@@ -1,0 +1,37 @@
+{
+  "utc": "2026-10-04T09:54:28.913776+00:00",
+  "implementation_checkpoint": "8e0ccfb138515bf248f185981a6c121567d156c8",
+  "status": "incomplete-retained",
+  "events": {
+    "configuration": 1,
+    "lock-acquired": 1,
+    "block-start": 1,
+    "probe-provenance": 24,
+    "wait-sample": 24,
+    "wait-timeout": 1,
+    "run-stopped": 1,
+    "lock-releasing": 1,
+    "formal-run-incomplete": 1
+  },
+  "common_flags": {
+    "load_headroom_exceeded": 17,
+    "paging_activity_observed": 1
+  },
+  "strict_reasons": {
+    "threshold:runnable_per_cpu": 8,
+    "threshold:common_host_flag_count": 17,
+    "threshold:cpu_busy_percent": 2
+  },
+  "waited_seconds": [
+    90.27241941698594
+  ],
+  "worker_launches": 0,
+  "real_performance_samples": 0,
+  "shared_lock_released": true,
+  "raw_sha256": "6c0707c167e4c31b546e48cdcc00e4aa93b7b698afc7bfe183690c7b0a3baf48",
+  "limitations": [
+    "One bounded gate attempt, no timing and no speed conclusion",
+    "Common temperature/throttle/available-memory unavailable; native CPU/Rprocess/pressure recorded",
+    "No stopping other projects or weakening thresholds"
+  ]
+}

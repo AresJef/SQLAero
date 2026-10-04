@@ -1,0 +1,35 @@
+{
+  "protocol": "sqlaero-three-way-host-v2-draft",
+  "config": {
+    "blocks": 6,
+    "repetitions": 32,
+    "warmup_repetitions": 128,
+    "post_guard_seconds": 2.0,
+    "shared_lock_path": "/private/var/folders/g9/fscckc0119s97khf1khzbh100000gn/T/shared-benchmark-1158e7e12c5e7362.lock",
+    "workload_id": "str",
+    "artifact_metadata": {},
+    "shared_protocol_digest": "8d1f081868d7ca4b96971f74aa5eccaa35927ba4eac9c30d99e96b1aa37c429b",
+    "window_evidence": "43a8f5b52c1aeb66077377d02fb42549fe862abb2f3475850b6fb4f36c77675a",
+    "heavy": true,
+    "calls_per_repetition": 16384,
+    "minimum_batch_seconds": 4.0,
+    "maximum_repetitions": 8192
+  },
+  "policy": {
+    "cpu_busy_max": 45.0,
+    "runnable_per_cpu_max": 0.45,
+    "memory_pressure_max": 1.0,
+    "stable_seconds": 30.0,
+    "minimum_samples": 10,
+    "max_wait_seconds": 90.0,
+    "poll_seconds": 2.0,
+    "common_host_flags_max": 0.0
+  },
+  "selected_cases": [
+    "str"
+  ],
+  "independent_cycles": 1,
+  "statistical_claim": "descriptive only; no interval from one cycle",
+  "fairness": "Exactly one SQLAero cycle, then release; busy lock waits within90seconds and postpones",
+  "common_policy_optional_signals": "Unavailable temperature/throttle/available-memory remain explicit; v2 does not exclude all interference"
+}

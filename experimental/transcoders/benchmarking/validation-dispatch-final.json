@@ -1,0 +1,42 @@
+{
+  "utc": "2026-10-04T09:55:26.162500+00:00",
+  "rows": [
+    {
+      "kernel": "sqlaero_cython_kernel",
+      "command": [
+        "/tmp/sqlaero-pypi-release-verification/bin/python",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "experimental/transcoders/tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "returncode": 0,
+      "tests": 57,
+      "output": "----------------------------------------------------------------------\nRan 57 tests in 0.375s\n\nOK\n"
+    },
+    {
+      "kernel": "sqlaero_rust_kernel",
+      "command": [
+        "/tmp/sqlaero-pypi-release-verification/bin/python",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "experimental/transcoders/tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "returncode": 0,
+      "tests": 57,
+      "output": "----------------------------------------------------------------------\nRan 57 tests in 0.370s\n\nOK\n"
+    }
+  ],
+  "scope": "light correctness/mock integration, not full-project acceptance or real performance timing"
+}
