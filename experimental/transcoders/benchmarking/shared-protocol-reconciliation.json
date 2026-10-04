@@ -1,0 +1,21 @@
+{
+  "cytimes_commit": "7e0ad62a2ba2419f4ebded55c89784af267786b5",
+  "protocol": "host-aware-paired-v2",
+  "resolved_literal_lock_path": "/private/var/folders/g9/fscckc0119s97khf1khzbh100000gn/T/shared-benchmark-1158e7e12c5e7362.lock",
+  "same_lock_verified": true,
+  "module_sha256": {
+    "experimental/transcoders/benchmarking/benchmark_environment.py": "1ee3f3838ca27527216974486e98e75cbfff08c9f2121eeb4f6454c1e4555a73",
+    "/Users/jef/ResilioSync/code/cyTimes-rewrite/tools/benchmark_environment.py": "1ee3f3838ca27527216974486e98e75cbfff08c9f2121eeb4f6454c1e4555a73"
+  },
+  "copy_equal": true,
+  "waiter_exit_verification": "Pending cyTimes main task verification of PID27483/session27699; SQLAero did not terminate or time workloads",
+  "temperature": {
+    "status": "unobserved",
+    "limitation": "No direct temperature signal in SQLAero strict probe; unavailable must remain explicit"
+  },
+  "throttle": {
+    "status": "unobserved",
+    "limitation": "No throttle signal in SQLAero strict probe; v2 does not completely exclude interference"
+  },
+  "heavy_timing_started": false
+}

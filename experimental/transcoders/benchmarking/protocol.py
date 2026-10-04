@@ -8,7 +8,7 @@ import math
 from itertools import permutations
 from typing import Callable, Mapping
 
-PROTOCOL_VERSION = 'sqlaero-load-ab-v1-draft'
+PROTOCOL_VERSION = 'sqlaero-three-way-host-v2-draft'
 Signal = Mapping[str, float | None]
 Event = dict[str, object]
 
@@ -63,21 +63,29 @@ def wait_for_stability(policy:LoadPolicy, probe:Callable[[],Signal],
                        clock:Callable[[],float], sleep:Callable[[float],None],
                        emit:Callable[[Event],None]) -> bool:
     """Wait within a finite budget, retain all samples and reset on any interference."""
-    started=clock(); quiet_started:float|None=None; count=0
+    started=clock(); quiet_started:float|None=None; count=0; previous:float|None=None
     while True:
-        now=clock(); sample=dict(probe()); ok,reasons=policy.classify(sample)
+        observation_started=clock(); sample=dict(probe()); now=clock(); ok,reasons=policy.classify(sample)
+        if previous is not None and now-previous>2*policy.poll_seconds:
+            quiet_started=None; count=0
+            reasons.append('observation-gap-reset')
+        previous=now
         emit({'protocol':PROTOCOL_VERSION,'kind':'wait-sample','time':now,
-              'signals':sample,'stable':ok,'reasons':reasons})
+              'signals':sample,'stable':ok,'reasons':reasons,
+              'observation_started':observation_started,'observation_ended':now})
+        if now-started>policy.max_wait_seconds:
+            emit({'protocol':PROTOCOL_VERSION,'kind':'wait-timeout','time':now,'waited_seconds':now-started})
+            return False
         if ok:
             if quiet_started is None: quiet_started=now
             count+=1
             if now-quiet_started>=policy.stable_seconds and count>=policy.minimum_samples:
-                emit({'protocol':PROTOCOL_VERSION,'kind':'window-ready','time':now,'samples':count})
+                emit({'protocol':PROTOCOL_VERSION,'kind':'window-ready','time':now,'samples':count,'waited_seconds':now-started})
                 return True
         else:
             quiet_started=None;count=0
         if now-started>=policy.max_wait_seconds:
-            emit({'protocol':PROTOCOL_VERSION,'kind':'wait-timeout','time':now})
+            emit({'protocol':PROTOCOL_VERSION,'kind':'wait-timeout','time':now,'waited_seconds':now-started})
             return False
         sleep(min(policy.poll_seconds,policy.max_wait_seconds-(now-started)))
 

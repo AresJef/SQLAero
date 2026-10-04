@@ -1,0 +1,112 @@
+{
+  "signals": {
+    "cpu_busy_percent": 10.64,
+    "runnable_per_cpu": 0.1,
+    "memory_pressure": 1.0
+  },
+  "capabilities": {
+    "cpu_busy_percent": {
+      "status": "available",
+      "unit": "percent busy over top delta interval",
+      "source_command": [
+        "/usr/bin/top",
+        "-l",
+        "2",
+        "-s",
+        "1",
+        "-n",
+        "0",
+        "-c",
+        "d",
+        "-F"
+      ]
+    },
+    "runnable_per_cpu": {
+      "status": "available",
+      "unit": "runnable processes per logical CPU, snapshot",
+      "source_command": [
+        "/bin/ps",
+        "-A",
+        "-o",
+        "state="
+      ],
+      "normalization_command": [
+        "/usr/sbin/sysctl",
+        "-n",
+        "hw.logicalcpu"
+      ],
+      "limitation": "process states, not all runnable threads; includes observer processes"
+    },
+    "memory_pressure": {
+      "status": "available",
+      "unit": "raw kern.memorystatus_vm_pressure_level integer",
+      "source_command": [
+        "/usr/sbin/sysctl",
+        "-n",
+        "kern.memorystatus_vm_pressure_level"
+      ]
+    }
+  },
+  "commands": [
+    {
+      "command": [
+        "/usr/bin/top",
+        "-l",
+        "2",
+        "-s",
+        "1",
+        "-n",
+        "0",
+        "-c",
+        "d",
+        "-F"
+      ],
+      "returncode": 0,
+      "stdout": "Processes: 801 total, 2 running, 799 sleeping, 5483 threads \n2026/10/04 17:11:48\nLoad Avg: 2.80, 3.38, 5.25 \nCPU usage: 5.62% user, 10.77% sys, 83.60% idle \nMemRegions: 1097842 total, 7464M resident, 0B private, 3768M shared.\nPhysMem: 31G used (3767M wired, 9077M compressor), 569M unused.\nVM: 461T vsize, 0B framework vsize, 6710(0) swapins, 128532(0) swapouts.\nNetworks: packets: 0/0B in, 0/0B out.\nDisks: 0/0B read, 0/0B written.\n\n\nProcesses: 801 total, 2 running, 799 sleeping, 5511 threads \n2026/10/04 17:11:49\nLoad Avg: 2.80, 3.38, 5.25 \nCPU usage: 6.43% user, 4.20% sys, 89.36% idle \nMemRegions: 0 total, 0B resident, 0B private, 3768M shared.\nPhysMem: 31G used (3713M wired, 9077M compressor), 587M unused.\nVM: 461T vsize, 0B framework vsize, 6710(0) swapins, 128532(0) swapouts.\nNetworks: packets: 44/10K in, 72/13K out.\nDisks: 1/4096B read, 90/504K written.\n\n\n",
+      "stderr": "",
+      "elapsed_seconds": 1.7494131249841303,
+      "error": null
+    },
+    {
+      "command": [
+        "/usr/sbin/sysctl",
+        "-n",
+        "hw.logicalcpu"
+      ],
+      "returncode": 0,
+      "stdout": "10\n",
+      "stderr": "",
+      "elapsed_seconds": 0.0038557079969905317,
+      "error": null
+    },
+    {
+      "command": [
+        "/bin/ps",
+        "-A",
+        "-o",
+        "state="
+      ],
+      "returncode": 0,
+      "stdout": "Ss  \nSs  \nSs  \nSs  \nS   \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nSs  \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nSs  \nSs  \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nS   \nSs  \nS   \nSs  \nSs  \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nS   \nSs  \nSs  \nS   \nS   \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nSs  \nS   \nSs  \nS   \nSs  \nSs  \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nSN  \nS   \nSs  \nS   \nS   \nS   \nSs  \nS   \nS   \nS   \nSs  \nSs  \nSs  \nS   \nSs  \nS   \nS   \nSs  \nSs  \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nSs  \nS   \nS   \nS   \nS   \nS   \nSs  \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nSs  \nS   \nSs  \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nSs  \nS   \nSs  \nSs  \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nSs  \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nSs  \nSs  \nSs  \nS   \nSs  \nSs  \nSs  \nS   \nS   \nS   \nS<  \nS   \nS   \nS   \nSs  \nSs  \nSs  \nS   \nSs  \nS   \nS   \nS   \nSs  \nS   \nS   \nSs  \nS   \nSs  \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nSs  \nS   \nSs  \nS   \nSs  \nS   \nSs  \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nSs  \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nS   \nSs  \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nSs  \nS   \nSs  \nSs  \nS   \nS   \nS   \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nSs  \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nS   \nSs  \nSs  \nSs  \nS   \nS   \nS   \nSs  \nSs  \nS   \nS   \nS   \nS   \nSNs \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nR   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nS   \nSs  \nSs  \nSs  \nS   \nSs  \nSs  \nS   \nS   \nS   \nSs  \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nSs  \nS   \nSs  \nS   \nSs  \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nSs  \nSs  \nSs  \nS   \nSs  \nS   \nS   \nSs  \nS   \nSs  \nSs  \nS   \nSs  \nSs  \nS   \nS   \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nS   \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nSs  \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nSs  \nSs  \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nSs  \nS   \nS   \nS   \nS   \nSs  \nSs  \nS   \nSs  \nS   \nSs  \nS   \nS   \nS   \nS   \nS   \nS   \nSs  \nS   \nS   \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nSs  \nS   \nS   \nS   \nSs  \nS   \nS   \nSs  \nSs  \nS   \nS   \nSs  \nS+  \nSs+ \n",
+      "stderr": "",
+      "elapsed_seconds": 0.012147708039265126,
+      "error": null
+    },
+    {
+      "command": [
+        "/usr/sbin/sysctl",
+        "-n",
+        "kern.memorystatus_vm_pressure_level"
+      ],
+      "returncode": 0,
+      "stdout": "1\n",
+      "stderr": "",
+      "elapsed_seconds": 0.001924125012010336,
+      "error": null
+    }
+  ],
+  "sampled_at_utc": "2026-10-04T09:11:48.078374+00:00",
+  "elapsed_seconds": 1.768101082998328,
+  "logical_cpus": 10,
+  "normalization": "logical CPUs reported by hw.logicalcpu"
+}

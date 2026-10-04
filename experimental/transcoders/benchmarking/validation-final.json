@@ -1,0 +1,43 @@
+{
+  "utc": "2026-10-04T09:22:33.244397+00:00",
+  "rows": [
+    {
+      "kernel": "sqlaero_cython_kernel",
+      "command": [
+        "/tmp/sqlaero-pypi-release-verification/bin/python",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "experimental/transcoders/tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "returncode": 0,
+      "tests": 49,
+      "output": "----------------------------------------------------------------------\nRan 49 tests in 0.476s\n\nOK\n"
+    },
+    {
+      "kernel": "sqlaero_rust_kernel",
+      "command": [
+        "/tmp/sqlaero-pypi-release-verification/bin/python",
+        "-B",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "experimental/transcoders/tests",
+        "-p",
+        "test_*.py",
+        "-q"
+      ],
+      "returncode": 0,
+      "tests": 49,
+      "output": "----------------------------------------------------------------------\nRan 49 tests in 0.464s\n\nOK\n"
+    }
+  ],
+  "real_performance_measurements": 0,
+  "scope": "light mocks, synthetic child processes, actual public-entry correctness; not full project acceptance"
+}

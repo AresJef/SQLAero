@@ -1,0 +1,353 @@
+{
+  "artifact_receipt": {
+    "dependencies": {
+      "cytimes": "3.1.0",
+      "numpy": "2.5.3",
+      "orjson": "3.12.0",
+      "pandas": "2.3.3"
+    },
+    "executable": "/tmp/sqlaero-pypi-release-verification/bin/python",
+    "modules": {
+      "cython": {
+        "/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/cython/sqlaero_cython_kernel.cpython-313-darwin.so": "4749f45f2f8165cc9b9224004c512a2badbdf56ead3d85eec5b225ab1e55c4c7"
+      },
+      "old": {
+        "/Users/jef/ResilioSync/code/SqlCyCli/src/sqlcycli/transcode.cpython-313-darwin.so": "da1d695271513fe60c8f9bca13ff87d1f26586a2505412c0145243d25aebe2e9"
+      },
+      "rust": {
+        "/private/tmp/sqlaero-rust-installed/sqlaero_rust_kernel/__init__.py": "659339037e4a78fcd7d7c9c74c0e7447adfed7b687cb4d3140da88a3c5c5ddb2",
+        "/private/tmp/sqlaero-rust-installed/sqlaero_rust_kernel/sqlaero_rust_kernel.cpython-313-darwin.so": "89a7b9060f8b1e6614b4cb3d98412aa4614ec4fd51d765305b9172b44f3bc171"
+      }
+    },
+    "old_git_head": "aa666c6a179ab020cb8a3616734ca284623c45f2",
+    "old_orjson_retained": true,
+    "old_root": "/Users/jef/ResilioSync/code/SqlCyCli",
+    "old_source_files": {
+      "pyproject.toml": "bf8f2b8d4921a762bdbc672d1c44b9269372008978a89d94583515d279cfdd61",
+      "setup.py": "873e82cbe0d8083762f792965f1d30d3c27a080d215a9506a88a6a517a46778f",
+      "src/sqlcycli/transcode.pxd": "5b6f901ca615352f80f3477c2f5206748aa63cb4e877c17d7a50a4928b379d9a",
+      "src/sqlcycli/transcode.pyi": "961272d5f5cbd0708c905a06fda767f77e5c460de5bd570b975ef58e73c0ac59",
+      "src/sqlcycli/transcode.pyx": "ddfb04c4a7241b5c3793d91da5c4da81f7129258521f2c0b4fdf13be6939c732"
+    },
+    "old_source_native_consistency": "Existing native artifact frozen by hash; not rebuilt or independently attested against source",
+    "old_source_sha256": "ddfb04c4a7241b5c3793d91da5c4da81f7129258521f2c0b4fdf13be6939c732",
+    "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+    "python": "3.13.3 (main, Sep 18 2025, 18:58:22) [Clang 17.0.0 (clang-1700.3.19.1)]"
+  },
+  "dispatch_coverage": {
+    "cython": "baseline classifier only; alternate native strategies remain unimplemented",
+    "rust": "four runnable classifier strategies, identical handlers"
+  },
+  "heavy_timing_admitted": false,
+  "host_module_sha256": "5d8deef4bd8231e556cd79f3f38521c73e25948780547834b4ea914ce5f424a2",
+  "host_protocol": "host-aware-paired-v2",
+  "measurements": 0,
+  "pending": [
+    "joint cyTimes policy reconciliation",
+    "verified mutual exclusion window",
+    "independent run-time sampler for long native calls",
+    "expanded type workload catalogue"
+  ],
+  "protocol": "sqlaero-three-way-host-v2-draft",
+  "semantics": [
+    {
+      "case": "none",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "str",
+          "value": "'NULL'"
+        },
+        "old": {
+          "type": "str",
+          "value": "'NULL'"
+        },
+        "rust": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "bool",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "str",
+          "value": "'1'"
+        },
+        "old": {
+          "type": "str",
+          "value": "'1'"
+        },
+        "rust": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "int",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "str",
+          "value": "'123456789'"
+        },
+        "old": {
+          "type": "str",
+          "value": "'123456789'"
+        },
+        "rust": {
+          "type": "str",
+          "value": "'123456789'"
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "float",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "str",
+          "value": "'1.23456789'"
+        },
+        "old": {
+          "type": "str",
+          "value": "'1.23456789'"
+        },
+        "rust": {
+          "type": "str",
+          "value": "'1.23456789'"
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "str",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "str",
+          "value": "\"'\u96ea\\\\'a\\\\\\\\b\\\\n'\""
+        },
+        "old": {
+          "type": "str",
+          "value": "\"'\u96ea\\\\'a\\\\\\\\b\\\\n'\""
+        },
+        "rust": {
+          "type": "str",
+          "value": "\"'\u96ea\\\\'a\\\\\\\\b\\\\n'\""
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "bytes",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "str",
+          "value": "\"_binary'a\\\\'b\\\\\\\\c'\""
+        },
+        "old": {
+          "type": "str",
+          "value": "\"_binary'a\\\\'b\\\\\\\\c'\""
+        },
+        "rust": {
+          "type": "str",
+          "value": "\"_binary'a\\\\'b\\\\\\\\c'\""
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "decimal",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "str",
+          "value": "'1.2300'"
+        },
+        "old": {
+          "type": "str",
+          "value": "'1.2300'"
+        },
+        "rust": {
+          "type": "str",
+          "value": "'1.2300'"
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "date",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "str",
+          "value": "\"'2024-02-29'\""
+        },
+        "old": {
+          "type": "str",
+          "value": "\"'2024-02-29'\""
+        },
+        "rust": {
+          "type": "str",
+          "value": "\"'2024-02-29'\""
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "datetime",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "str",
+          "value": "\"'2024-02-29 12:34:56.123456'\""
+        },
+        "old": {
+          "type": "str",
+          "value": "\"'2024-02-29 12:34:56.123456'\""
+        },
+        "rust": {
+          "type": "str",
+          "value": "\"'2024-02-29 12:34:56.123456'\""
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "list",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "tuple",
+          "value": "('1', \"'x'\", 'NULL')"
+        },
+        "old": {
+          "type": "tuple",
+          "value": "('1', \"'x'\", 'NULL')"
+        },
+        "rust": {
+          "type": "tuple",
+          "value": "('1', \"'x'\", 'NULL')"
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "numpy-int32",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "str",
+          "value": "'12'"
+        },
+        "old": {
+          "type": "str",
+          "value": "'12'"
+        },
+        "rust": {
+          "type": "str",
+          "value": "'12'"
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "array-int64",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "tuple",
+          "value": "('1', '2', '3')"
+        },
+        "old": {
+          "type": "tuple",
+          "value": "('1', '2', '3')"
+        },
+        "rust": {
+          "type": "tuple",
+          "value": "('1', '2', '3')"
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "decode-int",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "int",
+          "value": "12345"
+        },
+        "old": {
+          "type": "int",
+          "value": "12345"
+        },
+        "rust": {
+          "type": "int",
+          "value": "12345"
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "decode-json",
+      "difference": null,
+      "equivalent": true,
+      "outputs": {
+        "cython": {
+          "type": "dict",
+          "value": "{'x': [1, True, None]}"
+        },
+        "old": {
+          "type": "dict",
+          "value": "{'x': [1, True, None]}"
+        },
+        "rust": {
+          "type": "dict",
+          "value": "{'x': [1, True, None]}"
+        }
+      },
+      "parity": true
+    },
+    {
+      "case": "decode-bit-9",
+      "difference": "Legacy truncates oversized BIT; new kernels reject. Never an equivalent speedup.",
+      "equivalent": false,
+      "outputs": {
+        "cython": {
+          "error": "DecodeValueError"
+        },
+        "old": {
+          "type": "int",
+          "value": "3544952156018063160"
+        },
+        "rust": {
+          "error": "DecodeValueError"
+        }
+      },
+      "parity": false
+    }
+  ],
+  "shared_lock_path": "/var/folders/g9/fscckc0119s97khf1khzbh100000gn/T/shared-benchmark-1158e7e12c5e7362.lock"
+}

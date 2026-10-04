@@ -24,6 +24,16 @@ class ProtocolTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 LoadPolicy(value, 1., 1., 2., 3, 10., 1.)
 
+    def test_slow_probe_deadline(self) -> None:
+        """Never admit a window from a probe completing after the waiting deadline."""
+        def slow() -> dict[str,float]:
+            """Advance simulated time beyond the entire waiting budget."""
+            self.time += 7.
+            return self.quiet
+        self.assertFalse(wait_for_stability(self.policy,slow,self.clock,self.sleep,self.events.append))
+        self.assertEqual(self.events[-1]['kind'],'wait-timeout')
+        self.assertEqual(self.events[0]['observation_ended'],7.)
+
     def test_balance(self) -> None:
         """Confirm AB/BA and all six three-engine orders are balanced."""
         self.assertEqual(balanced_orders(('A','B'),2),[('A','B'),('B','A')])
