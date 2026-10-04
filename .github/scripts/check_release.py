@@ -35,7 +35,8 @@ def validate_binary(path: Path) -> None:
     for block in blocks:
         if block.startswith("cmd LC_BUILD_VERSION"):
             assert re.search(r"^\s*platform (?:1|macos)\s*$", block, re.M), "Unexpected Mach-O OS"
-        targets.extend(re.findall(r"^\s*(?:minos|version) (\d+\.\d+(?:\.\d+)?)\s*$", block, re.M))
+        field = "minos" if block.startswith("cmd LC_BUILD_VERSION") else "version"
+        targets.extend(re.findall(r"^\s*" + field + r" (\d+\.\d+(?:\.\d+)?)\s*$", block, re.M))
     assert targets, "Missing Mach-O deployment target"
     assert all(Version(t) == Version("26.0") for t in targets), f"Unexpected deployment targets: {targets}"
 
