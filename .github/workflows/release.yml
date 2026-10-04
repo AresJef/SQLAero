@@ -1,0 +1,108 @@
+name: Release SQLAero alpha
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-and-verify:
+    runs-on: macos-26
+    timeout-minutes: 45
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "26.0"
+      RELEASE_TAG: ${{ github.event.release.tag_name }}
+      RELEASE_EVENT: ${{ github.event_name }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.release.tag_name || github.ref }}
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: "3.13"
+      - name: Verify runner, alpha version and release tag
+        run: |
+          python - <<'PY'
+          import configparser, os, platform, sys
+          from pathlib import Path
+          assert platform.system() == "Darwin" and platform.machine() == "arm64"
+          assert sys.version_info[:2] == (3, 13)
+          assert platform.mac_ver()[0].split(".")[0] == "26"
+          cfg = configparser.ConfigParser()
+          cfg.read("setup.cfg")
+          assert cfg["metadata"]["name"] == "SQLAero"
+          assert cfg["metadata"]["version"] == "0.1.0a1"
+          assert cfg["options"]["python_requires"] == ">=3.13,<3.14"
+          if os.environ["RELEASE_EVENT"] == "release":
+              assert os.environ["RELEASE_TAG"] == "v" + cfg["metadata"]["version"]
+          PY
+      - name: Install build tools and freeze primary build dependencies
+        run: |
+          echo "PIP_CONSTRAINT=$GITHUB_WORKSPACE/.github/release-constraints.txt" >> "$GITHUB_ENV"
+          python -m pip install -c .github/release-constraints.txt build twine
+      - name: Build sdist and wheel from the sdist
+        run: |
+          python -m build --sdist --outdir dist
+          python - <<'PY'
+          import tarfile
+          from pathlib import Path
+          archive = next(Path("dist").glob("*.tar.gz"))
+          with tarfile.open(archive) as source:
+              source.extractall("build-input", filter="data")
+          PY
+          python -m build --wheel --outdir dist build-input/sqlaero-0.1.0a1
+          python -m twine check dist/*
+          python .github/scripts/check_release.py dist
+      - name: Install actual wheel into a clean environment and run offline cases
+        run: |
+          python -m venv "$RUNNER_TEMP/sqlaero-test"
+          "$RUNNER_TEMP/sqlaero-test/bin/python" -m pip install --only-binary=:all: -c .github/release-constraints.txt dist/*.whl pendulum
+          "$RUNNER_TEMP/sqlaero-test/bin/python" -m pip check
+          "$RUNNER_TEMP/sqlaero-test/bin/python" -I -B src/test_utils.py
+          "$RUNNER_TEMP/sqlaero-test/bin/python" -I -B src/test_sqlfunc.py
+          "$RUNNER_TEMP/sqlaero-test/bin/python" -I -B validation/run_transcode_pure.py
+          "$RUNNER_TEMP/sqlaero-test/bin/python" -I -B -c 'import sqlaero, importlib.util; assert importlib.util.find_spec("sqlcycli") is None; assert importlib.util.find_spec("Cython") is None; assert sqlaero.Connection.__module__ == "sqlaero.connection"'
+          "$RUNNER_TEMP/sqlaero-test/bin/python" -m pip freeze
+      - name: Retain only the verified wheel for publishing
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verified-pypi-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
+  publish:
+    if: >-
+      github.event_name == 'release' &&
+      github.repository == 'AresJef/SQLAero' &&
+      github.event.release.tag_name == 'v0.1.0a1' &&
+      github.event.release.prerelease == true
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-pypi-wheel
+          path: dist
+      - name: Require exactly the intended wheel; reject sdist or extra files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          files = list(Path("dist").iterdir())
+          assert len(files) == 1
+          assert files[0].name == "sqlaero-0.1.0a1-cp313-cp313-macosx_26_0_arm64.whl"
+          PY
+      - name: Publish verified wheel through PyPI Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
+        with:
+          packages-dir: dist
