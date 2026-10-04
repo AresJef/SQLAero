@@ -1,5 +1,5 @@
 {
-  "recorded_at_utc": "2026-10-04T08:48:25.018840+00:00",
+  "recorded_at_utc": "2026-10-04T09:29:38.257164+00:00",
   "python": "3.13.3 (main, Sep 18 2025, 18:58:22) [Clang 17.0.0 (clang-1700.3.19.1)]",
   "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
   "machine": "arm64",
@@ -20,12 +20,12 @@
   "installed_module": "/tmp/sqlaero-rust-installed/sqlaero_rust_kernel/__init__.py",
   "artifacts": {
     "src/lib.rs": {
-      "sha256": "dd641e52e006d27fe82a3af8ab9c84f5a9c3ccd9d79cd05a33f7a1af259edfd6",
-      "bytes": 65908
+      "sha256": "8c2a37cb9e725eafd4d4af8fa72a4d5515c3e8f8f3dd4dc6be2d1ccfd4c1b9db",
+      "bytes": 66019
     },
     "src/dispatch.rs": {
-      "sha256": "223edffe36c3ef0981a1df3cbf83f9e80e060a3e03ff2913cee7bd595056faa5",
-      "bytes": 4782
+      "sha256": "6e6f1b857162071d33dd085513419a789a67d53926e320d0743b006732d0e860",
+      "bytes": 3790
     },
     "build.rs": {
       "sha256": "be23ea924d30d08282dd69c3dfbfa249a2cf297e02312649bc785352e243ee25",
@@ -44,16 +44,40 @@
       "bytes": 278
     },
     "sqlaero_rust_kernel.pyi": {
-      "sha256": "13a371128dd03792ea608e180286f7c2e349b9c6860c9d645a065829c5fee774",
-      "bytes": 1671
+      "sha256": "01991282a29488b2e020c5a4029fc42ce57c3d41d53693954a5087fdc527645c",
+      "bytes": 1783
     },
     "sqlaero_rust_kernel.so": {
-      "sha256": "89a7b9060f8b1e6614b4cb3d98412aa4614ec4fd51d765305b9172b44f3bc171",
-      "bytes": 809648
+      "sha256": "47f4495deeb9dd6a2cb4a752a09e64dc883ba8169f666a1f45301f64c7b594ed",
+      "bytes": 810128
     },
     "target/wheels/sqlaero_rust_kernel-0.1.0-cp313-cp313-macosx_11_0_arm64.whl": {
-      "sha256": "d15a0446e8be72fc92265a1419578b03a6883c0c929141d86b89171b99c18f4d",
-      "bytes": 354891
+      "sha256": "87276f64556bd0a9727b5ade66d07b6416327f81c9cd0d545da67a8dafb03091",
+      "bytes": 355300
+    },
+    "test_kernel.py": {
+      "sha256": "479f776a3513f7c8fcc6fecd727fce9557f8a04a80308f5376a9c50e2558a473",
+      "bytes": 11987
+    },
+    "test_dispatch.py": {
+      "sha256": "db33b97a69e3f0c187513882af0672dc7372bba9b7e1fd713065f04a60585a9b",
+      "bytes": 935
+    },
+    "DISPATCH_DESIGN.md": {
+      "sha256": "29c08f9ce248a2321241ec5c21dd0100befec65f345da27c60ef072e7b4da0bc",
+      "bytes": 5296
+    },
+    "README.md": {
+      "sha256": "015609e0af87c51e8efea452e600a123bdec94f6ac70eb827682ba9039ff3a88",
+      "bytes": 4539
+    },
+    "SUPPORT_MATRIX.md": {
+      "sha256": "663ca68fefb4b05b1249c480a9052da10e90236e140c39c54a8dc52b34ecef52",
+      "bytes": 6480
+    },
+    "evidence/dispatch-validation.json": {
+      "sha256": "60eaf317f06e57ecf86292f4050db12998c5fff652c3fe0c5b83e9fd59ccbe67",
+      "bytes": 1890
     }
   },
   "wheel_members": [
@@ -106,6 +130,110 @@
     "extensive_fuzz": "not run",
     "miri": "not run; own code contains no unsafe blocks",
     "database": "not run",
-    "heavy_benchmarks": "not run"
+    "heavy_benchmarks": "not run",
+    "dispatch": {
+      "imported_module": "/tmp/sqlaero-rust-installed/sqlaero_rust_kernel/__init__.py",
+      "strategies": [
+        "cascade",
+        "type_id",
+        "hot_registry"
+      ],
+      "results": {
+        "cascade": {
+          "type": {
+            "rows": 404,
+            "matches": {
+              "sqlaero_rust_kernel": 404
+            }
+          },
+          "json": {
+            "rows": 58,
+            "matches": {
+              "sqlaero_rust_kernel": 58
+            }
+          },
+          "float": {
+            "rows": 492,
+            "matches": {
+              "sqlaero_rust_kernel": 492
+            }
+          },
+          "subclass": {
+            "rows": 20,
+            "matches": {
+              "sqlaero_rust_kernel": 20
+            }
+          },
+          "shared": {
+            "run": 15,
+            "failures": 0,
+            "errors": 0
+          }
+        },
+        "type_id": {
+          "type": {
+            "rows": 404,
+            "matches": {
+              "sqlaero_rust_kernel": 404
+            }
+          },
+          "json": {
+            "rows": 58,
+            "matches": {
+              "sqlaero_rust_kernel": 58
+            }
+          },
+          "float": {
+            "rows": 492,
+            "matches": {
+              "sqlaero_rust_kernel": 492
+            }
+          },
+          "subclass": {
+            "rows": 20,
+            "matches": {
+              "sqlaero_rust_kernel": 20
+            }
+          },
+          "shared": {
+            "run": 15,
+            "failures": 0,
+            "errors": 0
+          }
+        },
+        "hot_registry": {
+          "type": {
+            "rows": 404,
+            "matches": {
+              "sqlaero_rust_kernel": 404
+            }
+          },
+          "json": {
+            "rows": 58,
+            "matches": {
+              "sqlaero_rust_kernel": 58
+            }
+          },
+          "float": {
+            "rows": 492,
+            "matches": {
+              "sqlaero_rust_kernel": 492
+            }
+          },
+          "subclass": {
+            "rows": 20,
+            "matches": {
+              "sqlaero_rust_kernel": 20
+            }
+          },
+          "shared": {
+            "run": 15,
+            "failures": 0,
+            "errors": 0
+          }
+        }
+      }
+    },
+    "dispatch_own": "30/30 fixed-strategy tests; three classifiers"
   }
 }

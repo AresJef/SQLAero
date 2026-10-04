@@ -22,6 +22,7 @@ class LoadPolicy:
     minimum_samples: int
     max_wait_seconds: float
     poll_seconds: float
+    common_host_flags_max: float | None = None
     def __post_init__(self) -> None:
         """Reject policies that cannot substantiate a continuous stable window."""
         values = (self.cpu_busy_max, self.runnable_per_cpu_max, self.memory_pressure_max,
@@ -32,6 +33,8 @@ class LoadPolicy:
             raise ValueError('Load thresholds must be nonnegative')
         if self.stable_seconds <= 0 or self.minimum_samples < 2 or self.poll_seconds <= 0:
             raise ValueError('A multi-sample positive stable window is required')
+        if self.common_host_flags_max is not None and (not math.isfinite(self.common_host_flags_max) or self.common_host_flags_max<0):
+            raise ValueError('Common host flag count limit must be finite and nonnegative')
         if self.max_wait_seconds < self.stable_seconds:
             raise ValueError('Wait budget must permit the stable window')
 
@@ -39,6 +42,8 @@ class LoadPolicy:
         """Reject unavailable required metrics and report every breached threshold."""
         limits={'cpu_busy_percent':self.cpu_busy_max,'runnable_per_cpu':self.runnable_per_cpu_max,
                 'memory_pressure':self.memory_pressure_max}
+        if self.common_host_flags_max is not None:
+            limits['common_host_flag_count']=self.common_host_flags_max
         reasons:list[str]=[]
         for key,limit in limits.items():
             value=sample.get(key)

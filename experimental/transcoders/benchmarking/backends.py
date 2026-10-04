@@ -151,7 +151,14 @@ class DispatchInvocation:
         return self.backend.invoke(self.case)
 
 
+def dispatch_candidates(backend: Backend, case: Case) -> dict[str, Callable[[], object]]:
+    """Use the backend's reviewed internal catalogue and unchanged public handlers."""
+    strategies=backend.module._dispatch_strategies()
+    if not isinstance(strategies,tuple) or not strategies or len(set(strategies))!=len(strategies):
+        raise ValueError('Invalid reviewed dispatch catalogue')
+    return {strategy:DispatchInvocation(backend,case,strategy) for strategy in strategies}
+
+
 def rust_dispatch_candidates(backend: Backend, case: Case) -> dict[str, Callable[[], object]]:
-    """Return four classifier candidates with identical handlers and public inputs."""
-    return {strategy: DispatchInvocation(backend,case,strategy)
-            for strategy in ('cascade','type_id','function_table','hot_registry')}
+    """Retain the research helper name while using the reviewed Rust catalogue."""
+    return dispatch_candidates(backend,case)

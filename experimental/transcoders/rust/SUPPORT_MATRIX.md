@@ -31,3 +31,5 @@ JSON temporal multiplier frontier: datetime64 dtype multipliers other than1 are 
 Final saved evidence: installed own11/11, shared15/15, normal type404/404, JSON58/58, float492/492, subclass20/20. Legacy37/38 differs only at deliberately rejected >8-byte BIT integer decoding. See evidence/ and artifact-metadata.json for stable hashes and timestamps.
 
 JSON numeric ndarray encoding streams an owned raw snapshot directly through bounded dtype and shape writers; it does not build a per-cell SQL-row intermediate. SQL list/tuple subclasses normalize through their base constructors to honor explicit iterator overrides, while JSON uses base list storage and rejects tuple subclasses, matching the distinct frozen semantics.
+
+Dispatch review refresh: all three catalogue strategies independently pass shared15/15, type404/404, JSON58/58, float492/492 and subclass20/20 with the freshly installed release wheel. `test_dispatch.py` runs all10 non-selector owned tests for each fixed strategy (30/30 total). Evidence: `evidence/dispatch-validation.json` and `evidence/dispatch-own-tests.log`. No timing, winner selection or extension-registry alternatives are claimed.

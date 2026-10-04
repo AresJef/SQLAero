@@ -1,0 +1,7280 @@
+{
+  "rows": 404,
+  "matches": {
+    "sqlaero_rust_kernel": 404
+  },
+  "cases": [
+    {
+      "case": "none",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "none",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "none",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "none",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bool",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bool",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bool",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bool",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "int",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1267650600228229401496703205376'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1267650600228229401496703205376'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "int",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1267650600228229401496703205376'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1267650600228229401496703205376'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "int",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1267650600228229401496703205376'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1267650600228229401496703205376'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "int",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1267650600228229401496703205376'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1267650600228229401496703205376'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1.25'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.25'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1.25'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.25'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1.25'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.25'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1.25'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.25'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-exp",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1e-7'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1e-7'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-exp",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1e-7'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1e-7'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-exp",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1e-7'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1e-7'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-exp",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1e-7'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1e-7'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-zero",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'-0.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'-0.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-zero",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'-0.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'-0.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-zero",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'-0.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'-0.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-zero",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'-0.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'-0.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-nan",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-nan",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-nan",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "float-nan",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "text",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'\u96ea\\\\0a\\\\'b\\\\\\\\c\\\\n'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'\u96ea\\\\0a\\\\'b\\\\\\\\c\\\\n'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "text",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'\u96ea\\\\0a\\\\'b\\\\\\\\c\\\\n'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'\u96ea\\\\0a\\\\'b\\\\\\\\c\\\\n'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "text",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'\u96ea\\\\0a\\\\'b\\\\\\\\c\\\\n'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'\u96ea\\\\0a\\\\'b\\\\\\\\c\\\\n'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "text",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'\u96ea\\\\0a\\\\'b\\\\\\\\c\\\\n'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'\u96ea\\\\0a\\\\'b\\\\\\\\c\\\\n'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bytes",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\\\0\\udcff\\\\'\\\\\\\\'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\\\0\\udcff\\\\'\\\\\\\\'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bytes",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\\\0\\udcff\\\\'\\\\\\\\'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\\\0\\udcff\\\\'\\\\\\\\'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bytes",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\\\0\\udcff\\\\'\\\\\\\\'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\\\0\\udcff\\\\'\\\\\\\\'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bytes",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\\\0\\udcff\\\\'\\\\\\\\'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\\\0\\udcff\\\\'\\\\\\\\'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bytearray",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\udcff'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\udcff'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bytearray",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\udcff'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\udcff'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bytearray",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\udcff'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\udcff'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "bytearray",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\udcff'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\udcff'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "memoryview",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'ac'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'ac'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "memoryview",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'ac'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'ac'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "memoryview",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'ac'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'ac'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "memoryview",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'ac'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'ac'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "decimal",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1.2300'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.2300'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "decimal",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1.2300'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.2300'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "decimal",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1.2300'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.2300'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "decimal",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1.2300'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.2300'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03.000004'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03.000004'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03.000004'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03.000004'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03.000004'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03.000004'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03.000004'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03.000004'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "date",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "date",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "date",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "date",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "time",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'01:02:03.000004'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'01:02:03.000004'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "time",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'01:02:03.000004'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'01:02:03.000004'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "time",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'01:02:03.000004'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'01:02:03.000004'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "time",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'01:02:03.000004'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'01:02:03.000004'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-47:59:59.999999'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-47:59:59.999999'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-47:59:59.999999'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-47:59:59.999999'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-47:59:59.999999'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-47:59:59.999999'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-47:59:59.999999'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-47:59:59.999999'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "struct-time",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "struct-time",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "struct-time",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "struct-time",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "list",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"(1,'x')\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"(1,'x')\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "list",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', \"'x'\")"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', \"'x'\")"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "list",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', \"'x'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', \"'x'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "list",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', \"'x'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', \"'x'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "tuple",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"(1,'x')\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"(1,'x')\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "tuple",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', \"'x'\")"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', \"'x'\")"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "tuple",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', \"'x'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', \"'x'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "tuple",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', \"'x'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', \"'x'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "nested",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2),(3,4)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2),(3,4)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "nested",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('(1,2)', '(3,4)')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('(1,2)', '(3,4)')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "nested",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('3', '4')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('3', '4')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "nested",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('3', '4')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('3', '4')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"(1,'x')\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"(1,'x')\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', \"'x'\")"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', \"'x'\")"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', \"'x'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', \"'x'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', \"'x'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', \"'x'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-keys",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"('a')\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"('a')\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-keys",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "(\"'a'\",)"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "(\"'a'\",)"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-keys",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[\"'a'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[\"'a'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-keys",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[\"'a'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[\"'a'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-values",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-values",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1',)"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1',)"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-values",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-values",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-items",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-items",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1',)"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1',)"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-items",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dict-items",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "set",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "set",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "set",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "set",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "frozenset",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "frozenset",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "frozenset",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "frozenset",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "range",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(0,1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(0,1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "range",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('0', '1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('0', '1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "range",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['0', '1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['0', '1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "range",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['0', '1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['0', '1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "npstr-nul",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'\\\\0'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'\\\\0'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "npstr-nul",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'\\\\0'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'\\\\0'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "npstr-nul",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'\\\\0'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'\\\\0'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "npstr-nul",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'\\\\0'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'\\\\0'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "npbytes-nul",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\\\0'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\\\0'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "npbytes-nul",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\\\0'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\\\0'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "npbytes-nul",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\\\0'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\\\0'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "npbytes-nul",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'\\\\0'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'\\\\0'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "pdNaT",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "pdNaT",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "pdNaT",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "pdNaT",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'NULL'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'NULL'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timestamp",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03.123456'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03.123456'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timestamp",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03.123456'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03.123456'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timestamp",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03.123456'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03.123456'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timestamp",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'2024-02-29 01:02:03.123456'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'2024-02-29 01:02:03.123456'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "pdtimedelta",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "pdtimedelta",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "pdtimedelta",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "pdtimedelta",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "series",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "series",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "series",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "series",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "index",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "index",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "index",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "index",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetimeindex",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"('2024-01-01 00:00:00','2024-01-02 00:00:00')\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"('2024-01-01 00:00:00','2024-01-02 00:00:00')\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetimeindex",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "(\"'2024-01-01 00:00:00'\", \"'2024-01-02 00:00:00'\")"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "(\"'2024-01-01 00:00:00'\", \"'2024-01-02 00:00:00'\")"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetimeindex",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[\"'2024-01-01 00:00:00'\", \"'2024-01-02 00:00:00'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[\"'2024-01-01 00:00:00'\", \"'2024-01-02 00:00:00'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetimeindex",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[\"'2024-01-01 00:00:00'\", \"'2024-01-02 00:00:00'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[\"'2024-01-01 00:00:00'\", \"'2024-01-02 00:00:00'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedeltaindex",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"('00:00:00','-00:00:00.000001')\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"('00:00:00','-00:00:00.000001')\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedeltaindex",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "(\"'00:00:00'\", \"'-00:00:00.000001'\")"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "(\"'00:00:00'\", \"'-00:00:00.000001'\")"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedeltaindex",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[\"'00:00:00'\", \"'-00:00:00.000001'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[\"'00:00:00'\", \"'-00:00:00.000001'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedeltaindex",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[\"'00:00:00'\", \"'-00:00:00.000001'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[\"'00:00:00'\", \"'-00:00:00.000001'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dataframe",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,1.1),(2,2.2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,1.1),(2,2.2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dataframe",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '1.1'), ('2', '2.2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '1.1'), ('2', '2.2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dataframe",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '1.1'), ('2', '2.2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '1.1'), ('2', '2.2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "dataframe",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '1.1'), ('2', '2.2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '1.1'), ('2', '2.2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i1-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i1-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i1-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i1-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i1-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2),(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2),(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i1-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i1-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i1-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i2-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i2-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i2-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i2-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i2-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2),(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2),(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i2-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i2-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i2-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i4-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i4-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i4-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i4-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i4-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2),(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2),(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i4-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i4-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i4-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i4",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i4",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i4",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i4",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i8-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i8-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i8-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i8-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i8-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2),(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2),(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i8-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i8-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-i8-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i8",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i8",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i8",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-i8",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u1-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u1-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u1-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u1-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u1-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2),(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2),(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u1-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u1-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u1-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u2-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u2-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u2-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u2-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u2-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2),(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2),(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u2-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u2-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u2-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u4-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u4-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u4-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u4-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u4-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2),(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2),(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u4-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u4-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u4-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u4",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u4",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u4",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u4",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u8-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u8-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u8-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u8-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u8-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2),(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2),(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u8-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u8-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-u8-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u8",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u8",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u8",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-u8",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f2-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1.0,2.0)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1.0,2.0)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f2-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1.0', '2.0')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1.0', '2.0')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f2-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1.0', '2.0']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1.0', '2.0']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f2-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1.0', '2.0']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1.0', '2.0']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f2-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1.0,2.0),(1.0,2.0)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1.0,2.0),(1.0,2.0)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f2-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f2-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f2-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f4-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1.0,2.0)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1.0,2.0)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f4-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1.0', '2.0')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1.0', '2.0')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f4-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1.0', '2.0']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1.0', '2.0']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f4-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1.0', '2.0']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1.0', '2.0']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f4-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1.0,2.0),(1.0,2.0)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1.0,2.0),(1.0,2.0)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f4-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f4-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f4-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f4",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f4",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f4",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f4",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f8-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1.0,2.0)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1.0,2.0)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f8-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1.0', '2.0')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1.0', '2.0')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f8-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1.0', '2.0']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1.0', '2.0']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f8-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1.0', '2.0']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1.0', '2.0']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f8-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1.0,2.0),(1.0,2.0)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1.0,2.0),(1.0,2.0)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f8-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f8-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-f8-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1.0', '2.0'), ('1.0', '2.0')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f8",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f8",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f8",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-f8",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1.0'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1.0'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-bool-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,1)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,1)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-bool-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '1')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '1')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-bool-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '1']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '1']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-bool-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '1']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '1']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-bool-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,1),(1,1)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,1),(1,1)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-bool-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '1'), ('1', '1')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '1'), ('1', '1')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-bool-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '1'), ('1', '1')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '1'), ('1', '1')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-bool-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '1'), ('1', '1')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '1'), ('1', '1')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-bool",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-bool",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-bool",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-bool",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "'1'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'1'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-U3-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"('a','b')\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"('a','b')\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-U3-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "(\"'a'\", \"'b'\")"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "(\"'a'\", \"'b'\")"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-U3-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[\"'a'\", \"'b'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[\"'a'\", \"'b'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-U3-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[\"'a'\", \"'b'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[\"'a'\", \"'b'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-U3-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"('a','b'),('a','b')\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"('a','b'),('a','b')\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-U3-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[(\"'a'\", \"'b'\"), (\"'a'\", \"'b'\")]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[(\"'a'\", \"'b'\"), (\"'a'\", \"'b'\")]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-U3-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[(\"'a'\", \"'b'\"), (\"'a'\", \"'b'\")]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[(\"'a'\", \"'b'\"), (\"'a'\", \"'b'\")]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-U3-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[(\"'a'\", \"'b'\"), (\"'a'\", \"'b'\")]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[(\"'a'\", \"'b'\"), (\"'a'\", \"'b'\")]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-U3",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'a'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'a'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-U3",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'a'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'a'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-U3",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'a'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'a'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-U3",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'a'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'a'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-S3-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"(_binary'a',_binary'b')\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"(_binary'a',_binary'b')\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-S3-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "(\"_binary'a'\", \"_binary'b'\")"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "(\"_binary'a'\", \"_binary'b'\")"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-S3-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[\"_binary'a'\", \"_binary'b'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[\"_binary'a'\", \"_binary'b'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-S3-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[\"_binary'a'\", \"_binary'b'\"]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[\"_binary'a'\", \"_binary'b'\"]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-S3-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"(_binary'a',_binary'b'),(_binary'a',_binary'b')\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"(_binary'a',_binary'b'),(_binary'a',_binary'b')\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-S3-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[(\"_binary'a'\", \"_binary'b'\"), (\"_binary'a'\", \"_binary'b'\")]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[(\"_binary'a'\", \"_binary'b'\"), (\"_binary'a'\", \"_binary'b'\")]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-S3-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[(\"_binary'a'\", \"_binary'b'\"), (\"_binary'a'\", \"_binary'b'\")]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[(\"_binary'a'\", \"_binary'b'\"), (\"_binary'a'\", \"_binary'b'\")]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-S3-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[(\"_binary'a'\", \"_binary'b'\"), (\"_binary'a'\", \"_binary'b'\")]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[(\"_binary'a'\", \"_binary'b'\"), (\"_binary'a'\", \"_binary'b'\")]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-S3",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'a'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'a'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-S3",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'a'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'a'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-S3",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'a'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'a'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "scalar-S3",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"_binary'a'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"_binary'a'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-object-1",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-object-1",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "tuple",
+        "value": "('1', '2')"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "tuple",
+          "value": "('1', '2')"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-object-1",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-object-1",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "['1', '2']"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "['1', '2']"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-object-2",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "'(1,2),(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "'(1,2),(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-object-2",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-object-2",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "array-object-2",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "list",
+        "value": "[('1', '2'), ('1', '2')]"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "list",
+          "value": "[('1', '2'), ('1', '2')]"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-ns",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-ns",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-ns",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-ns",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-ns",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-ns",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-ns",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-ns",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-us",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-us",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-us",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-us",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-us",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-us",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-us",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-us",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.000001'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.000001'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-ms",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00.001000'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00.001000'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-ms",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00.001000'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00.001000'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-ms",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00.001000'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00.001000'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-ms",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:00.001000'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:00.001000'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-ms",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.001000'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.001000'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-ms",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.001000'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.001000'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-ms",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.001000'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.001000'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-ms",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:00.001000'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:00.001000'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-s",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:01'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:01'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-s",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:01'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:01'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-s",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:01'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:01'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-s",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:00:01'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:00:01'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-s",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:01'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:01'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-s",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:01'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:01'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-s",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:01'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:01'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-s",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:00:01'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:00:01'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-m",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:01:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:01:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-m",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:01:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:01:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-m",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:01:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:01:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-m",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 00:01:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 00:01:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-m",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:01:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:01:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-m",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:01:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:01:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-m",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:01:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:01:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-m",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-00:01:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-00:01:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-h",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 01:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 01:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-h",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 01:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 01:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-h",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 01:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 01:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-h",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-01 01:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-01 01:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-h",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-01:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-01:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-h",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-01:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-01:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-h",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-01:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-01:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-h",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-01:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-01:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-D",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-02 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-02 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-D",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-02 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-02 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-D",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-02 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-02 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-D",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-02 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-02 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-D",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-24:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-24:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-D",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-24:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-24:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-D",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-24:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-24:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-D",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-24:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-24:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-W",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-08 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-08 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-W",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-08 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-08 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-W",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-08 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-08 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-W",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-01-08 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-01-08 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-W",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-168:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-168:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-W",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-168:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-168:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-W",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-168:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-168:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-W",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-168:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-168:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-M",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-02-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-02-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-M",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-02-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-02-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-M",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-02-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-02-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-M",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1970-02-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1970-02-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-M",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-730:29:06'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-730:29:06'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-M",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-730:29:06'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-730:29:06'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-M",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-730:29:06'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-730:29:06'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-M",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-730:29:06'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-730:29:06'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-Y",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1971-01-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1971-01-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-Y",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1971-01-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1971-01-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-Y",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1971-01-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1971-01-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "datetime64-Y",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'1971-01-01 00:00:00'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'1971-01-01 00:00:00'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-Y",
+      "many": false,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-8765:49:12'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-8765:49:12'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-Y",
+      "many": false,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-8765:49:12'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-8765:49:12'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-Y",
+      "many": true,
+      "itemize": false,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-8765:49:12'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-8765:49:12'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "timedelta64-Y",
+      "many": true,
+      "itemize": true,
+      "baseline": {
+        "type": "str",
+        "value": "\"'-8765:49:12'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "type": "str",
+          "value": "\"'-8765:49:12'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    }
+  ]
+}

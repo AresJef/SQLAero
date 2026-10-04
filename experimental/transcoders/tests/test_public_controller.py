@@ -12,7 +12,7 @@ from backends import Case
 from benchmark_environment import BenchmarkLease, PROTOCOL as HOST_PROTOCOL
 from protocol import LoadPolicy, PROTOCOL_VERSION
 from runner import RunConfig
-from public_controller import PublicInvocation, run_public_cases
+from public_controller import PublicInvocation, run_public_cases, run_dispatch_cases
 
 
 class PublicControllerTests(unittest.TestCase):
@@ -68,6 +68,25 @@ class PublicControllerTests(unittest.TestCase):
                            cwd=Path(__file__).resolve().parents[1]/'benchmarking',capture_output=True,text=True)
         self.assertNotEqual(run.returncode,0)
         self.assertIn('lease is not held',run.stderr)
+
+    def test_dispatch_worker_adapters_and_partial_status(self) -> None:
+        """Reviewed strategy is selected before timed calls and incomplete runs stay partial."""
+        self.receipt['dispatch_coverage']={'cython':['exactif','hotcold','typeid_dict']}
+        with patch('public_controller.verify_receipt',return_value=self.receipt), \
+             patch('public_controller.cases',return_value=[self.case]), \
+             patch('public_controller.run_comparison',return_value=[]) as comparison:
+            result=run_dispatch_cases('cython',self.path/'receipt',self.path,self.config,
+                                      self.policy,lambda:{},self.events.append,1.)
+            self.assertFalse(result['complete'])
+            self.assertEqual(tuple(comparison.call_args.args[0]),('exactif','hotcold','typeid_dict'))
+            invocation=comparison.call_args.args[0]['hotcold']
+            invocation.admitted=True
+            with patch('public_controller.monitor_child') as monitor,patch('public_controller.parse_timing'):
+                invocation()
+                command=monitor.call_args.args[0]
+                self.assertEqual(command[command.index('--candidate')+1],'cython')
+                self.assertEqual(command[command.index('--dispatch-strategy')+1],'hotcold')
+                self.assertEqual(command[command.index('--warmup-repetitions')+1],'3')
 
     def test_worker_without_managed_admission_refuses_before_imports(self) -> None:
         """Standalone timing cannot use just a preparation receipt."""

@@ -29,3 +29,9 @@ class _JSONCodec:
 json: _JSONCodec
 def dispatch_code(value: object) -> int:
     """Experimental primitive classification probe, without serialization or callbacks."""
+def _dispatch_strategies() -> tuple[str, ...]:
+    """List internal same-handler research classifiers; not a public extension API."""
+def _set_dispatch_strategy(name: str) -> None:
+    """Select a research classifier outside timing; default remains exactif."""
+def _get_dispatch_strategy() -> str:
+    """Return the current internal research classifier name."""

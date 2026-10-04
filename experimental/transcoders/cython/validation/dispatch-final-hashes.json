@@ -1,0 +1,30 @@
+{
+  "revision": "dispatch-candidates-v1",
+  "utc": "2026-10-04T09:37:33.201949+00:00",
+  "strategies": [
+    "exactif",
+    "hotcold",
+    "typeid_dict"
+  ],
+  "default": "exactif",
+  "previous_validation_manifest": "validation/final-hashes.json",
+  "sha256": {
+    "sqlaero_cython_kernel.pyx": "f366234c55c60afdd13cc6b5f736c33e17aeea6a8a59280e4b7cb1b8f55c050c",
+    "sqlaero_cython_kernel.cpython-313-darwin.so": "075435b87da8342483173a95e9350a7fc0d05d3bb0c3378ec760560d7c059aa3",
+    "/tmp/sqlaero-cython-sanitized/sqlaero_cython_kernel.cpython-313-darwin.so": "c494fd2db86666b5a8989bfb37e3564167f752ddbcbbf20df12c001a31b7ad36"
+  },
+  "correctness_per_strategy": {
+    "type_matrix": 404,
+    "json_matrix": 58,
+    "float_matrix": 492,
+    "subclass_matrix": 20
+  },
+  "sanitizer": {
+    "run": 71,
+    "passed": 70,
+    "skipped": 1,
+    "skip_reason": "explicit three-way integration opt-in unset",
+    "leak_detection": false
+  },
+  "timing_run": false
+}

@@ -1,0 +1,5912 @@
+{
+  "rows": 492,
+  "matches": {
+    "sqlaero_rust_kernel": 492
+  },
+  "cases": [
+    {
+      "case": "f4-0",
+      "mode": "sql-scalar",
+      "input": "np.float32(0.0)",
+      "expected": "'0.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "'0.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-0",
+      "mode": "json-scalar",
+      "input": "np.float32(0.0)",
+      "expected": "b'0.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-0",
+      "mode": "json-array",
+      "input": "np.float32(0.0)",
+      "expected": "b'[0.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-1",
+      "mode": "sql-scalar",
+      "input": "np.float32(-0.0)",
+      "expected": "'-0.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-0.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-1",
+      "mode": "json-scalar",
+      "input": "np.float32(-0.0)",
+      "expected": "b'-0.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-0.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-1",
+      "mode": "json-array",
+      "input": "np.float32(-0.0)",
+      "expected": "b'[-0.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-0.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-2",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.1)",
+      "expected": "'1.1'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.1'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-2",
+      "mode": "json-scalar",
+      "input": "np.float32(1.1)",
+      "expected": "b'1.1'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.1'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-2",
+      "mode": "json-array",
+      "input": "np.float32(1.1)",
+      "expected": "b'[1.1]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.1]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-3",
+      "mode": "sql-scalar",
+      "input": "np.float32(-2.2)",
+      "expected": "'-2.2'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-2.2'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-3",
+      "mode": "json-scalar",
+      "input": "np.float32(-2.2)",
+      "expected": "b'-2.2'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-2.2'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-3",
+      "mode": "json-array",
+      "input": "np.float32(-2.2)",
+      "expected": "b'[-2.2]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-2.2]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-4",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e-04)",
+      "expected": "'1e-04'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e-04'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-4",
+      "mode": "json-scalar",
+      "input": "np.float32(1e-04)",
+      "expected": "b'0.0001'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.0001'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-4",
+      "mode": "json-array",
+      "input": "np.float32(1e-04)",
+      "expected": "b'[0.0001]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.0001]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-5",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e-05)",
+      "expected": "'1e-05'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e-05'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-5",
+      "mode": "json-scalar",
+      "input": "np.float32(1e-05)",
+      "expected": "b'0.00001'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.00001'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-5",
+      "mode": "json-array",
+      "input": "np.float32(1e-05)",
+      "expected": "b'[0.00001]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.00001]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-6",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e-06)",
+      "expected": "'1e-06'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e-06'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-6",
+      "mode": "json-scalar",
+      "input": "np.float32(1e-06)",
+      "expected": "b'0.000001'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.000001'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-6",
+      "mode": "json-array",
+      "input": "np.float32(1e-06)",
+      "expected": "b'[0.000001]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.000001]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-7",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e-07)",
+      "expected": "'1e-07'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e-07'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-7",
+      "mode": "json-scalar",
+      "input": "np.float32(1e-07)",
+      "expected": "b'1e-7'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e-7'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-7",
+      "mode": "json-array",
+      "input": "np.float32(1e-07)",
+      "expected": "b'[1e-7]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e-7]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-8",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e+06)",
+      "expected": "'1e+06'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e+06'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-8",
+      "mode": "json-scalar",
+      "input": "np.float32(1e+06)",
+      "expected": "b'1000000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1000000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-8",
+      "mode": "json-array",
+      "input": "np.float32(1e+06)",
+      "expected": "b'[1000000.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1000000.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-9",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e+12)",
+      "expected": "'1e+12'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e+12'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-9",
+      "mode": "json-scalar",
+      "input": "np.float32(1e+12)",
+      "expected": "b'1000000000000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1000000000000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-9",
+      "mode": "json-array",
+      "input": "np.float32(1e+12)",
+      "expected": "b'[1000000000000.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1000000000000.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-10",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e+13)",
+      "expected": "'1e+13'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e+13'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-10",
+      "mode": "json-scalar",
+      "input": "np.float32(1e+13)",
+      "expected": "b'1e+13'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e+13'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-10",
+      "mode": "json-array",
+      "input": "np.float32(1e+13)",
+      "expected": "b'[1e+13]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e+13]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-11",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e+15)",
+      "expected": "'1e+15'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e+15'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-11",
+      "mode": "json-scalar",
+      "input": "np.float32(1e+15)",
+      "expected": "b'1e+15'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e+15'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-11",
+      "mode": "json-array",
+      "input": "np.float32(1e+15)",
+      "expected": "b'[1e+15]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e+15]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-12",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e+16)",
+      "expected": "'1e+16'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e+16'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-12",
+      "mode": "json-scalar",
+      "input": "np.float32(1e+16)",
+      "expected": "b'1e+16'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e+16'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-12",
+      "mode": "json-array",
+      "input": "np.float32(1e+16)",
+      "expected": "b'[1e+16]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e+16]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-13",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e+20)",
+      "expected": "'1e+20'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e+20'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-13",
+      "mode": "json-scalar",
+      "input": "np.float32(1e+20)",
+      "expected": "b'1e+20'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e+20'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-13",
+      "mode": "json-array",
+      "input": "np.float32(1e+20)",
+      "expected": "b'[1e+20]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e+20]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-14",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e+21)",
+      "expected": "'1e+21'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e+21'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-14",
+      "mode": "json-scalar",
+      "input": "np.float32(1e+21)",
+      "expected": "b'1e+21'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e+21'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-14",
+      "mode": "json-array",
+      "input": "np.float32(1e+21)",
+      "expected": "b'[1e+21]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e+21]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-15",
+      "mode": "sql-scalar",
+      "input": "np.float32(1e-45)",
+      "expected": "'1e-45'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e-45'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-15",
+      "mode": "json-scalar",
+      "input": "np.float32(1e-45)",
+      "expected": "b'1e-45'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e-45'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-15",
+      "mode": "json-array",
+      "input": "np.float32(1e-45)",
+      "expected": "b'[1e-45]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e-45]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-16",
+      "mode": "sql-scalar",
+      "input": "np.float32(3.4028235e+38)",
+      "expected": "'3.4028235e+38'",
+      "actual": {
+        "sqlaero_rust_kernel": "'3.4028235e+38'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-16",
+      "mode": "json-scalar",
+      "input": "np.float32(3.4028235e+38)",
+      "expected": "b'3.4028235e+38'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'3.4028235e+38'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-16",
+      "mode": "json-array",
+      "input": "np.float32(3.4028235e+38)",
+      "expected": "b'[3.4028235e+38]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[3.4028235e+38]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-17",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.1754944e-38)",
+      "expected": "'1.1754944e-38'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.1754944e-38'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-17",
+      "mode": "json-scalar",
+      "input": "np.float32(1.1754944e-38)",
+      "expected": "b'1.1754944e-38'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.1754944e-38'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-17",
+      "mode": "json-array",
+      "input": "np.float32(1.1754944e-38)",
+      "expected": "b'[1.1754944e-38]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.1754944e-38]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-18",
+      "mode": "sql-scalar",
+      "input": "np.float32(5.090385e-12)",
+      "expected": "'5.090385e-12'",
+      "actual": {
+        "sqlaero_rust_kernel": "'5.090385e-12'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-18",
+      "mode": "json-scalar",
+      "input": "np.float32(5.090385e-12)",
+      "expected": "b'5.090385e-12'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'5.090385e-12'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-18",
+      "mode": "json-array",
+      "input": "np.float32(5.090385e-12)",
+      "expected": "b'[5.090385e-12]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[5.090385e-12]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-19",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.3614681e-30)",
+      "expected": "'1.3614681e-30'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.3614681e-30'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-19",
+      "mode": "json-scalar",
+      "input": "np.float32(1.3614681e-30)",
+      "expected": "b'1.3614681e-30'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.3614681e-30'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-19",
+      "mode": "json-array",
+      "input": "np.float32(1.3614681e-30)",
+      "expected": "b'[1.3614681e-30]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.3614681e-30]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-20",
+      "mode": "sql-scalar",
+      "input": "np.float32(-10.727271)",
+      "expected": "'-10.727271'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-10.727271'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-20",
+      "mode": "json-scalar",
+      "input": "np.float32(-10.727271)",
+      "expected": "b'-10.727271'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-10.727271'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-20",
+      "mode": "json-array",
+      "input": "np.float32(-10.727271)",
+      "expected": "b'[-10.727271]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-10.727271]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-21",
+      "mode": "sql-scalar",
+      "input": "np.float32(2.7425248e+08)",
+      "expected": "'2.7425248e+08'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.7425248e+08'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-21",
+      "mode": "json-scalar",
+      "input": "np.float32(2.7425248e+08)",
+      "expected": "b'274252480.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'274252480.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-21",
+      "mode": "json-array",
+      "input": "np.float32(2.7425248e+08)",
+      "expected": "b'[274252480.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[274252480.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-22",
+      "mode": "sql-scalar",
+      "input": "np.float32(2.1520897e+22)",
+      "expected": "'2.1520897e+22'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.1520897e+22'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-22",
+      "mode": "json-scalar",
+      "input": "np.float32(2.1520897e+22)",
+      "expected": "b'2.1520897e+22'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'2.1520897e+22'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-22",
+      "mode": "json-array",
+      "input": "np.float32(2.1520897e+22)",
+      "expected": "b'[2.1520897e+22]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[2.1520897e+22]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-23",
+      "mode": "sql-scalar",
+      "input": "np.float32(12330.906)",
+      "expected": "'12330.906'",
+      "actual": {
+        "sqlaero_rust_kernel": "'12330.906'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-23",
+      "mode": "json-scalar",
+      "input": "np.float32(12330.906)",
+      "expected": "b'12330.906'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'12330.906'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-23",
+      "mode": "json-array",
+      "input": "np.float32(12330.906)",
+      "expected": "b'[12330.906]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[12330.906]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-24",
+      "mode": "sql-scalar",
+      "input": "np.float32(-2.2297392e-35)",
+      "expected": "'-2.2297392e-35'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-2.2297392e-35'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-24",
+      "mode": "json-scalar",
+      "input": "np.float32(-2.2297392e-35)",
+      "expected": "b'-2.2297392e-35'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-2.2297392e-35'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-24",
+      "mode": "json-array",
+      "input": "np.float32(-2.2297392e-35)",
+      "expected": "b'[-2.2297392e-35]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-2.2297392e-35]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-25",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.5343298e-09)",
+      "expected": "'1.5343298e-09'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.5343298e-09'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-25",
+      "mode": "json-scalar",
+      "input": "np.float32(1.5343298e-09)",
+      "expected": "b'1.5343298e-9'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.5343298e-9'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-25",
+      "mode": "json-array",
+      "input": "np.float32(1.5343298e-09)",
+      "expected": "b'[1.5343298e-9]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.5343298e-9]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-26",
+      "mode": "sql-scalar",
+      "input": "np.float32(-2.0592916e+12)",
+      "expected": "'-2.0592916e+12'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-2.0592916e+12'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-26",
+      "mode": "json-scalar",
+      "input": "np.float32(-2.0592916e+12)",
+      "expected": "b'-2059291600000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-2059291600000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-26",
+      "mode": "json-array",
+      "input": "np.float32(-2.0592916e+12)",
+      "expected": "b'[-2059291600000.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-2059291600000.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-27",
+      "mode": "sql-scalar",
+      "input": "np.float32(-0.19376709)",
+      "expected": "'-0.19376709'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-0.19376709'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-27",
+      "mode": "json-scalar",
+      "input": "np.float32(-0.19376709)",
+      "expected": "b'-0.19376709'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-0.19376709'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-27",
+      "mode": "json-array",
+      "input": "np.float32(-0.19376709)",
+      "expected": "b'[-0.19376709]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-0.19376709]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-28",
+      "mode": "sql-scalar",
+      "input": "np.float32(-3.1264017e-07)",
+      "expected": "'-3.1264017e-07'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.1264017e-07'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-28",
+      "mode": "json-scalar",
+      "input": "np.float32(-3.1264017e-07)",
+      "expected": "b'-3.1264017e-7'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.1264017e-7'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-28",
+      "mode": "json-array",
+      "input": "np.float32(-3.1264017e-07)",
+      "expected": "b'[-3.1264017e-7]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.1264017e-7]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-29",
+      "mode": "sql-scalar",
+      "input": "np.float32(-1.6080559e-12)",
+      "expected": "'-1.6080559e-12'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.6080559e-12'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-29",
+      "mode": "json-scalar",
+      "input": "np.float32(-1.6080559e-12)",
+      "expected": "b'-1.6080559e-12'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.6080559e-12'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-29",
+      "mode": "json-array",
+      "input": "np.float32(-1.6080559e-12)",
+      "expected": "b'[-1.6080559e-12]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.6080559e-12]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-30",
+      "mode": "sql-scalar",
+      "input": "np.float32(2.0542962e-19)",
+      "expected": "'2.0542962e-19'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.0542962e-19'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-30",
+      "mode": "json-scalar",
+      "input": "np.float32(2.0542962e-19)",
+      "expected": "b'2.0542962e-19'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'2.0542962e-19'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-30",
+      "mode": "json-array",
+      "input": "np.float32(2.0542962e-19)",
+      "expected": "b'[2.0542962e-19]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[2.0542962e-19]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-31",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.424856e+35)",
+      "expected": "'1.424856e+35'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.424856e+35'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-31",
+      "mode": "json-scalar",
+      "input": "np.float32(1.424856e+35)",
+      "expected": "b'1.424856e+35'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.424856e+35'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-31",
+      "mode": "json-array",
+      "input": "np.float32(1.424856e+35)",
+      "expected": "b'[1.424856e+35]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.424856e+35]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-32",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.2949246e-16)",
+      "expected": "'1.2949246e-16'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.2949246e-16'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-32",
+      "mode": "json-scalar",
+      "input": "np.float32(1.2949246e-16)",
+      "expected": "b'1.2949246e-16'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.2949246e-16'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-32",
+      "mode": "json-array",
+      "input": "np.float32(1.2949246e-16)",
+      "expected": "b'[1.2949246e-16]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.2949246e-16]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-33",
+      "mode": "sql-scalar",
+      "input": "np.float32(-2.84229e+30)",
+      "expected": "'-2.84229e+30'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-2.84229e+30'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-33",
+      "mode": "json-scalar",
+      "input": "np.float32(-2.84229e+30)",
+      "expected": "b'-2.84229e+30'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-2.84229e+30'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-33",
+      "mode": "json-array",
+      "input": "np.float32(-2.84229e+30)",
+      "expected": "b'[-2.84229e+30]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-2.84229e+30]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-34",
+      "mode": "sql-scalar",
+      "input": "np.float32(2.8085132e+22)",
+      "expected": "'2.8085132e+22'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.8085132e+22'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-34",
+      "mode": "json-scalar",
+      "input": "np.float32(2.8085132e+22)",
+      "expected": "b'2.8085132e+22'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'2.8085132e+22'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-34",
+      "mode": "json-array",
+      "input": "np.float32(2.8085132e+22)",
+      "expected": "b'[2.8085132e+22]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[2.8085132e+22]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-35",
+      "mode": "sql-scalar",
+      "input": "np.float32(-5.3986027e-24)",
+      "expected": "'-5.3986027e-24'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-5.3986027e-24'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-35",
+      "mode": "json-scalar",
+      "input": "np.float32(-5.3986027e-24)",
+      "expected": "b'-5.3986027e-24'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-5.3986027e-24'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-35",
+      "mode": "json-array",
+      "input": "np.float32(-5.3986027e-24)",
+      "expected": "b'[-5.3986027e-24]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-5.3986027e-24]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-36",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.514175e+17)",
+      "expected": "'1.514175e+17'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.514175e+17'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-36",
+      "mode": "json-scalar",
+      "input": "np.float32(1.514175e+17)",
+      "expected": "b'1.514175e+17'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.514175e+17'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-36",
+      "mode": "json-array",
+      "input": "np.float32(1.514175e+17)",
+      "expected": "b'[1.514175e+17]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.514175e+17]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-37",
+      "mode": "sql-scalar",
+      "input": "np.float32(7.526436e-07)",
+      "expected": "'7.526436e-07'",
+      "actual": {
+        "sqlaero_rust_kernel": "'7.526436e-07'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-37",
+      "mode": "json-scalar",
+      "input": "np.float32(7.526436e-07)",
+      "expected": "b'7.526436e-7'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'7.526436e-7'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-37",
+      "mode": "json-array",
+      "input": "np.float32(7.526436e-07)",
+      "expected": "b'[7.526436e-7]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[7.526436e-7]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-38",
+      "mode": "sql-scalar",
+      "input": "np.float32(6.1955707e-06)",
+      "expected": "'6.1955707e-06'",
+      "actual": {
+        "sqlaero_rust_kernel": "'6.1955707e-06'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-38",
+      "mode": "json-scalar",
+      "input": "np.float32(6.1955707e-06)",
+      "expected": "b'0.0000061955707'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.0000061955707'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-38",
+      "mode": "json-array",
+      "input": "np.float32(6.1955707e-06)",
+      "expected": "b'[0.0000061955707]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.0000061955707]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-39",
+      "mode": "sql-scalar",
+      "input": "np.float32(2.3387014e-24)",
+      "expected": "'2.3387014e-24'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.3387014e-24'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-39",
+      "mode": "json-scalar",
+      "input": "np.float32(2.3387014e-24)",
+      "expected": "b'2.3387014e-24'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'2.3387014e-24'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-39",
+      "mode": "json-array",
+      "input": "np.float32(2.3387014e-24)",
+      "expected": "b'[2.3387014e-24]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[2.3387014e-24]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-40",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.4573257)",
+      "expected": "'1.4573257'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.4573257'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-40",
+      "mode": "json-scalar",
+      "input": "np.float32(1.4573257)",
+      "expected": "b'1.4573257'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.4573257'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-40",
+      "mode": "json-array",
+      "input": "np.float32(1.4573257)",
+      "expected": "b'[1.4573257]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.4573257]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-41",
+      "mode": "sql-scalar",
+      "input": "np.float32(-3.584628e+33)",
+      "expected": "'-3.584628e+33'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.584628e+33'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-41",
+      "mode": "json-scalar",
+      "input": "np.float32(-3.584628e+33)",
+      "expected": "b'-3.584628e+33'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.584628e+33'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-41",
+      "mode": "json-array",
+      "input": "np.float32(-3.584628e+33)",
+      "expected": "b'[-3.584628e+33]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.584628e+33]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-42",
+      "mode": "sql-scalar",
+      "input": "np.float32(2.6474035e-11)",
+      "expected": "'2.6474035e-11'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.6474035e-11'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-42",
+      "mode": "json-scalar",
+      "input": "np.float32(2.6474035e-11)",
+      "expected": "b'2.6474035e-11'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'2.6474035e-11'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-42",
+      "mode": "json-array",
+      "input": "np.float32(2.6474035e-11)",
+      "expected": "b'[2.6474035e-11]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[2.6474035e-11]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-43",
+      "mode": "sql-scalar",
+      "input": "np.float32(914.3159)",
+      "expected": "'914.3159'",
+      "actual": {
+        "sqlaero_rust_kernel": "'914.3159'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-43",
+      "mode": "json-scalar",
+      "input": "np.float32(914.3159)",
+      "expected": "b'914.3159'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'914.3159'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-43",
+      "mode": "json-array",
+      "input": "np.float32(914.3159)",
+      "expected": "b'[914.3159]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[914.3159]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-44",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.173045e+23)",
+      "expected": "'1.173045e+23'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.173045e+23'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-44",
+      "mode": "json-scalar",
+      "input": "np.float32(1.173045e+23)",
+      "expected": "b'1.173045e+23'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.173045e+23'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-44",
+      "mode": "json-array",
+      "input": "np.float32(1.173045e+23)",
+      "expected": "b'[1.173045e+23]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.173045e+23]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-45",
+      "mode": "sql-scalar",
+      "input": "np.float32(105.19852)",
+      "expected": "'105.19852'",
+      "actual": {
+        "sqlaero_rust_kernel": "'105.19852'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-45",
+      "mode": "json-scalar",
+      "input": "np.float32(105.19852)",
+      "expected": "b'105.19852'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'105.19852'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-45",
+      "mode": "json-array",
+      "input": "np.float32(105.19852)",
+      "expected": "b'[105.19852]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[105.19852]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-46",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.016985e-09)",
+      "expected": "'1.016985e-09'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.016985e-09'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-46",
+      "mode": "json-scalar",
+      "input": "np.float32(1.016985e-09)",
+      "expected": "b'1.016985e-9'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.016985e-9'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-46",
+      "mode": "json-array",
+      "input": "np.float32(1.016985e-09)",
+      "expected": "b'[1.016985e-9]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.016985e-9]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-47",
+      "mode": "sql-scalar",
+      "input": "np.float32(4.9856474e-15)",
+      "expected": "'4.9856474e-15'",
+      "actual": {
+        "sqlaero_rust_kernel": "'4.9856474e-15'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-47",
+      "mode": "json-scalar",
+      "input": "np.float32(4.9856474e-15)",
+      "expected": "b'4.9856474e-15'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'4.9856474e-15'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-47",
+      "mode": "json-array",
+      "input": "np.float32(4.9856474e-15)",
+      "expected": "b'[4.9856474e-15]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[4.9856474e-15]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-48",
+      "mode": "sql-scalar",
+      "input": "np.float32(-3.802096e-17)",
+      "expected": "'-3.802096e-17'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.802096e-17'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-48",
+      "mode": "json-scalar",
+      "input": "np.float32(-3.802096e-17)",
+      "expected": "b'-3.802096e-17'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.802096e-17'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-48",
+      "mode": "json-array",
+      "input": "np.float32(-3.802096e-17)",
+      "expected": "b'[-3.802096e-17]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.802096e-17]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-49",
+      "mode": "sql-scalar",
+      "input": "np.float32(0.9084387)",
+      "expected": "'0.9084387'",
+      "actual": {
+        "sqlaero_rust_kernel": "'0.9084387'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-49",
+      "mode": "json-scalar",
+      "input": "np.float32(0.9084387)",
+      "expected": "b'0.9084387'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.9084387'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-49",
+      "mode": "json-array",
+      "input": "np.float32(0.9084387)",
+      "expected": "b'[0.9084387]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.9084387]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-50",
+      "mode": "sql-scalar",
+      "input": "np.float32(-1.2019764e+13)",
+      "expected": "'-1.2019764e+13'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.2019764e+13'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-50",
+      "mode": "json-scalar",
+      "input": "np.float32(-1.2019764e+13)",
+      "expected": "b'-1.2019764e+13'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.2019764e+13'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-50",
+      "mode": "json-array",
+      "input": "np.float32(-1.2019764e+13)",
+      "expected": "b'[-1.2019764e+13]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.2019764e+13]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-51",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.4430877e-27)",
+      "expected": "'1.4430877e-27'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.4430877e-27'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-51",
+      "mode": "json-scalar",
+      "input": "np.float32(1.4430877e-27)",
+      "expected": "b'1.4430877e-27'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.4430877e-27'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-51",
+      "mode": "json-array",
+      "input": "np.float32(1.4430877e-27)",
+      "expected": "b'[1.4430877e-27]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.4430877e-27]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-52",
+      "mode": "sql-scalar",
+      "input": "np.float32(4.0881635e-16)",
+      "expected": "'4.0881635e-16'",
+      "actual": {
+        "sqlaero_rust_kernel": "'4.0881635e-16'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-52",
+      "mode": "json-scalar",
+      "input": "np.float32(4.0881635e-16)",
+      "expected": "b'4.0881635e-16'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'4.0881635e-16'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-52",
+      "mode": "json-array",
+      "input": "np.float32(4.0881635e-16)",
+      "expected": "b'[4.0881635e-16]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[4.0881635e-16]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-53",
+      "mode": "sql-scalar",
+      "input": "np.float32(4.506407e+26)",
+      "expected": "'4.506407e+26'",
+      "actual": {
+        "sqlaero_rust_kernel": "'4.506407e+26'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-53",
+      "mode": "json-scalar",
+      "input": "np.float32(4.506407e+26)",
+      "expected": "b'4.506407e+26'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'4.506407e+26'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-53",
+      "mode": "json-array",
+      "input": "np.float32(4.506407e+26)",
+      "expected": "b'[4.506407e+26]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[4.506407e+26]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-54",
+      "mode": "sql-scalar",
+      "input": "np.float32(4.577782e+27)",
+      "expected": "'4.577782e+27'",
+      "actual": {
+        "sqlaero_rust_kernel": "'4.577782e+27'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-54",
+      "mode": "json-scalar",
+      "input": "np.float32(4.577782e+27)",
+      "expected": "b'4.577782e+27'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'4.577782e+27'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-54",
+      "mode": "json-array",
+      "input": "np.float32(4.577782e+27)",
+      "expected": "b'[4.577782e+27]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[4.577782e+27]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-55",
+      "mode": "sql-scalar",
+      "input": "np.float32(5.1092593e-05)",
+      "expected": "'5.1092593e-05'",
+      "actual": {
+        "sqlaero_rust_kernel": "'5.1092593e-05'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-55",
+      "mode": "json-scalar",
+      "input": "np.float32(5.1092593e-05)",
+      "expected": "b'0.000051092593'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.000051092593'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-55",
+      "mode": "json-array",
+      "input": "np.float32(5.1092593e-05)",
+      "expected": "b'[0.000051092593]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.000051092593]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-56",
+      "mode": "sql-scalar",
+      "input": "np.float32(5.1293515e+18)",
+      "expected": "'5.1293515e+18'",
+      "actual": {
+        "sqlaero_rust_kernel": "'5.1293515e+18'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-56",
+      "mode": "json-scalar",
+      "input": "np.float32(5.1293515e+18)",
+      "expected": "b'5.1293515e+18'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'5.1293515e+18'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-56",
+      "mode": "json-array",
+      "input": "np.float32(5.1293515e+18)",
+      "expected": "b'[5.1293515e+18]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[5.1293515e+18]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-57",
+      "mode": "sql-scalar",
+      "input": "np.float32(-3.9415187e+28)",
+      "expected": "'-3.9415187e+28'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.9415187e+28'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-57",
+      "mode": "json-scalar",
+      "input": "np.float32(-3.9415187e+28)",
+      "expected": "b'-3.9415187e+28'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.9415187e+28'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-57",
+      "mode": "json-array",
+      "input": "np.float32(-3.9415187e+28)",
+      "expected": "b'[-3.9415187e+28]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.9415187e+28]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-58",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.5489236e-29)",
+      "expected": "'1.5489236e-29'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.5489236e-29'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-58",
+      "mode": "json-scalar",
+      "input": "np.float32(1.5489236e-29)",
+      "expected": "b'1.5489236e-29'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.5489236e-29'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-58",
+      "mode": "json-array",
+      "input": "np.float32(1.5489236e-29)",
+      "expected": "b'[1.5489236e-29]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.5489236e-29]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-59",
+      "mode": "sql-scalar",
+      "input": "np.float32(0.0011872067)",
+      "expected": "'0.0011872067'",
+      "actual": {
+        "sqlaero_rust_kernel": "'0.0011872067'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-59",
+      "mode": "json-scalar",
+      "input": "np.float32(0.0011872067)",
+      "expected": "b'0.0011872067'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.0011872067'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-59",
+      "mode": "json-array",
+      "input": "np.float32(0.0011872067)",
+      "expected": "b'[0.0011872067]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.0011872067]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-60",
+      "mode": "sql-scalar",
+      "input": "np.float32(56895.0)",
+      "expected": "'56895.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "'56895.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-60",
+      "mode": "json-scalar",
+      "input": "np.float32(56895.0)",
+      "expected": "b'56895.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'56895.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-60",
+      "mode": "json-array",
+      "input": "np.float32(56895.0)",
+      "expected": "b'[56895.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[56895.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-61",
+      "mode": "sql-scalar",
+      "input": "np.float32(-6.7130674e+14)",
+      "expected": "'-6.7130674e+14'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-6.7130674e+14'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-61",
+      "mode": "json-scalar",
+      "input": "np.float32(-6.7130674e+14)",
+      "expected": "b'-6.7130674e+14'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-6.7130674e+14'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-61",
+      "mode": "json-array",
+      "input": "np.float32(-6.7130674e+14)",
+      "expected": "b'[-6.7130674e+14]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-6.7130674e+14]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-62",
+      "mode": "sql-scalar",
+      "input": "np.float32(-0.0006088947)",
+      "expected": "'-0.0006088947'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-0.0006088947'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-62",
+      "mode": "json-scalar",
+      "input": "np.float32(-0.0006088947)",
+      "expected": "b'-0.0006088947'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-0.0006088947'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-62",
+      "mode": "json-array",
+      "input": "np.float32(-0.0006088947)",
+      "expected": "b'[-0.0006088947]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-0.0006088947]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-63",
+      "mode": "sql-scalar",
+      "input": "np.float32(2.3785204e+21)",
+      "expected": "'2.3785204e+21'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.3785204e+21'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-63",
+      "mode": "json-scalar",
+      "input": "np.float32(2.3785204e+21)",
+      "expected": "b'2.3785204e+21'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'2.3785204e+21'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-63",
+      "mode": "json-array",
+      "input": "np.float32(2.3785204e+21)",
+      "expected": "b'[2.3785204e+21]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[2.3785204e+21]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-64",
+      "mode": "sql-scalar",
+      "input": "np.float32(-5.860325e+31)",
+      "expected": "'-5.860325e+31'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-5.860325e+31'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-64",
+      "mode": "json-scalar",
+      "input": "np.float32(-5.860325e+31)",
+      "expected": "b'-5.860325e+31'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-5.860325e+31'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-64",
+      "mode": "json-array",
+      "input": "np.float32(-5.860325e+31)",
+      "expected": "b'[-5.860325e+31]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-5.860325e+31]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-65",
+      "mode": "sql-scalar",
+      "input": "np.float32(-1.9228963e-09)",
+      "expected": "'-1.9228963e-09'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.9228963e-09'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-65",
+      "mode": "json-scalar",
+      "input": "np.float32(-1.9228963e-09)",
+      "expected": "b'-1.9228963e-9'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.9228963e-9'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-65",
+      "mode": "json-array",
+      "input": "np.float32(-1.9228963e-09)",
+      "expected": "b'[-1.9228963e-9]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.9228963e-9]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-66",
+      "mode": "sql-scalar",
+      "input": "np.float32(4.3238545e+18)",
+      "expected": "'4.3238545e+18'",
+      "actual": {
+        "sqlaero_rust_kernel": "'4.3238545e+18'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-66",
+      "mode": "json-scalar",
+      "input": "np.float32(4.3238545e+18)",
+      "expected": "b'4.3238545e+18'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'4.3238545e+18'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-66",
+      "mode": "json-array",
+      "input": "np.float32(4.3238545e+18)",
+      "expected": "b'[4.3238545e+18]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[4.3238545e+18]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-67",
+      "mode": "sql-scalar",
+      "input": "np.float32(-1.7035913e+16)",
+      "expected": "'-1.7035913e+16'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.7035913e+16'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-67",
+      "mode": "json-scalar",
+      "input": "np.float32(-1.7035913e+16)",
+      "expected": "b'-1.7035913e+16'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.7035913e+16'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-67",
+      "mode": "json-array",
+      "input": "np.float32(-1.7035913e+16)",
+      "expected": "b'[-1.7035913e+16]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.7035913e+16]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-68",
+      "mode": "sql-scalar",
+      "input": "np.float32(9.908995)",
+      "expected": "'9.908995'",
+      "actual": {
+        "sqlaero_rust_kernel": "'9.908995'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-68",
+      "mode": "json-scalar",
+      "input": "np.float32(9.908995)",
+      "expected": "b'9.908995'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'9.908995'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-68",
+      "mode": "json-array",
+      "input": "np.float32(9.908995)",
+      "expected": "b'[9.908995]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[9.908995]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-69",
+      "mode": "sql-scalar",
+      "input": "np.float32(-1.3944803e+12)",
+      "expected": "'-1.3944803e+12'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.3944803e+12'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-69",
+      "mode": "json-scalar",
+      "input": "np.float32(-1.3944803e+12)",
+      "expected": "b'-1394480300000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1394480300000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-69",
+      "mode": "json-array",
+      "input": "np.float32(-1.3944803e+12)",
+      "expected": "b'[-1394480300000.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1394480300000.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-70",
+      "mode": "sql-scalar",
+      "input": "np.float32(114874.36)",
+      "expected": "'114874.36'",
+      "actual": {
+        "sqlaero_rust_kernel": "'114874.36'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-70",
+      "mode": "json-scalar",
+      "input": "np.float32(114874.36)",
+      "expected": "b'114874.36'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'114874.36'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-70",
+      "mode": "json-array",
+      "input": "np.float32(114874.36)",
+      "expected": "b'[114874.36]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[114874.36]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-71",
+      "mode": "sql-scalar",
+      "input": "np.float32(-1.1065225e+23)",
+      "expected": "'-1.1065225e+23'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.1065225e+23'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-71",
+      "mode": "json-scalar",
+      "input": "np.float32(-1.1065225e+23)",
+      "expected": "b'-1.1065225e+23'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.1065225e+23'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-71",
+      "mode": "json-array",
+      "input": "np.float32(-1.1065225e+23)",
+      "expected": "b'[-1.1065225e+23]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.1065225e+23]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-72",
+      "mode": "sql-scalar",
+      "input": "np.float32(-3.543912e-24)",
+      "expected": "'-3.543912e-24'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.543912e-24'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-72",
+      "mode": "json-scalar",
+      "input": "np.float32(-3.543912e-24)",
+      "expected": "b'-3.543912e-24'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.543912e-24'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-72",
+      "mode": "json-array",
+      "input": "np.float32(-3.543912e-24)",
+      "expected": "b'[-3.543912e-24]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.543912e-24]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-73",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.9663622e+12)",
+      "expected": "'1.9663622e+12'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.9663622e+12'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-73",
+      "mode": "json-scalar",
+      "input": "np.float32(1.9663622e+12)",
+      "expected": "b'1966362200000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1966362200000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-73",
+      "mode": "json-array",
+      "input": "np.float32(1.9663622e+12)",
+      "expected": "b'[1966362200000.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1966362200000.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-74",
+      "mode": "sql-scalar",
+      "input": "np.float32(-1.1943227e-11)",
+      "expected": "'-1.1943227e-11'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.1943227e-11'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-74",
+      "mode": "json-scalar",
+      "input": "np.float32(-1.1943227e-11)",
+      "expected": "b'-1.1943227e-11'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.1943227e-11'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-74",
+      "mode": "json-array",
+      "input": "np.float32(-1.1943227e-11)",
+      "expected": "b'[-1.1943227e-11]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.1943227e-11]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-75",
+      "mode": "sql-scalar",
+      "input": "np.float32(-3.7623963e+22)",
+      "expected": "'-3.7623963e+22'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.7623963e+22'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-75",
+      "mode": "json-scalar",
+      "input": "np.float32(-3.7623963e+22)",
+      "expected": "b'-3.7623963e+22'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.7623963e+22'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-75",
+      "mode": "json-array",
+      "input": "np.float32(-3.7623963e+22)",
+      "expected": "b'[-3.7623963e+22]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.7623963e+22]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-76",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.4177884e-35)",
+      "expected": "'1.4177884e-35'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.4177884e-35'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-76",
+      "mode": "json-scalar",
+      "input": "np.float32(1.4177884e-35)",
+      "expected": "b'1.4177884e-35'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.4177884e-35'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-76",
+      "mode": "json-array",
+      "input": "np.float32(1.4177884e-35)",
+      "expected": "b'[1.4177884e-35]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.4177884e-35]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-77",
+      "mode": "sql-scalar",
+      "input": "np.float32(-5.8271387e+22)",
+      "expected": "'-5.8271387e+22'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-5.8271387e+22'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-77",
+      "mode": "json-scalar",
+      "input": "np.float32(-5.8271387e+22)",
+      "expected": "b'-5.8271387e+22'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-5.8271387e+22'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-77",
+      "mode": "json-array",
+      "input": "np.float32(-5.8271387e+22)",
+      "expected": "b'[-5.8271387e+22]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-5.8271387e+22]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-78",
+      "mode": "sql-scalar",
+      "input": "np.float32(3.0699132e-36)",
+      "expected": "'3.0699132e-36'",
+      "actual": {
+        "sqlaero_rust_kernel": "'3.0699132e-36'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-78",
+      "mode": "json-scalar",
+      "input": "np.float32(3.0699132e-36)",
+      "expected": "b'3.0699132e-36'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'3.0699132e-36'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-78",
+      "mode": "json-array",
+      "input": "np.float32(3.0699132e-36)",
+      "expected": "b'[3.0699132e-36]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[3.0699132e-36]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-79",
+      "mode": "sql-scalar",
+      "input": "np.float32(-2.1743058e-21)",
+      "expected": "'-2.1743058e-21'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-2.1743058e-21'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-79",
+      "mode": "json-scalar",
+      "input": "np.float32(-2.1743058e-21)",
+      "expected": "b'-2.1743058e-21'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-2.1743058e-21'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-79",
+      "mode": "json-array",
+      "input": "np.float32(-2.1743058e-21)",
+      "expected": "b'[-2.1743058e-21]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-2.1743058e-21]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-80",
+      "mode": "sql-scalar",
+      "input": "np.float32(1.5558459e+13)",
+      "expected": "'1.5558459e+13'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.5558459e+13'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-80",
+      "mode": "json-scalar",
+      "input": "np.float32(1.5558459e+13)",
+      "expected": "b'1.5558459e+13'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.5558459e+13'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-80",
+      "mode": "json-array",
+      "input": "np.float32(1.5558459e+13)",
+      "expected": "b'[1.5558459e+13]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.5558459e+13]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-81",
+      "mode": "sql-scalar",
+      "input": "np.float32(-7.0144703e-25)",
+      "expected": "'-7.0144703e-25'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-7.0144703e-25'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-81",
+      "mode": "json-scalar",
+      "input": "np.float32(-7.0144703e-25)",
+      "expected": "b'-7.0144703e-25'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-7.0144703e-25'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f4-81",
+      "mode": "json-array",
+      "input": "np.float32(-7.0144703e-25)",
+      "expected": "b'[-7.0144703e-25]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-7.0144703e-25]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-0",
+      "mode": "sql-scalar",
+      "input": "np.float64(0.0)",
+      "expected": "'0.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "'0.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-0",
+      "mode": "json-scalar",
+      "input": "np.float64(0.0)",
+      "expected": "b'0.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-0",
+      "mode": "json-array",
+      "input": "np.float64(0.0)",
+      "expected": "b'[0.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-1",
+      "mode": "sql-scalar",
+      "input": "np.float64(-0.0)",
+      "expected": "'-0.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-0.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-1",
+      "mode": "json-scalar",
+      "input": "np.float64(-0.0)",
+      "expected": "b'-0.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-0.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-1",
+      "mode": "json-array",
+      "input": "np.float64(-0.0)",
+      "expected": "b'[-0.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-0.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-2",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.1)",
+      "expected": "'1.1'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.1'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-2",
+      "mode": "json-scalar",
+      "input": "np.float64(1.1)",
+      "expected": "b'1.1'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.1'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-2",
+      "mode": "json-array",
+      "input": "np.float64(1.1)",
+      "expected": "b'[1.1]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.1]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-3",
+      "mode": "sql-scalar",
+      "input": "np.float64(-2.2)",
+      "expected": "'-2.2'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-2.2'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-3",
+      "mode": "json-scalar",
+      "input": "np.float64(-2.2)",
+      "expected": "b'-2.2'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-2.2'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-3",
+      "mode": "json-array",
+      "input": "np.float64(-2.2)",
+      "expected": "b'[-2.2]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-2.2]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-4",
+      "mode": "sql-scalar",
+      "input": "np.float64(0.0001)",
+      "expected": "'0.0001'",
+      "actual": {
+        "sqlaero_rust_kernel": "'0.0001'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-4",
+      "mode": "json-scalar",
+      "input": "np.float64(0.0001)",
+      "expected": "b'0.0001'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.0001'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-4",
+      "mode": "json-array",
+      "input": "np.float64(0.0001)",
+      "expected": "b'[0.0001]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.0001]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-5",
+      "mode": "sql-scalar",
+      "input": "np.float64(1e-05)",
+      "expected": "'1e-05'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e-05'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-5",
+      "mode": "json-scalar",
+      "input": "np.float64(1e-05)",
+      "expected": "b'0.00001'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'0.00001'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-5",
+      "mode": "json-array",
+      "input": "np.float64(1e-05)",
+      "expected": "b'[0.00001]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[0.00001]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-6",
+      "mode": "sql-scalar",
+      "input": "np.float64(1e-06)",
+      "expected": "'1e-06'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e-06'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-6",
+      "mode": "json-scalar",
+      "input": "np.float64(1e-06)",
+      "expected": "b'1e-6'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e-6'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-6",
+      "mode": "json-array",
+      "input": "np.float64(1e-06)",
+      "expected": "b'[1e-6]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e-6]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-7",
+      "mode": "sql-scalar",
+      "input": "np.float64(1e-07)",
+      "expected": "'1e-07'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e-07'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-7",
+      "mode": "json-scalar",
+      "input": "np.float64(1e-07)",
+      "expected": "b'1e-7'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e-7'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-7",
+      "mode": "json-array",
+      "input": "np.float64(1e-07)",
+      "expected": "b'[1e-7]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e-7]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-8",
+      "mode": "sql-scalar",
+      "input": "np.float64(1000000.0)",
+      "expected": "'1000000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1000000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-8",
+      "mode": "json-scalar",
+      "input": "np.float64(1000000.0)",
+      "expected": "b'1000000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1000000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-8",
+      "mode": "json-array",
+      "input": "np.float64(1000000.0)",
+      "expected": "b'[1000000.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1000000.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-9",
+      "mode": "sql-scalar",
+      "input": "np.float64(1000000000000.0)",
+      "expected": "'1000000000000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1000000000000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-9",
+      "mode": "json-scalar",
+      "input": "np.float64(1000000000000.0)",
+      "expected": "b'1000000000000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1000000000000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-9",
+      "mode": "json-array",
+      "input": "np.float64(1000000000000.0)",
+      "expected": "b'[1000000000000.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1000000000000.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-10",
+      "mode": "sql-scalar",
+      "input": "np.float64(10000000000000.0)",
+      "expected": "'10000000000000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "'10000000000000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-10",
+      "mode": "json-scalar",
+      "input": "np.float64(10000000000000.0)",
+      "expected": "b'10000000000000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'10000000000000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-10",
+      "mode": "json-array",
+      "input": "np.float64(10000000000000.0)",
+      "expected": "b'[10000000000000.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[10000000000000.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-11",
+      "mode": "sql-scalar",
+      "input": "np.float64(1000000000000000.0)",
+      "expected": "'1000000000000000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1000000000000000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-11",
+      "mode": "json-scalar",
+      "input": "np.float64(1000000000000000.0)",
+      "expected": "b'1000000000000000.0'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1000000000000000.0'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-11",
+      "mode": "json-array",
+      "input": "np.float64(1000000000000000.0)",
+      "expected": "b'[1000000000000000.0]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1000000000000000.0]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-12",
+      "mode": "sql-scalar",
+      "input": "np.float64(1e+16)",
+      "expected": "'1e+16'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e+16'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-12",
+      "mode": "json-scalar",
+      "input": "np.float64(1e+16)",
+      "expected": "b'1e+16'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e+16'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-12",
+      "mode": "json-array",
+      "input": "np.float64(1e+16)",
+      "expected": "b'[1e+16]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e+16]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-13",
+      "mode": "sql-scalar",
+      "input": "np.float64(1e+20)",
+      "expected": "'1e+20'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e+20'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-13",
+      "mode": "json-scalar",
+      "input": "np.float64(1e+20)",
+      "expected": "b'1e+20'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e+20'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-13",
+      "mode": "json-array",
+      "input": "np.float64(1e+20)",
+      "expected": "b'[1e+20]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e+20]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-14",
+      "mode": "sql-scalar",
+      "input": "np.float64(1e+21)",
+      "expected": "'1e+21'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1e+21'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-14",
+      "mode": "json-scalar",
+      "input": "np.float64(1e+21)",
+      "expected": "b'1e+21'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1e+21'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-14",
+      "mode": "json-array",
+      "input": "np.float64(1e+21)",
+      "expected": "b'[1e+21]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1e+21]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-15",
+      "mode": "sql-scalar",
+      "input": "np.float64(5e-324)",
+      "expected": "'5e-324'",
+      "actual": {
+        "sqlaero_rust_kernel": "'5e-324'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-15",
+      "mode": "json-scalar",
+      "input": "np.float64(5e-324)",
+      "expected": "b'5e-324'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'5e-324'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-15",
+      "mode": "json-array",
+      "input": "np.float64(5e-324)",
+      "expected": "b'[5e-324]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[5e-324]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-16",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.7976931348623157e+308)",
+      "expected": "'1.7976931348623157e+308'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.7976931348623157e+308'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-16",
+      "mode": "json-scalar",
+      "input": "np.float64(1.7976931348623157e+308)",
+      "expected": "b'1.7976931348623157e+308'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.7976931348623157e+308'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-16",
+      "mode": "json-array",
+      "input": "np.float64(1.7976931348623157e+308)",
+      "expected": "b'[1.7976931348623157e+308]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.7976931348623157e+308]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-17",
+      "mode": "sql-scalar",
+      "input": "np.float64(2.2250738585072014e-308)",
+      "expected": "'2.2250738585072014e-308'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.2250738585072014e-308'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-17",
+      "mode": "json-scalar",
+      "input": "np.float64(2.2250738585072014e-308)",
+      "expected": "b'2.2250738585072014e-308'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'2.2250738585072014e-308'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-17",
+      "mode": "json-array",
+      "input": "np.float64(2.2250738585072014e-308)",
+      "expected": "b'[2.2250738585072014e-308]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[2.2250738585072014e-308]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-18",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.032327575052375e-152)",
+      "expected": "'1.032327575052375e-152'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.032327575052375e-152'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-18",
+      "mode": "json-scalar",
+      "input": "np.float64(1.032327575052375e-152)",
+      "expected": "b'1.032327575052375e-152'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.032327575052375e-152'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-18",
+      "mode": "json-array",
+      "input": "np.float64(1.032327575052375e-152)",
+      "expected": "b'[1.032327575052375e-152]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.032327575052375e-152]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-19",
+      "mode": "sql-scalar",
+      "input": "np.float64(-3.7622231716741055e-255)",
+      "expected": "'-3.7622231716741055e-255'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.7622231716741055e-255'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-19",
+      "mode": "json-scalar",
+      "input": "np.float64(-3.7622231716741055e-255)",
+      "expected": "b'-3.7622231716741055e-255'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.7622231716741055e-255'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-19",
+      "mode": "json-array",
+      "input": "np.float64(-3.7622231716741055e-255)",
+      "expected": "b'[-3.7622231716741055e-255]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.7622231716741055e-255]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-20",
+      "mode": "sql-scalar",
+      "input": "np.float64(-4.794131882050488e-174)",
+      "expected": "'-4.794131882050488e-174'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-4.794131882050488e-174'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-20",
+      "mode": "json-scalar",
+      "input": "np.float64(-4.794131882050488e-174)",
+      "expected": "b'-4.794131882050488e-174'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-4.794131882050488e-174'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-20",
+      "mode": "json-array",
+      "input": "np.float64(-4.794131882050488e-174)",
+      "expected": "b'[-4.794131882050488e-174]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-4.794131882050488e-174]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-21",
+      "mode": "sql-scalar",
+      "input": "np.float64(5.7707232169634305e+222)",
+      "expected": "'5.7707232169634305e+222'",
+      "actual": {
+        "sqlaero_rust_kernel": "'5.7707232169634305e+222'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-21",
+      "mode": "json-scalar",
+      "input": "np.float64(5.7707232169634305e+222)",
+      "expected": "b'5.7707232169634305e+222'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'5.7707232169634305e+222'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-21",
+      "mode": "json-array",
+      "input": "np.float64(5.7707232169634305e+222)",
+      "expected": "b'[5.7707232169634305e+222]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[5.7707232169634305e+222]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-22",
+      "mode": "sql-scalar",
+      "input": "np.float64(5.518015989760752e-40)",
+      "expected": "'5.518015989760752e-40'",
+      "actual": {
+        "sqlaero_rust_kernel": "'5.518015989760752e-40'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-22",
+      "mode": "json-scalar",
+      "input": "np.float64(5.518015989760752e-40)",
+      "expected": "b'5.518015989760752e-40'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'5.518015989760752e-40'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-22",
+      "mode": "json-array",
+      "input": "np.float64(5.518015989760752e-40)",
+      "expected": "b'[5.518015989760752e-40]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[5.518015989760752e-40]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-23",
+      "mode": "sql-scalar",
+      "input": "np.float64(3.2488112899883423e+131)",
+      "expected": "'3.2488112899883423e+131'",
+      "actual": {
+        "sqlaero_rust_kernel": "'3.2488112899883423e+131'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-23",
+      "mode": "json-scalar",
+      "input": "np.float64(3.2488112899883423e+131)",
+      "expected": "b'3.2488112899883423e+131'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'3.2488112899883423e+131'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-23",
+      "mode": "json-array",
+      "input": "np.float64(3.2488112899883423e+131)",
+      "expected": "b'[3.2488112899883423e+131]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[3.2488112899883423e+131]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-24",
+      "mode": "sql-scalar",
+      "input": "np.float64(-3.911409335259618e-133)",
+      "expected": "'-3.911409335259618e-133'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.911409335259618e-133'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-24",
+      "mode": "json-scalar",
+      "input": "np.float64(-3.911409335259618e-133)",
+      "expected": "b'-3.911409335259618e-133'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.911409335259618e-133'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-24",
+      "mode": "json-array",
+      "input": "np.float64(-3.911409335259618e-133)",
+      "expected": "b'[-3.911409335259618e-133]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.911409335259618e-133]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-25",
+      "mode": "sql-scalar",
+      "input": "np.float64(9.327906381869176e+49)",
+      "expected": "'9.327906381869176e+49'",
+      "actual": {
+        "sqlaero_rust_kernel": "'9.327906381869176e+49'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-25",
+      "mode": "json-scalar",
+      "input": "np.float64(9.327906381869176e+49)",
+      "expected": "b'9.327906381869176e+49'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'9.327906381869176e+49'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-25",
+      "mode": "json-array",
+      "input": "np.float64(9.327906381869176e+49)",
+      "expected": "b'[9.327906381869176e+49]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[9.327906381869176e+49]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-26",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.2509593296993625e-68)",
+      "expected": "'-1.2509593296993625e-68'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.2509593296993625e-68'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-26",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.2509593296993625e-68)",
+      "expected": "b'-1.2509593296993625e-68'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.2509593296993625e-68'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-26",
+      "mode": "json-array",
+      "input": "np.float64(-1.2509593296993625e-68)",
+      "expected": "b'[-1.2509593296993625e-68]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.2509593296993625e-68]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-27",
+      "mode": "sql-scalar",
+      "input": "np.float64(-9.816518143390642e-47)",
+      "expected": "'-9.816518143390642e-47'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-9.816518143390642e-47'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-27",
+      "mode": "json-scalar",
+      "input": "np.float64(-9.816518143390642e-47)",
+      "expected": "b'-9.816518143390642e-47'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-9.816518143390642e-47'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-27",
+      "mode": "json-array",
+      "input": "np.float64(-9.816518143390642e-47)",
+      "expected": "b'[-9.816518143390642e-47]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-9.816518143390642e-47]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-28",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.1305280681666315e+154)",
+      "expected": "'1.1305280681666315e+154'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.1305280681666315e+154'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-28",
+      "mode": "json-scalar",
+      "input": "np.float64(1.1305280681666315e+154)",
+      "expected": "b'1.1305280681666315e+154'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.1305280681666315e+154'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-28",
+      "mode": "json-array",
+      "input": "np.float64(1.1305280681666315e+154)",
+      "expected": "b'[1.1305280681666315e+154]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.1305280681666315e+154]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-29",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.373927156345171e+25)",
+      "expected": "'-1.373927156345171e+25'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.373927156345171e+25'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-29",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.373927156345171e+25)",
+      "expected": "b'-1.373927156345171e+25'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.373927156345171e+25'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-29",
+      "mode": "json-array",
+      "input": "np.float64(-1.373927156345171e+25)",
+      "expected": "b'[-1.373927156345171e+25]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.373927156345171e+25]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-30",
+      "mode": "sql-scalar",
+      "input": "np.float64(2.734873340879961e-271)",
+      "expected": "'2.734873340879961e-271'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.734873340879961e-271'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-30",
+      "mode": "json-scalar",
+      "input": "np.float64(2.734873340879961e-271)",
+      "expected": "b'2.734873340879961e-271'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'2.734873340879961e-271'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-30",
+      "mode": "json-array",
+      "input": "np.float64(2.734873340879961e-271)",
+      "expected": "b'[2.734873340879961e-271]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[2.734873340879961e-271]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-31",
+      "mode": "sql-scalar",
+      "input": "np.float64(3.6126092737072256e-239)",
+      "expected": "'3.6126092737072256e-239'",
+      "actual": {
+        "sqlaero_rust_kernel": "'3.6126092737072256e-239'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-31",
+      "mode": "json-scalar",
+      "input": "np.float64(3.6126092737072256e-239)",
+      "expected": "b'3.6126092737072256e-239'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'3.6126092737072256e-239'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-31",
+      "mode": "json-array",
+      "input": "np.float64(3.6126092737072256e-239)",
+      "expected": "b'[3.6126092737072256e-239]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[3.6126092737072256e-239]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-32",
+      "mode": "sql-scalar",
+      "input": "np.float64(-2.274500410153771e-172)",
+      "expected": "'-2.274500410153771e-172'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-2.274500410153771e-172'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-32",
+      "mode": "json-scalar",
+      "input": "np.float64(-2.274500410153771e-172)",
+      "expected": "b'-2.274500410153771e-172'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-2.274500410153771e-172'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-32",
+      "mode": "json-array",
+      "input": "np.float64(-2.274500410153771e-172)",
+      "expected": "b'[-2.274500410153771e-172]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-2.274500410153771e-172]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-33",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.299843198378969e+49)",
+      "expected": "'-1.299843198378969e+49'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.299843198378969e+49'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-33",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.299843198378969e+49)",
+      "expected": "b'-1.299843198378969e+49'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.299843198378969e+49'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-33",
+      "mode": "json-array",
+      "input": "np.float64(-1.299843198378969e+49)",
+      "expected": "b'[-1.299843198378969e+49]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.299843198378969e+49]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-34",
+      "mode": "sql-scalar",
+      "input": "np.float64(-3.166151991870415e-193)",
+      "expected": "'-3.166151991870415e-193'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.166151991870415e-193'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-34",
+      "mode": "json-scalar",
+      "input": "np.float64(-3.166151991870415e-193)",
+      "expected": "b'-3.166151991870415e-193'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.166151991870415e-193'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-34",
+      "mode": "json-array",
+      "input": "np.float64(-3.166151991870415e-193)",
+      "expected": "b'[-3.166151991870415e-193]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.166151991870415e-193]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-35",
+      "mode": "sql-scalar",
+      "input": "np.float64(2.900299073308234e+83)",
+      "expected": "'2.900299073308234e+83'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.900299073308234e+83'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-35",
+      "mode": "json-scalar",
+      "input": "np.float64(2.900299073308234e+83)",
+      "expected": "b'2.900299073308234e+83'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'2.900299073308234e+83'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-35",
+      "mode": "json-array",
+      "input": "np.float64(2.900299073308234e+83)",
+      "expected": "b'[2.900299073308234e+83]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[2.900299073308234e+83]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-36",
+      "mode": "sql-scalar",
+      "input": "np.float64(-9.251452150731038e-274)",
+      "expected": "'-9.251452150731038e-274'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-9.251452150731038e-274'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-36",
+      "mode": "json-scalar",
+      "input": "np.float64(-9.251452150731038e-274)",
+      "expected": "b'-9.251452150731038e-274'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-9.251452150731038e-274'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-36",
+      "mode": "json-array",
+      "input": "np.float64(-9.251452150731038e-274)",
+      "expected": "b'[-9.251452150731038e-274]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-9.251452150731038e-274]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-37",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.1396736218916968e+70)",
+      "expected": "'1.1396736218916968e+70'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.1396736218916968e+70'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-37",
+      "mode": "json-scalar",
+      "input": "np.float64(1.1396736218916968e+70)",
+      "expected": "b'1.1396736218916968e+70'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.1396736218916968e+70'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-37",
+      "mode": "json-array",
+      "input": "np.float64(1.1396736218916968e+70)",
+      "expected": "b'[1.1396736218916968e+70]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.1396736218916968e+70]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-38",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.9052627798283262e+153)",
+      "expected": "'-1.9052627798283262e+153'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.9052627798283262e+153'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-38",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.9052627798283262e+153)",
+      "expected": "b'-1.9052627798283262e+153'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.9052627798283262e+153'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-38",
+      "mode": "json-array",
+      "input": "np.float64(-1.9052627798283262e+153)",
+      "expected": "b'[-1.9052627798283262e+153]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.9052627798283262e+153]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-39",
+      "mode": "sql-scalar",
+      "input": "np.float64(-3.9910255365325545e-222)",
+      "expected": "'-3.9910255365325545e-222'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.9910255365325545e-222'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-39",
+      "mode": "json-scalar",
+      "input": "np.float64(-3.9910255365325545e-222)",
+      "expected": "b'-3.9910255365325545e-222'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.9910255365325545e-222'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-39",
+      "mode": "json-array",
+      "input": "np.float64(-3.9910255365325545e-222)",
+      "expected": "b'[-3.9910255365325545e-222]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.9910255365325545e-222]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-40",
+      "mode": "sql-scalar",
+      "input": "np.float64(5.417659129421907e+185)",
+      "expected": "'5.417659129421907e+185'",
+      "actual": {
+        "sqlaero_rust_kernel": "'5.417659129421907e+185'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-40",
+      "mode": "json-scalar",
+      "input": "np.float64(5.417659129421907e+185)",
+      "expected": "b'5.417659129421907e+185'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'5.417659129421907e+185'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-40",
+      "mode": "json-array",
+      "input": "np.float64(5.417659129421907e+185)",
+      "expected": "b'[5.417659129421907e+185]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[5.417659129421907e+185]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-41",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.3799489446875847e+271)",
+      "expected": "'1.3799489446875847e+271'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.3799489446875847e+271'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-41",
+      "mode": "json-scalar",
+      "input": "np.float64(1.3799489446875847e+271)",
+      "expected": "b'1.3799489446875847e+271'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.3799489446875847e+271'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-41",
+      "mode": "json-array",
+      "input": "np.float64(1.3799489446875847e+271)",
+      "expected": "b'[1.3799489446875847e+271]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.3799489446875847e+271]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-42",
+      "mode": "sql-scalar",
+      "input": "np.float64(-8.993054815155211e+305)",
+      "expected": "'-8.993054815155211e+305'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-8.993054815155211e+305'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-42",
+      "mode": "json-scalar",
+      "input": "np.float64(-8.993054815155211e+305)",
+      "expected": "b'-8.993054815155211e+305'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-8.993054815155211e+305'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-42",
+      "mode": "json-array",
+      "input": "np.float64(-8.993054815155211e+305)",
+      "expected": "b'[-8.993054815155211e+305]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-8.993054815155211e+305]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-43",
+      "mode": "sql-scalar",
+      "input": "np.float64(3.669991076647522e+56)",
+      "expected": "'3.669991076647522e+56'",
+      "actual": {
+        "sqlaero_rust_kernel": "'3.669991076647522e+56'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-43",
+      "mode": "json-scalar",
+      "input": "np.float64(3.669991076647522e+56)",
+      "expected": "b'3.669991076647522e+56'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'3.669991076647522e+56'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-43",
+      "mode": "json-array",
+      "input": "np.float64(3.669991076647522e+56)",
+      "expected": "b'[3.669991076647522e+56]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[3.669991076647522e+56]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-44",
+      "mode": "sql-scalar",
+      "input": "np.float64(-3.5063411432080987e+288)",
+      "expected": "'-3.5063411432080987e+288'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.5063411432080987e+288'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-44",
+      "mode": "json-scalar",
+      "input": "np.float64(-3.5063411432080987e+288)",
+      "expected": "b'-3.5063411432080987e+288'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.5063411432080987e+288'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-44",
+      "mode": "json-array",
+      "input": "np.float64(-3.5063411432080987e+288)",
+      "expected": "b'[-3.5063411432080987e+288]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.5063411432080987e+288]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-45",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.3518403073984926e-49)",
+      "expected": "'-1.3518403073984926e-49'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.3518403073984926e-49'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-45",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.3518403073984926e-49)",
+      "expected": "b'-1.3518403073984926e-49'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.3518403073984926e-49'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-45",
+      "mode": "json-array",
+      "input": "np.float64(-1.3518403073984926e-49)",
+      "expected": "b'[-1.3518403073984926e-49]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.3518403073984926e-49]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-46",
+      "mode": "sql-scalar",
+      "input": "np.float64(-4.526892208143442e-229)",
+      "expected": "'-4.526892208143442e-229'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-4.526892208143442e-229'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-46",
+      "mode": "json-scalar",
+      "input": "np.float64(-4.526892208143442e-229)",
+      "expected": "b'-4.526892208143442e-229'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-4.526892208143442e-229'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-46",
+      "mode": "json-array",
+      "input": "np.float64(-4.526892208143442e-229)",
+      "expected": "b'[-4.526892208143442e-229]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-4.526892208143442e-229]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-47",
+      "mode": "sql-scalar",
+      "input": "np.float64(-7.634039517560047e+154)",
+      "expected": "'-7.634039517560047e+154'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-7.634039517560047e+154'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-47",
+      "mode": "json-scalar",
+      "input": "np.float64(-7.634039517560047e+154)",
+      "expected": "b'-7.634039517560047e+154'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-7.634039517560047e+154'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-47",
+      "mode": "json-array",
+      "input": "np.float64(-7.634039517560047e+154)",
+      "expected": "b'[-7.634039517560047e+154]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-7.634039517560047e+154]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-48",
+      "mode": "sql-scalar",
+      "input": "np.float64(3.465464129663271e+216)",
+      "expected": "'3.465464129663271e+216'",
+      "actual": {
+        "sqlaero_rust_kernel": "'3.465464129663271e+216'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-48",
+      "mode": "json-scalar",
+      "input": "np.float64(3.465464129663271e+216)",
+      "expected": "b'3.465464129663271e+216'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'3.465464129663271e+216'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-48",
+      "mode": "json-array",
+      "input": "np.float64(3.465464129663271e+216)",
+      "expected": "b'[3.465464129663271e+216]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[3.465464129663271e+216]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-49",
+      "mode": "sql-scalar",
+      "input": "np.float64(-6.334939931579056e-293)",
+      "expected": "'-6.334939931579056e-293'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-6.334939931579056e-293'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-49",
+      "mode": "json-scalar",
+      "input": "np.float64(-6.334939931579056e-293)",
+      "expected": "b'-6.334939931579056e-293'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-6.334939931579056e-293'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-49",
+      "mode": "json-array",
+      "input": "np.float64(-6.334939931579056e-293)",
+      "expected": "b'[-6.334939931579056e-293]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-6.334939931579056e-293]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-50",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.6180807400334578e-112)",
+      "expected": "'-1.6180807400334578e-112'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.6180807400334578e-112'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-50",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.6180807400334578e-112)",
+      "expected": "b'-1.6180807400334578e-112'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.6180807400334578e-112'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-50",
+      "mode": "json-array",
+      "input": "np.float64(-1.6180807400334578e-112)",
+      "expected": "b'[-1.6180807400334578e-112]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.6180807400334578e-112]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-51",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.3376722957276666e+222)",
+      "expected": "'1.3376722957276666e+222'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.3376722957276666e+222'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-51",
+      "mode": "json-scalar",
+      "input": "np.float64(1.3376722957276666e+222)",
+      "expected": "b'1.3376722957276666e+222'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.3376722957276666e+222'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-51",
+      "mode": "json-array",
+      "input": "np.float64(1.3376722957276666e+222)",
+      "expected": "b'[1.3376722957276666e+222]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.3376722957276666e+222]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-52",
+      "mode": "sql-scalar",
+      "input": "np.float64(-5.430618579234522e+265)",
+      "expected": "'-5.430618579234522e+265'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-5.430618579234522e+265'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-52",
+      "mode": "json-scalar",
+      "input": "np.float64(-5.430618579234522e+265)",
+      "expected": "b'-5.430618579234522e+265'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-5.430618579234522e+265'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-52",
+      "mode": "json-array",
+      "input": "np.float64(-5.430618579234522e+265)",
+      "expected": "b'[-5.430618579234522e+265]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-5.430618579234522e+265]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-53",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.2233771142509081e+262)",
+      "expected": "'1.2233771142509081e+262'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.2233771142509081e+262'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-53",
+      "mode": "json-scalar",
+      "input": "np.float64(1.2233771142509081e+262)",
+      "expected": "b'1.2233771142509081e+262'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.2233771142509081e+262'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-53",
+      "mode": "json-array",
+      "input": "np.float64(1.2233771142509081e+262)",
+      "expected": "b'[1.2233771142509081e+262]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.2233771142509081e+262]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-54",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.2236713962838165e+63)",
+      "expected": "'1.2236713962838165e+63'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.2236713962838165e+63'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-54",
+      "mode": "json-scalar",
+      "input": "np.float64(1.2236713962838165e+63)",
+      "expected": "b'1.2236713962838165e+63'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.2236713962838165e+63'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-54",
+      "mode": "json-array",
+      "input": "np.float64(1.2236713962838165e+63)",
+      "expected": "b'[1.2236713962838165e+63]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.2236713962838165e+63]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-55",
+      "mode": "sql-scalar",
+      "input": "np.float64(-6.006727008935628e-243)",
+      "expected": "'-6.006727008935628e-243'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-6.006727008935628e-243'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-55",
+      "mode": "json-scalar",
+      "input": "np.float64(-6.006727008935628e-243)",
+      "expected": "b'-6.006727008935628e-243'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-6.006727008935628e-243'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-55",
+      "mode": "json-array",
+      "input": "np.float64(-6.006727008935628e-243)",
+      "expected": "b'[-6.006727008935628e-243]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-6.006727008935628e-243]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-56",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.1980969721318245e-107)",
+      "expected": "'1.1980969721318245e-107'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.1980969721318245e-107'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-56",
+      "mode": "json-scalar",
+      "input": "np.float64(1.1980969721318245e-107)",
+      "expected": "b'1.1980969721318245e-107'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.1980969721318245e-107'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-56",
+      "mode": "json-array",
+      "input": "np.float64(1.1980969721318245e-107)",
+      "expected": "b'[1.1980969721318245e-107]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.1980969721318245e-107]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-57",
+      "mode": "sql-scalar",
+      "input": "np.float64(-5.295618815447881e-214)",
+      "expected": "'-5.295618815447881e-214'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-5.295618815447881e-214'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-57",
+      "mode": "json-scalar",
+      "input": "np.float64(-5.295618815447881e-214)",
+      "expected": "b'-5.295618815447881e-214'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-5.295618815447881e-214'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-57",
+      "mode": "json-array",
+      "input": "np.float64(-5.295618815447881e-214)",
+      "expected": "b'[-5.295618815447881e-214]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-5.295618815447881e-214]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-58",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.1823901304553798e-68)",
+      "expected": "'-1.1823901304553798e-68'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.1823901304553798e-68'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-58",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.1823901304553798e-68)",
+      "expected": "b'-1.1823901304553798e-68'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.1823901304553798e-68'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-58",
+      "mode": "json-array",
+      "input": "np.float64(-1.1823901304553798e-68)",
+      "expected": "b'[-1.1823901304553798e-68]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.1823901304553798e-68]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-59",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.6524211320873526e-146)",
+      "expected": "'-1.6524211320873526e-146'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.6524211320873526e-146'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-59",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.6524211320873526e-146)",
+      "expected": "b'-1.6524211320873526e-146'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.6524211320873526e-146'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-59",
+      "mode": "json-array",
+      "input": "np.float64(-1.6524211320873526e-146)",
+      "expected": "b'[-1.6524211320873526e-146]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.6524211320873526e-146]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-60",
+      "mode": "sql-scalar",
+      "input": "np.float64(-2.2013129151282748e-301)",
+      "expected": "'-2.2013129151282748e-301'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-2.2013129151282748e-301'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-60",
+      "mode": "json-scalar",
+      "input": "np.float64(-2.2013129151282748e-301)",
+      "expected": "b'-2.2013129151282748e-301'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-2.2013129151282748e-301'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-60",
+      "mode": "json-array",
+      "input": "np.float64(-2.2013129151282748e-301)",
+      "expected": "b'[-2.2013129151282748e-301]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-2.2013129151282748e-301]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-61",
+      "mode": "sql-scalar",
+      "input": "np.float64(-4.70588806129883e-290)",
+      "expected": "'-4.70588806129883e-290'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-4.70588806129883e-290'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-61",
+      "mode": "json-scalar",
+      "input": "np.float64(-4.70588806129883e-290)",
+      "expected": "b'-4.70588806129883e-290'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-4.70588806129883e-290'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-61",
+      "mode": "json-array",
+      "input": "np.float64(-4.70588806129883e-290)",
+      "expected": "b'[-4.70588806129883e-290]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-4.70588806129883e-290]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-62",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.410903079506886e+94)",
+      "expected": "'1.410903079506886e+94'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.410903079506886e+94'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-62",
+      "mode": "json-scalar",
+      "input": "np.float64(1.410903079506886e+94)",
+      "expected": "b'1.410903079506886e+94'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.410903079506886e+94'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-62",
+      "mode": "json-array",
+      "input": "np.float64(1.410903079506886e+94)",
+      "expected": "b'[1.410903079506886e+94]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.410903079506886e+94]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-63",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.5299294090273068e+216)",
+      "expected": "'1.5299294090273068e+216'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.5299294090273068e+216'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-63",
+      "mode": "json-scalar",
+      "input": "np.float64(1.5299294090273068e+216)",
+      "expected": "b'1.5299294090273068e+216'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.5299294090273068e+216'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-63",
+      "mode": "json-array",
+      "input": "np.float64(1.5299294090273068e+216)",
+      "expected": "b'[1.5299294090273068e+216]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.5299294090273068e+216]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-64",
+      "mode": "sql-scalar",
+      "input": "np.float64(-2.3461114483857394e-104)",
+      "expected": "'-2.3461114483857394e-104'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-2.3461114483857394e-104'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-64",
+      "mode": "json-scalar",
+      "input": "np.float64(-2.3461114483857394e-104)",
+      "expected": "b'-2.3461114483857394e-104'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-2.3461114483857394e-104'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-64",
+      "mode": "json-array",
+      "input": "np.float64(-2.3461114483857394e-104)",
+      "expected": "b'[-2.3461114483857394e-104]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-2.3461114483857394e-104]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-65",
+      "mode": "sql-scalar",
+      "input": "np.float64(-3.7632714201929376e-07)",
+      "expected": "'-3.7632714201929376e-07'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-3.7632714201929376e-07'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-65",
+      "mode": "json-scalar",
+      "input": "np.float64(-3.7632714201929376e-07)",
+      "expected": "b'-3.7632714201929376e-7'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-3.7632714201929376e-7'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-65",
+      "mode": "json-array",
+      "input": "np.float64(-3.7632714201929376e-07)",
+      "expected": "b'[-3.7632714201929376e-7]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-3.7632714201929376e-7]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-66",
+      "mode": "sql-scalar",
+      "input": "np.float64(-8.928531229619275e+98)",
+      "expected": "'-8.928531229619275e+98'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-8.928531229619275e+98'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-66",
+      "mode": "json-scalar",
+      "input": "np.float64(-8.928531229619275e+98)",
+      "expected": "b'-8.928531229619275e+98'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-8.928531229619275e+98'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-66",
+      "mode": "json-array",
+      "input": "np.float64(-8.928531229619275e+98)",
+      "expected": "b'[-8.928531229619275e+98]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-8.928531229619275e+98]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-67",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.4924617821658585e-104)",
+      "expected": "'-1.4924617821658585e-104'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.4924617821658585e-104'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-67",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.4924617821658585e-104)",
+      "expected": "b'-1.4924617821658585e-104'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.4924617821658585e-104'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-67",
+      "mode": "json-array",
+      "input": "np.float64(-1.4924617821658585e-104)",
+      "expected": "b'[-1.4924617821658585e-104]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.4924617821658585e-104]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-68",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.9893551178327843e-102)",
+      "expected": "'-1.9893551178327843e-102'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.9893551178327843e-102'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-68",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.9893551178327843e-102)",
+      "expected": "b'-1.9893551178327843e-102'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.9893551178327843e-102'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-68",
+      "mode": "json-array",
+      "input": "np.float64(-1.9893551178327843e-102)",
+      "expected": "b'[-1.9893551178327843e-102]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.9893551178327843e-102]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-69",
+      "mode": "sql-scalar",
+      "input": "np.float64(2.5258097509714202e+213)",
+      "expected": "'2.5258097509714202e+213'",
+      "actual": {
+        "sqlaero_rust_kernel": "'2.5258097509714202e+213'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-69",
+      "mode": "json-scalar",
+      "input": "np.float64(2.5258097509714202e+213)",
+      "expected": "b'2.5258097509714202e+213'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'2.5258097509714202e+213'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-69",
+      "mode": "json-array",
+      "input": "np.float64(2.5258097509714202e+213)",
+      "expected": "b'[2.5258097509714202e+213]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[2.5258097509714202e+213]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-70",
+      "mode": "sql-scalar",
+      "input": "np.float64(-2.9594686769754635e-158)",
+      "expected": "'-2.9594686769754635e-158'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-2.9594686769754635e-158'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-70",
+      "mode": "json-scalar",
+      "input": "np.float64(-2.9594686769754635e-158)",
+      "expected": "b'-2.9594686769754635e-158'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-2.9594686769754635e-158'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-70",
+      "mode": "json-array",
+      "input": "np.float64(-2.9594686769754635e-158)",
+      "expected": "b'[-2.9594686769754635e-158]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-2.9594686769754635e-158]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-71",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.578482088034747e-124)",
+      "expected": "'1.578482088034747e-124'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.578482088034747e-124'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-71",
+      "mode": "json-scalar",
+      "input": "np.float64(1.578482088034747e-124)",
+      "expected": "b'1.578482088034747e-124'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.578482088034747e-124'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-71",
+      "mode": "json-array",
+      "input": "np.float64(1.578482088034747e-124)",
+      "expected": "b'[1.578482088034747e-124]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.578482088034747e-124]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-72",
+      "mode": "sql-scalar",
+      "input": "np.float64(1.558611458867276e-68)",
+      "expected": "'1.558611458867276e-68'",
+      "actual": {
+        "sqlaero_rust_kernel": "'1.558611458867276e-68'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-72",
+      "mode": "json-scalar",
+      "input": "np.float64(1.558611458867276e-68)",
+      "expected": "b'1.558611458867276e-68'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'1.558611458867276e-68'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-72",
+      "mode": "json-array",
+      "input": "np.float64(1.558611458867276e-68)",
+      "expected": "b'[1.558611458867276e-68]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[1.558611458867276e-68]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-73",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.5301559739556015e-151)",
+      "expected": "'-1.5301559739556015e-151'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.5301559739556015e-151'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-73",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.5301559739556015e-151)",
+      "expected": "b'-1.5301559739556015e-151'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.5301559739556015e-151'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-73",
+      "mode": "json-array",
+      "input": "np.float64(-1.5301559739556015e-151)",
+      "expected": "b'[-1.5301559739556015e-151]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.5301559739556015e-151]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-74",
+      "mode": "sql-scalar",
+      "input": "np.float64(-5.479253378683936e+138)",
+      "expected": "'-5.479253378683936e+138'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-5.479253378683936e+138'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-74",
+      "mode": "json-scalar",
+      "input": "np.float64(-5.479253378683936e+138)",
+      "expected": "b'-5.479253378683936e+138'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-5.479253378683936e+138'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-74",
+      "mode": "json-array",
+      "input": "np.float64(-5.479253378683936e+138)",
+      "expected": "b'[-5.479253378683936e+138]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-5.479253378683936e+138]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-75",
+      "mode": "sql-scalar",
+      "input": "np.float64(3.4289191380271685e-41)",
+      "expected": "'3.4289191380271685e-41'",
+      "actual": {
+        "sqlaero_rust_kernel": "'3.4289191380271685e-41'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-75",
+      "mode": "json-scalar",
+      "input": "np.float64(3.4289191380271685e-41)",
+      "expected": "b'3.4289191380271685e-41'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'3.4289191380271685e-41'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-75",
+      "mode": "json-array",
+      "input": "np.float64(3.4289191380271685e-41)",
+      "expected": "b'[3.4289191380271685e-41]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[3.4289191380271685e-41]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-76",
+      "mode": "sql-scalar",
+      "input": "np.float64(3.0235758376653197e-178)",
+      "expected": "'3.0235758376653197e-178'",
+      "actual": {
+        "sqlaero_rust_kernel": "'3.0235758376653197e-178'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-76",
+      "mode": "json-scalar",
+      "input": "np.float64(3.0235758376653197e-178)",
+      "expected": "b'3.0235758376653197e-178'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'3.0235758376653197e-178'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-76",
+      "mode": "json-array",
+      "input": "np.float64(3.0235758376653197e-178)",
+      "expected": "b'[3.0235758376653197e-178]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[3.0235758376653197e-178]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-77",
+      "mode": "sql-scalar",
+      "input": "np.float64(-4.113799101805334e+181)",
+      "expected": "'-4.113799101805334e+181'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-4.113799101805334e+181'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-77",
+      "mode": "json-scalar",
+      "input": "np.float64(-4.113799101805334e+181)",
+      "expected": "b'-4.113799101805334e+181'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-4.113799101805334e+181'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-77",
+      "mode": "json-array",
+      "input": "np.float64(-4.113799101805334e+181)",
+      "expected": "b'[-4.113799101805334e+181]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-4.113799101805334e+181]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-78",
+      "mode": "sql-scalar",
+      "input": "np.float64(3.580486672147384e-272)",
+      "expected": "'3.580486672147384e-272'",
+      "actual": {
+        "sqlaero_rust_kernel": "'3.580486672147384e-272'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-78",
+      "mode": "json-scalar",
+      "input": "np.float64(3.580486672147384e-272)",
+      "expected": "b'3.580486672147384e-272'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'3.580486672147384e-272'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-78",
+      "mode": "json-array",
+      "input": "np.float64(3.580486672147384e-272)",
+      "expected": "b'[3.580486672147384e-272]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[3.580486672147384e-272]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-79",
+      "mode": "sql-scalar",
+      "input": "np.float64(-4.508356662357708e-86)",
+      "expected": "'-4.508356662357708e-86'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-4.508356662357708e-86'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-79",
+      "mode": "json-scalar",
+      "input": "np.float64(-4.508356662357708e-86)",
+      "expected": "b'-4.508356662357708e-86'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-4.508356662357708e-86'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-79",
+      "mode": "json-array",
+      "input": "np.float64(-4.508356662357708e-86)",
+      "expected": "b'[-4.508356662357708e-86]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-4.508356662357708e-86]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-80",
+      "mode": "sql-scalar",
+      "input": "np.float64(-1.0620225688364623e+96)",
+      "expected": "'-1.0620225688364623e+96'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-1.0620225688364623e+96'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-80",
+      "mode": "json-scalar",
+      "input": "np.float64(-1.0620225688364623e+96)",
+      "expected": "b'-1.0620225688364623e+96'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-1.0620225688364623e+96'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-80",
+      "mode": "json-array",
+      "input": "np.float64(-1.0620225688364623e+96)",
+      "expected": "b'[-1.0620225688364623e+96]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-1.0620225688364623e+96]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-81",
+      "mode": "sql-scalar",
+      "input": "np.float64(-6.726176965683555e-141)",
+      "expected": "'-6.726176965683555e-141'",
+      "actual": {
+        "sqlaero_rust_kernel": "'-6.726176965683555e-141'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-81",
+      "mode": "json-scalar",
+      "input": "np.float64(-6.726176965683555e-141)",
+      "expected": "b'-6.726176965683555e-141'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'-6.726176965683555e-141'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "f8-81",
+      "mode": "json-array",
+      "input": "np.float64(-6.726176965683555e-141)",
+      "expected": "b'[-6.726176965683555e-141]'",
+      "actual": {
+        "sqlaero_rust_kernel": "b'[-6.726176965683555e-141]'"
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    }
+  ]
+}

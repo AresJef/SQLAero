@@ -17,7 +17,7 @@ This task installed development tools only under `/tmp/sqlaero-cargo`, `/tmp/sql
 
 ## Validation
 
-`test_kernel.py` is independent compact correctness/safety validation, including 200 deterministic JSON round trips. Shared tests and comparison matrices are owned by the coordinator in `../tests`. See `SUPPORT_MATRIX.md` and the saved evidence for exact results. No database access or heavy benchmarking occurred. The four internal dispatch strategies share handlers; correctness parity is tested and speed comparison remains deferred.
+`test_kernel.py` is independent compact correctness/safety validation, including 200 deterministic JSON round trips. Shared tests and comparison matrices are owned by the coordinator in `../tests`. See `SUPPORT_MATRIX.md` and the saved evidence for exact results. No database access or heavy benchmarking occurred. The three internal dispatch strategies returned by `_dispatch_strategies()` share handlers; `test_dispatch.py` validates each across the complete owned suite. See `DISPATCH_DESIGN.md` for the removed redundant classifier table and comparison limits. Speed comparison remains deferred.
 
 ## Safety and policy
 

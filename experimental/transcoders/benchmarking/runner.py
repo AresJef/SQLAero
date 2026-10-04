@@ -36,6 +36,9 @@ class RunConfig:
     shared_protocol_digest: str | None = None
     window_evidence: str | None = None
     heavy: bool = False
+    calls_per_repetition: int = 1
+    minimum_batch_seconds: float = 0.
+    maximum_repetitions: int | None = None
 
     def validate(self, candidate_count: int) -> None:
         """Require complete order cycles and explicit heavy-run integration evidence."""
@@ -45,6 +48,12 @@ class RunConfig:
             raise ValueError('Blocks must contain complete permutation cycles')
         if self.repetitions < 1 or self.warmup_repetitions < 0 or not math.isfinite(self.post_guard_seconds) or self.post_guard_seconds <= 0:
             raise ValueError('Invalid repetition or guard policy')
+        if self.calls_per_repetition<1 or not math.isfinite(self.minimum_batch_seconds) or self.minimum_batch_seconds<0:
+            raise ValueError('Invalid per-call normalization or minimum duration')
+        if self.minimum_batch_seconds and self.maximum_repetitions is None:
+            raise ValueError('Duration-based batches require an explicit finite repetition cap')
+        if self.maximum_repetitions is not None and self.maximum_repetitions<self.repetitions:
+            raise ValueError('Maximum repetitions must permit the declared minimum')
         if not self.shared_lock_path or not self.workload_id:
             raise ValueError('An explicit shared lock and workload ID are required')
         if self.heavy and (not self.shared_protocol_digest or not self.window_evidence):
@@ -132,7 +141,7 @@ def run_comparison(candidates: Mapping[str, Callable[[], object]], config: RunCo
                 if warmup_failed:
                     emit({'protocol': PROTOCOL_VERSION, 'kind': 'block-rejected', 'block': block, 'reason': 'warmup-error'})
                     continue
-                if not wait_for_stability(policy, probe, clock, sleep, emit):
+                if config.warmup_repetitions and not wait_for_stability(policy, probe, clock, sleep, emit):
                     emit({'protocol': PROTOCOL_VERSION, 'kind': 'run-stopped', 'block': block, 'reason': 'post-warmup-timeout'})
                     break
                 block_results: list[Event] = []

@@ -1,0 +1,336 @@
+{
+  "rows": 20,
+  "matches": {
+    "sqlaero_rust_kernel": 20
+  },
+  "cases": [
+    {
+      "case": "Text",
+      "mode": "sql",
+      "baseline": {
+        "status": "ok",
+        "type": "str",
+        "value": "\"'replacement\\\\''\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "ok",
+          "type": "str",
+          "value": "\"'replacement\\\\''\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Text",
+      "mode": "json",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'\"stored\"'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'\"stored\"'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Integer",
+      "mode": "sql",
+      "baseline": {
+        "status": "ok",
+        "type": "str",
+        "value": "'7'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "ok",
+          "type": "str",
+          "value": "'7'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Integer",
+      "mode": "json",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'3'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'3'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Floating",
+      "mode": "sql",
+      "baseline": {
+        "status": "ok",
+        "type": "str",
+        "value": "'7.5'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "ok",
+          "type": "str",
+          "value": "'7.5'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Floating",
+      "mode": "json",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Dec",
+      "mode": "sql",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Dec",
+      "mode": "json",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Array",
+      "mode": "sql",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Array",
+      "mode": "json",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Frame",
+      "mode": "sql",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Frame",
+      "mode": "json",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Tuple",
+      "mode": "sql",
+      "baseline": {
+        "status": "ok",
+        "type": "str",
+        "value": "'(1,2)'"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "ok",
+          "type": "str",
+          "value": "'(1,2)'"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Tuple",
+      "mode": "json",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Date",
+      "mode": "sql",
+      "baseline": {
+        "status": "ok",
+        "type": "str",
+        "value": "\"'2024-01-01'\""
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "ok",
+          "type": "str",
+          "value": "\"'2024-01-01'\""
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "Date",
+      "mode": "json",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "NaTType",
+      "mode": "sql",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "NaTType",
+      "mode": "json",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "type",
+      "mode": "sql",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    },
+    {
+      "case": "type",
+      "mode": "json",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_rust_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_rust_kernel": true
+      }
+    }
+  ]
+}

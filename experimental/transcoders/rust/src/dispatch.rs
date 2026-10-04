@@ -18,7 +18,6 @@ pub enum Kind {
 enum Strategy {
     Cascade,
     TypeId,
-    Table,
     HotRegistry,
 }
 /// Owned exact type pointers and callback entries pinned by Python module lifetime.
@@ -26,68 +25,22 @@ enum Strategy {
 pub struct Dispatch {
     ids: Vec<(usize, Kind)>,
     tags: HashMap<usize, Kind>,
-    table: HashMap<usize, fn() -> Kind>,
     strategy: Strategy,
-}
-/// Return the identifier for the shared null handler.
-fn null() -> Kind {
-    Kind::Null
-}
-/// Return the identifier for the shared boolean handler.
-fn boolean() -> Kind {
-    Kind::Bool
-}
-/// Return the identifier for the shared integer handler.
-fn integer() -> Kind {
-    Kind::Int
-}
-/// Return the identifier for the shared floating handler.
-fn floating() -> Kind {
-    Kind::Float
-}
-/// Return the identifier for the shared Unicode handler.
-fn string() -> Kind {
-    Kind::String
-}
-/// Return the identifier for the shared binary handler.
-fn bytes() -> Kind {
-    Kind::Bytes
 }
 impl Dispatch {
     /// Cache exact builtin identities once; extension families use the reviewed type catalogue.
     pub fn new(py: Python<'_>) -> Self {
-        let entries: [(usize, Kind, fn() -> Kind); 6] = [
-            (
-                py.get_type::<PyString>().as_ptr() as usize,
-                Kind::String,
-                string,
-            ),
-            (py.get_type::<PyInt>().as_ptr() as usize, Kind::Int, integer),
-            (
-                py.get_type::<PyBool>().as_ptr() as usize,
-                Kind::Bool,
-                boolean,
-            ),
-            (
-                py.None().bind(py).get_type().as_ptr() as usize,
-                Kind::Null,
-                null,
-            ),
-            (
-                py.get_type::<PyFloat>().as_ptr() as usize,
-                Kind::Float,
-                floating,
-            ),
-            (
-                py.get_type::<PyBytes>().as_ptr() as usize,
-                Kind::Bytes,
-                bytes,
-            ),
+        let entries: [(usize, Kind); 6] = [
+            (py.get_type::<PyString>().as_ptr() as usize, Kind::String),
+            (py.get_type::<PyInt>().as_ptr() as usize, Kind::Int),
+            (py.get_type::<PyBool>().as_ptr() as usize, Kind::Bool),
+            (py.None().bind(py).get_type().as_ptr() as usize, Kind::Null),
+            (py.get_type::<PyFloat>().as_ptr() as usize, Kind::Float),
+            (py.get_type::<PyBytes>().as_ptr() as usize, Kind::Bytes),
         ];
         Self {
-            ids: entries.iter().map(|(p, k, _)| (*p, *k)).collect(),
-            tags: entries.iter().map(|(p, k, _)| (*p, *k)).collect(),
-            table: entries.iter().map(|(p, _, f)| (*p, *f)).collect(),
+            ids: entries.iter().map(|(p, k)| (*p, *k)).collect(),
+            tags: entries.iter().map(|(p, k)| (*p, *k)).collect(),
             strategy: Strategy::HotRegistry,
         }
     }
@@ -104,7 +57,6 @@ impl Dispatch {
                 Kind::Unknown
             }
             Strategy::TypeId => self.tags.get(&ptr).copied().unwrap_or(Kind::Unknown),
-            Strategy::Table => self.table.get(&ptr).map(|f| f()).unwrap_or(Kind::Unknown),
             Strategy::HotRegistry => {
                 for (p, k) in &self.ids[..5] {
                     if *p == ptr {
@@ -135,7 +87,6 @@ pub fn _set_dispatch_strategy(py: Python<'_>, strategy: &str) -> PyResult<()> {
     state.strategy = match strategy {
         "cascade" => Strategy::Cascade,
         "type_id" => Strategy::TypeId,
-        "function_table" => Strategy::Table,
         "hot_registry" => Strategy::HotRegistry,
         _ => {
             return Err(pyo3::exceptions::PyValueError::new_err(
@@ -144,4 +95,10 @@ pub fn _set_dispatch_strategy(py: Python<'_>, strategy: &str) -> PyResult<()> {
         }
     };
     Ok(())
+}
+
+/// Enumerate meaningful internal classifier candidates, without a selected performance winner.
+#[pyfunction]
+pub fn _dispatch_strategies() -> (&'static str, &'static str, &'static str) {
+    ("cascade", "type_id", "hot_registry")
 }

@@ -31,12 +31,11 @@ def prepare(output: Path, old_root: Path) -> dict[str, object]:
     result={'protocol':PROTOCOL_VERSION,'host_protocol':HOST_PROTOCOL,
             'host_module_sha256':hashlib.sha256(module.read_bytes()).hexdigest(),
             'implementation_sha256':implementation_hashes(),
-            'shared_lock_path':str(shared_lock_path()),'artifact_receipt':receipt(backends,old_root),
+            'shared_lock_path':str(shared_lock_path().resolve()),'artifact_receipt':receipt(backends,old_root),
             'semantics':rows,'measurements':0,'heavy_timing_admitted':False,
             'pending':['joint cyTimes policy reconciliation','verified mutual exclusion window',
                        'independent run-time sampler for long native calls','expanded type workload catalogue'],
-            'dispatch_coverage':{'rust':'four runnable classifier strategies, identical handlers',
-                                 'cython':'baseline classifier only; alternate native strategies remain unimplemented'}}
+            'dispatch_coverage':{name:list(backends[name].module._dispatch_strategies()) for name in ('cython','rust')}}
     with output.open('x',encoding='utf-8') as stream:
         json.dump(result,stream,indent=2,sort_keys=True,allow_nan=False)
         stream.write('\n')

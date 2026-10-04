@@ -1855,6 +1855,7 @@ fn sqlaero_rust_kernel(m: &Bound<'_, PyModule>) -> PyResult<()> {
             "_type_cache",
             "_native_dispatch",
             "_set_dispatch_strategy",
+            "_dispatch_strategies",
         ],
     )?;
     m.add(
@@ -1888,6 +1889,7 @@ fn sqlaero_rust_kernel(m: &Bound<'_, PyModule>) -> PyResult<()> {
         Py::new(m.py(), dispatch::Dispatch::new(m.py()))?,
     )?;
     m.add_function(wrap_pyfunction!(dispatch::_set_dispatch_strategy, m)?)?;
+    m.add_function(wrap_pyfunction!(dispatch::_dispatch_strategies, m)?)?;
     m.add(
         "_registry",
         Py::new(

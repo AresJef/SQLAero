@@ -27,7 +27,10 @@ class ChildResult:
         if self.returncode != 0 or self.monitor_errors or not all(row['stable'] for row in self.observations):
             return False
         try:
-            interval = json.loads(self.stdout)['timed_interval']
+            payload=json.loads(self.stdout)
+            if payload.get('minimum_duration_met') is False:
+                return False
+            interval = payload['timed_interval']
             started, ended = float(interval['started']), float(interval['ended'])
             if not all(math.isfinite(value) for value in (started, ended)) or ended <= started:
                 return False

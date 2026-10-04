@@ -111,9 +111,11 @@ class KernelDeep(unittest.TestCase):
         k.configure_types()
     def test_dispatch_candidates(self) -> None:
         """All candidate classifiers feed identical handlers for exact and subtype values."""
+        self.assertEqual(k._dispatch_strategies(), ('cascade', 'type_id', 'hot_registry'))
+        with self.assertRaises(ValueError): k._set_dispatch_strategy('function_table')
         values=[None,True,1,-1,1.25,"a'",b'\xff',[1,2],np.int32(2),np.float32(1.2),dt.date(2024,1,2)]
         expected=[k.escape(v) for v in values]
-        for strategy in ('cascade','type_id','function_table','hot_registry'):
+        for strategy in k._dispatch_strategies():
             k._set_dispatch_strategy(strategy)
             self.assertEqual([k.escape(v) for v in values],expected)
         k._set_dispatch_strategy('hot_registry')

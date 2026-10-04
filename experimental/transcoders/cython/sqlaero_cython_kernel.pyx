@@ -5,6 +5,9 @@ Object-level ndarray indexing intentionally respects strides, endian and alignme
 no raw pointers or borrowed buffers survive Python callbacks.
 """
 from cpython.unicode cimport PyUnicode_GET_LENGTH, PyUnicode_READ_CHAR
+from cpython.object cimport PyObject, Py_TYPE
+from cpython.dict cimport PyDict_GetItemWithError
+from cpython.long cimport PyLong_AsLong
 import math
 import re
 import datetime as dt
@@ -78,6 +81,55 @@ cdef int _dispatch_exact(object value) except -1:
     if typ is time.struct_time: return 12
     return 0
 
+# One internal declaration binds supported exact types to the existing handler IDs.
+# Strong type references prevent identity-address reuse; users cannot extend this table.
+cdef tuple _exact_type_declarations = (
+    (bool,1),(int,2),(float,3),(str,4),(bytes,5),(bytearray,5),(memoryview,5),
+    (type(None),6),(decimal.Decimal,7),(dt.datetime,8),(dt.date,9),
+    (dt.time,10),(dt.timedelta,11),(time.struct_time,12),
+)
+cdef dict _type_id_codes = {<size_t><PyObject*>typ: code for typ,code in _exact_type_declarations}
+cdef int _dispatch_strategy_id = 0
+cdef tuple _strategy_names = ('exactif','hotcold','typeid_dict')
+
+cdef int _dispatch_identity_dict(object value) except -1:
+    """Classify by boxed CPython type address, with no metaclass hash/equality callbacks."""
+    cdef object identity = <size_t>Py_TYPE(value)
+    cdef PyObject* borrowed = PyDict_GetItemWithError(_type_id_codes,identity)
+    if borrowed == NULL: return 0
+    return <int>PyLong_AsLong(<object>borrowed)
+
+cdef int _dispatch_hotcold(object value) except -1:
+    """Keep common exact query scalars in direct branches and use the fixed cold identity registry."""
+    cdef object typ = type(value)
+    if typ is str: return 4
+    if typ is int: return 2
+    if typ is float: return 3
+    if typ is bool: return 1
+    if value is None: return 6
+    return _dispatch_identity_dict(value)
+
+cdef int _dispatch_selected(object value) except -1:
+    """Select the research classifier while retaining identical downstream handlers and cold policy."""
+    if _dispatch_strategy_id == 0: return _dispatch_exact(value)
+    if _dispatch_strategy_id == 1: return _dispatch_hotcold(value)
+    return _dispatch_identity_dict(value)
+
+def _dispatch_strategies() -> tuple[str, ...]:
+    """List internal research candidates; registration and serialization semantics are unchanged."""
+    return _strategy_names
+
+def _set_dispatch_strategy(name: str) -> None:
+    """Select a process-local research strategy outside timed calls; exactif is the default."""
+    global _dispatch_strategy_id
+    if not isinstance(name,str) or name not in _strategy_names:
+        raise ValueError('unknown internal dispatch strategy')
+    _dispatch_strategy_id = _strategy_names.index(name)
+
+def _get_dispatch_strategy() -> str:
+    """Report the internal research setting for evidence without changing it."""
+    return _strategy_names[_dispatch_strategy_id]
+
 cdef int _dispatch_subclass(object value) except -1:
     """Known historical subclass categories only, ordered bool/int and datetime/date safely."""
     if isinstance(value,bool): return 1
@@ -93,7 +145,7 @@ cdef int _dispatch_subclass(object value) except -1:
 
 def dispatch_code(value: object) -> int:
     """Expose classification only for future bounded dispatch experiments, without serialization."""
-    cdef int code = _dispatch_exact(value)
+    cdef int code = _dispatch_selected(value)
     return code if code else _dispatch_subclass(value)
 
 cdef str _quote(object value):
@@ -160,7 +212,7 @@ cdef str _literal(object value, set active, int depth):
     if isinstance(value, _trusted['sqlinterval']):
         expr = value.expr if hasattr(value,'expr') else value._expr
         return value.syntax() % _literal(expr,active,depth+1)
-    kind = _dispatch_exact(value)
+    kind = _dispatch_selected(value)
     if kind == 0: kind = _dispatch_subclass(value)
     if kind == 6 or (pd is not None and value is pd.NaT): return 'NULL'
     if kind == 1: return '1' if value else '0'

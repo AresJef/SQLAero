@@ -8,7 +8,7 @@
     "/Users/jef/ResilioSync/code/cyTimes-rewrite/tools/benchmark_environment.py": "1ee3f3838ca27527216974486e98e75cbfff08c9f2121eeb4f6454c1e4555a73"
   },
   "copy_equal": true,
-  "waiter_exit_verification": "Pending cyTimes main task verification of PID27483/session27699; SQLAero did not terminate or time workloads",
+  "waiter_exit_verification": "Read-only verified parent-provided absence and live lease handshake receipts; no processes stopped by SQLAero",
   "temperature": {
     "status": "unobserved",
     "limitation": "No direct temperature signal in SQLAero strict probe; unavailable must remain explicit"
@@ -17,5 +17,56 @@
     "status": "unobserved",
     "limitation": "No throttle signal in SQLAero strict probe; v2 does not completely exclude interference"
   },
-  "heavy_timing_started": false
+  "heavy_timing_started": false,
+  "evidence": {
+    "/Users/jef/ResilioSync/code/cyTimes-rewrite/.build/cytimes-old-waiters-absence-20261004.json": {
+      "sha256": "3e4d326d4d3fe3e06360eadc5feb0fc2f3090e7ccd990332f55897eba7ac88e0",
+      "receipt": {
+        "at_utc": "2026-10-04T09:14:00.180062+00:00",
+        "read_only_command": [
+          "ps",
+          "-p",
+          "40185,27483,2798,115,98677",
+          "-o",
+          "pid=,ppid=,command="
+        ],
+        "returncode": 1,
+        "stdout": "",
+        "no_matching_processes": true,
+        "processes_stopped": 0,
+        "new_waiters_started_after_v2": 0,
+        "old_group_complete_32raw768": true,
+        "old_waiter_was_unlocked_but_finished_before_v2": true
+      }
+    },
+    "/Users/jef/ResilioSync/code/cyTimes-rewrite/.build/cytimes-SQLAero-shared-lease-literal-handshake-20261004.json": {
+      "sha256": "c754a0cb1f981dd576612173869ea79fab394d625b3c50965afa62872c4ddcf3",
+      "receipt": {
+        "at_utc": "2026-10-04T09:23:35.552721+00:00",
+        "cyTimes_BENCHMARK_SHARED_LOCK_PATH_environment": null,
+        "cyTimes_default_unresolved": "/var/folders/g9/fscckc0119s97khf1khzbh100000gn/T/shared-benchmark-1158e7e12c5e7362.lock",
+        "cyTimes_resolved_literal": "/private/var/folders/g9/fscckc0119s97khf1khzbh100000gn/T/shared-benchmark-1158e7e12c5e7362.lock",
+        "SQLAero_resolved_literal": "/private/var/folders/g9/fscckc0119s97khf1khzbh100000gn/T/shared-benchmark-1158e7e12c5e7362.lock",
+        "identical_resolved_literal": true,
+        "symlink_alias_note": "macOS /var resolves to /private/var; both resolve to same kernel file",
+        "identical_shared_module_sha256": "1ee3f3838ca27527216974486e98e75cbfff08c9f2121eeb4f6454c1e4555a73",
+        "sql_reconciliation_path": "/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/benchmarking/shared-protocol-reconciliation.json",
+        "sql_reconciliation_sha256": "1c4e014313c77f2aaa02c5a0876f5ff60870a8d2924514dc2fc55fd43210051e",
+        "blocked_while_cy_lease_held": {
+          "path": "/private/var/folders/g9/fscckc0119s97khf1khzbh100000gn/T/shared-benchmark-1158e7e12c5e7362.lock",
+          "blocked": true,
+          "heavy_workload": false
+        },
+        "allowed_after_cy_release": {
+          "path": "/private/var/folders/g9/fscckc0119s97khf1khzbh100000gn/T/shared-benchmark-1158e7e12c5e7362.lock",
+          "blocked": false,
+          "heavy_workload": false
+        },
+        "new_heavy_timing": false,
+        "SQLAero_files_modified": false,
+        "privilege_escalation": false
+      }
+    }
+  },
+  "heavy_timing_authorization": "Current user delegation explicitly authorizes bounded first real three-way cycle after correctness/protocol review; no extra approval required"
 }

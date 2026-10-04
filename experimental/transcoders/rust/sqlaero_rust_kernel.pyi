@@ -16,7 +16,7 @@ def loads(value: bytes | str) -> object:
 def configure_types(*, objstr: tuple[type, ...] = (), rawtext: tuple[type, ...] = (), sqlfunction: tuple[type, ...] = (), sqlinterval: tuple[type, ...] = ()) -> None:
     """Internal bridge integration: set reviewed SQL trust classes, replacing earlier tuples."""
     ...
-def _set_dispatch_strategy(strategy: Literal['cascade', 'type_id', 'function_table', 'hot_registry']) -> None:
+def _set_dispatch_strategy(strategy: Literal['cascade', 'type_id', 'hot_registry']) -> None:
     """Internal research switch: select classifier feeding identical value handlers."""
     ...
 class _JSON:
@@ -30,3 +30,7 @@ class _JSON:
         """Parse a complete strict JSON document."""
         ...
 json: _JSON
+
+def _dispatch_strategies() -> tuple[str, ...]:
+    """Internal research catalogue of supported classifier candidates."""
+    ...

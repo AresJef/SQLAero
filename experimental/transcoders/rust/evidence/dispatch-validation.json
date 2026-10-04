@@ -1,0 +1,103 @@
+{
+  "imported_module": "/tmp/sqlaero-rust-installed/sqlaero_rust_kernel/__init__.py",
+  "strategies": [
+    "cascade",
+    "type_id",
+    "hot_registry"
+  ],
+  "results": {
+    "cascade": {
+      "type": {
+        "rows": 404,
+        "matches": {
+          "sqlaero_rust_kernel": 404
+        }
+      },
+      "json": {
+        "rows": 58,
+        "matches": {
+          "sqlaero_rust_kernel": 58
+        }
+      },
+      "float": {
+        "rows": 492,
+        "matches": {
+          "sqlaero_rust_kernel": 492
+        }
+      },
+      "subclass": {
+        "rows": 20,
+        "matches": {
+          "sqlaero_rust_kernel": 20
+        }
+      },
+      "shared": {
+        "run": 15,
+        "failures": 0,
+        "errors": 0
+      }
+    },
+    "type_id": {
+      "type": {
+        "rows": 404,
+        "matches": {
+          "sqlaero_rust_kernel": 404
+        }
+      },
+      "json": {
+        "rows": 58,
+        "matches": {
+          "sqlaero_rust_kernel": 58
+        }
+      },
+      "float": {
+        "rows": 492,
+        "matches": {
+          "sqlaero_rust_kernel": 492
+        }
+      },
+      "subclass": {
+        "rows": 20,
+        "matches": {
+          "sqlaero_rust_kernel": 20
+        }
+      },
+      "shared": {
+        "run": 15,
+        "failures": 0,
+        "errors": 0
+      }
+    },
+    "hot_registry": {
+      "type": {
+        "rows": 404,
+        "matches": {
+          "sqlaero_rust_kernel": 404
+        }
+      },
+      "json": {
+        "rows": 58,
+        "matches": {
+          "sqlaero_rust_kernel": 58
+        }
+      },
+      "float": {
+        "rows": 492,
+        "matches": {
+          "sqlaero_rust_kernel": 492
+        }
+      },
+      "subclass": {
+        "rows": 20,
+        "matches": {
+          "sqlaero_rust_kernel": 20
+        }
+      },
+      "shared": {
+        "run": 15,
+        "failures": 0,
+        "errors": 0
+      }
+    }
+  }
+}

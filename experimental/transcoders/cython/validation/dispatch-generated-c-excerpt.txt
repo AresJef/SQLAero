@@ -1,0 +1,213 @@
+static int __pyx_f_21sqlaero_cython_kernel__dispatch_identity_dict(PyObject *__pyx_v_value) {
+  PyObject *__pyx_v_identity = 0;
+  PyObject *__pyx_v_borrowed;
+  int __pyx_r;
+  __Pyx_RefNannyDeclarations
+  PyObject *__pyx_t_1 = NULL;
+  PyObject *__pyx_t_2;
+  int __pyx_t_3;
+  long __pyx_t_4;
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+  __Pyx_RefNannySetupContext("_dispatch_identity_dict", 1);
+
+  /* "sqlaero_cython_kernel.pyx":97
+ * cdef int _dispatch_identity_dict(object value) except -1:
+ *     """Classify by boxed CPython type address, with no metaclass hash/equality callbacks."""
+ *     cdef object identity = <size_t>Py_TYPE(value)             # <<<<<<<<<<<<<<
+ *     cdef PyObject* borrowed = PyDict_GetItemWithError(_type_id_codes,identity)
+ *     if borrowed == NULL: return 0
+ */
+  __pyx_t_1 = __Pyx_PyInt_FromSize_t(((size_t)Py_TYPE(__pyx_v_value))); if (unlikely(!__pyx_t_1)) __PYX_ERR(0, 97, __pyx_L1_error)
+  __Pyx_GOTREF(__pyx_t_1);
+  __pyx_v_identity = __pyx_t_1;
+  __pyx_t_1 = 0;
+
+  /* "sqlaero_cython_kernel.pyx":98
+ *     """Classify by boxed CPython type address, with no metaclass hash/equality callbacks."""
+ *     cdef object identity = <size_t>Py_TYPE(value)
+ *     cdef PyObject* borrowed = PyDict_GetItemWithError(_type_id_codes,identity)             # <<<<<<<<<<<<<<
+ *     if borrowed == NULL: return 0
+ *     return <int>PyLong_AsLong(<object>borrowed)
+ */
+  __pyx_t_1 = __pyx_v_21sqlaero_cython_kernel__type_id_codes;
+  __Pyx_INCREF(__pyx_t_1);
+  __pyx_t_2 = PyDict_GetItemWithError(__pyx_t_1, __pyx_v_identity); if (unlikely(__pyx_t_2 == ((PyObject *)NULL) && PyErr_Occurred())) __PYX_ERR(0, 98, __pyx_L1_error)
+  __Pyx_DECREF(__pyx_t_1); __pyx_t_1 = 0;
+  __pyx_v_borrowed = __pyx_t_2;
+
+  /* "sqlaero_cython_kernel.pyx":99
+ *     cdef object identity = <size_t>Py_TYPE(value)
+ *     cdef PyObject* borrowed = PyDict_GetItemWithError(_type_id_codes,identity)
+ *     if borrowed == NULL: return 0             # <<<<<<<<<<<<<<
+ *     return <int>PyLong_AsLong(<object>borrowed)
+ * 
+ */
+  __pyx_t_3 = (__pyx_v_borrowed == NULL);
+  if (__pyx_t_3) {
+    __pyx_r = 0;
+    goto __pyx_L0;
+  }
+
+  /* "sqlaero_cython_kernel.pyx":100
+ *     cdef PyObject* borrowed = PyDict_GetItemWithError(_type_id_codes,identity)
+ *     if borrowed == NULL: return 0
+ *     return <int>PyLong_AsLong(<object>borrowed)             # <<<<<<<<<<<<<<
+ * 
+ * cdef int _dispatch_hotcold(object value) except -1:
+ */
+  __pyx_t_4 = PyLong_AsLong(((PyObject *)__pyx_v_borrowed)); if (unlikely(__pyx_t_4 == ((long)-1L) && PyErr_Occurred())) __PYX_ERR(0, 100, __pyx_L1_error)
+  __pyx_r = ((int)__pyx_t_4);
+  goto __pyx_L0;
+
+  /* "sqlaero_cython_kernel.pyx":95
+ * cdef tuple _strategy_names = ('exactif','hotcold','typeid_dict')
+ * 
+ * cdef int _dispatch_identity_dict(object value) except -1:             # <<<<<<<<<<<<<<
+ *     """Classify by boxed CPython type address, with no metaclass hash/equality callbacks."""
+ *     cdef object identity = <size_t>Py_TYPE(value)
+ */
+
+  /* function exit code */
+  __pyx_L1_error:;
+  __Pyx_XDECREF(__pyx_t_1);
+  __Pyx_AddTraceback("sqlaero_cython_kernel._dispatch_identity_dict", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_r = -1;
+  __pyx_L0:;
+  __Pyx_XDECREF(__pyx_v_identity);
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+
+/* "sqlaero_cython_kernel.pyx":102
+ *     return <int>PyLong_AsLong(<object>borrowed)
+ * 
+ * cdef int _dispatch_hotcold(object value) except -1:             # <<<<<<<<<<<<<<
+ *     """Keep common exact query scalars in direct branches and use the fixed cold identity registry."""
+ *     cdef object typ = type(value)
+ */
+
+static int __pyx_f_21sqlaero_cython_kernel__dispatch_hotcold(PyObject *__pyx_v_value) {
+  PyObject *__pyx_v_typ = 0;
+  int __pyx_r;
+  __Pyx_RefNannyDeclarations
+  int __pyx_t_1;
+  int __pyx_t_2;
+  int __pyx_lineno = 0;
+  const char *__pyx_filename = NULL;
+  int __pyx_clineno = 0;
+  __Pyx_RefNannySetupContext("_dispatch_hotcold", 1);
+
+  /* "sqlaero_cython_kernel.pyx":104
+ * cdef int _dispatch_hotcold(object value) except -1:
+ *     """Keep common exact query scalars in direct branches and use the fixed cold identity registry."""
+ *     cdef object typ = type(value)             # <<<<<<<<<<<<<<
+ *     if typ is str: return 4
+ *     if typ is int: return 2
+ */
+  __Pyx_INCREF(((PyObject *)Py_TYPE(__pyx_v_value)));
+  __pyx_v_typ = ((PyObject *)Py_TYPE(__pyx_v_value));
+
+  /* "sqlaero_cython_kernel.pyx":105
+ *     """Keep common exact query scalars in direct branches and use the fixed cold identity registry."""
+ *     cdef object typ = type(value)
+ *     if typ is str: return 4             # <<<<<<<<<<<<<<
+ *     if typ is int: return 2
+ *     if typ is float: return 3
+ */
+  __pyx_t_1 = (__pyx_v_typ == ((PyObject *)(&PyUnicode_Type)));
+  if (__pyx_t_1) {
+    __pyx_r = 4;
+    goto __pyx_L0;
+  }
+
+  /* "sqlaero_cython_kernel.pyx":106
+ *     cdef object typ = type(value)
+ *     if typ is str: return 4
+ *     if typ is int: return 2             # <<<<<<<<<<<<<<
+ *     if typ is float: return 3
+ *     if typ is bool: return 1
+ */
+  __pyx_t_1 = (__pyx_v_typ == ((PyObject *)(&PyInt_Type)));
+  if (__pyx_t_1) {
+    __pyx_r = 2;
+    goto __pyx_L0;
+  }
+
+  /* "sqlaero_cython_kernel.pyx":107
+ *     if typ is str: return 4
+ *     if typ is int: return 2
+ *     if typ is float: return 3             # <<<<<<<<<<<<<<
+ *     if typ is bool: return 1
+ *     if value is None: return 6
+ */
+  __pyx_t_1 = (__pyx_v_typ == ((PyObject *)(&PyFloat_Type)));
+  if (__pyx_t_1) {
+    __pyx_r = 3;
+    goto __pyx_L0;
+  }
+
+  /* "sqlaero_cython_kernel.pyx":108
+ *     if typ is int: return 2
+ *     if typ is float: return 3
+ *     if typ is bool: return 1             # <<<<<<<<<<<<<<
+ *     if value is None: return 6
+ *     return _dispatch_identity_dict(value)
+ */
+  __pyx_t_1 = (__pyx_v_typ == ((PyObject*)&PyBool_Type));
+  if (__pyx_t_1) {
+    __pyx_r = 1;
+    goto __pyx_L0;
+  }
+
+  /* "sqlaero_cython_kernel.pyx":109
+ *     if typ is float: return 3
+ *     if typ is bool: return 1
+ *     if value is None: return 6             # <<<<<<<<<<<<<<
+ *     return _dispatch_identity_dict(value)
+ * 
+ */
+  __pyx_t_1 = (__pyx_v_value == Py_None);
+  if (__pyx_t_1) {
+    __pyx_r = 6;
+    goto __pyx_L0;
+  }
+
+  /* "sqlaero_cython_kernel.pyx":110
+ *     if typ is bool: return 1
+ *     if value is None: return 6
+ *     return _dispatch_identity_dict(value)             # <<<<<<<<<<<<<<
+ * 
+ * cdef int _dispatch_selected(object value) except -1:
+ */
+  __pyx_t_2 = __pyx_f_21sqlaero_cython_kernel__dispatch_identity_dict(__pyx_v_value); if (unlikely(__pyx_t_2 == ((int)-1))) __PYX_ERR(0, 110, __pyx_L1_error)
+  __pyx_r = __pyx_t_2;
+  goto __pyx_L0;
+
+  /* "sqlaero_cython_kernel.pyx":102
+ *     return <int>PyLong_AsLong(<object>borrowed)
+ * 
+ * cdef int _dispatch_hotcold(object value) except -1:             # <<<<<<<<<<<<<<
+ *     """Keep common exact query scalars in direct branches and use the fixed cold identity registry."""
+ *     cdef object typ = type(value)
+ */
+
+  /* function exit code */
+  __pyx_L1_error:;
+  __Pyx_AddTraceback("sqlaero_cython_kernel._dispatch_hotcold", __pyx_clineno, __pyx_lineno, __pyx_filename);
+  __pyx_r = -1;
+  __pyx_L0:;
+  __Pyx_XDECREF(__pyx_v_typ);
+  __Pyx_RefNannyFinishContext();
+  return __pyx_r;
+}
+
+/* "sqlaero_cython_kernel.pyx":112
+ *     return _dispatch_identity_dict(value)
+ * 
+ * cdef int _dispatch_selected(object value) except -1:             # <<<<<<<<<<<<<<
+ *     """Select the research classifier while retaining identical downstream handlers and cold policy."""
+ *     if _dispatch_strategy_id == 0: return _dispatch_exact(value)
+ */
+
