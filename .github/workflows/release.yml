@@ -18,6 +18,8 @@ jobs:
     timeout-minutes: 45
     env:
       MACOSX_DEPLOYMENT_TARGET: "26.0"
+      ARCHFLAGS: "-arch arm64"
+      _PYTHON_HOST_PLATFORM: "macosx-26.0-arm64"
       RELEASE_TAG: ${{ github.event.release.tag_name }}
       RELEASE_EVENT: ${{ github.event_name }}
     steps:
