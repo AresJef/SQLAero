@@ -1,0 +1,8 @@
+{
+  "utc": "2026-10-04T08:43:12.508042+00:00",
+  "sha256": {
+    "sqlaero_cython_kernel.pyx": "8f103e6f794646751a0f7bf6e21917cd7b44bb8e9ddae647f0c8a79c1ddae08c",
+    "sqlaero_cython_kernel.cpython-313-darwin.so": "4749f45f2f8165cc9b9224004c512a2badbdf56ead3d85eec5b225ab1e55c4c7",
+    "/tmp/sqlaero-cython-sanitized/sqlaero_cython_kernel.cpython-313-darwin.so": "1707b88fb13cebd453751e57ff571051a00e194291b96107a9bcd7888963ad51"
+  }
+}

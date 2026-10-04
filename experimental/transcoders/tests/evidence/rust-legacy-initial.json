@@ -1,0 +1,176 @@
+{
+  "kernel": "sqlaero_rust_kernel",
+  "passed": 21,
+  "total": 38,
+  "cases": [
+    {
+      "case": "TestEscape.test_escape_bool",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_int",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_float",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 150, in test_escape_float\n    self.assertEqualEscape(expt, dtype(data))\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1464, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: '-2.1992188' != '-2.2'\n- -2.1992188\n+ -2.2\n : escape(np.float16(-2.2)) >>> '-2.1992188' != '-2.2'\n"
+    },
+    {
+      "case": "TestEscape.test_escape_str",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_none",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_datetime",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 240, in test_escape_datetime\n    self.assertEqualEscape(expt, data)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1464, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 900, in _baseAssertEqual\n    raise self.failureException(msg)\nAssertionError: ['2021', '1', '1', '12', '0', '0', '0', '1', '0'] != \"'2021-01-01 12:00:00'\" : escape(time.struct_time(tm_year=2021, tm_mon=1, tm_mday=1, tm_hour=12, tm_min=0, tm_sec=0, tm_wday=0, tm_yday=1, tm_isdst=0)) >>> ['2021', '1', '1', '12', '0', '0', '0', '1', '0'] != \"'2021-01-01 12:00:00'\"\n"
+    },
+    {
+      "case": "TestEscape.test_escape_date",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_time",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_timedelta",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_bytes",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_decimal",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 341, in test_escape_decimal\n    escape(decimal.Decimal(i))\n    ~~~~~~^^^^^^^^^^^^^^^^^^^^\nValueError: nonfinite Decimal\n"
+    },
+    {
+      "case": "TestEscape.test_escape_list_and_tuple",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_set_and_frozenset",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_range",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_sequence",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_dict",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_array_object",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 533, in test_escape_array_object\n    self.assertEqualEscape(\"()\", arr_2d, many=False, itemize=False)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1448, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: '(),()' != '()'\n- (),()\n+ ()\n : escape(array([], shape=(2, 0), dtype=object)) >>> '(),()' != '()'\n"
+    },
+    {
+      "case": "TestEscape.test_escape_array_int",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 577, in test_escape_array_int\n    self.assertEqualEscape(\"()\", arr_2d, many=False, itemize=False)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1448, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: '(),()' != '()'\n- (),()\n+ ()\n : escape(array([], shape=(2, 0), dtype=int8)) >>> '(),()' != '()'\n"
+    },
+    {
+      "case": "TestEscape.test_escape_array_uint",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 621, in test_escape_array_uint\n    self.assertEqualEscape(\"()\", arr_2d, many=False, itemize=False)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1448, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: '(),()' != '()'\n- (),()\n+ ()\n : escape(array([], shape=(2, 0), dtype=uint8)) >>> '(),()' != '()'\n"
+    },
+    {
+      "case": "TestEscape.test_escape_array_float",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 666, in test_escape_array_float\n    self.assertEqualEscape(\"()\", arr_2d, many=False, itemize=False)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1448, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: '(),()' != '()'\n- (),()\n+ ()\n : escape(array([], shape=(2, 0), dtype=float32)) >>> '(),()' != '()'\n"
+    },
+    {
+      "case": "TestEscape.test_escape_array_bool",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 758, in test_escape_array_bool\n    self.assertEqualEscape(\"()\", arr_2d, many=False, itemize=False)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1448, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: '(),()' != '()'\n- (),()\n+ ()\n : escape(array([], shape=(2, 0), dtype=bool)) >>> '(),()' != '()'\n"
+    },
+    {
+      "case": "TestEscape.test_escape_array_dt64",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1026, in test_escape_array_dt64\n    self.assertEqualEscape(\"()\", arr_2d, many=False, itemize=False)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1448, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: '(),()' != '()'\n- (),()\n+ ()\n : escape(array([], shape=(2, 0), dtype='datetime64[D]')) >>> '(),()' != '()'\n"
+    },
+    {
+      "case": "TestEscape.test_escape_array_td64",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1083, in test_escape_array_td64\n    self.assertEqualEscape(\"('-00:00:00.000001','00:00:00','00:00:00')\", arr_1d, many=False, itemize=False)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1448, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: \"('00:00:00','00:00:00','00:00:00')\" != \"('-00:00:00.000001','00:00:00','00:00:00')\"\n- ('00:00:00','00:00:00','00:00:00')\n+ ('-00:00:00.000001','00:00:00','00:00:00')\n?   +        +++++++\n : escape(array([-1,  0,  1], dtype='timedelta64[ns]')) >>> \"('00:00:00','00:00:00','00:00:00')\" != \"('-00:00:00.000001','00:00:00','00:00:00')\"\n"
+    },
+    {
+      "case": "TestEscape.test_escape_array_bytes",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1301, in test_escape_array_bytes\n    self.assertEqualEscape(\"()\", arr_2d, many=False, itemize=False)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1448, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: '(),()' != '()'\n- (),()\n+ ()\n : escape(array([], shape=(2, 0), dtype='|S1')) >>> '(),()' != '()'\n"
+    },
+    {
+      "case": "TestEscape.test_escape_array_unicode",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1351, in test_escape_array_unicode\n    self.assertEqualEscape(\"()\", arr_2d, many=False, itemize=False)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1448, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: '(),()' != '()'\n- (),()\n+ ()\n : escape(array([], shape=(2, 0), dtype='<U1')) >>> '(),()' != '()'\n"
+    },
+    {
+      "case": "TestEscape.test_escape_dataframe",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1373, in test_escape_dataframe\n    self.assertEqualEscape(\"()\", df, many=False, itemize=False)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1448, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: '' != '()'\n+ ()\n : escape(Empty DataFrame\nColumns: []\nIndex: []) >>> '' != '()'\n"
+    },
+    {
+      "case": "TestEscape.test_escape_custom",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1413, in test_escape_custom\n    escape(BIT(\"apple\"))  # not bytes or int\n    ~~~~~~^^^^^^^^^^^^^^\n  File \"src/sqlaero/transcode.pyx\", line 454, in sqlaero.transcode.BIT.__str__\n    raise TypeError(\nTypeError: Cannot escape BIT value from <class 'str'>. Only supports 'bytes', 'bytearray', 'memoryview' and 'int'.\n"
+    },
+    {
+      "case": "TestDecode.decode_string",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_integer",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_float",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_decimal",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_bit",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1673, in decode_bit\n    self.assertEqualDecode(expt, value, FIELD_TYPE.BIT, decode_bit=True)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1864, in assertEqualDecode\n    res = decode(\n        data,\n    ...<5 lines>...\n        decode_json=decode_json,\n    )\nValueError: BIT decode exceeds 64 bits\n"
+    },
+    {
+      "case": "TestDecode.decode_date",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1700, in decode_date\n    self.assertEqualDecode(expt, value, field_type)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1873, in assertEqualDecode\n    self.assertEqual(type(expt), type(res))\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 900, in _baseAssertEqual\n    raise self.failureException(msg)\nAssertionError: <class 'datetime.date'> != <class 'str'>\n"
+    },
+    {
+      "case": "TestDecode.decode_datetime",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1753, in decode_datetime\n    self.assertEqualDecode(expt, value, field_type)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1873, in assertEqualDecode\n    self.assertEqual(type(expt), type(res))\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 900, in _baseAssertEqual\n    raise self.failureException(msg)\nAssertionError: <class 'datetime.datetime'> != <class 'str'>\n"
+    },
+    {
+      "case": "TestDecode.decode_time",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_enum",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_set",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_json",
+      "passed": true
+    }
+  ]
+}

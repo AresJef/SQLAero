@@ -1,0 +1,12 @@
+# Generated experimental artifacts remain local, never release inputs.
+**/__pycache__/
+**/*.so
+**/*.dylib
+**/*.egg-info/
+**/build/
+rust/target/
+shared/bridge.c
+shared/sqlaero_transcoder_bridge.c
+cython/sqlaero_cython_kernel.c
+
+tests/abi_probe.c

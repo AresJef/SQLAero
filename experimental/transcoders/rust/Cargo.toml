@@ -1,0 +1,16 @@
+[package]
+name = "sqlaero_rust_kernel"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+[lib]
+name = "sqlaero_rust_kernel"
+crate-type = ["cdylib"]
+[dependencies]
+pyo3 = { version = "=0.28.2", features = ["extension-module"] }
+zmij = "=1.0.21"
+[profile.release]
+overflow-checks = true
+lto = "thin"
+[build-dependencies]
+pyo3-build-config = "=0.28.2"

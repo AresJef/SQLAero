@@ -1,0 +1,1027 @@
+{
+  "baseline": "orjson 3.12.0 OPT_SERIALIZE_NUMPY",
+  "rows": 58,
+  "matches": {
+    "sqlaero_cython_kernel": 58
+  },
+  "cases": [
+    {
+      "kind": "dumps",
+      "case": "null",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'null'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'null'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "bool",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'true'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'true'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "int",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'18446744073709551615'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'18446744073709551615'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "bigint",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "float",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'1.25'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'1.25'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "exp",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'1e-7'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'1e-7'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "negzero",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'-0.0'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'-0.0'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "nan",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'null'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'null'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "inf",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'null'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'null'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "text",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'\"\\xe9\\x9b\\xaa\\xf0\\x9f\\x98\\x80\\\\u0000\\\\n\\\\\\\\\\\\\"\"'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'\"\\xe9\\x9b\\xaa\\xf0\\x9f\\x98\\x80\\\\u0000\\\\n\\\\\\\\\\\\\"\"'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "surrogate",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "dict",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'{\"x\":[true,null,1]}'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'{\"x\":[true,null,1]}'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "nonstringkey",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "uuid",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'\"00000000-0000-0000-0000-000000000000\"'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'\"00000000-0000-0000-0000-000000000000\"'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "enum",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'\"one\"'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'\"one\"'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "dataclass",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'{\"value\":1}'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'{\"value\":1}'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "date",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'\"2024-02-29\"'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'\"2024-02-29\"'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "time",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'\"01:02:03.000004\"'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'\"01:02:03.000004\"'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "awaretime",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "datetime",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'\"2024-02-29T01:02:03.000004\"'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'\"2024-02-29T01:02:03.000004\"'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "awaredatetime",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'\"2024-01-01T00:00:00+00:00\"'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'\"2024-01-01T00:00:00+00:00\"'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "decimal",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "bytes",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "set",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "npstrNUL",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'\"\\\\u0000\"'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'\"\\\\u0000\"'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "npfloat16",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'1.0996094'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'1.0996094'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "npfloat32",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'1.1'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'1.1'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "npfloat64",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'1.1'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'1.1'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "npint",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'-1'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'-1'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "npdatetime",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'\"2024-01-01T00:00:00\"'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'\"2024-01-01T00:00:00\"'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "nptimedelta",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "npNaTgeneric",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "arrayf2",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'[1.0996094]'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'[1.0996094]'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "arrayf4",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'[1.1]'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'[1.1]'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "arrayf8",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'[1.1,null]'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'[1.1,null]'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "arrayint",
+      "baseline": {
+        "status": "ok",
+        "type": "bytes",
+        "value": "b'[[1,2],[3,4]]'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bytes",
+          "value": "b'[[1,2],[3,4]]'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "arrayreverse",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "arrayswapped",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "dumps",
+      "case": "arrayF",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'null'",
+      "baseline": {
+        "status": "ok",
+        "type": "NoneType",
+        "value": "None"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "NoneType",
+          "value": "None"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'true'",
+      "baseline": {
+        "status": "ok",
+        "type": "bool",
+        "value": "True"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "bool",
+          "value": "True"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'1'",
+      "baseline": {
+        "status": "ok",
+        "type": "int",
+        "value": "1"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "int",
+          "value": "1"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'-0.0'",
+      "baseline": {
+        "status": "ok",
+        "type": "float",
+        "value": "-0.0"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "float",
+          "value": "-0.0"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'1e-7'",
+      "baseline": {
+        "status": "ok",
+        "type": "float",
+        "value": "1e-07"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "float",
+          "value": "1e-07"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'18446744073709551616'",
+      "baseline": {
+        "status": "ok",
+        "type": "float",
+        "value": "1.8446744073709552e+19"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "float",
+          "value": "1.8446744073709552e+19"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'-9223372036854775809'",
+      "baseline": {
+        "status": "ok",
+        "type": "float",
+        "value": "-9.223372036854776e+18"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "float",
+          "value": "-9.223372036854776e+18"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'1234567890123456789012345678901234567890'",
+      "baseline": {
+        "status": "ok",
+        "type": "float",
+        "value": "1.2345678901234568e+39"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "float",
+          "value": "1.2345678901234568e+39"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'{\"x\":1,\"x\":2}'",
+      "baseline": {
+        "status": "ok",
+        "type": "dict",
+        "value": "{'x': 2}"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "dict",
+          "value": "{'x': 2}"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'\"\\\\ud83d\\\\ude00\"'",
+      "baseline": {
+        "status": "ok",
+        "type": "str",
+        "value": "'\ud83d\ude00'"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "ok",
+          "type": "str",
+          "value": "'\ud83d\ude00'"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'\"\\\\ud800\"'",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'\"\\xff\"'",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'NaN'",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'Infinity'",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'1e309'",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'01'",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'[1,]'",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'{\"x\":}'",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    },
+    {
+      "kind": "loads",
+      "case": "b'null x'",
+      "baseline": {
+        "status": "error"
+      },
+      "actual": {
+        "sqlaero_cython_kernel": {
+          "status": "error"
+        }
+      },
+      "match": {
+        "sqlaero_cython_kernel": true
+      }
+    }
+  ]
+}

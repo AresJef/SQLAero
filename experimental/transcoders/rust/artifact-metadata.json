@@ -1,0 +1,111 @@
+{
+  "recorded_at_utc": "2026-10-04T08:48:25.018840+00:00",
+  "python": "3.13.3 (main, Sep 18 2025, 18:58:22) [Clang 17.0.0 (clang-1700.3.19.1)]",
+  "platform": "macOS-27.0.1-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "rustc": "rustc 1.99.0 (b940084d7 2026-09-28)\nbinary: rustc\ncommit-hash: b940084d7eb6a299eb4bfeb8e34901bc051e7ac4\ncommit-date: 2026-09-28\nhost: aarch64-apple-darwin\nrelease: 1.99.0\nLLVM version: 23.1.1\n",
+  "dependencies": {
+    "numpy": "2.5.3",
+    "pandas": "2.3.3",
+    "cytimes": "3.1.0",
+    "orjson": "3.12.0"
+  },
+  "maturin": "1.15.0",
+  "pyo3": "0.28.2",
+  "zmij": "1.0.21",
+  "release_flags": {
+    "overflow_checks": true,
+    "lto": "thin"
+  },
+  "installed_module": "/tmp/sqlaero-rust-installed/sqlaero_rust_kernel/__init__.py",
+  "artifacts": {
+    "src/lib.rs": {
+      "sha256": "dd641e52e006d27fe82a3af8ab9c84f5a9c3ccd9d79cd05a33f7a1af259edfd6",
+      "bytes": 65908
+    },
+    "src/dispatch.rs": {
+      "sha256": "223edffe36c3ef0981a1df3cbf83f9e80e060a3e03ff2913cee7bd595056faa5",
+      "bytes": 4782
+    },
+    "build.rs": {
+      "sha256": "be23ea924d30d08282dd69c3dfbfa249a2cf297e02312649bc785352e243ee25",
+      "bytes": 143
+    },
+    "Cargo.toml": {
+      "sha256": "e43e4e17357b1e1c07a31fe7a56512d722cbb599ba0cc467c03d8b4a2725e8ad",
+      "bytes": 350
+    },
+    "Cargo.lock": {
+      "sha256": "0b43db5f89dc83a79865c388f27967ffb3eec0debcf6dd44bbe7ba9f6b68f9c0",
+      "bytes": 3637
+    },
+    "pyproject.toml": {
+      "sha256": "8be682cfacef0b714ee042de4569434f2bde756687637448a5d7efbc85b3a728",
+      "bytes": 278
+    },
+    "sqlaero_rust_kernel.pyi": {
+      "sha256": "13a371128dd03792ea608e180286f7c2e349b9c6860c9d645a065829c5fee774",
+      "bytes": 1671
+    },
+    "sqlaero_rust_kernel.so": {
+      "sha256": "89a7b9060f8b1e6614b4cb3d98412aa4614ec4fd51d765305b9172b44f3bc171",
+      "bytes": 809648
+    },
+    "target/wheels/sqlaero_rust_kernel-0.1.0-cp313-cp313-macosx_11_0_arm64.whl": {
+      "sha256": "d15a0446e8be72fc92265a1419578b03a6883c0c929141d86b89171b99c18f4d",
+      "bytes": 354891
+    }
+  },
+  "wheel_members": [
+    "sqlaero_rust_kernel/__init__.py",
+    "sqlaero_rust_kernel/__init__.pyi",
+    "sqlaero_rust_kernel/py.typed",
+    "sqlaero_rust_kernel/sqlaero_rust_kernel.cpython-313-darwin.so",
+    "sqlaero_rust_kernel-0.1.0.dist-info/METADATA",
+    "sqlaero_rust_kernel-0.1.0.dist-info/WHEEL",
+    "sqlaero_rust_kernel-0.1.0.dist-info/licenses/LICENSE",
+    "sqlaero_rust_kernel-0.1.0.dist-info/licenses/THIRD_PARTY_NOTICES.txt",
+    "sqlaero_rust_kernel-0.1.0.dist-info/sboms/sqlaero_rust_kernel.cyclonedx.json",
+    "sqlaero_rust_kernel-0.1.0.dist-info/RECORD"
+  ],
+  "results": {
+    "type": {
+      "matches": {
+        "sqlaero_rust_kernel": 404
+      },
+      "rows": 404
+    },
+    "json": {
+      "matches": {
+        "sqlaero_rust_kernel": 58
+      },
+      "rows": 58
+    },
+    "float": {
+      "matches": {
+        "sqlaero_rust_kernel": 492
+      },
+      "rows": 492
+    },
+    "subclass": {
+      "matches": {
+        "sqlaero_rust_kernel": 20
+      },
+      "rows": 20
+    },
+    "legacy": {
+      "passed": 37,
+      "total": 38,
+      "remaining_cases": [
+        "TestDecode.decode_bit"
+      ]
+    },
+    "own": "11/11",
+    "shared": "15/15",
+    "json_budget": "passed single 3 MB bool snapshot safety vector",
+    "extensive_fuzz": "not run",
+    "miri": "not run; own code contains no unsafe blocks",
+    "database": "not run",
+    "heavy_benchmarks": "not run"
+  }
+}

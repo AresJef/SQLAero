@@ -1,0 +1,161 @@
+{
+  "kernel": "sqlaero_cython_kernel",
+  "passed": 36,
+  "total": 38,
+  "cases": [
+    {
+      "case": "TestEscape.test_escape_bool",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_int",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_float",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_str",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 197, in test_escape_str\n    self.assertEqualEscape(expt, dtype(data))\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1464, in assertEqualEscape\n    self.assertEqual(res, expt, f\"escape({data!r}) >>> {res!r} != {expt!r}\")\n    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 907, in assertEqual\n    assertion_func(first, second, msg=msg)\n    ~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 1273, in assertMultiLineEqual\n    self.fail(self._formatMessage(msg, standardMsg))\n    ~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/.pyenv/versions/3.13.3/lib/python3.13/unittest/case.py\", line 732, in fail\n    raise self.failureException(msg)\nAssertionError: \"''\" != \"'\\\\0'\"\n- ''\n+ '\\0'\n?  ++\n : escape(np.str_('')) >>> \"''\" != \"'\\\\0'\"\n"
+    },
+    {
+      "case": "TestEscape.test_escape_none",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_datetime",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_date",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_time",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_timedelta",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_bytes",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_decimal",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_list_and_tuple",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_set_and_frozenset",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_range",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_sequence",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_dict",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_array_object",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_array_int",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_array_uint",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_array_float",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_array_bool",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_array_dt64",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_array_td64",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_array_bytes",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_array_unicode",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_dataframe",
+      "passed": true
+    },
+    {
+      "case": "TestEscape.test_escape_custom",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_string",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_integer",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_float",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_decimal",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_bit",
+      "passed": false,
+      "error": "Traceback (most recent call last):\n  File \"sqlaero_cython_kernel.pyx\", line 367, in sqlaero_cython_kernel.decode\nValueError: BIT field exceeds 64 bits\n\nThe above exception was the direct cause of the following exception:\n\nTraceback (most recent call last):\n  File \"/Users/jef/ResilioSync/code/SQLAero/experimental/transcoders/tests/run_legacy_cases.py\", line 32, in main\n    with contextlib.redirect_stdout(io.StringIO()): getattr(instance,method)()\n                                                    ~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1673, in decode_bit\n    self.assertEqualDecode(expt, value, FIELD_TYPE.BIT, decode_bit=True)\n    ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/jef/ResilioSync/code/SQLAero/src/test_transcode.py\", line 1864, in assertEqualDecode\n    res = decode(\n        data,\n    ...<5 lines>...\n        decode_json=decode_json,\n    )\n  File \"sqlaero_cython_kernel.pyx\", line 405, in sqlaero_cython_kernel.decode\nsqlaero.errors.DecodeValueError: BIT field exceeds 64 bits\n"
+    },
+    {
+      "case": "TestDecode.decode_date",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_datetime",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_time",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_enum",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_set",
+      "passed": true
+    },
+    {
+      "case": "TestDecode.decode_json",
+      "passed": true
+    }
+  ]
+}
