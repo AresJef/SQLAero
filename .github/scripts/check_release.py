@@ -2,9 +2,24 @@
 from email.parser import BytesParser
 from pathlib import Path
 from packaging.specifiers import SpecifierSet
+from packaging.tags import parse_tag
+from packaging.utils import parse_wheel_filename
+from packaging.version import Version
+import os
+import platform
+import sysconfig
 import hashlib
 import sys
 import zipfile
+
+
+def validate_tags(tags) -> None:
+    """Keep the first alpha limited to CPython 3.13, macOS 26.0, arm64."""
+    assert tags, "Wheel has no compatibility tags"
+    for tag in tags:
+        assert tag.interpreter == "cp313", f"Unexpected interpreter: {tag}"
+        assert tag.abi == "cp313", f"Unexpected ABI: {tag}"
+        assert tag.platform == "macosx_26_0_arm64", f"Unexpected platform: {tag}"
 
 
 def check_release(dist: Path) -> None:
@@ -17,11 +32,29 @@ def check_release(dist: Path) -> None:
         AssertionError: A file or metadata field differs from the approved alpha.
     """
     wheels = list(dist.glob("*.whl"))
-    assert len(wheels) == 1
+    print("Produced wheels:", [w.name for w in wheels], flush=True)
+    print("Build platform:", sysconfig.get_platform(), "host:", platform.mac_ver()[0],
+          "deployment target:", os.environ.get("MACOSX_DEPLOYMENT_TARGET"), flush=True)
+    assert len(wheels) == 1, "Expected exactly one wheel"
     wheel = wheels[0]
-    assert wheel.name == "sqlaero-0.1.0a1-cp313-cp313-macosx_26_0_arm64.whl"
+    name, version, build, filename_tags = parse_wheel_filename(wheel.name)
+    print("Filename tags:", sorted(map(str, filename_tags)), flush=True)
+    assert name == "sqlaero", f"Unexpected distribution: {name}"
+    assert version == Version("0.1.0a1"), f"Unexpected version: {version}"
+    assert not build, f"Unexpected build tag: {build}"
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
+        wheel_files = [n for n in names if n.endswith(".dist-info/WHEEL")]
+        assert len(wheel_files) == 1, "Expected exactly one WHEEL metadata file"
+        wheel_metadata = BytesParser().parsebytes(archive.read(wheel_files[0]))
+        internal_tags = set()
+        for value in wheel_metadata.get_all("Tag", []):
+            internal_tags.update(parse_tag(value))
+        print("Internal WHEEL tags:", sorted(map(str, internal_tags)), flush=True)
+        assert wheel_metadata["Wheel-Version"] == "1.0"
+        assert wheel_metadata["Root-Is-Purelib"] == "false"
+        assert internal_tags == filename_tags, "Filename and WHEEL tags differ"
+        validate_tags(filename_tags)
         metadata = BytesParser().parsebytes(archive.read(next(n for n in names if n.endswith("/METADATA"))))
         assert metadata["Name"] == "SQLAero"
         assert metadata["Version"] == "0.1.0a1"
