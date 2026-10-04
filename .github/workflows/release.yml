@@ -81,6 +81,8 @@ jobs:
   publish:
     if: >-
       github.event_name == 'release' &&
+      github.actor == 'AresJef' &&
+      github.triggering_actor == 'AresJef' &&
       github.repository == 'AresJef/SQLAero' &&
       github.event.release.tag_name == 'v0.1.0a1' &&
       github.event.release.prerelease == true
