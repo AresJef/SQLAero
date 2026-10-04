@@ -1,4 +1,4 @@
-name: Release SQLAero alpha
+name: Release SQLAero
 
 on:
   workflow_dispatch:
@@ -16,12 +16,14 @@ jobs:
   build-and-verify:
     runs-on: macos-26
     timeout-minutes: 45
+    outputs:
+      version: ${{ steps.release-policy.outputs.version }}
+      wheel_filename: ${{ steps.release-policy.outputs.wheel_filename }}
+      publish_allowed: ${{ steps.release-policy.outputs.publish_allowed }}
     env:
       MACOSX_DEPLOYMENT_TARGET: "26.0"
       ARCHFLAGS: "-arch arm64"
       _PYTHON_HOST_PLATFORM: "macosx-26.0-arm64"
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
-      RELEASE_EVENT: ${{ github.event_name }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -30,26 +32,21 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
         with:
           python-version: "3.13"
-      - name: Verify runner, alpha version and release tag
-        run: |
-          python - <<'PY'
-          import configparser, os, platform, sys
-          from pathlib import Path
-          assert platform.system() == "Darwin" and platform.machine() == "arm64"
-          assert sys.version_info[:2] == (3, 13)
-          assert platform.mac_ver()[0].split(".")[0] == "26"
-          cfg = configparser.ConfigParser()
-          cfg.read("setup.cfg")
-          assert cfg["metadata"]["name"] == "SQLAero"
-          assert cfg["metadata"]["version"] == "0.1.0a1"
-          assert cfg["options"]["python_requires"] == ">=3.13,<3.14"
-          if os.environ["RELEASE_EVENT"] == "release":
-              assert os.environ["RELEASE_TAG"] == "v" + cfg["metadata"]["version"]
-          PY
       - name: Install build tools and freeze primary build dependencies
         run: |
           echo "PIP_CONSTRAINT=$GITHUB_WORKSPACE/.github/release-constraints.txt" >> "$GITHUB_ENV"
           python -m pip install -c .github/release-constraints.txt build twine
+      - name: Verify runner and release policy
+        id: release-policy
+        run: |
+          python - <<'PYTHON'
+          import platform, sys
+          assert platform.system() == "Darwin" and platform.machine() == "arm64"
+          assert sys.version_info[:2] == (3, 13)
+          assert platform.mac_ver()[0].split(".")[0] == "26"
+          PYTHON
+          python .github/scripts/test_check_release.py
+          python .github/scripts/release_policy.py
       - name: Build sdist and wheel from the sdist
         run: |
           python -m build --sdist --outdir dist
@@ -60,7 +57,15 @@ jobs:
           with tarfile.open(archive) as source:
               source.extractall("build-input", filter="data")
           PY
-          python -m build --wheel --outdir dist build-input/sqlaero-0.1.0a1
+          python - <<'PYTHON'
+          import subprocess
+          from pathlib import Path
+          import sys
+          sys.path.insert(0, str(Path(".github/scripts").resolve()))
+          from release_policy import read_package
+          subprocess.run([sys.executable, "-m", "build", "--wheel", "--outdir", "dist",
+                          f"build-input/sqlaero-{read_package()}"], check=True)
+          PYTHON
           python -m twine check dist/*
           python .github/scripts/check_release.py dist
       - name: Install actual wheel into a clean environment and run offline cases
@@ -86,8 +91,8 @@ jobs:
       github.actor == 'AresJef' &&
       github.triggering_actor == 'AresJef' &&
       github.repository == 'AresJef/SQLAero' &&
-      github.event.release.tag_name == 'v0.1.0a1' &&
-      github.event.release.prerelease == true
+      github.event.action == 'published' &&
+      needs.build-and-verify.outputs.publish_allowed == 'true'
     needs: build-and-verify
     runs-on: ubuntu-latest
     environment: pypi
@@ -99,12 +104,25 @@ jobs:
           name: verified-pypi-wheel
           path: dist
       - name: Require exactly the intended wheel; reject sdist or extra files
+        env:
+          EXPECTED_WHEEL: ${{ needs.build-and-verify.outputs.wheel_filename }}
+          EXPECTED_VERSION: ${{ needs.build-and-verify.outputs.version }}
         run: |
           python - <<'PY'
           from pathlib import Path
+          import os, zipfile
+          from email.parser import BytesParser
           files = list(Path("dist").iterdir())
           assert len(files) == 1
-          assert files[0].name == "sqlaero-0.1.0a1-cp313-cp313-macosx_26_0_arm64.whl"
+          assert files[0].name == os.environ["EXPECTED_WHEEL"]
+          with zipfile.ZipFile(files[0]) as archive:
+              names = archive.namelist()
+              metadata = BytesParser().parsebytes(archive.read(next(n for n in names if n.endswith("/METADATA"))))
+              assert metadata["Name"] == "SQLAero"
+              assert metadata["Version"] == os.environ["EXPECTED_VERSION"]
+              wheel = BytesParser().parsebytes(archive.read(next(n for n in names if n.endswith(".dist-info/WHEEL"))))
+              assert wheel.get_all("Tag") == ["cp313-cp313-macosx_26_0_arm64"]
+              assert wheel["Root-Is-Purelib"] == "false"
           PY
       - name: Publish verified wheel through PyPI Trusted Publishing
         uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0

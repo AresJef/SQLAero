@@ -284,7 +284,7 @@ this does not validate every version allowed by the wider dependency metadata.
 The initial CI only checks offline behavior; database tests remain separate.
 
 See RELEASE_PREPARATION.md for the confirmed publisher mapping and manual
-Release steps. Publishing the v0.1.0a1 prerelease starts verification followed
+Release steps. Publishing a Release whose v+PEP440 tag matches setup.cfg starts verification followed
 by automatic PyPI upload; no separate deployment approval is required.
 Previously retained dist/ artifacts predate the Python metadata restriction
 and must not be uploaded. The workflow must build and test fresh artifacts.

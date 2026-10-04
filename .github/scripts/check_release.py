@@ -1,4 +1,4 @@
-"""Check the single approved alpha wheel before its CI artifact is published."""
+"""Check the single supported release wheel before its CI artifact is published."""
 from email.parser import BytesParser
 from pathlib import Path
 from packaging.specifiers import SpecifierSet
@@ -14,10 +14,11 @@ import re
 import hashlib
 import sys
 import zipfile
+from release_policy import read_package
 
 
 def validate_tags(tags) -> None:
-    """Keep the first alpha limited to CPython 3.13, macOS 26.0, arm64."""
+    """Keep releases limited to CPython 3.13, macOS 26.0, arm64."""
     assert tags, "Wheel has no compatibility tags"
     for tag in tags:
         assert tag.interpreter == "cp313", f"Unexpected interpreter: {tag}"
@@ -48,8 +49,9 @@ def check_release(dist: Path) -> None:
         dist: Directory containing the newly built wheel and source archive.
 
     Raises:
-        AssertionError: A file or metadata field differs from the approved alpha.
+        AssertionError: A file or metadata field differs from the supported release.
     """
+    expected_version = read_package()
     wheels = list(dist.glob("*.whl"))
     print("Produced wheels:", [w.name for w in wheels], flush=True)
     print("Build platform:", sysconfig.get_platform(), "host:", platform.mac_ver()[0],
@@ -59,7 +61,7 @@ def check_release(dist: Path) -> None:
     name, version, build, filename_tags = parse_wheel_filename(wheel.name)
     print("Filename tags:", sorted(map(str, filename_tags)), flush=True)
     assert name == "sqlaero", f"Unexpected distribution: {name}"
-    assert version == Version("0.1.0a1"), f"Unexpected version: {version}"
+    assert version == expected_version, f"Unexpected version: {version}"
     assert not build, f"Unexpected build tag: {build}"
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
@@ -76,7 +78,7 @@ def check_release(dist: Path) -> None:
         validate_tags(filename_tags)
         metadata = BytesParser().parsebytes(archive.read(next(n for n in names if n.endswith("/METADATA"))))
         assert metadata["Name"] == "SQLAero"
-        assert metadata["Version"] == "0.1.0a1"
+        assert metadata["Version"] == str(expected_version)
         assert SpecifierSet(metadata["Requires-Python"]) == SpecifierSet(">=3.13,<3.14")
         assert not any(n.startswith("sqlcycli/") for n in names)
         extensions = [n for n in names if n.endswith(".so")]

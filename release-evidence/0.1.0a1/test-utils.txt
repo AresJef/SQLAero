@@ -1,0 +1,16 @@
+nice: setpriority: Operation not permitted
+Pass: find_null_byte
+Pass: pack_I24B
+Pass: pack_IB
+Pass: pack_IIB23s
+Pass: pack_int8 & unpack_int8
+Pass: pack_uint8 & unpack_uint8
+Pass: pack_int16 & unpack_int16
+Pass: pack_uint16 & unpack_uint16
+Pass: pack_int24 & unpack_int24
+Pass: pack_uint24 & unpack_uint24
+Pass: pack_int32 & unpack_int32
+Pass: pack_uint32 & unpack_uint32
+Pass: pack_int64 & unpack_int64
+Pass: pack_uint64 & unpack_uint64
+Pass: gen_length_encoded_integer

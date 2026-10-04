@@ -1,0 +1,7 @@
+nice: setpriority: Operation not permitted
+START TEST 'Custom Class': RawText
+PASS TEST 'Custom Class': RawText (0.000022s)
+START TEST 'SQLInterval': escape
+PASS TEST 'SQLInterval': escape (0.000080s)
+START TEST 'SQLFunction': escape
+PASS TEST 'SQLFunction': escape (0.001561s)
