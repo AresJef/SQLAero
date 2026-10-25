@@ -9,6 +9,7 @@ description = "A native Rust MySQL client for Python"
 requires-python = ">=3.12,<3.16"
 readme = "README.md"
 license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/third-party/**/*"]
 authors = [{ name = "Jef" }]
 
 [tool.maturin]
@@ -17,7 +18,8 @@ python-source = "python"
 module-name = "sqlaero._sqlaero"
 
 [tool.pyright]
-include = ["python", "tests"]
+include = ["python", "tests", "tools"]
+extraPaths = ["python"]
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "strict"

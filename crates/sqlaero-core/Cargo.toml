@@ -7,5 +7,23 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[dependencies]
+mysql_common.workspace = true
+flate2.workspace = true
+mio.workspace = true
+socket2.workspace = true
+rustls.workspace = true
+aws-lc-rs.workspace = true
+rustls-platform-verifier.workspace = true
+rustls-pki-types.workspace = true
+pkcs8.workspace = true
+zeroize.workspace = true
+encoding_rs.workspace = true
+num-bigint.workspace = true
+thiserror.workspace = true
+
+[target.'cfg(target_vendor = "apple")'.dependencies]
+security-framework.workspace = true
+
 [lints]
 workspace = true

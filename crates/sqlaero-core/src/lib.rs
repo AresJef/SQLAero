@@ -3,3 +3,4 @@
 //! Configuration parsing is shared by the binding boundary and native callers.
 
 pub mod config;
+pub mod transport;
