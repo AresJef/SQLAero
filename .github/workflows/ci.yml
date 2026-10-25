@@ -1,0 +1,38 @@
+name: Native build checks
+
+on:
+  push:
+    branches: [main, codex/rust-sync-kernel]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-smoke:
+    runs-on: macos-14
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.3"
+          architecture: arm64
+      - name: Install the fixed native toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+      - name: Build and verify the current implementation slice
+        run: |
+          python -m venv .venv
+          source .venv/bin/activate
+          python -m pip install --disable-pip-version-check -r requirements-dev.txt
+          rustc --version
+          python --version
+          cargo fmt --all --check
+          cargo test -p sqlaero-core --locked
+          cargo clippy --workspace --locked -- -D warnings
+          maturin develop --release --locked -m crates/sqlaero-python/Cargo.toml
+          python -m pytest -q
+          pyright
