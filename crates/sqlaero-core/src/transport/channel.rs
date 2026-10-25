@@ -186,7 +186,7 @@ impl Channel {
         &mut self,
         message: &mut MessageReader,
         budget: &mut IoBudget,
-    ) -> Result<Step<Vec<u8>>, ChannelError> {
+    ) -> Result<Step<crate::memory::Buffer<u8>>, ChannelError> {
         budget.check()?;
         if self.tls.is_none() {
             return message

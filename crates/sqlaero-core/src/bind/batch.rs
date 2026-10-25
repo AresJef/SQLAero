@@ -394,15 +394,20 @@ mod tests {
         use crate::result::text::Response;
         use mysql_common::constants::CapabilityFlags;
         let caps = CapabilityFlags::CLIENT_PROTOCOL_41;
+        let scope = crate::memory::Scope::new(crate::memory::Pool::new(10000), 10000).unwrap();
         let first = Response::Command(
-            packets::ok(&[0, 2, 8, 2, 0, 3, 0], caps, OkKind::Command)
-                .unwrap()
-                .into_owned(),
+            crate::result::text::Completion::new(
+                packets::ok(&[0, 2, 8, 2, 0, 3, 0], caps, OkKind::Command).unwrap(),
+                &scope,
+            )
+            .unwrap(),
         );
         let second = Response::Command(
-            packets::ok(&[0, 0, 0, 2, 0, 1, 0], caps, OkKind::Command)
-                .unwrap()
-                .into_owned(),
+            crate::result::text::Completion::new(
+                packets::ok(&[0, 0, 0, 2, 0, 1, 0], caps, OkKind::Command).unwrap(),
+                &scope,
+            )
+            .unwrap(),
         );
         let mut prefix = crate::session::query::ConfirmedPrefix::default();
         prefix.record(0..100, &first).unwrap();

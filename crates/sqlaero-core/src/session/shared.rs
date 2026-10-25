@@ -46,6 +46,8 @@ pub struct Connection {
     /// One authoritative set of confirmed facts. Borrow briefly and release
     /// before invoking Python or waiting for network I/O.
     pub facts: Mutex<Confirmed>,
+    /// Shared capacity ownership for all live native results and snapshots.
+    pub result_pool: std::sync::Arc<crate::memory::Pool>,
 }
 
 impl Connection {
@@ -53,6 +55,12 @@ impl Connection {
     /// The connection-establishment budget is dropped, not reused for commands.
     #[must_use]
     pub fn new(ready: Ready) -> Self {
+        Self::with_result_limit(ready, 512 * 1024 * 1024)
+    }
+
+    /// Keep one aggregate result limit for the connection's entire lifetime.
+    #[must_use]
+    pub fn with_result_limit(ready: Ready, total_result_memory_limit: usize) -> Self {
         let authenticated = ready.transport;
         let wire = WireSession {
             channel: authenticated.channel,
@@ -67,6 +75,7 @@ impl Connection {
             closed: AtomicBool::new(false),
             metadata: authenticated.metadata,
             facts: Mutex::new(ready.confirmed),
+            result_pool: crate::memory::Pool::new(total_result_memory_limit),
         }
     }
 

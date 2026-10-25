@@ -103,7 +103,7 @@ pub(crate) fn client<T: PyTypeInfo>(
 pub(crate) fn wire(py: Python<'_>, error: WireError) -> PyErr {
     match error {
         WireError::Allocation(error) => pyo3::exceptions::PyMemoryError::new_err(error.to_string()),
-        error @ WireError::Limit { .. } => {
+        error @ (WireError::Limit { .. } | WireError::Memory(_)) => {
             client::<OperationalError>(py, ClientErrorCode::ResourceLimit, error.to_string())
         }
         error => client::<OperationalError>(py, ClientErrorCode::Protocol, error.to_string()),

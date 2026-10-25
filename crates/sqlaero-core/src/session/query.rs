@@ -1,5 +1,6 @@
 //! One native command exchange over the existing channel and original budget.
 
+use crate::memory::{Pool, Scope};
 use crate::protocol::framing::{MessageReader, MessageWriter, WireError};
 use crate::result::text::{self, Receiver, Response, ResultError};
 use crate::transport::channel::{Channel, ChannelError, Step};
@@ -8,6 +9,7 @@ use crate::transport::socket::WaitStatus;
 use mysql_common::constants::CapabilityFlags;
 use mysql_common::packets::OkPacket;
 use std::ops::Range;
+use std::sync::Arc;
 
 /// A command failure whose server/transport/resource origin remains explicit.
 #[derive(Debug, thiserror::Error)]
@@ -68,6 +70,7 @@ impl ConfirmedPrefix {
         let count = match response {
             Response::Command(ok) => u128::from(ok.affected_rows()),
             Response::Rows(result) => result.row_count as u128,
+            Response::Counted { rows, .. } => *rows as u128,
         };
         self.commands = commands;
         self.source_rows = rows.end;
@@ -96,7 +99,7 @@ pub struct Query {
     collector: Receiver,
     capabilities: CapabilityFlags,
     max_receive: usize,
-    memory_limit: usize,
+    scope: Arc<Scope>,
     sent: bool,
     started: bool,
     unsupported_multiple: bool,
@@ -116,18 +119,46 @@ impl Query {
         max_receive: usize,
         memory_limit: usize,
     ) -> Result<Self, QueryError> {
+        Self::with_pool(
+            request,
+            capabilities,
+            max_send,
+            max_receive,
+            memory_limit,
+            Pool::new(usize::MAX),
+            false,
+        )
+    }
+
+    /// Execute under the same aggregate pool as other live connection results.
+    /// Discard only row storage for known intermediate commands; validation,
+    /// real counts and session-state parsing remain identical.
+    ///
+    /// # Errors
+    /// Returns actual request, native-owner or configured capacity failures.
+    pub fn with_pool(
+        request: Vec<u8>,
+        capabilities: CapabilityFlags,
+        max_send: usize,
+        max_receive: usize,
+        memory_limit: usize,
+        pool: Arc<Pool>,
+        discard: bool,
+    ) -> Result<Self, QueryError> {
         if request.is_empty() {
             return Err(WireError::Malformed("request has no command byte").into());
         }
         let sender = MessageWriter::new(request.len(), max_send)?;
+        let scope = Scope::new(pool, memory_limit).map_err(ResultError::from)?;
+        let collector = Receiver::new(capabilities, Arc::clone(&scope), discard)?;
         Ok(Self {
             request,
             sender,
-            incoming: MessageReader::new(max_receive),
-            collector: Receiver::new(capabilities, memory_limit),
+            incoming: MessageReader::tracked(max_receive, &scope),
+            collector,
             capabilities,
             max_receive,
-            memory_limit,
+            scope,
             sent: false,
             started: false,
             unsupported_multiple: false,
@@ -189,12 +220,13 @@ impl Query {
                 }
                 Step::Control => return Ok(Step::Control),
             };
-            self.incoming = MessageReader::new(self.max_receive);
+            self.incoming = MessageReader::tracked(self.max_receive, &self.scope);
             processed = processed.saturating_add(data.len());
             if let Some(response) = self.collector.push(&data)? {
                 if text::has_more(&response) {
                     self.unsupported_multiple = true;
-                    self.collector = Receiver::new(self.capabilities, self.memory_limit);
+                    self.collector =
+                        Receiver::new(self.capabilities, Arc::clone(&self.scope), true)?;
                 } else {
                     self.finished = true;
                     if self.unsupported_multiple {

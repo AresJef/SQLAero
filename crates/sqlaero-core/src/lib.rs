@@ -6,6 +6,7 @@ pub mod bind;
 pub mod charset;
 pub mod config;
 pub mod error;
+pub mod memory;
 pub mod protocol;
 pub mod result;
 pub mod session;

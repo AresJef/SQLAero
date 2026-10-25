@@ -293,16 +293,34 @@ fn query(
     connection: &mut Authenticated,
     sql: &str,
 ) -> Result<sqlaero_core::result::text::Response, sqlaero_core::session::query::QueryError> {
+    query_with_memory(
+        connection,
+        sql,
+        sqlaero_core::memory::Pool::new(usize::MAX),
+        16 * 1024 * 1024,
+        false,
+    )
+}
+
+fn query_with_memory(
+    connection: &mut Authenticated,
+    sql: &str,
+    pool: Arc<sqlaero_core::memory::Pool>,
+    limit: usize,
+    discard: bool,
+) -> Result<sqlaero_core::result::text::Response, sqlaero_core::session::query::QueryError> {
     use sqlaero_core::session::query::Query;
     let mut request = Vec::with_capacity(sql.len() + 1);
     request.push(3);
     request.extend_from_slice(sql.as_bytes());
-    let mut query = Query::new(
+    let mut query = Query::with_pool(
         request,
         connection.capabilities,
         connection.max_send,
         connection.max_receive,
-        16 * 1024 * 1024,
+        limit,
+        pool,
+        discard,
     )?;
     let mut budget = sqlaero_core::transport::deadline::IoBudget::new(
         sqlaero_core::transport::deadline::TimeoutKind::Operation,
@@ -316,6 +334,74 @@ fn query(
             Step::Control => (),
             Step::Wait(_) => panic!("query driver must handle readiness internally"),
         }
+    }
+}
+
+#[test]
+#[ignore = "requires both isolated MySQL servers; run this binary with one test thread"]
+fn pooled_results_release_rows_without_invalidating_metadata_and_discard_boundedly() {
+    use sqlaero_core::memory::Pool;
+    use sqlaero_core::result::text::{Label, Response};
+    let root = root();
+    for label in ["84", "97"] {
+        let pool = Pool::new(24_000);
+        let mut connection =
+            establish(configuration(&root, label, true, None, "localhost")).unwrap();
+        let Response::Rows(first) = query_with_memory(
+            &mut connection,
+            "SELECT REPEAT('x',8192) AS payload",
+            Arc::clone(&pool),
+            1_000_000,
+            false,
+        )
+        .unwrap() else {
+            panic!("expected first buffered rows")
+        };
+        let owned = pool.used();
+        let metadata = Arc::clone(&first.columns);
+        let failure = query_with_memory(
+            &mut connection,
+            "SELECT REPEAT('y',8192) AS payload",
+            Arc::clone(&pool),
+            1_000_000,
+            false,
+        );
+        assert!(failure.is_err());
+        assert!(
+            failure
+                .err()
+                .unwrap()
+                .to_string()
+                .contains("total result memory")
+        );
+        assert_eq!(pool.used(), owned);
+        drop(connection); // The incomplete failed response retires this wire.
+        assert_eq!(
+            first.row(0).unwrap()[0]
+                .get(&first.bytes)
+                .unwrap()
+                .unwrap()
+                .len(),
+            8192
+        );
+        drop(first);
+        assert!(pool.used() < owned);
+        assert_eq!(metadata.label(0, Label::Name), Some(b"payload".as_slice()));
+        drop(metadata);
+        assert_eq!(pool.used(), 0);
+
+        let mut connection =
+            establish(configuration(&root, label, true, None, "localhost")).unwrap();
+        let counted = query_with_memory(&mut connection,
+            "WITH RECURSIVE n AS (SELECT 1 AS i UNION ALL SELECT i+1 FROM n WHERE i<300) SELECT REPEAT('x',4096) FROM n",
+            Arc::clone(&pool), 24_000, true).unwrap();
+        let Response::Counted { rows, .. } = counted else {
+            panic!("expected intermediate count")
+        };
+        assert_eq!(rows, 300);
+        drop(counted);
+        assert_eq!(pool.used(), 0);
+        assert!(query(&mut connection, "SELECT 7").is_ok());
     }
 }
 
@@ -528,7 +614,10 @@ fn native_numeric_literals_keep_mysql_approximate_and_exact_categories() {
             else {
                 panic!("expected scalar row")
             };
-            assert_eq!(rows.columns[0].column_type(), ColumnType::MYSQL_TYPE_DOUBLE);
+            assert_eq!(
+                rows.columns[0].type_code,
+                ColumnType::MYSQL_TYPE_DOUBLE as u8
+            );
             let bytes = rows.row(0).unwrap()[0].get(&rows.bytes).unwrap().unwrap();
             let actual: f64 = std::str::from_utf8(bytes).unwrap().parse().unwrap();
             // MySQL may normalize the sign of zero, which the input writer
@@ -548,8 +637,8 @@ fn native_numeric_literals_keep_mysql_approximate_and_exact_categories() {
             panic!("expected exact decimal")
         };
         assert_eq!(
-            rows.columns[0].column_type(),
-            ColumnType::MYSQL_TYPE_NEWDECIMAL
+            rows.columns[0].type_code,
+            ColumnType::MYSQL_TYPE_NEWDECIMAL as u8
         );
         assert_eq!(
             rows.row(0).unwrap()[0].get(&rows.bytes).unwrap(),

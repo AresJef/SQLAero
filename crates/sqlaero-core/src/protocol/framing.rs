@@ -1,7 +1,9 @@
 //! Uncompressed MySQL logical messages, independent of the transport backend.
 
+use crate::memory::{Buffer, MemoryError, Scope};
 use std::collections::TryReserveError;
 use std::io::{self, Read, Write};
+use std::sync::Arc;
 
 /// Maximum payload in one three-byte-length classic-protocol frame.
 pub const MAX_FRAME_PAYLOAD: usize = 0x00ff_ffff;
@@ -34,12 +36,23 @@ pub enum WireError {
     /// Native storage could not be reserved.
     #[error("cannot reserve MySQL message storage: {0}")]
     Allocation(#[from] TryReserveError),
+    /// A result-owned message exhausted the actual native capacity budget.
+    #[error(transparent)]
+    Memory(MemoryError),
     /// Packet fields did not satisfy the negotiated protocol contract.
     #[error("invalid MySQL packet: {0}")]
     Malformed(&'static str),
     /// A selected public packet parser rejected the payload.
     #[error("invalid MySQL packet fields: {0}")]
     Decode(io::Error),
+}
+impl From<MemoryError> for WireError {
+    fn from(error: MemoryError) -> Self {
+        match error {
+            MemoryError::Allocation(error) => Self::Allocation(error),
+            error => Self::Memory(error),
+        }
+    }
 }
 
 /// The next shared sequence number in a handshake or command exchange.
@@ -86,7 +99,7 @@ pub struct MessageReader {
     header_read: usize,
     frame_remaining: usize,
     frame_length: usize,
-    payload: Vec<u8>,
+    payload: Buffer<u8>,
     limit: usize,
     complete: bool,
 }
@@ -100,10 +113,19 @@ impl MessageReader {
             header_read: 0,
             frame_remaining: 0,
             frame_length: 0,
-            payload: Vec::new(),
+            payload: Buffer::new(),
             limit: limit.min(MAX_MESSAGE_PAYLOAD),
             complete: false,
         }
+    }
+
+    /// Receive into the same result/connection quota as the collector. A
+    /// complete message retains its charge until parsing/copying releases it.
+    #[must_use]
+    pub fn tracked(limit: usize, scope: &Arc<Scope>) -> Self {
+        let mut reader = Self::new(limit);
+        reader.payload = Buffer::tracked(scope);
+        reader
     }
 
     /// Consume available bytes without blocking internally. At most a bounded
@@ -116,7 +138,7 @@ impl MessageReader {
         &mut self,
         reader: &mut R,
         sequence: &mut Sequence,
-    ) -> Result<Progress<Vec<u8>>, WireError> {
+    ) -> Result<Progress<Buffer<u8>>, WireError> {
         if self.complete {
             return Err(WireError::Malformed("message reader already consumed"));
         }
@@ -179,9 +201,8 @@ impl MessageReader {
                     return Ok(Progress::Yield);
                 }
                 let start = self.payload.len();
-                self.payload.try_reserve(length)?;
-                self.payload.resize(start + length, 0);
-                let received = reader.read(&mut self.payload[start..]);
+                self.payload.resize(start + length, 0)?;
+                let received = reader.read(&mut self.payload.as_mut_slice()[start..]);
                 match received {
                     Ok(0) => {
                         self.payload.truncate(start);
@@ -358,7 +379,7 @@ pub fn read_message<R: Read>(
     reader: &mut R,
     sequence: &mut Sequence,
     limit: usize,
-) -> Result<Vec<u8>, WireError> {
+) -> Result<Buffer<u8>, WireError> {
     let mut message = MessageReader::new(limit);
     loop {
         match message.step(reader, sequence)? {
@@ -422,7 +443,9 @@ mod tests {
         stream.bytes.set_position(0);
         let mut read_sequence = Sequence::new(9);
         assert_eq!(
-            read_message(&mut stream, &mut read_sequence, 64).unwrap(),
+            read_message(&mut stream, &mut read_sequence, 64)
+                .unwrap()
+                .as_slice(),
             b"\x03SELECT 1"
         );
         assert_eq!(read_sequence.next(), write_sequence.next());
