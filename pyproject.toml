@@ -18,6 +18,7 @@ module-name = "sqlaero._sqlaero"
 
 [tool.pyright]
 include = ["python", "tests"]
+extraPaths = ["python"]
 venvPath = "."
 venv = ".venv"
 typeCheckingMode = "strict"
