@@ -4,6 +4,10 @@ use super::writer::{append, reserve};
 use crate::protocol::framing::WireError;
 use num_bigint::BigInt;
 
+/// Necessary bit bound before formatting a signed value with at most 65 digits.
+/// Values at this bit width still undergo the exact decimal-length check.
+pub const MAX_INTEGER_BITS: u64 = 216;
+
 /// A scalar cannot be represented under the approved SQL value contract.
 #[derive(Debug, thiserror::Error)]
 pub enum ScalarError {
@@ -37,7 +41,7 @@ pub fn large_integer(
     value: &BigInt,
     limit: usize,
 ) -> Result<(), ScalarError> {
-    if value.bits() > 216 {
+    if value.bits() > MAX_INTEGER_BITS {
         return Err(ScalarError::Range(
             "integer exceeds the 65-digit exact SQL range",
         ));

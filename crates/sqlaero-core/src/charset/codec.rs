@@ -52,6 +52,40 @@ impl Codec {
         self.charset.name
     }
 
+    /// Return a character width in bytes already produced by this strict codec.
+    /// SQL lexical scanning uses it to keep multibyte trail punctuation inside
+    /// its character. This is not a replacement for validating remote bytes.
+    #[must_use]
+    pub fn encoded_width(&self, input: &[u8]) -> usize {
+        match self.charset.route {
+            CodecRoute::Multibyte(kind) => multibyte::width(kind, input),
+            CodecRoute::Utf8 => input.first().map_or(0, |byte| {
+                if *byte < 128 {
+                    1
+                } else {
+                    byte.leading_ones() as usize
+                }
+            }),
+            _ => usize::from(!input.is_empty()),
+        }
+    }
+
+    /// Test the actual MySQL whitespace/control byte class after --. This is
+    /// lexical policy, prepared from fixed server observations, not a Unicode
+    /// whitespace guess or an extra per-value/server check.
+    #[must_use]
+    pub fn comment_space(&self, byte: u8) -> bool {
+        let masks: &[u64; 4] = match self.charset.route {
+            CodecRoute::SingleByte(index) => &super::lexer_space::SINGLE[usize::from(index)],
+            CodecRoute::Multibyte(kind) => &super::lexer_space::MULTI[kind as usize],
+            CodecRoute::Utf8 => &super::lexer_space::BASIC[0],
+            CodecRoute::Ascii => &super::lexer_space::BASIC[1],
+            CodecRoute::Binary => &super::lexer_space::BASIC[2],
+            CodecRoute::Unavailable => return false,
+        };
+        masks[usize::from(byte) / 64] & (1 << (byte % 64)) != 0
+    }
+
     /// Encode SQL source text, without treating it as an SQL string literal.
     ///
     /// # Errors
@@ -75,12 +109,29 @@ impl Codec {
         limit: usize,
     ) -> Result<(), CodecError> {
         append(output, b"'", limit)?;
+        self.literal_fragment(text, output, no_backslash, limit)?;
+        append(output, b"'", limit)?;
+        Ok(())
+    }
+
+    /// Write complete Unicode characters inside an already opened SQL literal.
+    /// Binding uses bounded fragments to check deadlines/signals between work
+    /// units; fragments never split a source scalar or an encoded character.
+    ///
+    /// # Errors
+    /// Returns the same precise conversion or request-buffer failure as literal.
+    pub fn literal_fragment(
+        &self,
+        text: &str,
+        output: &mut Vec<u8>,
+        no_backslash: bool,
+        limit: usize,
+    ) -> Result<(), CodecError> {
         if no_backslash {
             self.write::<2>(text, output, limit)?;
         } else {
             self.write::<1>(text, output, limit)?;
         }
-        append(output, b"'", limit)?;
         Ok(())
     }
 

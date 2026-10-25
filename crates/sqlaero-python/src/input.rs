@@ -12,6 +12,7 @@ use sqlaero_core::bind::scalar::{Clock, Date, ScalarError};
 use sqlaero_core::bind::{Context, scalar, writer};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
+use sqlaero_core::transport::deadline::IoBudget;
 
 /// Module-owned immutable type references; there is no process-global Python
 /// type pointer or per-value import, and a future interpreter can own its state.
@@ -44,6 +45,7 @@ impl ScalarTypes {
         value: &Bound<'_, PyAny>,
         output: &mut Vec<u8>,
         context: &Context,
+        budget: Option<&IoBudget>,
     ) -> PyResult<()> {
         let py = value.py();
         let limit = context.limit;
@@ -66,47 +68,58 @@ impl ScalarTypes {
                 .map_err(|e| errors::wire(py, e));
         }
         if value.is_exact_instance_of::<PyString>() {
-            let source = value.cast::<PyString>()?;
-            let text = source.to_str().map_err(|error| {
-                if error.is_instance_of::<PyUnicodeEncodeError>(py) {
-                    let native = error.value(py);
-                    let positions = native
-                        .getattr("start")
-                        .and_then(|start| start.extract::<usize>())
-                        .and_then(|start| {
-                            native
-                                .getattr("end")?
-                                .extract::<usize>()
-                                .map(|end| (start, end))
-                        });
-                    if let Ok((start, end)) = positions {
-                        return encode_error(
-                            source,
-                            context.codec.name(),
-                            start,
-                            end,
-                            "surrogates are not valid input characters",
-                        );
-                    }
-                }
-                error
-            })?;
-            return context
-                .codec
-                .literal(text, output, context.no_backslash_escapes, limit)
-                .map_err(|error| codec_error(source, text, context.codec.name(), error));
+            return text(value.cast::<PyString>()?, output, context, true, budget);
         }
         if value.is_exact_instance_of::<PyBytes>() {
-            return writer::binary(output, value.cast::<PyBytes>()?.as_bytes(), limit)
-                .map_err(|error| errors::wire(py, error));
+            let source = value.cast::<PyBytes>()?.as_bytes();
+            if source.len() <= WORK_BYTES {
+                return writer::binary(output, source, limit)
+                    .map_err(|error| errors::wire(py, error));
+            }
+            checkpoint(py, budget)?;
+            writer::binary_start(output, source.len(), limit)
+                .map_err(|error| errors::wire(py, error))?;
+            for chunk in source.chunks(WORK_BYTES) {
+                checkpoint(py, budget)?;
+                writer::binary_fragment(output, chunk, limit)
+                    .map_err(|error| errors::wire(py, error))?;
+            }
+            return writer::binary_end(output, limit).map_err(|error| errors::wire(py, error));
         }
         if value.is_exact_instance_of::<PyByteArray>() {
             let source = value.cast::<PyByteArray>()?;
-            // SAFETY: the exact bytearray stays owned under the regular GIL;
-            // this protected section neither calls Python nor releases the GIL.
-            // The caller's contract excludes concurrent external native writes.
-            let written = unsafe { writer::binary(output, source.as_bytes(), limit) };
-            return written.map_err(|error| errors::wire(py, error));
+            let length = source.len();
+            if length <= WORK_BYTES {
+                // SAFETY: the exact bytearray stays owned while attached; no
+                // Python callback or GIL release occurs during this borrow.
+                let written = unsafe { writer::binary(output, source.as_bytes(), limit) };
+                return written.map_err(|error| errors::wire(py, error));
+            }
+            checkpoint(py, budget)?;
+            writer::binary_start(output, length, limit).map_err(|error| errors::wire(py, error))?;
+            for start in (0..length).step_by(WORK_BYTES) {
+                checkpoint(py, budget)?;
+                let end = (start + WORK_BYTES).min(length);
+                // SAFETY: reacquire a checked view after each callback. This
+                // borrow ends before error construction or the next callback.
+                // Concurrent external native writes remain outside the input
+                // stability contract, just as for the short protected path.
+                let written = unsafe {
+                    source
+                        .as_bytes()
+                        .get(start..end)
+                        .map(|chunk| writer::binary_fragment(output, chunk, limit))
+                };
+                match written {
+                    Some(result) => result.map_err(|error| errors::wire(py, error))?,
+                    None => {
+                        return Err(pyo3::exceptions::PyValueError::new_err(
+                            "bytearray length changed while binding; current request was not sent",
+                        ));
+                    }
+                }
+            }
+            return writer::binary_end(output, limit).map_err(|error| errors::wire(py, error));
         }
         if value.is_exact_instance_of::<PyDateTime>() {
             let datetime = value.cast::<PyDateTime>()?;
@@ -191,6 +204,15 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
     {
         return scalar::integer(output, unsigned, limit).map_err(|e| errors::wire(py, e));
     }
+    // Exact int's public constant-time size query avoids copying a huge,
+    // already out-of-policy integer merely to discover its native bit count.
+    if value.call_method0("bit_length")?.extract::<u64>()? > scalar::MAX_INTEGER_BITS {
+        return Err(errors::client::<DataError>(
+            py,
+            ClientErrorCode::NumericRange,
+            "integer exceeds the 65-digit exact SQL range",
+        ));
+    }
     let value = value.extract::<BigInt>()?;
     scalar::large_integer(output, &value, limit).map_err(|e| scalar_error(py, e))
 }
@@ -264,4 +286,100 @@ fn codec_error(
             error.to_string(),
         ),
     }
+}
+
+const WORK_BYTES: usize = 256 * 1024;
+
+/// Check the original whole-operation budget and actual pending Python signal.
+pub(crate) fn check(py: Python<'_>, budget: &IoBudget) -> PyResult<()> {
+    py.check_signals()?;
+    budget.check().map_err(|error| {
+        errors::client::<errors::OperationalTimeoutError>(
+            py,
+            ClientErrorCode::OperationDeadline,
+            error.to_string(),
+        )
+    })
+}
+fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
+    match budget {
+        Some(budget) => check(py, budget),
+        None => py.check_signals(),
+    }
+}
+
+/// The same strict text conversion serves SQL source and quoted value content.
+/// Only the boundary performs signal checks; the codec never calls Python.
+pub(crate) fn text(
+    source: &Bound<'_, PyString>,
+    output: &mut Vec<u8>,
+    context: &Context,
+    quoted: bool,
+    budget: Option<&IoBudget>,
+) -> PyResult<()> {
+    let py = source.py();
+    let text = source.to_str().map_err(|error| {
+        if error.is_instance_of::<PyUnicodeEncodeError>(py) {
+            let native = error.value(py);
+            let positions = native
+                .getattr("start")
+                .and_then(|start| start.extract::<usize>())
+                .and_then(|start| {
+                    native
+                        .getattr("end")?
+                        .extract::<usize>()
+                        .map(|end| (start, end))
+                });
+            if let Ok((start, end)) = positions {
+                return encode_error(
+                    source,
+                    context.codec.name(),
+                    start,
+                    end,
+                    "surrogates are not valid input characters",
+                );
+            }
+        }
+        error
+    })?;
+    if quoted {
+        writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))?;
+    }
+    let mut start = 0;
+    while start < text.len() {
+        if text.len() > WORK_BYTES {
+            checkpoint(py, budget)?;
+        }
+        let mut end = (start + WORK_BYTES).min(text.len());
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        let result = if quoted {
+            context.codec.literal_fragment(
+                &text[start..end],
+                output,
+                context.no_backslash_escapes,
+                context.limit,
+            )
+        } else {
+            context
+                .codec
+                .encode(&text[start..end], output, context.limit)
+        };
+        result.map_err(|error| {
+            let error = match error {
+                CodecError::Encode { offset, point } => CodecError::Encode {
+                    offset: start + offset,
+                    point,
+                },
+                error => error,
+            };
+            codec_error(source, text, context.codec.name(), error)
+        })?;
+        start = end;
+    }
+    if quoted {
+        writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))?;
+    }
+    Ok(())
 }

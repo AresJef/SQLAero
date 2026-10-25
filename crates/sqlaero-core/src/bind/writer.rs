@@ -19,8 +19,17 @@ pub fn append(output: &mut Vec<u8>, bytes: &[u8], limit: usize) -> Result<(), Wi
 /// # Errors
 /// Returns a size/overflow or reservation failure before modifying the buffer.
 pub fn binary(output: &mut Vec<u8>, value: &[u8], limit: usize) -> Result<(), WireError> {
-    let length = value
-        .len()
+    binary_start(output, value.len(), limit)?;
+    binary_fragment(output, value, limit)?;
+    binary_end(output, limit)
+}
+
+/// Reserve and begin one exact-width binary literal before incremental writes.
+///
+/// # Errors
+/// Returns size/overflow or allocation failure before modifying the buffer.
+pub fn binary_start(output: &mut Vec<u8>, length: usize, limit: usize) -> Result<(), WireError> {
+    let length = length
         .checked_mul(2)
         .and_then(|length| length.checked_add(19))
         .ok_or(WireError::Limit {
@@ -29,13 +38,33 @@ pub fn binary(output: &mut Vec<u8>, value: &[u8], limit: usize) -> Result<(), Wi
         })?;
     reserve(output, length, limit)?;
     output.extend_from_slice(b"CAST(X'");
+    Ok(())
+}
+
+/// Append one protected byte fragment to an already started binary literal.
+///
+/// # Errors
+/// Returns an actual request-bound or allocation failure.
+pub fn binary_fragment(output: &mut Vec<u8>, value: &[u8], limit: usize) -> Result<(), WireError> {
+    let length = value.len().checked_mul(2).ok_or(WireError::Limit {
+        required: usize::MAX,
+        limit,
+    })?;
+    reserve(output, length, limit)?;
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     for byte in value {
         output.push(HEX[usize::from(byte >> 4)]);
         output.push(HEX[usize::from(byte & 15)]);
     }
-    output.extend_from_slice(b"' AS BINARY)");
     Ok(())
+}
+
+/// Complete the single binary literal after all source fragments were written.
+///
+/// # Errors
+/// Returns an actual request-bound or allocation failure.
+pub fn binary_end(output: &mut Vec<u8>, limit: usize) -> Result<(), WireError> {
+    append(output, b"' AS BINARY)", limit)
 }
 
 pub(crate) fn reserve(output: &mut Vec<u8>, length: usize, limit: usize) -> Result<(), WireError> {

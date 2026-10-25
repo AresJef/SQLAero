@@ -570,14 +570,9 @@ fn all_client_charsets_quote_complete_values_in_both_real_sql_modes() {
     use sqlaero_core::session::initialize::{Initialize, Options};
     use sqlaero_core::session::query::Query;
     let root = root();
-    let names = [
-        "utf8mb4", "ascii", "binary", "armscii8", "cp1250", "cp1251", "cp1256", "cp1257", "cp850",
-        "cp852", "cp866", "dec8", "geostd8", "greek", "hebrew", "hp8", "keybcs2", "koi8r", "koi8u",
-        "latin1", "latin2", "latin5", "latin7", "macce", "macroman", "swe7", "tis620", "big5",
-        "cp932", "eucjpms", "euckr", "gb18030", "gb2312", "gbk", "sjis", "ujis",
-    ];
+
     for label in ["84", "97"] {
-        for name in names {
+        for name in CLIENT_CHARSETS {
             for no_backslash in [false, true] {
                 let encoding = charset::resolve(Some(name), None).unwrap();
                 let codec = Codec::new(encoding.charset);
@@ -688,3 +683,230 @@ fn all_client_charsets_quote_complete_values_in_both_real_sql_modes() {
         println!("MySQL {label}: all 36 client charsets, two SQL modes and binary CAST passed");
     }
 }
+
+#[test]
+#[ignore = "requires both isolated MySQL servers; run this binary with one test thread"]
+fn native_template_and_value_writers_keep_sql_data_separate_on_the_server() {
+    use sqlaero_core::{
+        bind::{scalar, template::Template},
+        charset::{self, codec::Codec},
+        result::text::Response,
+        session::{
+            initialize::{Initialize, Options},
+            query::Query,
+        },
+    };
+    let root = root();
+    for label in ["84", "97"] {
+        for name in ["utf8mb4", "sjis", "gbk", "swe7"] {
+            for no_backslash in [false, true] {
+                let encoding = charset::resolve(Some(name), None).unwrap();
+                let codec = Codec::new(encoding.charset);
+                let mut job = Initialize::new(
+                    Establish::new(configuration(&root, label, true, None, "localhost")).unwrap(),
+                    Options {
+                        encoding,
+                        autocommit: true,
+                        sql_mode: Some(
+                            if no_backslash {
+                                "NO_BACKSLASH_ESCAPES"
+                            } else {
+                                ""
+                            }
+                            .to_owned(),
+                        ),
+                        server_timeouts: [None, None, None, None],
+                        result_memory_limit: 1024 * 1024,
+                    },
+                );
+                let mut ready = loop {
+                    if let Step::Ready(ready) = job.advance().unwrap() {
+                        break ready;
+                    }
+                };
+                let source = "SELECT %s,'%s',10 %% %s";
+                let mut encoded = Vec::new();
+                codec.encode(source, &mut encoded, 1024).unwrap();
+                let template = Template::compile(encoded, codec, no_backslash, false).unwrap();
+                assert_eq!(template.slots(), 2);
+                let data = match name {
+                    "sjis" => "ソ' OR 1=1 -- %s",
+                    "swe7" => "Ö' OR 1=1 -- %s",
+                    _ => "' OR 1=1 -- %s\\",
+                };
+                let mut request = vec![3];
+                let mut position = 0;
+                assert!(
+                    template
+                        .append_until_slot(&mut position, &mut request, 1024)
+                        .unwrap()
+                        .is_some()
+                );
+                codec
+                    .literal(data, &mut request, no_backslash, 1024)
+                    .unwrap();
+                assert!(
+                    template
+                        .append_until_slot(&mut position, &mut request, 1024)
+                        .unwrap()
+                        .is_some()
+                );
+                scalar::integer(&mut request, 3u8, 1024).unwrap();
+                assert!(
+                    template
+                        .append_until_slot(&mut position, &mut request, 1024)
+                        .unwrap()
+                        .is_none()
+                );
+                let connection = &mut ready.transport;
+                let mut query = Query::new(
+                    request,
+                    connection.capabilities,
+                    connection.max_send,
+                    connection.max_receive,
+                    1024 * 1024,
+                )
+                .unwrap();
+                let response = loop {
+                    if let Step::Ready(response) = query
+                        .advance(&mut connection.channel, &mut connection.budget)
+                        .unwrap()
+                    {
+                        break response;
+                    }
+                };
+                let Response::Rows(rows) = response else {
+                    panic!("expected rows")
+                };
+                let row = rows.row(0).unwrap();
+                assert_eq!(
+                    codec
+                        .decode(row[0].get(&rows.bytes).unwrap().unwrap())
+                        .unwrap(),
+                    data
+                );
+                assert_eq!(row[1].get(&rows.bytes).unwrap(), Some(b"%s".as_slice()));
+                assert_eq!(row[2].get(&rows.bytes).unwrap(), Some(b"1".as_slice()));
+            }
+        }
+        println!(
+            "MySQL {label}: protected positions, modulo percent and injection-shaped values remained data"
+        );
+    }
+}
+
+#[test]
+#[ignore = "requires both isolated MySQL servers; run this binary with one test thread"]
+fn dash_comment_space_classification_matches_mysql_for_supported_encodings() {
+    use sqlaero_core::{
+        charset::{self, codec::Codec},
+        result::text::{Response, ResultError},
+        session::query::{Query, QueryError},
+        transport::deadline::{IoBudget, TimeoutKind},
+    };
+    let root = root();
+    let mut mismatches = Vec::new();
+    let mut all = Vec::new();
+    let evidence =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../evidence/rust-sync-kernel/charset");
+    std::fs::create_dir_all(&evidence).unwrap();
+    for label in ["84", "97"] {
+        let mut connection =
+            establish(configuration(&root, label, true, None, "localhost")).unwrap();
+        let mut observations = String::new();
+        for name in CLIENT_CHARSETS {
+            query(&mut connection, &format!("SET NAMES {name}")).unwrap();
+            let codec = Codec::new(charset::resolve(Some(name), None).unwrap().charset);
+            for byte in 0u8..=255 {
+                // LF and CR line behavior is checked separately from the byte class:
+                // LF terminates the comment immediately; CR does not.
+                if matches!(byte, b'\n' | b'\r') {
+                    continue;
+                }
+                let mut request = b"\x03SELECT 7--".to_vec();
+                request.push(byte);
+                request.extend_from_slice(b" %s");
+                let mut job = Query::new(
+                    request,
+                    connection.capabilities,
+                    connection.max_send,
+                    connection.max_receive,
+                    1024 * 1024,
+                )
+                .unwrap();
+                let mut budget = IoBudget::new(
+                    TimeoutKind::Operation,
+                    Some(Duration::from_secs(2)),
+                    None,
+                    None,
+                );
+                let response = loop {
+                    match job.advance(&mut connection.channel, &mut budget) {
+                        Ok(Step::Ready(value)) => break Ok(value),
+                        Ok(_) => (),
+                        Err(error) => break Err(error),
+                    }
+                };
+                let comment = match response {
+                    Ok(Response::Rows(rows)) => {
+                        assert_eq!(
+                            rows.row(0).unwrap()[0].get(&rows.bytes).unwrap(),
+                            Some(b"7".as_slice())
+                        );
+                        true
+                    }
+                    Err(QueryError::Result(ResultError::Server(_))) => false,
+                    _ => panic!("unexpected comment-classification response"),
+                };
+                observations.push_str(&format!("{name}\t{byte:02X}\t{}\n", u8::from(comment)));
+                if codec.comment_space(byte) != comment {
+                    mismatches.push(format!("{label}/{name}/0x{byte:02X}"));
+                }
+            }
+        }
+        std::fs::write(
+            evidence.join(format!("lexer-space-mysql{label}.tsv")),
+            &observations,
+        )
+        .unwrap();
+        for ending in ['\n', '\r'] {
+            let sql = format!("SELECT 7--{ending}%s");
+            let active = match query(&mut connection, &sql) {
+                Ok(Response::Rows(_)) => 0,
+                Err(QueryError::Result(ResultError::Server(_))) => 1,
+                _ => panic!("unexpected line-ending response"),
+            };
+            let codec = Codec::new(charset::resolve(Some("ujis"), None).unwrap().charset);
+            let template = sqlaero_core::bind::template::Template::compile(
+                sql.into_bytes(),
+                codec,
+                false,
+                false,
+            )
+            .unwrap();
+            assert_eq!(
+                template.slots(),
+                active,
+                "MySQL {label} line ending U+{:04X}",
+                u32::from(ending)
+            );
+        }
+        all.push(observations);
+    }
+    assert_eq!(
+        all[0], all[1],
+        "server byte classes must agree before generating static masks"
+    );
+    assert!(
+        mismatches.is_empty(),
+        "comment byte-class differences: {}",
+        mismatches.join(", ")
+    );
+}
+
+const CLIENT_CHARSETS: [&str; 36] = [
+    "utf8mb4", "ascii", "binary", "armscii8", "cp1250", "cp1251", "cp1256", "cp1257", "cp850",
+    "cp852", "cp866", "dec8", "geostd8", "greek", "hebrew", "hp8", "keybcs2", "koi8r", "koi8u",
+    "latin1", "latin2", "latin5", "latin7", "macce", "macroman", "swe7", "tis620", "big5", "cp932",
+    "eucjpms", "euckr", "gb18030", "gb2312", "gbk", "sjis", "ujis",
+];

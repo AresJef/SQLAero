@@ -50,3 +50,9 @@ def _encode_scalar(data: object, *, utc_confirmed: bool = True,
 def _decode_text(data: bytes, *, charset: str = "utf8mb4") -> str:
     """Exercise the native strict byte-to-Unicode conversion route."""
     ...
+def _bind_sql(sql: str, args: object, *, many: bool = False,
+              itemize: bool = True, charset: str | None = None,
+              no_backslash: bool = False, ansi_quotes: bool = False,
+              timeout_ns: int | None = None, limit: int = 67108864) -> list[bytes]:
+    """Return actual COM_QUERY payloads from the incremental native binder."""
+    ...

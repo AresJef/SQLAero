@@ -2,6 +2,7 @@
 
 mod catalog;
 pub mod codec;
+mod lexer_space;
 pub mod multibyte;
 mod multibyte_delta;
 mod single_byte;

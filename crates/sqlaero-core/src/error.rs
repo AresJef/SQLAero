@@ -15,4 +15,12 @@ pub enum ClientErrorCode {
     Protocol = 65_539,
     /// NotSupportedError: a known charset cannot be used by this operation.
     UnsupportedCharset = 65_540,
+    /// ProgrammingError: an unsupported active SQL template directive.
+    TemplateBinding = 65_541,
+    /// ProgrammingError: current adapter width differs from SQL positions.
+    ParameterCount = 65_542,
+    /// DataError: a true container cycle or excessive active nesting depth.
+    ContainerNesting = 65_543,
+    /// OperationalTimeoutError: the original whole-operation deadline expired.
+    OperationDeadline = 65_544,
 }

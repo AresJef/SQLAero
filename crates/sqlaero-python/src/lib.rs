@@ -1,5 +1,6 @@
 //! Python input and output boundary for SQLAero's native MySQL core.
 
+mod binding;
 mod errors;
 mod input;
 mod json;
@@ -46,7 +47,7 @@ fn _encode_scalar<'py>(
         utc_confirmed,
         limit,
     };
-    types.write(data, &mut request, &context)?;
+    types.write(data, &mut request, &context, None)?;
     Ok(PyBytes::new(module.py(), &request))
 }
 
@@ -87,6 +88,79 @@ fn _decode_text<'py>(data: &Bound<'py, PyBytes>, charset: &str) -> PyResult<Boun
     }
 }
 
+/// Return actual native COM_QUERY requests from the incremental binder.
+/// Production executes one prepared request before asking for the next row;
+/// this private correctness probe only materializes the final request bytes.
+#[pyfunction]
+#[pyo3(pass_module, signature = (sql, args, *, many=false, itemize=true, charset=None, no_backslash=false, ansi_quotes=false, timeout_ns=None, limit=67108864))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private probe mirrors the separately specified binding controls"
+)]
+fn _bind_sql<'py>(
+    module: &Bound<'py, PyModule>,
+    sql: &Bound<'py, PyString>,
+    args: &Bound<'py, PyAny>,
+    many: bool,
+    itemize: bool,
+    charset: Option<&str>,
+    no_backslash: bool,
+    ansi_quotes: bool,
+    timeout_ns: Option<u64>,
+    limit: usize,
+) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+    use sqlaero_core::{
+        bind::{Context, template::Compiler},
+        charset::{codec::Codec, resolve},
+        transport::deadline::{IoBudget, TimeoutKind},
+    };
+    let py = module.py();
+    let budget = IoBudget::new(
+        TimeoutKind::Operation,
+        timeout_ns.map(std::time::Duration::from_nanos),
+        None,
+        None,
+    );
+    input::check(py, &budget)?;
+    let owner = module.getattr("_scalar_types")?;
+    let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
+    let context = Context {
+        codec: Codec::new(
+            resolve(charset, None)
+                .map_err(|error| PyValueError::new_err(error.to_string()))?
+                .charset,
+        ),
+        no_backslash_escapes: no_backslash,
+        utc_confirmed: true,
+        limit,
+    };
+    let mut encoded = Vec::new();
+    // SQL source is not a sent request yet: the final binder applies its
+    // complete byte bound after placeholder replacement, not to this template.
+    let source_context = Context {
+        limit: usize::MAX,
+        ..context
+    };
+    input::text(sql, &mut encoded, &source_context, false, Some(&budget))?;
+    let mut compiler = Compiler::new(encoded, context.codec, no_backslash, ansi_quotes);
+    let template = loop {
+        let step = py
+            .detach(|| compiler.advance())
+            .map_err(|error| binding::template_error(py, error))?;
+        input::check(py, &budget)?;
+        if let Some(template) = step {
+            break template;
+        }
+    };
+    let mut rows = binding::Rows::new(args, many, itemize);
+    let output = pyo3::types::PyList::empty(py);
+    while let Some(row) = rows.next()? {
+        let request = row.bind(&template, &types, &context, &budget)?;
+        output.append(PyBytes::new(py, &request))?;
+    }
+    Ok(output)
+}
+
 #[pymodule]
 fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     errors::register(module)?;
@@ -98,5 +172,6 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(_decode_json, module)?)?;
     module.add_function(wrap_pyfunction!(_encode_scalar, module)?)?;
     module.add_function(wrap_pyfunction!(_decode_text, module)?)?;
+    module.add_function(wrap_pyfunction!(_bind_sql, module)?)?;
     Ok(())
 }

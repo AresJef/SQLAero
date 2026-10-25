@@ -120,3 +120,16 @@ servers, and the core's charset_delta example compares those observations with
 the fixed encoding_rs public API. Generated Rust data ships with the product;
 normal build/import/conversion never starts MySQL or runs a generator. No
 server source, private encoding_rs table or Python runtime codec is embedded.
+
+## Native SQL lexical byte classes
+
+SQL dash comments use the server charset's byte classification, not Python
+Unicode whitespace. Native protocol observations cover 9,144 non-LF/CR byte
+positions per supported server line; all 36 families agree between versions.
+NUL is not an accepted starter, DEL differs in several legacy families, and
+additional high-byte classes are factual static masks. LF and CR both admit
+the comment, but only LF ends it; isolated CR remains inside the comment.
+These facts are compiled by the same data extractor (--lexer) into a small
+static bitmap used only while scanning --. No per-value check or server
+round-trip is added. Evidence and both pre-fix failures remain in the binding
+startup logs and charset/lexer-space-mysql*.tsv observations.
