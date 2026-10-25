@@ -407,6 +407,32 @@ fn pooled_results_release_rows_without_invalidating_metadata_and_discard_bounded
 
 #[test]
 #[ignore = "requires both isolated MySQL servers; run this binary with one test thread"]
+fn json_results_expose_actual_metadata_and_transmitted_encoding() {
+    use sqlaero_core::result::text::Response;
+    let root = root();
+    for label in ["84", "97"] {
+        let mut connection =
+            establish(configuration(&root, label, true, None, "localhost")).unwrap();
+        for charset in ["utf8mb4", "latin1", "cp1251", "gb18030"] {
+            query(&mut connection, &format!("SET NAMES {charset}")).unwrap();
+            let Response::Rows(rows) = query(
+                &mut connection,
+                "SELECT JSON_OBJECT('x',CONVERT(X'C3A9D0AFE4B8AD' USING utf8mb4)) AS payload",
+            )
+            .unwrap() else {
+                panic!("expected JSON rows")
+            };
+            let data = rows.row(0).unwrap()[0].get(&rows.bytes).unwrap().unwrap();
+            println!(
+                "{label} charset={charset} type={} collation={} data={data:?}",
+                rows.columns[0].type_code, rows.columns[0].collation_id
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore = "requires both isolated MySQL servers; run this binary with one test thread"]
 fn native_queries_keep_empty_null_unicode_large_rows_and_recover_after_server_err() {
     use sqlaero_core::result::text::{Response, ResultError};
     use sqlaero_core::session::query::QueryError;

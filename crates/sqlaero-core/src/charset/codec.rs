@@ -213,46 +213,77 @@ impl Codec {
         }
         let mut output = String::new();
         output.try_reserve(bytes.len()).map_err(WireError::from)?;
-        if let CodecRoute::Multibyte(kind) = self.charset.route {
-            let mut start = 0;
-            while start < bytes.len() {
-                let width = multibyte::width(kind, &bytes[start..]);
-                let end = start.saturating_add(width).min(bytes.len());
-                if end - start != width {
-                    return Err(CodecError::Decode { start, end });
-                }
-                let point = multibyte::decode(kind, &bytes[start..end])
-                    .ok_or(CodecError::Decode { start, end })?;
-                output
-                    .try_reserve(point.len_utf8())
-                    .map_err(WireError::from)?;
-                output.push(point);
-                start = end;
-            }
-            return Ok(Cow::Owned(output));
-        }
-        for (start, byte) in bytes.iter().copied().enumerate() {
-            let point = match self.charset.route {
-                CodecRoute::Ascii if byte < 128 => Some(char::from(byte)),
-                CodecRoute::Binary => Some(char::from(byte)),
-                CodecRoute::SingleByte(index) => {
-                    char::from_u32(single_byte::DECODE[usize::from(index)][usize::from(byte)])
-                }
-                CodecRoute::Multibyte(_) | CodecRoute::Unavailable => {
-                    return Err(CodecError::Unavailable);
-                }
-                _ => None,
-            }
-            .ok_or(CodecError::Decode {
-                start,
-                end: start + 1,
-            })?;
+        let mut start = 0;
+        while start < bytes.len() {
+            let (point, end) = self.decode_point(bytes, start)?;
             output
                 .try_reserve(point.len_utf8())
                 .map_err(WireError::from)?;
             output.push(point);
+            start = end;
         }
         Ok(Cow::Owned(output))
+    }
+
+    /// Decode exactly one native character without constructing a String.
+    /// Output materialization reuses the same verified MySQL mappings while
+    /// charging only the actual bounded transcoding buffer it needs.
+    ///
+    /// # Errors
+    /// Returns the first invalid interval in the original byte slice.
+    pub fn decode_point(&self, bytes: &[u8], start: usize) -> Result<(char, usize), CodecError> {
+        let byte = *bytes
+            .get(start)
+            .ok_or(CodecError::Decode { start, end: start })?;
+        if let CodecRoute::Multibyte(kind) = self.charset.route {
+            let width = multibyte::width(kind, &bytes[start..]);
+            let end = start.saturating_add(width).min(bytes.len());
+            if end - start != width {
+                return Err(CodecError::Decode { start, end });
+            }
+            let point = multibyte::decode(kind, &bytes[start..end])
+                .ok_or(CodecError::Decode { start, end })?;
+            return Ok((point, end));
+        }
+        if let CodecRoute::Utf8 = self.charset.route {
+            let width = if byte < 128 {
+                1
+            } else {
+                byte.leading_ones() as usize
+            };
+            if !(1..=4).contains(&width) {
+                return Err(CodecError::Decode {
+                    start,
+                    end: start + 1,
+                });
+            }
+            let end = start.saturating_add(width).min(bytes.len());
+            let point = std::str::from_utf8(&bytes[start..end])
+                .map_err(|error| CodecError::Decode {
+                    start,
+                    end: start + error.error_len().unwrap_or(end - start),
+                })?
+                .chars()
+                .next()
+                .ok_or(CodecError::Decode { start, end })?;
+            return Ok((point, end));
+        }
+        let point = match self.charset.route {
+            CodecRoute::Ascii if byte < 128 => Some(char::from(byte)),
+            CodecRoute::Binary => Some(char::from(byte)),
+            CodecRoute::SingleByte(index) => {
+                char::from_u32(single_byte::DECODE[usize::from(index)][usize::from(byte)])
+            }
+            CodecRoute::Unavailable => {
+                return Err(CodecError::Unavailable);
+            }
+            _ => None,
+        }
+        .ok_or(CodecError::Decode {
+            start,
+            end: start + 1,
+        })?;
+        Ok((point, start + 1))
     }
 }
 

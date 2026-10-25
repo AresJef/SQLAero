@@ -3,3 +3,5 @@
 pub mod auth;
 pub mod framing;
 pub mod packets;
+/// Shared protocol capability type; this is not a public raw client_flags input.
+pub use mysql_common::constants::CapabilityFlags;

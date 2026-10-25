@@ -173,21 +173,17 @@ pub struct Clock {
 
 const DAY_MICROS: i128 = 86_400_000_000;
 
+pub(crate) fn month_days(year: i32, month: u8) -> u8 {
+    match month {
+        4 | 6 | 9 | 11 => 30,
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        _ => 31,
+    }
+}
+
 impl Date {
     fn shift_one(&mut self, forward: bool) {
-        let month_days = |year: i32, month: u8| -> u8 {
-            match month {
-                4 | 6 | 9 | 11 => 30,
-                2 => {
-                    if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) {
-                        29
-                    } else {
-                        28
-                    }
-                }
-                _ => 31,
-            }
-        };
         if forward {
             if self.day < month_days(self.year, self.month) {
                 self.day += 1;

@@ -23,6 +23,9 @@ pub(crate) struct ScalarTypes {
 }
 
 impl ScalarTypes {
+    pub(crate) fn decimal_type<'py>(&self, py: Python<'py>) -> &Bound<'py, PyType> {
+        self.decimal.bind(py)
+    }
     pub(crate) fn new(py: Python<'_>) -> PyResult<Self> {
         Ok(Self {
             decimal: py

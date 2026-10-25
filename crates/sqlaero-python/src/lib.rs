@@ -4,6 +4,8 @@ mod binding;
 mod errors;
 mod input;
 mod json;
+mod output;
+mod reader;
 
 use pyo3::exceptions::{PyUnicodeDecodeError, PyValueError};
 use pyo3::prelude::*;
@@ -202,6 +204,124 @@ fn _bind_sql<'py>(
     Ok(output)
 }
 
+/// Exercise the production output action chosen from actual column metadata.
+/// SQL NULL remains None; this private probe is not a public row API.
+#[pyfunction]
+#[pyo3(pass_module, signature = (type_code, data, *, collation_id=255, flags=0, length=0, decode_json=false, decode_set=false, decode_bit=false, use_decimal=true, use_timedelta=true, decode_text_strict=true, decode_date_strict=true))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private probe mirrors explicit output metadata and the seven frozen policies"
+)]
+fn _decode_field<'py>(
+    module: &Bound<'py, PyModule>,
+    type_code: u8,
+    data: Option<&Bound<'py, PyBytes>>,
+    collation_id: u16,
+    flags: u16,
+    length: u32,
+    decode_json: bool,
+    decode_set: bool,
+    decode_bit: bool,
+    use_decimal: bool,
+    use_timedelta: bool,
+    decode_text_strict: bool,
+    decode_date_strict: bool,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = module.py();
+    let Some(data) = data else {
+        return Ok(py.None().into_bound(py));
+    };
+    let owner = module.getattr("_scalar_types")?;
+    let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
+    let options = sqlaero_core::result::decode::Options {
+        decode_json,
+        decode_set,
+        decode_bit,
+        use_decimal,
+        use_timedelta,
+        decode_text_strict,
+        decode_date_strict,
+    };
+    let plan = sqlaero_core::result::decode::Plan::new(
+        type_code,
+        flags,
+        collation_id,
+        length,
+        options,
+        sqlaero_core::charset::output::OutputCodec::for_collation(255),
+    );
+    output::field(py, data.as_bytes(), plan, &types, None)
+}
+
+/// Exercise the production buffered Reader using complete real-format packets.
+/// It does not open a network connection or expose a second public Cursor API.
+#[pyfunction]
+#[pyo3(pass_module, signature = (packets, *, name_collation_id=255, decode_json=false, decode_set=false, decode_bit=false, use_decimal=true, use_timedelta=true, decode_text_strict=true, decode_date_strict=true))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private packet fixture supplies the exact execute-time output policy"
+)]
+fn _rows_from_packets(
+    module: &Bound<'_, PyModule>,
+    packets: &Bound<'_, pyo3::types::PyList>,
+    name_collation_id: u16,
+    decode_json: bool,
+    decode_set: bool,
+    decode_bit: bool,
+    use_decimal: bool,
+    use_timedelta: bool,
+    decode_text_strict: bool,
+    decode_date_strict: bool,
+) -> PyResult<reader::Reader> {
+    use sqlaero_core::{
+        protocol::CapabilityFlags,
+        result::text::{Receiver, Response},
+    };
+    let py = module.py();
+    let capabilities = CapabilityFlags::CLIENT_PROTOCOL_41 | CapabilityFlags::CLIENT_DEPRECATE_EOF;
+    let mut collector = Receiver::isolated(capabilities, 256 * 1024 * 1024)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let mut complete = None;
+    for index in 0..packets.len() {
+        if complete.is_some() {
+            return Err(PyValueError::new_err(
+                "packet fixture contains a second response",
+            ));
+        }
+        let packet = packets.get_item(index)?.cast_into::<PyBytes>()?;
+        complete = collector
+            .push(packet.as_bytes())
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        py.check_signals()?;
+    }
+    let response =
+        complete.ok_or_else(|| PyValueError::new_err("packet fixture has no complete response"))?;
+    let types = module
+        .getattr("_scalar_types")?
+        .cast_into::<input::ScalarTypes>()?
+        .unbind();
+    let result = reader::Reader::empty(types);
+    let options = sqlaero_core::result::decode::Options {
+        decode_json,
+        decode_set,
+        decode_bit,
+        use_decimal,
+        use_timedelta,
+        decode_text_strict,
+        decode_date_strict,
+    };
+    match response {
+        Response::Rows(rows) => result.install(
+            py,
+            rows,
+            options,
+            sqlaero_core::charset::output::OutputCodec::for_collation(name_collation_id),
+        )?,
+        _ => result.clear_result(py)?,
+    }
+    Ok(result)
+}
+
 #[pymodule]
 fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     errors::register(module)?;
@@ -214,5 +334,8 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(_encode_scalar, module)?)?;
     module.add_function(wrap_pyfunction!(_decode_text, module)?)?;
     module.add_function(wrap_pyfunction!(_bind_sql, module)?)?;
+    module.add_function(wrap_pyfunction!(_decode_field, module)?)?;
+    module.add_class::<reader::Reader>()?;
+    module.add_function(wrap_pyfunction!(_rows_from_packets, module)?)?;
     Ok(())
 }

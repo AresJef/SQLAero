@@ -5,6 +5,7 @@ pub mod codec;
 mod lexer_space;
 pub mod multibyte;
 mod multibyte_delta;
+pub mod output;
 mod single_byte;
 
 /// MySQL-specific multibyte families. Similar Web encodings are not aliases;

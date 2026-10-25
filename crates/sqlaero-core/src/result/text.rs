@@ -115,6 +115,11 @@ pub struct Columns {
     _owner: Reservation,
 }
 impl Columns {
+    /// Keep necessary lazy native metadata work under its original quota.
+    #[must_use]
+    pub fn scope(&self) -> &Arc<Scope> {
+        self._owner.scope()
+    }
     /// Borrow one protocol label without allocating or decoding Python text.
     #[must_use]
     pub fn label(&self, index: usize, label: Label) -> Option<&[u8]> {
@@ -188,6 +193,12 @@ pub struct Buffered {
     _owner: Reservation,
 }
 impl Buffered {
+    /// Share only the allocation scope while preparing this result's native
+    /// output strategies. It does not expose or lock the connection transport.
+    #[must_use]
+    pub fn scope(&self) -> &Arc<Scope> {
+        self._owner.scope()
+    }
     /// Release fully consumed row allocations at their natural owner boundary.
     /// Call only after the binding has atomically committed its final fetch;
     /// metadata, total count, confirmation and delivered Python values remain.

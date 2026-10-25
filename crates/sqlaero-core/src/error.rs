@@ -23,4 +23,10 @@ pub enum ClientErrorCode {
     ContainerNesting = 65_543,
     /// OperationalTimeoutError: the original whole-operation deadline expired.
     OperationDeadline = 65_544,
+    /// DataError: a supported result field contains invalid or unrepresentable data.
+    DecodeContent = 65_545,
+    /// InterfaceBusyError: another operation owns this connection or Cursor.
+    InterfaceBusy = 65_546,
+    /// InternalError: a real native ownership/state invariant failed.
+    InternalState = 65_547,
 }
