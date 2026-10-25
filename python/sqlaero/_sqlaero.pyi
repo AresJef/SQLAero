@@ -43,6 +43,10 @@ def _decode_json(data: bytes) -> Any:
     """Decode one complete JSON value with strict native numeric checks."""
     ...
 def _encode_scalar(data: object, *, utc_confirmed: bool = True,
-                   limit: int = 67108864) -> bytes:
+                   limit: int = 67108864, charset: str | None = None,
+                   no_backslash: bool = False) -> bytes:
     """Exercise the real native scalar reader and SQL writer."""
+    ...
+def _decode_text(data: bytes, *, charset: str = "utf8mb4") -> str:
+    """Exercise the native strict byte-to-Unicode conversion route."""
     ...

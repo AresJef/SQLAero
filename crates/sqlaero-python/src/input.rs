@@ -2,14 +2,15 @@
 
 use crate::errors::{self, DataError, InterfaceError};
 use num_bigint::BigInt;
-use pyo3::exceptions::PyTypeError;
+use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
 use pyo3::types::{
-    PyBool, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyFloat, PyInt, PyTime,
-    PyTimeAccess, PyTuple, PyType, PyTzInfoAccess,
+    PyBool, PyByteArray, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess,
+    PyFloat, PyInt, PyString, PyTime, PyTimeAccess, PyTuple, PyType, PyTzInfoAccess,
 };
 use sqlaero_core::bind::scalar::{Clock, Date, ScalarError};
-use sqlaero_core::bind::{scalar, writer};
+use sqlaero_core::bind::{Context, scalar, writer};
+use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
 
 /// Module-owned immutable type references; there is no process-global Python
@@ -42,10 +43,10 @@ impl ScalarTypes {
         &self,
         value: &Bound<'_, PyAny>,
         output: &mut Vec<u8>,
-        utc_confirmed: bool,
-        limit: usize,
+        context: &Context,
     ) -> PyResult<()> {
         let py = value.py();
+        let limit = context.limit;
         if value.is_none() {
             return writer::append(output, b"NULL", limit).map_err(|e| errors::wire(py, e));
         }
@@ -63,6 +64,49 @@ impl ScalarTypes {
         if value.is_exact_instance_of::<PyFloat>() {
             return scalar::float(output, value.extract::<f64>()?, limit)
                 .map_err(|e| errors::wire(py, e));
+        }
+        if value.is_exact_instance_of::<PyString>() {
+            let source = value.cast::<PyString>()?;
+            let text = source.to_str().map_err(|error| {
+                if error.is_instance_of::<PyUnicodeEncodeError>(py) {
+                    let native = error.value(py);
+                    let positions = native
+                        .getattr("start")
+                        .and_then(|start| start.extract::<usize>())
+                        .and_then(|start| {
+                            native
+                                .getattr("end")?
+                                .extract::<usize>()
+                                .map(|end| (start, end))
+                        });
+                    if let Ok((start, end)) = positions {
+                        return encode_error(
+                            source,
+                            context.codec.name(),
+                            start,
+                            end,
+                            "surrogates are not valid input characters",
+                        );
+                    }
+                }
+                error
+            })?;
+            return context
+                .codec
+                .literal(text, output, context.no_backslash_escapes, limit)
+                .map_err(|error| codec_error(source, text, context.codec.name(), error));
+        }
+        if value.is_exact_instance_of::<PyBytes>() {
+            return writer::binary(output, value.cast::<PyBytes>()?.as_bytes(), limit)
+                .map_err(|error| errors::wire(py, error));
+        }
+        if value.is_exact_instance_of::<PyByteArray>() {
+            let source = value.cast::<PyByteArray>()?;
+            // SAFETY: the exact bytearray stays owned under the regular GIL;
+            // this protected section neither calls Python nor releases the GIL.
+            // The caller's contract excludes concurrent external native writes.
+            let written = unsafe { writer::binary(output, source.as_bytes(), limit) };
+            return written.map_err(|error| errors::wire(py, error));
         }
         if value.is_exact_instance_of::<PyDateTime>() {
             let datetime = value.cast::<PyDateTime>()?;
@@ -83,7 +127,7 @@ impl ScalarTypes {
                 }
             };
             if let Some(offset) = offset {
-                if !utc_confirmed {
+                if !context.utc_confirmed {
                     return Err(errors::client::<InterfaceError>(
                         py,
                         ClientErrorCode::SessionState,
@@ -177,4 +221,47 @@ fn clock(value: &impl PyTimeAccess) -> Clock {
 fn delta(value: &impl PyDeltaAccess) -> i128 {
     (i128::from(value.get_days()) * 86_400 + i128::from(value.get_seconds())) * 1_000_000
         + i128::from(value.get_microseconds())
+}
+
+fn encode_error(
+    source: &Bound<'_, PyString>,
+    encoding: &str,
+    start: usize,
+    end: usize,
+    reason: &str,
+) -> PyErr {
+    match source
+        .py()
+        .get_type::<PyUnicodeEncodeError>()
+        .call1((encoding, source, start, end, reason))
+    {
+        Ok(value) => PyErr::from_value(value),
+        Err(error) => error,
+    }
+}
+fn codec_error(
+    source: &Bound<'_, PyString>,
+    text: &str,
+    encoding: &str,
+    error: CodecError,
+) -> PyErr {
+    let py = source.py();
+    match error {
+        CodecError::Encode { offset, point } => {
+            let start = text[..offset].chars().count();
+            encode_error(
+                source,
+                encoding,
+                start,
+                start + 1,
+                &format!("character U+{point:04X} is not representable in MySQL {encoding}"),
+            )
+        }
+        CodecError::Wire(error) => errors::wire(py, error),
+        error => errors::client::<errors::NotSupportedError>(
+            py,
+            ClientErrorCode::UnsupportedCharset,
+            error.to_string(),
+        ),
+    }
 }

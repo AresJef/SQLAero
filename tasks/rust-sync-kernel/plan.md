@@ -1,6 +1,6 @@
 # SQLAero Rust sync内核：72小时执行与验收计划
 
-状态：持续推进；P01及P02原生连接闭环通过，P03.1数值／时间通过，继续P03.2文本及二进制。原正式T0为2026-10-26T01:09:55+08:00，排除暂停1分56秒；动态余额见第9节，产品验收31／100分。本文是本项目唯一执行计划及推进台账。
+状态：持续推进；P01及P02原生连接闭环通过，P03.1／P03.2通过，继续P03.3位置与形状绑定。原正式T0为2026-10-26T01:09:55+08:00，排除暂停1分56秒；动态余额见第9节，产品验收36／100分。本文是本项目唯一执行计划及推进台账。
 
 ## 1. 执行依据与核心instruction
 
@@ -119,7 +119,7 @@ reader增量驱动绑定器，不向核心注入“读取下一Python行”的�
 | P02.4 TLS四模式 | 2h | P02.3 | 系统信任／显式根替换、验名／不验名／REQUIRED签名、TLS版本及客户端证书；正反证书场景与两通道适用组合 | 4 | 通过／两线真实四策略、TLS1.2／1.3、错误CA／名称及加密客户端证书；OS系统信任真实握手通过，见establish-real.log、system-trust-real.log |
 | P02.5 Ready与关闭闭环 | 2h | P02.4 | 初始化尽量合并、实际状态确认、无降级／秘密泄露；connect→SQL→close最小闭环，两服务器各运行 | 4 | 通过／两线六编码初始化实际读回；两通道查询、正常COM_QUIT及关闭后事实有效。纯Rust闭环，Python公开驱动仍待后续接入 |
 | P03.1 数值及时间reader | 2h | P02.5 | 精确标量、整数／Decimal精度、非有限NULL、负零、UTC及安全时长；共享原生writer、值／异常边界 | 5 | 通过／43项reader定向、全部Python70项／Pyright／Clippy通过；两MySQL线实际DOUBLE极值与NEWDECIMAL类别、值一致。私有请求探针使用同一reader／writer |
-| P03.2 文本与二进制 | 2h | P03.1、P01.2 | str／bytes／bytearray、融合编码／转义、二进制CAST、两SQL模式、完整编码发送路径及定位 | 5 | 未开始／— |
+| P03.2 文本与二进制 | 2h | P03.1、P01.2 | str／bytes／bytearray、融合编码／转义、二进制CAST、两SQL模式、完整编码发送路径及定位 | 5 | 通过／全部36编码×两SQL模式×两MySQL线实际通过；完整单字节及354407多字节观察／独立PSF／全Unicode核对通过，106项Python及Pyright／Clippy通过。输出宽容物化仍归P04 |
 | P03.3 形状及位置绑定 | 2h | P03.2 | list／tuple、many／itemize、循环／层数、空根集合、%s／%%、引号及注释；准确原生SQL与无注入歧义 | 4 | 未开始／— |
 | P03.4 合并及真实分块 | 2h | P03.3 | 同范围Rust扫描器／编译regex公平小测后只留胜者；批准语句合并／回退、编码后真实字节限额、完整行切分及失败前缀 | 3 | 未开始／— |
 | P04.1 原生结果 | 2h | P03.4 | 列／行范围及拥有者、buffered响应、单结果／连接聚合容量、资源释放；基本tuple fetch及多Cursor结果独立 | 5 | 未开始／— |
@@ -293,9 +293,9 @@ P01提前核PyPI项目／候选及OIDC配置，P08才发行。候选Python版本
 | 项目 | 当前值 |
 | --- | --- |
 | 正式T0／时区 | 2026-10-26T01:09:55+08:00／Asia/Shanghai |
-| 正式已用／余额 | 截至03:59:24已用2小时47分33秒／余额69小时12分27秒；之后继续计时，暂停排除01:13:21–01:15:17共1分56秒 |
-| 当前步骤／下一动作 | P03.2：沿静态路线实现实际编码／SQL模式及binary直写；先完成单字节表和UTF-8最小闭环，不开发测量框架。下一自查04:11:51（T+180） |
-| 已通过分值 | 31／100，P01／P02／P03.1通过；不是完整Python驱动或性能验收通过 |
+| 正式已用／余额 | 截至04:12:19已用3小时00分28秒／余额68小时59分32秒；之后继续计时，暂停排除01:13:21–01:15:17共1分56秒 |
+| 当前步骤／下一动作 | P03.3：原生SQL位置扫描与统一list／tuple形状；复用已测codec／reader，不创建第二类型表。下一自查04:41:51（T+210） |
+| 已通过分值 | 36／100，P01／P02／P03.1／P03.2通过；不是完整Python驱动或性能验收通过 |
 | 当前最佳／回退 | P02闭环本地c3cc2982ea8e，P03.1为当前已测切片；P01回退本地b0ac21a80，初始通路b9ca56a66／远端c6ff57e8。experimental v23及冻结reference原样保留 |
 | 运行与进程 | 两套专用mysqld已运行：8.4 PID26479、9.7 PID26486，分别使用/tmp专用目录与13384／13397回环端口；无性能worker |
 | 已批准事项 | C01／C02、A01–A08已确认；用户启动后补充“仅在本次项目推进和规定预算内，所有合理请求统一approve”。自主处理必要合理动作，既定安全／范围／精度／验收及72小时不放宽，平台实际能力另核 |
@@ -312,9 +312,10 @@ P01提前核PyPI项目／候选及OIDC配置，P08才发行。候选Python版本
 | 2026-10-26 01:40:50–02:05:14 | P01.2／P01.3收口及P02.1协议准备，重叠合并计时 | 24分24秒 | TLS实际fixture检查3项通过、JSON原生15项及异常根构造10项通过；完整锁与128第三方原始许可保存。两线41／286目录一致，所选36／177路线见charset-implementation-routes.md；双实例受控重启通过。P01本地b0ac21a80保存，未改冻结参考。P08仍预留8小时、R10小时未动用 |
 | 2026-10-26 02:05:14–02:41:16 | P02.1及P02.2–P02.4必要组件，合并计时 | 36分02秒 | P02.1通过；Mio两版本TCP／Unix和受控读超时实测通过。15项核心单测通过，认证不自动取钥且等待最终OK，TLS四模式配置及原生通道已编译；实际认证／TLS／查询整链仍待核验。T+60及T+90均按时自查汇报；下一T+120为03:11:51，P08 8小时和R10小时保持。 |
 | 2026-10-26 02:41:16–03:59:24 | P02原生连接、查询、初始化及关闭闭环，合并计时 | 1小时18分08秒 | 真实认证／四TLS策略／六编码初始化／两通道查询与关闭通过；core20单测、受控socket超时及Clippy通过。普通沙箱socket权限失败单列session-unit-sandbox.log，同用例获准权限通过。T+120于03:16:21、T+150约03:48:38才汇报，分别延后约4分30／6分47；已纠正前置推演和记录滞后，采用短实现—实测—保存循环。P08仍8小时、R10小时未动用。 |
-| 2026-10-26 03:59:24起，进行中 | P03.1参数reader与原生编码 | 未结算 | 完整单元按2小时预算，先数值／时间值与私有实际请求入口，再接形状及公开执行；不展开后续工具或无关架构。 |
+| 2026-10-26 03:59:24–04:12:19 | P03.1数值／时间reader及P03.2最小编码观察 | 12分55秒 | P03.1通过并保存7499ffd，22项核心／70项Python、类型和Clippy通过；实际两线DOUBLE极值／NEWDECIMAL值与类别一致。T+180已自查汇报；下一04:41:51。单字节事实表由两线各6144观察生成且完全一致；P03.2仍未完成，不把生成表当全部codec通过。P08 8小时／R10小时保持。 |
+| 2026-10-26 04:12:19起，进行中 | P03.2文本／二进制及实际codec | 未结算 | 复用单一静态codec与writer；先单字节全码位／UTF-8，再多字节已定路线及SQL元字符边界，预算内完成实际发送／接收验证。 |
 
-**当前恢复点：** P01／P02／P03.1通过，继续P03.2。P03.1实际证据为scalar-real.log、scalar-python-all.log、scalar-unit.log、scalar-pyright.log和scalar-clippy.log；70项Python通过。新私有_encode_scalar直接调用生产reader／writer，不构建Python SQL字符串；数值界限为真实DataError，UTC不可信为InterfaceError，均带固定客户端code。完整异常家族原生继承已接入，错误目录与ErrorInfo仍待P05；未将其当完整错误验收。规格1天1秒示例原25小时的算术笔误已原位改为24小时，规则未变。当前纯Rust连接实现位于core的protocol／transport／session，实际初始化与关闭证据分别为startup/initialize-real.log和session-real.log；认证、TLS正反及原生查询证据为establish-real.log、query-real.log和system-trust-real.log。20项核心单测及受控本地socket超时通过；普通沙箱权限失败另存，未伪装产品错误或删除失败。全部声明密钥格式实测见key-formats-real.log。Python公开Connection／Cursor尚未实现，原生结果实际容量／聚合配额、全部codec与完整异常诊断仍按P03–P05完成。JSON私有入口当前ValueError，P04／P05接入DataError。两套专用数据库在/private/tmp/sqlaero-mysql-501，秘密仅私有目录；不重复P01环境与有效实测。继续source .runtime/env.sh后使用独立target／venv，不改冻结参考；PyPI已登录，release.yml／pypi发布者和无额外人工环境门禁已核实。
+**当前恢复点：** P01／P02／P03.1／P03.2通过，继续P03.3。36编码真实SQL与独立矩阵已通过；严格codec与reader为当前已测切片，source/证据身份见startup/text-contracts.json。单字节中无警告的替换槽仍拒绝；binary按字节语义测试，最初错误UTF8假设的测试失败保存在codec-real-binary-assumption.log。多字节数据为固定组件的必要事实差异；生成器只用于维护，不进入运行链路。P03.3仍须接入源参数路径、长绑定阶段的信号／截止检查和统一形状，不将当前私有探针当公开execute。P03.1实际证据为scalar-real.log、scalar-python-all.log、scalar-unit.log、scalar-pyright.log和scalar-clippy.log；70项Python通过。新私有_encode_scalar直接调用生产reader／writer，不构建Python SQL字符串；数值界限为真实DataError，UTC不可信为InterfaceError，均带固定客户端code。完整异常家族原生继承已接入，错误目录与ErrorInfo仍待P05；未将其当完整错误验收。规格1天1秒示例原25小时的算术笔误已原位改为24小时，规则未变。当前纯Rust连接实现位于core的protocol／transport／session，实际初始化与关闭证据分别为startup/initialize-real.log和session-real.log；认证、TLS正反及原生查询证据为establish-real.log、query-real.log和system-trust-real.log。20项核心单测及受控本地socket超时通过；普通沙箱权限失败另存，未伪装产品错误或删除失败。全部声明密钥格式实测见key-formats-real.log。Python公开Connection／Cursor尚未实现，原生结果实际容量／聚合配额、全部codec与完整异常诊断仍按P03–P05完成。JSON私有入口当前ValueError，P04／P05接入DataError。两套专用数据库在/private/tmp/sqlaero-mysql-501，秘密仅私有目录；不重复P01环境与有效实测。继续source .runtime/env.sh后使用独立target／venv，不改冻结参考；PyPI已登录，release.yml／pypi发布者和无额外人工环境门禁已核实。
 
 暂停／产品限制／安全退出时，在同一表保存：准确有效余额、已排除区间、当前代码／配置／产物及回退、测试／采集完整提交点、仍在运行的自己进程处理、缺口和下一条具体动作。保留已完成数据，不把中断运行返回成功；恢复从该点继续。只有用户明确暂停才将Goal设paused；整个目标实际达成才complete，不因局部失败或阶段预算耗尽结束。
 

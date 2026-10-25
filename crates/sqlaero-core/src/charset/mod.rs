@@ -1,6 +1,10 @@
 //! One charset/collation authority for configuration and protocol metadata.
 
 mod catalog;
+pub mod codec;
+pub mod multibyte;
+mod multibyte_delta;
+mod single_byte;
 
 /// MySQL-specific multibyte families. Similar Web encodings are not aliases;
 /// each route applies its own verified validity and mapping differences.

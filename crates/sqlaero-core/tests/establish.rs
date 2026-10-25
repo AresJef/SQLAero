@@ -557,3 +557,134 @@ fn native_numeric_literals_keep_mysql_approximate_and_exact_categories() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires both isolated MySQL servers; run this binary with one test thread"]
+fn all_client_charsets_quote_complete_values_in_both_real_sql_modes() {
+    use sqlaero_core::bind::writer;
+    use sqlaero_core::charset::{
+        self,
+        codec::{Codec, CodecError},
+    };
+    use sqlaero_core::result::text::Response;
+    use sqlaero_core::session::initialize::{Initialize, Options};
+    use sqlaero_core::session::query::Query;
+    let root = root();
+    let names = [
+        "utf8mb4", "ascii", "binary", "armscii8", "cp1250", "cp1251", "cp1256", "cp1257", "cp850",
+        "cp852", "cp866", "dec8", "geostd8", "greek", "hebrew", "hp8", "keybcs2", "koi8r", "koi8u",
+        "latin1", "latin2", "latin5", "latin7", "macce", "macroman", "swe7", "tis620", "big5",
+        "cp932", "eucjpms", "euckr", "gb18030", "gb2312", "gbk", "sjis", "ujis",
+    ];
+    for label in ["84", "97"] {
+        for name in names {
+            for no_backslash in [false, true] {
+                let encoding = charset::resolve(Some(name), None).unwrap();
+                let codec = Codec::new(encoding.charset);
+                let mut initialize = Initialize::new(
+                    Establish::new(configuration(&root, label, true, None, "localhost")).unwrap(),
+                    Options {
+                        encoding,
+                        autocommit: true,
+                        sql_mode: Some(
+                            if no_backslash {
+                                "NO_BACKSLASH_ESCAPES"
+                            } else {
+                                ""
+                            }
+                            .to_owned(),
+                        ),
+                        server_timeouts: [None, None, None, None],
+                        result_memory_limit: 1024 * 1024,
+                    },
+                );
+                let mut ready = loop {
+                    if let Step::Ready(ready) = initialize.advance().unwrap() {
+                        break ready;
+                    }
+                };
+                let mut source = String::from("A'\"\0\n\r\x1a%_");
+                for point in [
+                    '\\', 'Ö', 'é', 'ß', 'α', 'ש', 'ქ', '中', 'ソ', 'ｱ', '한', '😀', '\u{E7C7}',
+                    '\u{FFFD}',
+                ] {
+                    match codec.encode(&point.to_string(), &mut Vec::new(), 1024) {
+                        Ok(()) => source.push(point),
+                        Err(CodecError::Encode { .. }) => (),
+                        Err(error) => panic!("unexpected route failure {name}: {error}"),
+                    }
+                }
+                let mut request = if name == "binary" {
+                    b"\x03SELECT HEX(".to_vec()
+                } else {
+                    b"\x03SELECT HEX(CONVERT(".to_vec()
+                };
+                codec
+                    .literal(&source, &mut request, no_backslash, 1024 * 1024)
+                    .unwrap();
+                // This independent server conversion returns a fixed ASCII
+                // observation even for a non-ASCII-compatible client charset.
+                writer::append(
+                    &mut request,
+                    if name == "binary" {
+                        b"),"
+                    } else {
+                        b" USING utf8mb4)),"
+                    },
+                    1024 * 1024,
+                )
+                .unwrap();
+                writer::binary(&mut request, b"12", 1024 * 1024).unwrap();
+                writer::append(&mut request, b"+0,HEX(", 1024 * 1024).unwrap();
+                writer::binary(&mut request, b"\0\xff'\\", 1024 * 1024).unwrap();
+                writer::append(&mut request, b")", 1024 * 1024).unwrap();
+                let connection = &mut ready.transport;
+                let mut query = Query::new(
+                    request,
+                    connection.capabilities,
+                    connection.max_send,
+                    connection.max_receive,
+                    1024 * 1024,
+                )
+                .unwrap();
+                let response = loop {
+                    if let Step::Ready(response) = query
+                        .advance(&mut connection.channel, &mut connection.budget)
+                        .unwrap()
+                    {
+                        break response;
+                    }
+                };
+                let Response::Rows(rows) = response else {
+                    panic!("expected literal observation")
+                };
+                let row = rows.row(0).unwrap();
+                // The binary pseudo charset has byte-valued semantics, not
+                // Unicode transcoding. Assert its actual bytes directly.
+                let expected_bytes = if name == "binary" {
+                    source
+                        .chars()
+                        .map(|point| u32::from(point) as u8)
+                        .collect::<Vec<_>>()
+                } else {
+                    source.as_bytes().to_vec()
+                };
+                let expected = expected_bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02X}"))
+                    .collect::<String>();
+                assert_eq!(
+                    row[0].get(&rows.bytes).unwrap(),
+                    Some(expected.as_bytes()),
+                    "{label}/{name}/NBE={no_backslash}"
+                );
+                assert_eq!(row[1].get(&rows.bytes).unwrap(), Some(b"12".as_slice()));
+                assert_eq!(
+                    row[2].get(&rows.bytes).unwrap(),
+                    Some(b"00FF275C".as_slice())
+                );
+            }
+        }
+        println!("MySQL {label}: all 36 client charsets, two SQL modes and binary CAST passed");
+    }
+}

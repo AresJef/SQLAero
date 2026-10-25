@@ -13,4 +13,6 @@ pub enum ClientErrorCode {
     ResourceLimit = 65_538,
     /// OperationalError: malformed or incomplete server protocol data.
     Protocol = 65_539,
+    /// NotSupportedError: a known charset cannot be used by this operation.
+    UnsupportedCharset = 65_540,
 }
