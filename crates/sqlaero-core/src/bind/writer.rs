@@ -38,7 +38,7 @@ pub fn binary(output: &mut Vec<u8>, value: &[u8], limit: usize) -> Result<(), Wi
     Ok(())
 }
 
-fn reserve(output: &mut Vec<u8>, length: usize, limit: usize) -> Result<(), WireError> {
+pub(crate) fn reserve(output: &mut Vec<u8>, length: usize, limit: usize) -> Result<(), WireError> {
     let required = output.len().checked_add(length).ok_or(WireError::Limit {
         required: usize::MAX,
         limit,

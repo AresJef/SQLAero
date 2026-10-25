@@ -1254,6 +1254,7 @@ dependencies = [
  "core-foundation-sys",
  "encoding_rs",
  "flate2",
+ "itoa",
  "libc",
  "mio",
  "mysql_common",
@@ -1266,6 +1267,7 @@ dependencies = [
  "socket2",
  "thiserror",
  "zeroize",
+ "zmij",
 ]
 
 [[package]]

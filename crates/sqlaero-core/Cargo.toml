@@ -21,6 +21,8 @@ zeroize.workspace = true
 encoding_rs.workspace = true
 num-bigint.workspace = true
 thiserror.workspace = true
+itoa.workspace = true
+zmij.workspace = true
 
 [target.'cfg(target_vendor = "apple")'.dependencies]
 security-framework.workspace = true

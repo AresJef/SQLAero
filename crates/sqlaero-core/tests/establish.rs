@@ -509,3 +509,51 @@ fn command_ownership_and_close_preserve_confirmed_local_facts() {
         }
     }
 }
+
+#[test]
+#[ignore = "requires both isolated MySQL servers; run this binary with one test thread"]
+fn native_numeric_literals_keep_mysql_approximate_and_exact_categories() {
+    use mysql_common::constants::ColumnType;
+    use sqlaero_core::bind::scalar;
+    use sqlaero_core::result::text::Response;
+    let root = root();
+    for label in ["84", "97"] {
+        let mut connection =
+            establish(configuration(&root, label, true, None, "localhost")).unwrap();
+        for value in [0.1, -0.0, f64::from_bits(1), f64::MAX] {
+            let mut sql = b"SELECT ".to_vec();
+            scalar::float(&mut sql, value, 1024).unwrap();
+            let Response::Rows(rows) =
+                query(&mut connection, std::str::from_utf8(&sql).unwrap()).unwrap()
+            else {
+                panic!("expected scalar row")
+            };
+            assert_eq!(rows.columns[0].column_type(), ColumnType::MYSQL_TYPE_DOUBLE);
+            let bytes = rows.row(0).unwrap()[0].get(&rows.bytes).unwrap().unwrap();
+            let actual: f64 = std::str::from_utf8(bytes).unwrap().parse().unwrap();
+            // MySQL may normalize the sign of zero, which the input writer
+            // still preserves. Every nonzero binary64 value remains exact.
+            assert_eq!(actual, value);
+            println!(
+                "MySQL {label}: approximate literal {:?}, received {:?}",
+                std::str::from_utf8(&sql[7..]).unwrap(),
+                std::str::from_utf8(bytes).unwrap()
+            );
+        }
+        let mut sql = b"SELECT ".to_vec();
+        scalar::decimal(&mut sql, false, &[1, 2, 3, 4, 5, 6, 0, 0], -4, 1024).unwrap();
+        let Response::Rows(rows) =
+            query(&mut connection, std::str::from_utf8(&sql).unwrap()).unwrap()
+        else {
+            panic!("expected exact decimal")
+        };
+        assert_eq!(
+            rows.columns[0].column_type(),
+            ColumnType::MYSQL_TYPE_NEWDECIMAL
+        );
+        assert_eq!(
+            rows.row(0).unwrap()[0].get(&rows.bytes).unwrap(),
+            Some(b"1234.56".as_slice())
+        );
+    }
+}

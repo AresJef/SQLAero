@@ -30,6 +30,8 @@ thiserror = "=2.0.21"
 libc = "=0.2.191"
 core-foundation = "=0.10.1"
 core-foundation-sys = "=0.8.7"
+itoa = "=1.0.18"
+zmij = "=1.0.23"
 
 [workspace.lints.rust]
 missing_docs = "deny"
