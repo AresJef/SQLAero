@@ -27,6 +27,9 @@ encoding_rs = { version = "=0.8.42", default-features = false, features = ["allo
 jiter = { version = "=0.17.0", default-features = false, features = ["python", "num-bigint"] }
 num-bigint = "0.4"
 thiserror = "=2.0.21"
+libc = "=0.2.191"
+core-foundation = "=0.10.1"
+core-foundation-sys = "=0.8.7"
 
 [workspace.lints.rust]
 missing_docs = "deny"

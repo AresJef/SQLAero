@@ -76,6 +76,7 @@ def mysql_command(label: str, account: str = 'root') -> list[str]:
     version, _ = VERSIONS[label]
     return [f'/opt/homebrew/opt/mysql@{version}/bin/mysql',
             f'--defaults-file={ROOT / label / (account + ".cnf")}',
+            '--no-login-paths',
             '--batch', '--raw', '--skip-column-names']
 
 
@@ -134,7 +135,7 @@ def prepare(label: str, tls: Path) -> dict[str, Any]:
         for host in ['localhost', '127.0.0.1']:
             setup += (f"CREATE USER 'sqlaero'@'{host}' IDENTIFIED BY '{state['test_password']}';\n"
                       f"GRANT ALL ON sqlaero_test.* TO 'sqlaero'@'{host}';\n")
-        run([str(binary.parent / 'mysql'), '--no-defaults', '--protocol=SOCKET',
+        run([str(binary.parent / 'mysql'), '--no-defaults', '--no-login-paths', '--protocol=SOCKET',
              f'--socket={socket}', '--user=root'], data=setup)
     actual = run(mysql_command(label), data='SELECT VERSION(), @@port, @@socket;').strip()
     run(mysql_command(label, 'test'), data='SELECT 1;')

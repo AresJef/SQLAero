@@ -1250,8 +1250,11 @@ name = "sqlaero-core"
 version = "0.2.0-alpha.1"
 dependencies = [
  "aws-lc-rs",
+ "core-foundation",
+ "core-foundation-sys",
  "encoding_rs",
  "flate2",
+ "libc",
  "mio",
  "mysql_common",
  "num-bigint 0.4.8",

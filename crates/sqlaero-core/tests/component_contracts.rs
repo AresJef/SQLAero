@@ -4,6 +4,7 @@ use rustls::RootCertStore;
 use rustls::client::WebPkiServerVerifier;
 use sqlaero_core::transport::tls;
 use std::path::PathBuf;
+use std::process::Command;
 use std::sync::Arc;
 
 fn fixture() -> PathBuf {
@@ -39,6 +40,103 @@ fn encrypted_pkcs8_and_positive_key_matching_use_public_interfaces() {
         )
         .is_err()
     );
+}
+
+#[test]
+#[ignore = "requires the isolated TLS fixture and its private OpenSSL test files"]
+fn declared_pem_formats_and_modern_encryption_are_decoded_natively() {
+    let directory = fixture();
+    let output = directory.join(format!("key-formats-{}", std::process::id()));
+    std::fs::create_dir(&output).unwrap();
+    let openssl = "/opt/homebrew/opt/openssl@4/bin/openssl";
+    let run = |arguments: &[&str]| {
+        let result = Command::new(openssl)
+            .current_dir(&output)
+            .args(arguments)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "test certificate generation failed"
+        );
+    };
+    std::fs::copy(directory.join("client-key.pem"), output.join("rsa.pem")).unwrap();
+    std::fs::copy(directory.join("key-password"), output.join("password")).unwrap();
+    run(&[
+        "pkey",
+        "-in",
+        "rsa.pem",
+        "-traditional",
+        "-out",
+        "rsa-pkcs1.pem",
+    ]);
+    run(&[
+        "ecparam",
+        "-name",
+        "prime256v1",
+        "-genkey",
+        "-noout",
+        "-out",
+        "ec-sec1.pem",
+    ]);
+    for name in ["rsa.pem", "rsa-pkcs1.pem", "ec-sec1.pem"] {
+        let parsed = tls::private_key(&std::fs::read(output.join(name)).unwrap(), None).unwrap();
+        tls::provider()
+            .key_provider
+            .load_private_key(parsed)
+            .unwrap();
+    }
+    let password = std::fs::read(output.join("password")).unwrap();
+    for cipher in ["aes-128-cbc", "aes-192-cbc", "aes-256-cbc"] {
+        for digest in ["hmacWithSHA256", "hmacWithSHA384", "hmacWithSHA512"] {
+            run(&[
+                "pkcs8",
+                "-topk8",
+                "-in",
+                "rsa.pem",
+                "-out",
+                "encrypted.pem",
+                "-v2",
+                cipher,
+                "-v2prf",
+                digest,
+                "-passout",
+                "file:password",
+            ]);
+            let parsed = tls::private_key(
+                &std::fs::read(output.join("encrypted.pem")).unwrap(),
+                Some(&password),
+            )
+            .unwrap();
+            tls::provider()
+                .key_provider
+                .load_private_key(parsed)
+                .unwrap();
+        }
+    }
+    run(&[
+        "pkcs8",
+        "-topk8",
+        "-in",
+        "rsa.pem",
+        "-out",
+        "encrypted.pem",
+        "-scrypt",
+        "-v2",
+        "aes-256-cbc",
+        "-passout",
+        "file:password",
+    ]);
+    let parsed = tls::private_key(
+        &std::fs::read(output.join("encrypted.pem")).unwrap(),
+        Some(&password),
+    )
+    .unwrap();
+    tls::provider()
+        .key_provider
+        .load_private_key(parsed)
+        .unwrap();
+    std::fs::remove_dir_all(output).unwrap();
 }
 
 #[test]

@@ -24,6 +24,7 @@ pub(crate) struct SQLAeroError {
 impl SQLAeroError {
     #[new]
     #[pyo3(signature = (*args, **kwargs))]
+    #[pyo3(text_signature = "(message='', *, code=None, is_server_error=None)")]
     fn new(
         py: Python<'_>,
         args: &Bound<'_, PyTuple>,
