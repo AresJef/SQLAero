@@ -53,7 +53,7 @@ pub(crate) fn bytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, Py
         )
     }
 }
-fn codepoints<'py>(py: Python<'py>, data: &[u32]) -> PyResult<Bound<'py, PyString>> {
+pub(crate) fn codepoints<'py>(py: Python<'py>, data: &[u32]) -> PyResult<Bound<'py, PyString>> {
     // SAFETY: every u32 is a Unicode code point (surrogates are intentional
     // only under surrogateescape); CPython copies the initialized slice.
     unsafe {
@@ -70,7 +70,7 @@ fn codepoints<'py>(py: Python<'py>, data: &[u32]) -> PyResult<Bound<'py, PyStrin
     }
 }
 
-fn points(
+pub(crate) fn points(
     py: Python<'_>,
     data: &[u8],
     codec: OutputCodec,
@@ -86,6 +86,7 @@ fn points(
     }
     let mut values = scope.map_or_else(Buffer::new, Buffer::tracked);
     let mut position = 0;
+    let mut checkpoint = 64 * 1024;
     while position < data.len() {
         match codec.point(data, position) {
             Ok((point, end)) => {
@@ -114,8 +115,9 @@ fn points(
                 ));
             }
         }
-        if position % (64 * 1024) < 4 {
+        if position >= checkpoint {
             py.check_signals()?;
+            checkpoint = position.saturating_add(64 * 1024);
         }
     }
     Ok(values)
@@ -182,6 +184,7 @@ fn json_value<'py>(
         data
     } else {
         let mut position = 0;
+        let mut checkpoint = 64 * 1024;
         while position < data.len() {
             let (point, end) = codec.point(data, position).map_err(|_| {
                 content(py, ContentError("JSON field contains invalid encoded text"))
@@ -191,8 +194,9 @@ fn json_value<'py>(
                 .extend_from_slice(point.encode_utf8(&mut storage).as_bytes())
                 .map_err(|error| memory(py, error))?;
             position = end;
-            if position % (64 * 1024) < 4 {
+            if position >= checkpoint {
                 py.check_signals()?;
+                checkpoint = position.saturating_add(64 * 1024);
             }
         }
         converted.as_slice()

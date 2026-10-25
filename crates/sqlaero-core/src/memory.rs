@@ -278,6 +278,15 @@ impl<T> Buffer<T> {
         self.values.push(value);
         Ok(())
     }
+    /// Insert at a previously checked sorted-cache position.
+    ///
+    /// # Errors
+    /// Returns the actual capacity or allocation failure.
+    pub fn insert(&mut self, index: usize, value: T) -> Result<(), MemoryError> {
+        self.reserve(1)?;
+        self.values.insert(index, value);
+        Ok(())
+    }
 }
 impl<T: Clone> Buffer<T> {
     /// Append initialized values, charging a growth only at its real boundary.

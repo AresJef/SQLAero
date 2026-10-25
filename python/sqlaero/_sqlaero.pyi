@@ -1,6 +1,144 @@
 """Private native extension declarations."""
 
-from typing import Any
+from typing import Any, Iterator, overload
+
+class ColumnInfo:
+    """Immutable metadata for one column at its original result position."""
+    @property
+    def index(self) -> int:
+        """Zero-based original column position."""
+        ...
+    @property
+    def key(self) -> str:
+        """Unique exact lookup key; preparing it preserves original labels."""
+        ...
+    @property
+    def name(self) -> str:
+        """Actual query label including AS aliases and duplicates."""
+        ...
+    @property
+    def original_name(self) -> str | None:
+        """Original source column name when reported."""
+        ...
+    @property
+    def table(self) -> str | None:
+        """Query-visible source table or alias when reported."""
+        ...
+    @property
+    def original_table(self) -> str | None:
+        """Original physical table when reported."""
+        ...
+    @property
+    def database(self) -> str | None:
+        """Reported source schema or database."""
+        ...
+    @property
+    def type_code(self) -> int:
+        """Actual MySQL protocol field type, including unknown codes."""
+        ...
+    @property
+    def type_name(self) -> str | None:
+        """Known protocol type name, without reconstructing source DDL."""
+        ...
+    @property
+    def column_length(self) -> int:
+        """Server-declared display bytes; not characters or actual row size."""
+        ...
+    @property
+    def precision(self) -> int | None:
+        """Reliable Decimal precision, otherwise None."""
+        ...
+    @property
+    def scale(self) -> int | None:
+        """Applicable numeric fractional digits, otherwise None."""
+        ...
+    @property
+    def is_unsigned(self) -> bool:
+        """Whether UNSIGNED_FLAG applies to this numeric type."""
+        ...
+    @property
+    def is_zerofill(self) -> bool:
+        """Whether ZEROFILL_FLAG applies to this numeric type."""
+        ...
+    @property
+    def fractional_seconds_precision(self) -> int | None:
+        """Declared temporal fractional digits, or None."""
+        ...
+    @property
+    def collation_id(self) -> int:
+        """Actual protocol character_set/collation ID."""
+        ...
+    @property
+    def collation_name(self) -> str | None:
+        """Catalog collation name, or None for an unknown ID."""
+        ...
+    @property
+    def charset_name(self) -> str | None:
+        """Catalog charset name for this collation, or None."""
+        ...
+    @property
+    def is_binary_string(self) -> bool:
+        """Binary-encoded string family; textual _bin collations stay text."""
+        ...
+    @property
+    def is_enum(self) -> bool:
+        """Whether the actual protocol type or flags report ENUM."""
+        ...
+    @property
+    def is_set(self) -> bool:
+        """Whether the actual protocol type or flags report SET."""
+        ...
+    @property
+    def is_nullable(self) -> bool:
+        """Inverse of the server's NOT_NULL_FLAG."""
+        ...
+    @property
+    def is_auto_increment(self) -> bool:
+        """Whether AUTO_INCREMENT_FLAG is set."""
+        ...
+    @property
+    def is_primary_key_part(self) -> bool:
+        """Reported primary-key membership."""
+        ...
+    @property
+    def is_unique_key_part(self) -> bool:
+        """Reported unique-index membership, not per-column uniqueness."""
+        ...
+    @property
+    def is_non_unique_key_part(self) -> bool:
+        """Reported ordinary-index membership."""
+        ...
+    @property
+    def flags(self) -> int:
+        """Actual raw MySQL column flag bits."""
+        ...
+    @property
+    def decimals(self) -> int:
+        """Actual raw decimals/fractional-second byte."""
+        ...
+    @property
+    def catalog(self) -> str:
+        """Validated protocol catalog, def."""
+        ...
+
+class Columns:
+    """Immutable ordered column metadata with exact unique-key lookup."""
+    def __len__(self) -> int: ...
+    def __iter__(self) -> Iterator[ColumnInfo]: ...
+    @overload
+    def __getitem__(self, key: int | str) -> ColumnInfo: ...
+    @overload
+    def __getitem__(self, key: slice) -> tuple[ColumnInfo, ...]: ...
+    @property
+    def names(self) -> tuple[str, ...]:
+        """Ordered actual labels, preserving duplicates; cached once."""
+        ...
+    @property
+    def keys(self) -> tuple[str, ...]:
+        """Ordered unique access labels, generated only when requested."""
+        ...
+
+Description = tuple[tuple[str, int, None, None, int | None, int | None, bool], ...]
 
 class SQLAeroError(Exception):
     """Native root exception; the public errors module is not yet complete."""
@@ -79,6 +217,10 @@ class _Rows:
     def closed(self) -> bool: ...
     @property
     def names(self) -> tuple[str, ...]: ...
+    @property
+    def columns(self) -> Columns: ...
+    @property
+    def description(self) -> Description | None: ...
 
 def _rows_from_packets(packets: list[bytes], *, name_collation_id: int = 255,
                       decode_json: bool = False, decode_set: bool = False,

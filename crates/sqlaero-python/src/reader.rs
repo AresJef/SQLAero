@@ -1,6 +1,6 @@
 //! Buffered fetch ownership and one atomic position commit per output call.
 
-use crate::{errors, input::ScalarTypes, output};
+use crate::{errors, input::ScalarTypes, metadata, output};
 use pyo3::exceptions::{PyOverflowError, PyStopIteration, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyInt, PyTuple};
@@ -9,7 +9,7 @@ use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::memory::{Buffer, Reservation};
 use sqlaero_core::result::{
     decode::{Options, Plan},
-    text::{Buffered, Columns},
+    text::Buffered,
 };
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,15 +20,10 @@ struct ReadData {
     plans: Buffer<Plan>,
     _owner: Reservation,
 }
-#[derive(Clone)]
-pub(crate) struct Metadata {
-    pub(crate) columns: Arc<Columns>,
-    pub(crate) codec: OutputCodec,
-    pub(crate) strict: bool,
-}
 struct State {
     data: Option<Arc<ReadData>>,
-    metadata: Option<Metadata>,
+    metadata: Option<Arc<metadata::Snapshot>>,
+    columns: Option<Py<metadata::Columns>>,
     position: usize,
     total: usize,
     arraysize: usize,
@@ -58,6 +53,7 @@ impl Reader {
             state: Mutex::new(State {
                 data: None,
                 metadata: None,
+                columns: None,
                 position: 0,
                 total: 0,
                 arraysize: 1,
@@ -115,11 +111,12 @@ impl Reader {
         options: Options,
         codec: OutputCodec,
     ) -> PyResult<()> {
-        let metadata = Metadata {
-            columns: Arc::clone(&rows.columns),
+        let metadata = metadata::Snapshot::new(
+            py,
+            Some(Arc::clone(&rows.columns)),
             codec,
-            strict: options.decode_text_strict,
-        };
+            options.decode_text_strict,
+        )?;
         let total = rows.row_count;
         let data = if total == 0 {
             None
@@ -152,10 +149,15 @@ impl Reader {
         };
         let old = {
             let mut state = self.lock(py)?;
-            state.metadata = Some(metadata);
+            let old_metadata = state.metadata.replace(metadata);
+            let old_columns = state.columns.take();
             state.position = 0;
             state.total = total;
-            std::mem::replace(&mut state.data, data)
+            (
+                std::mem::replace(&mut state.data, data),
+                old_metadata,
+                old_columns,
+            )
         };
         drop(old);
         Ok(())
@@ -165,15 +167,16 @@ impl Reader {
     pub(crate) fn clear_result(&self, py: Python<'_>) -> PyResult<()> {
         let old = {
             let mut state = self.lock(py)?;
-            state.metadata = None;
+            let old_metadata = state.metadata.take();
+            let old_columns = state.columns.take();
             state.position = 0;
             state.total = 0;
-            state.data.take()
+            (state.data.take(), old_metadata, old_columns)
         };
         drop(old);
         Ok(())
     }
-    pub(crate) fn metadata(&self, py: Python<'_>) -> PyResult<Option<Metadata>> {
+    pub(crate) fn metadata(&self, py: Python<'_>) -> PyResult<Option<Arc<metadata::Snapshot>>> {
         Ok(self.lock(py)?.metadata.clone())
     }
 
@@ -344,39 +347,51 @@ impl Reader {
     fn position(&self, py: Python<'_>) -> PyResult<usize> {
         Ok(self.lock(py)?.position)
     }
-    /// Internal metadata check; public Cursor exposes its Columns snapshot.
+    /// Actual cached column labels, without preparing unique lookup keys.
     #[getter]
     fn names<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
         let Some(metadata) = self.metadata(py)? else {
             return Ok(PyTuple::empty(py));
         };
-        let mut names = Vec::new();
-        names
-            .try_reserve(metadata.columns.len())
-            .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
-        for index in 0..metadata.columns.len() {
-            let value = metadata
-                .columns
-                .label(index, sqlaero_core::result::text::Label::Name)
-                .ok_or_else(|| {
-                    errors::client::<errors::InternalError>(
-                        py,
-                        ClientErrorCode::InternalState,
-                        "column name ownership is unavailable",
-                    )
-                })?;
-            names.push(
-                output::text(
-                    py,
-                    value,
-                    metadata.codec,
-                    metadata.strict,
-                    Some(metadata.columns.scope()),
-                )?
-                .unbind(),
-            );
+        metadata.names(py)
+    }
+    /// Immutable metadata for the current result; usable after close. Creating
+    /// this view does not materialize labels, keys, or ColumnInfo objects.
+    #[getter]
+    pub(crate) fn columns(&self, py: Python<'_>) -> PyResult<Py<metadata::Columns>> {
+        let snapshot = {
+            let state = self.lock(py)?;
+            if let Some(value) = &state.columns {
+                return Ok(value.clone_ref(py));
+            }
+            state.metadata.clone()
+        };
+        let view = match &snapshot {
+            Some(snapshot) => Arc::clone(snapshot),
+            None => metadata::Snapshot::new(py, None, OutputCodec::for_collation(255), true)?,
+        };
+        let value = Py::new(py, metadata::Columns::new(view))?;
+        let mut state = self.lock(py)?;
+        let current = match (&snapshot, &state.metadata) {
+            (Some(before), Some(now)) => Arc::ptr_eq(before, now),
+            (None, None) => true,
+            _ => false,
+        };
+        if current {
+            if let Some(value) = &state.columns {
+                return Ok(value.clone_ref(py));
+            }
+            state.columns = Some(value.clone_ref(py));
         }
-        PyTuple::new(py, names)
+        Ok(value)
+    }
+    /// PEP 249 seven-field tuples from the same execution-time metadata.
+    #[getter]
+    pub(crate) fn description<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        match self.metadata(py)? {
+            Some(metadata) => metadata.description(py),
+            None => Ok(py.None().into_bound(py)),
+        }
     }
     fn __iter__(slf: PyRef<'_, Self>) -> PyRef<'_, Self> {
         slf

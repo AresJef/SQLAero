@@ -4,6 +4,7 @@ mod binding;
 mod errors;
 mod input;
 mod json;
+mod metadata;
 mod output;
 mod reader;
 
@@ -336,6 +337,8 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(_bind_sql, module)?)?;
     module.add_function(wrap_pyfunction!(_decode_field, module)?)?;
     module.add_class::<reader::Reader>()?;
+    module.add_class::<metadata::Columns>()?;
+    module.add_class::<metadata::ColumnInfo>()?;
     module.add_function(wrap_pyfunction!(_rows_from_packets, module)?)?;
     Ok(())
 }

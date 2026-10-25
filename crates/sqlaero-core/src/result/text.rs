@@ -69,6 +69,109 @@ pub enum Label {
 }
 
 impl Column {
+    /// Actual known protocol type name, without guessing the original DDL.
+    #[must_use]
+    pub fn type_name(&self) -> Option<&'static str> {
+        Some(match self.type_code {
+            0 => "DECIMAL",
+            1 => "TINY",
+            2 => "SHORT",
+            3 => "LONG",
+            4 => "FLOAT",
+            5 => "DOUBLE",
+            6 => "NULL",
+            7 => "TIMESTAMP",
+            8 => "LONGLONG",
+            9 => "INT24",
+            10 => "DATE",
+            11 => "TIME",
+            12 => "DATETIME",
+            13 => "YEAR",
+            14 => "NEWDATE",
+            15 => "VARCHAR",
+            16 => "BIT",
+            17 => "TIMESTAMP2",
+            18 => "DATETIME2",
+            19 => "TIME2",
+            20 => "TYPED_ARRAY",
+            242 => "VECTOR",
+            245 => "JSON",
+            246 => "NEWDECIMAL",
+            247 => "ENUM",
+            248 => "SET",
+            249 => "TINY_BLOB",
+            250 => "MEDIUM_BLOB",
+            251 => "LONG_BLOB",
+            252 => "BLOB",
+            253 => "VAR_STRING",
+            254 => "STRING",
+            255 => "GEOMETRY",
+            _ => return None,
+        })
+    }
+    /// Whether the protocol type has numeric signedness/display semantics.
+    #[must_use]
+    pub fn numeric(&self) -> bool {
+        matches!(self.type_code, 0..=5 | 8 | 9 | 13 | 246)
+    }
+    /// Applicable unsigned flag; the raw flags remain separately observable.
+    #[must_use]
+    pub fn is_unsigned(&self) -> bool {
+        self.numeric() && self.flags & 32 != 0
+    }
+    /// Applicable legacy zero-fill flag.
+    #[must_use]
+    pub fn is_zerofill(&self) -> bool {
+        self.numeric() && self.flags & 64 != 0
+    }
+    /// Actual ENUM type/flag, without assuming one-character values.
+    #[must_use]
+    pub fn is_enum(&self) -> bool {
+        self.type_code == 247 || self.flags & 256 != 0
+    }
+    /// Actual SET type/flag, without inferring its schema members.
+    #[must_use]
+    pub fn is_set(&self) -> bool {
+        self.type_code == 248 || self.flags & 2048 != 0
+    }
+    /// Binary string family under binary encoding, excluding ENUM/SET and the
+    /// unrelated BINARY_FLAG on numeric or textual binary-collation columns.
+    #[must_use]
+    pub fn is_binary_string(&self) -> bool {
+        matches!(self.type_code, 15 | 249..=254)
+            && self.collation_id == 63
+            && !self.is_enum()
+            && !self.is_set()
+    }
+    /// Reliable numeric scale; special floating markers are not decimal digits.
+    #[must_use]
+    pub fn scale(&self) -> Option<u8> {
+        match self.type_code {
+            1..=3 | 8 | 9 | 13 => Some(0),
+            0 | 4 | 5 | 246 if self.decimals <= 30 => Some(self.decimals),
+            _ => None,
+        }
+    }
+    /// Decimal precision after subtracting actual sign and decimal-point slots.
+    /// Integer display widths and FLOAT/DOUBLE do not establish precision.
+    #[must_use]
+    pub fn precision(&self) -> Option<u32> {
+        if !matches!(self.type_code, 0 | 246) {
+            return None;
+        }
+        let scale = u32::from(self.scale()?);
+        let precision = self
+            .column_length
+            .checked_sub(u32::from(!self.is_unsigned()) + u32::from(scale != 0))?;
+        (precision > 0 && precision <= 65 && scale <= precision).then_some(precision)
+    }
+    /// Declared fractional-second precision, independent of current value text.
+    #[must_use]
+    pub fn fractional_seconds_precision(&self) -> Option<u8> {
+        (matches!(self.type_code, 7 | 11 | 12 | 17..=19) && self.decimals <= 6)
+            .then_some(self.decimals)
+    }
+
     fn parse(data: &[u8], base: usize) -> Result<Self, WireError> {
         let mut position = 0;
         let mut labels = [Cell { start: 0, end: 0 }; 6];
