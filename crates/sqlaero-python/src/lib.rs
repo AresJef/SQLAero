@@ -142,8 +142,12 @@ fn _bind_sql<'py>(
         ..context
     };
     input::text(sql, &mut encoded, &source_context, false, Some(&budget))?;
-    let mut compiler = Compiler::new(encoded, context.codec, no_backslash, ansi_quotes);
-    let template = loop {
+    let mut compiler = if many && itemize {
+        Compiler::for_batch(encoded, context.codec, no_backslash, ansi_quotes)
+    } else {
+        Compiler::new(encoded, context.codec, no_backslash, ansi_quotes)
+    };
+    let mut template = loop {
         let step = py
             .detach(|| compiler.advance())
             .map_err(|error| binding::template_error(py, error))?;
@@ -154,6 +158,43 @@ fn _bind_sql<'py>(
     };
     let mut rows = binding::Rows::new(args, many, itemize);
     let output = pyo3::types::PyList::empty(py);
+    if let Some(layout) = template.prepare_merge() {
+        let mut blocks = sqlaero_core::bind::batch::Blocks::new(&template, &layout, limit, limit)
+            .map_err(|error| errors::wire(py, error))?;
+        // One bounded native row fragment handles unknown expansion and normal
+        // rollover. Its allocation is reused; no per-row Python SQL exists.
+        let mut encoded = Vec::new();
+        while let Some(row) = rows.next()? {
+            row.bind_fragment(
+                &template,
+                &types,
+                &context,
+                &budget,
+                layout.row.clone(),
+                &mut encoded,
+            )?;
+            if !blocks
+                .push(&encoded)
+                .map_err(|error| errors::wire(py, error))?
+            {
+                if let Some(request) = blocks.take().map_err(|error| errors::wire(py, error))? {
+                    output.append(PyBytes::new(py, &request))?;
+                }
+                if !blocks
+                    .push(&encoded)
+                    .map_err(|error| errors::wire(py, error))?
+                {
+                    return Err(PyValueError::new_err(
+                        "legal first row did not fit empty request",
+                    ));
+                }
+            }
+        }
+        if let Some(request) = blocks.take().map_err(|error| errors::wire(py, error))? {
+            output.append(PyBytes::new(py, &request))?;
+        }
+        return Ok(output);
+    }
     while let Some(row) = rows.next()? {
         let request = row.bind(&template, &types, &context, &budget)?;
         output.append(PyBytes::new(py, &request))?;

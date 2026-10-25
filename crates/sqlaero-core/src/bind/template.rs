@@ -39,6 +39,7 @@ pub struct Template {
     source: Vec<u8>,
     pieces: Vec<Piece>,
     slots: usize,
+    pub(crate) merge_tokens: Option<Vec<super::batch::Token>>,
 }
 
 impl Template {
@@ -67,6 +68,26 @@ impl Template {
         self.slots
     }
 
+    /// Consume optional lexical metadata and recognize the approved repeated
+    /// VALUES row. This preparation happens once, never once per input row.
+    pub fn prepare_merge(&mut self) -> Option<super::batch::Layout> {
+        self.merge_tokens
+            .take()
+            .and_then(|tokens| super::batch::recognize(&tokens))
+    }
+
+    /// Encoded source length used by range-based request assembly.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.source.len()
+    }
+
+    /// Whether the encoded template is empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.source.is_empty()
+    }
+
     /// Append fixed bytes through the next position, or the end of the template.
     /// The caller writes one complete value directly into this same request
     /// before calling again. The cursor is local to one row, never shared.
@@ -79,11 +100,33 @@ impl Template {
         output: &mut Vec<u8>,
         limit: usize,
     ) -> Result<Option<usize>, WireError> {
+        self.append_range_until_slot(&(0..self.source.len()), cursor, output, limit)
+    }
+
+    /// Append a selected source range through its next binding position.
+    /// Percent normalization is shared with ordinary positional execution.
+    ///
+    /// # Errors
+    /// Returns a request-bound or allocation failure.
+    pub fn append_range_until_slot(
+        &self,
+        range: &Range<usize>,
+        cursor: &mut usize,
+        output: &mut Vec<u8>,
+        limit: usize,
+    ) -> Result<Option<usize>, WireError> {
         while let Some(piece) = self.pieces.get(*cursor) {
             *cursor += 1;
             match piece {
-                Piece::Bytes(range) => writer::append(output, &self.source[range.clone()], limit)?,
-                Piece::Value(offset) => return Ok(Some(*offset)),
+                Piece::Bytes(bytes) => {
+                    let start = bytes.start.max(range.start);
+                    let end = bytes.end.min(range.end);
+                    if start < end {
+                        writer::append(output, &self.source[start..end], limit)?;
+                    }
+                }
+                Piece::Value(offset) if range.contains(offset) => return Ok(Some(*offset)),
+                Piece::Value(_) => (),
             }
         }
         Ok(None)
@@ -104,14 +147,25 @@ pub struct Compiler {
     state: Lex,
     special: bool,
     finished: bool,
+    tokens: Option<Vec<super::batch::Token>>,
+    merge_safe: bool,
 }
 #[derive(Clone, Copy)]
 enum Lex {
     Code,
-    Quote { delimiter: u8, identifier: bool },
+    Quote {
+        delimiter: u8,
+        identifier: bool,
+        start: usize,
+    },
+    Word {
+        start: usize,
+    },
     Line,
     Block,
-    Named { start: usize },
+    Named {
+        start: usize,
+    },
 }
 impl Compiler {
     /// Retain the one encoded source buffer; no copied template or value tree.
@@ -129,7 +183,18 @@ impl Compiler {
             state: Lex::Code,
             special: false,
             finished: false,
+            tokens: None,
+            merge_safe: true,
         }
+    }
+
+    /// Enable compact token spans during the same bounded lexical pass.
+    /// Ordinary single-row binding does not pay for this optional metadata.
+    #[must_use]
+    pub fn for_batch(source: Vec<u8>, codec: Codec, no_backslash: bool, ansi_quotes: bool) -> Self {
+        let mut compiler = Self::new(source, codec, no_backslash, ansi_quotes);
+        compiler.tokens = Some(Vec::new());
+        compiler
     }
     /// Scan at most 256 KiB of source plus one complete encoded character.
     /// None yields to the host; Some commits the finished immutable template.
@@ -167,6 +232,7 @@ impl Compiler {
                 Lex::Quote {
                     delimiter,
                     identifier,
+                    start,
                 } => {
                     if byte >= 128 {
                         self.position += self.character(position);
@@ -175,6 +241,7 @@ impl Compiler {
                             self.position += 2;
                         } else {
                             self.position += 1;
+                            self.token(if identifier { b'i' } else { b'x' }, start, self.position)?;
                             self.state = Lex::Code;
                         }
                     } else if byte == b'\\' && !identifier && !self.no_backslash {
@@ -187,6 +254,16 @@ impl Compiler {
                         }
                     } else {
                         self.position += 1;
+                    }
+                }
+                Lex::Word { start } => {
+                    if byte >= 128 {
+                        self.position += self.character(position);
+                    } else if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') {
+                        self.position += 1;
+                    } else {
+                        self.word(start, position)?;
+                        self.state = Lex::Code;
                     }
                 }
                 Lex::Line => {
@@ -220,6 +297,15 @@ impl Compiler {
                     }
                 }
                 Lex::Code => {
+                    if self.tokens.is_some()
+                        && (byte >= 128
+                            || byte.is_ascii_alphanumeric()
+                            || matches!(byte, b'_' | b'$'))
+                    {
+                        self.state = Lex::Word { start: position };
+                        self.position += self.character(position);
+                        continue;
+                    }
                     if byte >= 128 {
                         self.position += self.character(position);
                         continue;
@@ -229,6 +315,7 @@ impl Compiler {
                             self.state = Lex::Quote {
                                 delimiter: byte,
                                 identifier: byte == b'`' || (byte == b'"' && self.ansi_quotes),
+                                start: position,
                             };
                             self.position += 1;
                         }
@@ -252,6 +339,7 @@ impl Compiler {
                                     .get(position + 2)
                                     .is_some_and(|byte| matches!(byte, b'!' | b'+'))
                             {
+                                self.merge_safe = false;
                                 self.special = true;
                                 self.position += 3;
                             } else {
@@ -267,26 +355,39 @@ impl Compiler {
                                     });
                                 }
                                 self.edit(position, true)?;
+                                self.token(b'?', position, position + 2)?;
                                 self.position += 2;
                             } else if self.source.get(position + 1) == Some(&b'%') {
                                 if !self.special {
                                     self.edit(position, false)?;
                                 }
+                                self.token(b'x', position, position + 2)?;
                                 self.position += 2;
                             } else if self.source.get(position + 1) == Some(&b'(') {
                                 self.state = Lex::Named { start: position };
                                 self.position += 2;
                             } else {
+                                self.token(byte, position, position + 1)?;
                                 self.position += 1;
                             }
                         }
-                        _ => self.position += 1,
+                        _ => {
+                            if !byte.is_ascii_whitespace() {
+                                self.token(byte, position, position + 1)?;
+                            }
+                            self.position += 1;
+                        }
                     }
                 }
             }
         }
         if self.position < self.source.len() {
             return Ok(None);
+        }
+        if let Lex::Word { start } = self.state {
+            self.word(start, self.position)?;
+        } else if !matches!(self.state, Lex::Code | Lex::Line) {
+            self.merge_safe = false;
         }
         if self.copied < self.source.len() {
             self.pieces.try_reserve(1).map_err(WireError::from)?;
@@ -298,7 +399,23 @@ impl Compiler {
             source: std::mem::take(&mut self.source),
             pieces: std::mem::take(&mut self.pieces),
             slots: self.slots,
+            merge_tokens: if self.merge_safe {
+                self.tokens.take()
+            } else {
+                None
+            },
         }))
+    }
+    fn token(&mut self, symbol: u8, start: usize, end: usize) -> Result<(), WireError> {
+        if let Some(tokens) = &mut self.tokens {
+            tokens.try_reserve(1)?;
+            tokens.push(super::batch::Token { symbol, start, end });
+        }
+        Ok(())
+    }
+    fn word(&mut self, start: usize, end: usize) -> Result<(), WireError> {
+        let symbol = super::batch::word(&self.source[start..end]);
+        self.token(symbol, start, end)
     }
     fn character(&self, position: usize) -> usize {
         self.codec

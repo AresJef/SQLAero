@@ -1,5 +1,6 @@
 //! Native SQL request writing shared by initialization and parameter binding.
 
+pub mod batch;
 pub mod scalar;
 pub mod template;
 pub mod writer;

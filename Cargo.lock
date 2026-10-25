@@ -1260,6 +1260,7 @@ dependencies = [
  "mysql_common",
  "num-bigint 0.4.8",
  "pkcs8",
+ "regex",
  "rustls",
  "rustls-pki-types",
  "rustls-platform-verifier",

@@ -11,6 +11,7 @@ use sqlaero_core::bind::{
 };
 use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::deadline::IoBudget;
+use std::ops::Range;
 
 enum Sequence<'py> {
     List(Bound<'py, PyList>),
@@ -123,6 +124,38 @@ impl Row<'_> {
         budget: &IoBudget,
     ) -> PyResult<Vec<u8>> {
         let py = self.value.py();
+        let end = template.len();
+        let mut output = Vec::new();
+        writer::append(&mut output, &[3], context.limit)
+            .map_err(|error| errors::wire(py, error))?;
+        self.fill(template, types, context, budget, 0..end, &mut output)?;
+        Ok(output)
+    }
+
+    /// Encode the one repeated row, without re-encoding it for rollover.
+    pub(crate) fn bind_fragment(
+        self,
+        template: &Template,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &IoBudget,
+        range: Range<usize>,
+        output: &mut Vec<u8>,
+    ) -> PyResult<()> {
+        output.clear();
+        self.fill(template, types, context, budget, range, output)
+    }
+
+    fn fill(
+        self,
+        template: &Template,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &IoBudget,
+        range: Range<usize>,
+        output: &mut Vec<u8>,
+    ) -> PyResult<()> {
+        let py = self.value.py();
         check(py, budget)?;
         let width = self.width();
         if width != template.slots() {
@@ -136,9 +169,6 @@ impl Row<'_> {
                 ),
             ));
         }
-        let mut output = Vec::new();
-        writer::append(&mut output, &[3], context.limit)
-            .map_err(|error| errors::wire(py, error))?;
         let mut visit = Visit {
             types,
             context,
@@ -167,7 +197,7 @@ impl Row<'_> {
                 self.value.clone()
             };
             if template
-                .append_until_slot(&mut cursor, &mut output, context.limit)
+                .append_range_until_slot(&range, &mut cursor, output, context.limit)
                 .map_err(|error| errors::wire(py, error))?
                 .is_none()
             {
@@ -177,7 +207,7 @@ impl Row<'_> {
                     "binding position is unavailable",
                 ));
             }
-            if let Err(error) = visit.value(&source, &mut output) {
+            if let Err(error) = visit.value(&source, output) {
                 let _ = error.add_note(
                     py,
                     format!(
@@ -192,7 +222,7 @@ impl Row<'_> {
             }
         }
         if template
-            .append_until_slot(&mut cursor, &mut output, context.limit)
+            .append_range_until_slot(&range, &mut cursor, output, context.limit)
             .map_err(|error| errors::wire(py, error))?
             .is_some()
         {
@@ -203,7 +233,7 @@ impl Row<'_> {
             ));
         }
         check(py, budget)?;
-        Ok(output)
+        Ok(())
     }
 }
 

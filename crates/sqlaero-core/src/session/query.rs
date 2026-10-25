@@ -7,6 +7,7 @@ use crate::transport::deadline::IoBudget;
 use crate::transport::socket::WaitStatus;
 use mysql_common::constants::CapabilityFlags;
 use mysql_common::packets::OkPacket;
+use std::ops::Range;
 
 /// A command failure whose server/transport/resource origin remains explicit.
 #[derive(Debug, thiserror::Error)]
@@ -27,6 +28,64 @@ pub enum QueryError {
         /// Actual final OK/EOF metadata.
         completion: OkPacket<'static>,
     },
+}
+
+/// Actual completed prefix of one user batch. These facts are attached to a
+/// later error; they never masquerade as the failed call's success counters
+/// and do not assert that any transaction was committed.
+#[derive(Debug, Default)]
+pub struct ConfirmedPrefix {
+    /// Number of complete commands whose full responses were consumed.
+    pub commands: usize,
+    /// Contiguous source-row range already confirmed; an empty root can issue
+    /// one zero-position command without inventing a source row.
+    pub source_rows: usize,
+    /// Sum of actual affected rows, or actual returned rows for row responses.
+    pub row_count: u128,
+    /// Sum of each actual command's warning count, exactly once per command.
+    pub warnings: u128,
+    /// Insert ID of the most recent completed command, not a guessed range.
+    pub last_insert_id: Option<u64>,
+}
+
+impl ConfirmedPrefix {
+    /// Add only a complete response in source order. A send, partial response,
+    /// server ERR or local encoding failure must not call this method.
+    ///
+    /// # Errors
+    /// Returns inconsistent source-range or command-count overflow failures
+    /// without partially mutating the existing confirmed prefix.
+    pub fn record(&mut self, rows: Range<usize>, response: &Response) -> Result<(), WireError> {
+        if rows.start != self.source_rows || rows.end < rows.start {
+            return Err(WireError::Malformed(
+                "batch confirmation is not a contiguous source prefix",
+            ));
+        }
+        let commands = self
+            .commands
+            .checked_add(1)
+            .ok_or(WireError::Malformed("batch command count overflow"))?;
+        let count = match response {
+            Response::Command(ok) => u128::from(ok.affected_rows()),
+            Response::Rows(result) => result.row_count as u128,
+        };
+        self.commands = commands;
+        self.source_rows = rows.end;
+        self.row_count += count;
+        self.warnings += u128::from(response.completion().warnings());
+        self.last_insert_id = response.completion().last_insert_id();
+        Ok(())
+    }
+
+    /// Concise factual diagnostic. The current failing/unknown range and stage
+    /// are supplied separately by the boundary that owns that actual request.
+    #[must_use]
+    pub fn diagnostic(&self) -> String {
+        format!(
+            "confirmed {} commands covering source rows 0..{}; actual cumulative row count {}, warnings {}, final insert ID {:?}; confirmation does not imply transaction commit",
+            self.commands, self.source_rows, self.row_count, self.warnings, self.last_insert_id
+        )
+    }
 }
 
 /// An owned complete request beginning with its actual MySQL command byte.
