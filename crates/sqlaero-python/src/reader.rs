@@ -9,11 +9,26 @@ use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::memory::{Buffer, Reservation};
 use sqlaero_core::result::{
     decode::{Options, Plan},
-    text::Buffered,
+    text::{Buffered, Cell},
 };
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+
+/// Let PyO3 fill the final tuple directly from a fallible native iterator.
+/// The wrapper owns only the current final value or its original exception;
+/// it adds no Python object, intermediate collection or unsafe tuple writer.
+struct Decoded<'py>(PyResult<Bound<'py, PyAny>>);
+
+impl<'py> IntoPyObject<'py> for Decoded<'py> {
+    type Target = PyAny;
+    type Output = Bound<'py, PyAny>;
+    type Error = PyErr;
+
+    fn into_pyobject(self, _py: Python<'py>) -> PyResult<Self::Output> {
+        self.0
+    }
+}
 
 struct ReadData {
     rows: Buffered,
@@ -215,6 +230,139 @@ impl Reader {
         Ok(())
     }
 
+    /// Decode one row using the same checked field converter for both
+    /// strategies. Const specialization removes per-row strategy branches.
+    #[inline(always)]
+    fn row_tuple<'py, const DIRECT: bool>(
+        &self,
+        py: Python<'py>,
+        data: &ReadData,
+        types: &ScalarTypes,
+        row_index: usize,
+        start: usize,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let fields = data.rows.row(row_index).ok_or_else(|| {
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "native row location is unavailable",
+            )
+        })?;
+        let decode = |column_index: usize,
+                      cell: &Cell,
+                      plan: Plan|
+         -> PyResult<Bound<'py, PyAny>> {
+            let value = match cell
+                .get(&data.rows.bytes)
+                .map_err(|error| errors::wire(py, error))?
+            {
+                None => py.None().into_bound(py),
+                Some(value) => {
+                    match output::field(py, value, plan, types, Some(data.rows.scope())) {
+                        Ok(value) => value,
+                        Err(error) => {
+                            let key = self
+                                .state
+                                .lock()
+                                .ok()
+                                .and_then(|state| state.metadata.clone())
+                                .and_then(|metadata| metadata.diagnostic_key(py, column_index))
+                                .map_or_else(String::new, |key| format!(" (key={key})"));
+                            errors::note(
+                                py,
+                                &error,
+                                format!(
+                                    "while decoding result row {row_index}, column {column_index}{key}; fetch position remains {start}"
+                                ),
+                            );
+                            return Err(error);
+                        }
+                    }
+                }
+            };
+            if column_index.is_multiple_of(256) {
+                py.check_signals()?;
+            }
+            Ok(value)
+        };
+        let row = if DIRECT {
+            PyTuple::new(
+                py,
+                fields
+                    .iter()
+                    .zip(data.plans.iter())
+                    .enumerate()
+                    .map(|(index, (cell, plan))| Decoded(decode(index, cell, *plan))),
+            )?
+            .into_any()
+        } else {
+            let mut values = Vec::new();
+            values
+                .try_reserve(fields.len())
+                .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+            for (index, (cell, plan)) in fields.iter().zip(data.plans.iter()).enumerate() {
+                values.push(decode(index, cell, *plan)?.unbind());
+            }
+            PyTuple::new(py, values)?.into_any()
+        };
+        if row_index.is_multiple_of(64) {
+            py.check_signals()?;
+        }
+        Ok(row)
+    }
+
+    /// Materialize the final result without changing the caller's position.
+    /// The buffered specialization preserves the old wide-row ownership graph;
+    /// the direct specialization delegates partial tuple cleanup to PyO3.
+    fn materialize<'py, const DIRECT: bool>(
+        &self,
+        py: Python<'py>,
+        data: &ReadData,
+        types: &ScalarTypes,
+        range: std::ops::Range<usize>,
+        one: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let start = range.start;
+        if DIRECT {
+            if one {
+                self.row_tuple::<true>(py, data, types, start, start)
+            } else {
+                PyTuple::new(
+                    py,
+                    range.map(|index| {
+                        Decoded(self.row_tuple::<true>(py, data, types, index, start))
+                    }),
+                )
+                .map(Bound::into_any)
+            }
+        } else {
+            let mut result = Vec::new();
+            result
+                .try_reserve(range.len())
+                .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+            for index in range {
+                result.push(
+                    self.row_tuple::<false>(py, data, types, index, start)?
+                        .unbind(),
+                );
+            }
+            if one {
+                result
+                    .pop()
+                    .map(|value| value.into_bound(py))
+                    .ok_or_else(|| {
+                        errors::client(
+                            py,
+                            ClientErrorCode::InternalState,
+                            "single-row output is unavailable",
+                        )
+                    })
+            } else {
+                PyTuple::new(py, result).map(Bound::into_any)
+            }
+        }
+    }
+
     fn read<'py>(
         &self,
         py: Python<'py>,
@@ -253,75 +401,12 @@ impl Reader {
             ));
         };
         let types = self.types.borrow(py);
-        let mut result = Vec::new();
-        result
-            .try_reserve(end - start)
-            .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
-        for row_index in start..end {
-            let fields = data.rows.row(row_index).ok_or_else(|| {
-                errors::client(
-                    py,
-                    ClientErrorCode::InternalState,
-                    "native row location is unavailable",
-                )
-            })?;
-            let mut values = Vec::new();
-            values
-                .try_reserve(fields.len())
-                .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
-            for (column_index, (cell, plan)) in fields.iter().zip(data.plans.iter()).enumerate() {
-                let value = match cell
-                    .get(&data.rows.bytes)
-                    .map_err(|error| errors::wire(py, error))?
-                {
-                    None => py.None().into_bound(py),
-                    Some(value) => {
-                        match output::field(py, value, *plan, &types, Some(data.rows.scope())) {
-                            Ok(value) => value,
-                            Err(error) => {
-                                let key = self
-                                    .state
-                                    .lock()
-                                    .ok()
-                                    .and_then(|state| state.metadata.clone())
-                                    .and_then(|metadata| metadata.diagnostic_key(py, column_index))
-                                    .map_or_else(String::new, |key| format!(" (key={key})"));
-                                errors::note(
-                                    py,
-                                    &error,
-                                    format!(
-                                        "while decoding result row {row_index}, column {column_index}{key}; fetch position remains {start}"
-                                    ),
-                                );
-                                return Err(error);
-                            }
-                        }
-                    }
-                };
-                values.push(value.unbind());
-                if column_index % 256 == 0 {
-                    py.check_signals()?;
-                }
-            }
-            result.push(PyTuple::new(py, values)?.unbind());
-            if row_index % 64 == 0 {
-                py.check_signals()?;
-            }
-        }
-        let output = if one {
-            result
-                .pop()
-                .ok_or_else(|| {
-                    errors::client(
-                        py,
-                        ClientErrorCode::InternalState,
-                        "single-row output is unavailable",
-                    )
-                })?
-                .into_bound(py)
-                .into_any()
+        // Select a monomorphized strategy once per fetch. Wide rows keep
+        // the original field and result buffers, outside the narrow fast path.
+        let output = if data.plans.len() <= 4 {
+            self.materialize::<true>(py, &data, &types, start..end, one)?
         } else {
-            PyTuple::new(py, result)?.into_any()
+            self.materialize::<false>(py, &data, &types, start..end, one)?
         };
         py.check_signals()?;
         let released = {
