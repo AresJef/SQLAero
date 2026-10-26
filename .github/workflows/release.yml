@@ -1,112 +1,140 @@
-name: Release SQLAero alpha
+name: Build and publish native distributions
 
 on:
+  pull_request:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  build-and-verify:
+  build:
+    name: CPython ${{ matrix.python }} / macOS arm64
     runs-on: macos-26
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12.10", "3.13.17", "3.14.9", "3.15.1"]
     env:
-      MACOSX_DEPLOYMENT_TARGET: "26.0"
-      ARCHFLAGS: "-arch arm64"
-      _PYTHON_HOST_PLATFORM: "macosx-26.0-arm64"
-      RELEASE_TAG: ${{ github.event.release.tag_name }}
-      RELEASE_EVENT: ${{ github.event_name }}
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      SQLAERO_NATIVE_MYSQL: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
-          ref: ${{ github.event.release.tag_name || github.ref }}
-      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.13"
-      - name: Verify runner, alpha version and release tag
+          python-version: ${{ matrix.python }}
+          architecture: arm64
+      - name: Check release identity and install fixed tools
         run: |
           python - <<'PY'
-          import configparser, os, platform, sys
+          import os
           from pathlib import Path
-          assert platform.system() == "Darwin" and platform.machine() == "arm64"
-          assert sys.version_info[:2] == (3, 13)
-          assert platform.mac_ver()[0].split(".")[0] == "26"
-          cfg = configparser.ConfigParser()
-          cfg.read("setup.cfg")
-          assert cfg["metadata"]["name"] == "SQLAero"
-          assert cfg["metadata"]["version"] == "0.1.0a1"
-          assert cfg["options"]["python_requires"] == ">=3.13,<3.14"
-          if os.environ["RELEASE_EVENT"] == "release":
-              assert os.environ["RELEASE_TAG"] == "v" + cfg["metadata"]["version"]
+          import tomllib
+          version = tomllib.loads(Path('pyproject.toml').read_text())['project']['version']
+          if os.environ['GITHUB_REF_TYPE'] == 'tag':
+              assert os.environ['GITHUB_REF_NAME'] == 'v' + version
+              assert (Path('docs/releases') / (os.environ['GITHUB_REF_NAME'] + '.md')).is_file()
           PY
-      - name: Install build tools and freeze primary build dependencies
+          test "$(uname -m)" = arm64
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
+          python -m venv .venv
+          .venv/bin/python -m pip install --disable-pip-version-check -r requirements-dev.txt
+          brew install --force-bottle --skip-post-install mysql@8.4 mysql@9.7 openssl@4
+          echo "SQLAERO_TEST_MYSQL_ROOT=/private/tmp/sqlaero-mysql-$(id -u)" >> "$GITHUB_ENV"
+          mkdir -p evidence/rust-sync-kernel/startup
+      - name: Verify native sources and build the actual wheel
         run: |
-          echo "PIP_CONSTRAINT=$GITHUB_WORKSPACE/.github/release-constraints.txt" >> "$GITHUB_ENV"
-          python -m pip install -c .github/release-constraints.txt build twine
-      - name: Build sdist and wheel from the sdist
+          source .venv/bin/activate
+          cargo fmt --all --check
+          cargo test -p sqlaero-core --locked
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          python tools/error_catalog.py --check
+          pyright
+          maturin build --release --locked --interpreter python --out dist
+      - name: Build and reconstruct the source distribution
+        if: matrix.python == '3.13.17'
         run: |
-          python -m build --sdist --outdir dist
+          source .venv/bin/activate
+          maturin sdist --out dist
+          mkdir sdist-source
+          tar -xzf dist/*.tar.gz --directory sdist-source
+          cd sdist-source/*
+          maturin build --release --locked --interpreter "$GITHUB_WORKSPACE/.venv/bin/python" --out "$GITHUB_WORKSPACE/sdist-wheels"
+      - name: Install and test the wheel against both isolated servers
+        run: |
+          source .venv/bin/activate
+          python -m pip install --no-deps dist/*.whl
+          if [ -d sdist-wheels ]; then
+            python -m pip install --no-deps --force-reinstall sdist-wheels/*.whl
+          fi
           python - <<'PY'
-          import tarfile
+          from importlib.metadata import version
           from pathlib import Path
-          archive = next(Path("dist").glob("*.tar.gz"))
-          with tarfile.open(archive) as source:
-              source.extractall("build-input", filter="data")
+          import platform
+          import sqlaero
+          assert platform.machine() == 'arm64'
+          assert '.venv' in Path(sqlaero.__file__).parts
+          assert version('sqlaero') == '0.2.0a1'
           PY
-          python -m build --wheel --outdir dist build-input/sqlaero-0.1.0a1
-          python -m twine check dist/*
-          python .github/scripts/check_release.py dist
-      - name: Install actual wheel into a clean environment and run offline cases
-        run: |
-          python -m venv "$RUNNER_TEMP/sqlaero-test"
-          "$RUNNER_TEMP/sqlaero-test/bin/python" -m pip install --only-binary=:all: -c .github/release-constraints.txt dist/*.whl pendulum
-          "$RUNNER_TEMP/sqlaero-test/bin/python" -m pip check
-          "$RUNNER_TEMP/sqlaero-test/bin/python" -I -B src/test_utils.py
-          "$RUNNER_TEMP/sqlaero-test/bin/python" -I -B src/test_sqlfunc.py
-          "$RUNNER_TEMP/sqlaero-test/bin/python" -I -B validation/run_transcode_pure.py
-          "$RUNNER_TEMP/sqlaero-test/bin/python" -I -B -c 'import sqlaero, importlib.util; assert importlib.util.find_spec("sqlcycli") is None; assert importlib.util.find_spec("Cython") is None; assert sqlaero.Connection.__module__ == "sqlaero.connection"'
-          "$RUNNER_TEMP/sqlaero-test/bin/python" -m pip freeze
-      - name: Retain only the verified wheel for publishing
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+          python tools/mysql_fixture.py prepare
+          python -m pytest -q tests
+          python -m pip check
+      - name: Stop only this job's isolated servers
+        if: always()
+        run: .venv/bin/python tools/mysql_fixture.py stop
+      - name: Save tested distributions
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: verified-pypi-wheel
-          path: dist/*.whl
+          name: distributions-${{ matrix.python }}
+          path: dist/*
           if-no-files-found: error
+          retention-days: 7
 
-  publish:
-    if: >-
-      github.event_name == 'release' &&
-      github.actor == 'AresJef' &&
-      github.triggering_actor == 'AresJef' &&
-      github.repository == 'AresJef/SQLAero' &&
-      github.event.release.tag_name == 'v0.1.0a1' &&
-      github.event.release.prerelease == true
-    needs: build-and-verify
-    runs-on: ubuntu-latest
+  github-release:
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: distributions-*
+          merge-multiple: true
+          path: dist
+      - name: Publish the tested alpha with its authored notes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          test "$(find dist -name '*.whl' | wc -l)" -eq 4
+          test "$(find dist -name '*.tar.gz' | wc -l)" -eq 1
+          sha256sum dist/* > SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" dist/* SHA256SUMS --verify-tag --prerelease --title "SQLAero $GITHUB_REF_NAME" --notes-file "docs/releases/$GITHUB_REF_NAME.md"
+
+  pypi-publish:
+    needs: github-release
+    runs-on: ubuntu-24.04
     environment: pypi
     permissions:
       id-token: write
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: verified-pypi-wheel
+          pattern: distributions-*
+          merge-multiple: true
           path: dist
-      - name: Require exactly the intended wheel; reject sdist or extra files
-        run: |
-          python - <<'PY'
-          from pathlib import Path
-          files = list(Path("dist").iterdir())
-          assert len(files) == 1
-          assert files[0].name == "sqlaero-0.1.0a1-cp313-cp313-macosx_26_0_arm64.whl"
-          PY
-      - name: Publish verified wheel through PyPI Trusted Publishing
-        uses: pypa/gh-action-pypi-publish@ed0c53931b1dc9bd32cbe73a98c7f6766f8a527e # v1.13.0
-        with:
-          packages-dir: dist
+      - name: Publish the same distributions through Trusted Publishing
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

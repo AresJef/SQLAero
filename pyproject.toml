@@ -1,9 +1,48 @@
 [build-system]
-requires = [
-    "setuptools>=68.0.0",
-    "wheel>=0.41.0",
-    "cytimes>=3.1.0",
-    "Cython==3.2.1",
-    "numpy>=1.25.2",
+requires = ["maturin==1.15.0"]
+build-backend = "maturin"
+
+[project]
+name = "sqlaero"
+version = "0.2.0a1"
+description = "A native Rust MySQL client for Python"
+requires-python = ">=3.12,<3.16"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md", "licenses/third-party/**/*"]
+authors = [{ name = "Jef" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Operating System :: MacOS :: MacOS X",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
+    "Programming Language :: Rust",
+    "Topic :: Database :: Front-Ends",
 ]
-build-backend = "setuptools.build_meta"
+
+[project.urls]
+Repository = "https://github.com/AresJef/SQLAero"
+Issues = "https://github.com/AresJef/SQLAero/issues"
+
+[tool.maturin]
+manifest-path = "crates/sqlaero-python/Cargo.toml"
+python-source = "python"
+module-name = "sqlaero._sqlaero"
+include = [
+    { path = "rust-toolchain.toml", format = "sdist" },
+    { path = "data/error-catalog.json", format = "sdist" },
+]
+
+[tool.pyright]
+include = ["python", "tests", "tools"]
+extraPaths = ["python"]
+venvPath = "."
+venv = ".venv"
+typeCheckingMode = "strict"
+pythonVersion = "3.12"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

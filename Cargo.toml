@@ -1,0 +1,51 @@
+[workspace]
+members = ["crates/sqlaero-core", "crates/sqlaero-python"]
+resolver = "3"
+
+[workspace.package]
+version = "0.2.0-alpha.1"
+edition = "2024"
+rust-version = "1.99.1"
+license = "MIT"
+repository = "https://github.com/AresJef/SQLAero"
+
+[workspace.dependencies]
+pyo3 = { version = "=0.29.2", features = ["extension-module", "num-bigint"] }
+sqlaero-core = { path = "crates/sqlaero-core" }
+mysql_common = { version = "=0.38.2", default-features = false }
+flate2 = { version = "=1.1.10", default-features = false, features = ["rust_backend"] }
+mio = { version = "=1.2.4", default-features = false, features = ["os-poll", "net"] }
+socket2 = "=0.6.5"
+rustls = { version = "=0.23.46", default-features = false, features = ["std", "tls12", "aws_lc_rs"] }
+aws-lc-rs = "=1.18.0"
+rustls-platform-verifier = "=0.7.1"
+security-framework = "=3.7.0"
+rustls-pki-types = { version = "=1.15.1", features = ["std"] }
+pkcs8 = { version = "=0.11.0", features = ["std", "pem", "encryption"] }
+zeroize = { version = "=1.9.1", features = ["std"] }
+encoding_rs = { version = "=0.8.42", default-features = false, features = ["alloc"] }
+jiter = { version = "=0.17.0", default-features = false, features = ["python", "num-bigint"] }
+num-bigint = "0.4"
+thiserror = "=2.0.21"
+libc = "=0.2.191"
+core-foundation = "=0.10.1"
+core-foundation-sys = "=0.8.7"
+itoa = "=1.0.18"
+zmij = "=1.0.23"
+memchr = "=2.8.3"
+smallvec = "=1.16.4"
+getrandom = { version = "=0.3.4", features = ["std"] }
+
+[workspace.lints.rust]
+missing_docs = "deny"
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "unwind"
+overflow-checks = true

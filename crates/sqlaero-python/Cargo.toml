@@ -1,0 +1,26 @@
+[package]
+name = "sqlaero-python"
+description = "Python boundary for the SQLAero native MySQL core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+name = "_sqlaero"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pyo3.workspace = true
+sqlaero-core.workspace = true
+jiter.workspace = true
+num-bigint.workspace = true
+rustls.workspace = true
+rustls-pki-types.workspace = true
+zeroize.workspace = true
+getrandom.workspace = true
+smallvec.workspace = true
+
+[lints]
+workspace = true
