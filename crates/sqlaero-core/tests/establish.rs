@@ -1162,3 +1162,35 @@ fn tracked_session_roles_change_independently_after_actual_confirmations() {
         );
     }
 }
+
+#[test]
+#[ignore = "requires both isolated MySQL servers; run this binary with one test thread"]
+fn actual_error_text_bytes_under_results_encodings_are_preserved() {
+    use sqlaero_core::{result::text::ResultError, session::query::QueryError};
+    let root = root();
+    for label in ["84", "97"] {
+        let mut connection =
+            establish(configuration(&root, label, true, None, "localhost")).unwrap();
+        for encoding in [
+            "utf8mb4", "latin1", "utf16", "utf16le", "ucs2", "utf32", "binary", "NULL",
+        ] {
+            query(
+                &mut connection,
+                &format!("SET character_set_results={encoding}"),
+            )
+            .unwrap();
+            match query(&mut connection, "SELECT `é`") {
+                Err(QueryError::Result(ResultError::Server(error))) => {
+                    println!(
+                        "MySQL {label} {encoding}: code {}, raw length {}, bytes {:?}",
+                        error.error_code(),
+                        error.message_ref().len(),
+                        error.message_ref()
+                    );
+                    assert_eq!(error.error_code(), 1054);
+                }
+                _ => panic!("expected the actual missing-column ERR"),
+            }
+        }
+    }
+}

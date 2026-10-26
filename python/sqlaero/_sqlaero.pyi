@@ -1,6 +1,7 @@
 """Private native extension declarations."""
 
 from typing import Any, Iterator, overload
+from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as MySQLErrorCode
 
 class ColumnInfo:
     """Immutable metadata for one column at its original result position."""

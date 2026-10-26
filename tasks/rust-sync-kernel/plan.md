@@ -1,6 +1,6 @@
 # SQLAero Rust sync内核：72小时执行与验收计划
 
-状态：持续推进；P01及P02原生连接闭环通过，P03及P04.1／P04.2组件通过，继续P04.3列信息。原正式T0为2026-10-26T01:09:55+08:00，排除暂停1分56秒；动态余额见第9节，分步验收53／100分。本文是本项目唯一执行计划及推进台账。
+状态：持续推进；P01及P02原生连接闭环通过，P03／P04及P05.1组件通过，继续P05.2完整错误目录。原正式T0为2026-10-26T01:09:55+08:00，排除暂停1分56秒；动态余额见第9节，分步验收61／100分。本文是本项目唯一执行计划及推进台账。
 
 ## 1. 执行依据与核心instruction
 
@@ -124,9 +124,9 @@ reader增量驱动绑定器，不向核心注入“读取下一Python行”的�
 | P03.4 合并及真实分块 | 2h | P03.3 | 同范围Rust扫描器／编译regex公平小测后只留胜者；批准语句合并／回退、编码后真实字节限额、完整行切分及失败前缀 | 3 | 通过／原生扫描保留，完整行真实字节拆分；148项Python、31项核心及两线真实SQL通过；失败前缀只取实际响应。证据startup/batch-contracts.json |
 | P04.1 原生结果 | 2h | P03.4 | 列／行范围及拥有者、buffered响应、单结果／连接聚合容量、资源释放；基本tuple fetch及多Cursor结果独立 | 5 | 组件通过／实际容量、聚合与独立元信息两线实测；生产Reader tuple读取及独立结果／释放通过，见reader-contracts.json |
 | P04.2 decode及读取原子性 | 2h | P04.1 | 全MySQL结果类型、七选项、jiter一次解析、严格／宽容文本与日期、TIME；失败不推进读取位置，完整接收解码路线 | 5 | 组件通过／54字段及10读取定向；全部212 Python、40核心通过。原异常中断及失败原子性、真实JSON编码已核实；公开客户端组合仍归P05／P06 |
-| P04.3 Columns与缓存 | 2h | P04.2 | 29字段、names／keys及重复规则、PEP description、按需Python缓存／旧元信息快照；新执行及未执行／关闭状态 | 4 | 未开始／— |
-| P05.1 会话与事务 | 2h | P04.3 | 统一响应状态路径、必要最小确认、UTC失效、手动事务及隐式提交、context manager及未知执行事实 | 4 | 未开始／— |
-| P05.2 完整错误目录 | 2h | P02.1、P04.2 | 两线协议ERR完整分类、独立来源核对、11异常及Warning、两公开IntEnum同源生成、未知SQLSTATE回退及只读构造契约 | 4 | 未开始／— |
+| P04.3 Columns与缓存 | 2h | P04.2 | 29字段、names／keys及重复规则、PEP description、按需Python缓存／旧元信息快照；新执行及未执行／关闭状态 | 4 | 组件通过／29字段、原生命名与延迟缓存；225 Python／41核心、类型／Clippy通过，见startup/columns-contracts.json；公开新执行替换归P05集成 |
+| P05.1 会话与事务 | 2h | P04.3 | 统一响应状态路径、必要最小确认、UTC失效、手动事务及隐式提交、context manager及未知执行事实 | 4 | 组件通过／258 Python、41核心、类型／Clippy；两线33个公开用例、原生2项通过。公开会话／事务及上下文确认已接通，完整诊断仍归P05.2／P05.3。见startup/session-public-contracts.json |
+| P05.2 完整错误目录 | 2h | P02.1、P04.2 | 两线协议ERR完整分类、独立来源核对、11异常及Warning、两公开IntEnum同源生成、未知SQLSTATE回退及只读构造契约 | 4 | 组件通过／279 Python、44核心及类型／Clippy；两线完整映射2046服务端／19客户端，同源枚举／文档和ERR真实文本通过error-catalog-contracts.json |
 | P05.3 单主错与诊断 | 2h | P05.1、P05.2 | ErrorInfo全部字段、cause／context／additional_errors、延迟快照刷新；业务／提交／回滚／清理的单主错优先级与未知计数 | 4 | 未开始／— |
 | P05.4 retry及配置闭合 | 2h | P05.3 | RetryRule／decorator／block、AND／OR及次数等待、ParamSpec保真；八超时、local属性／remote方法、关闭后读取／修改约定 | 3 | 未开始／— |
 | P06.1 完整功能B0候选 | 2h | P05.4 | 第5节必要覆盖在两服务器落实；真实包调用、码目录／英文文档／类型／资源证据；功能缺口关闭后冻结B0候选 | 3 | 未开始／— |
@@ -293,13 +293,13 @@ P01提前核PyPI项目／候选及OIDC配置，P08才发行。候选Python版本
 | 项目 | 当前值 |
 | --- | --- |
 | 正式T0／时区 | 2026-10-26T01:09:55+08:00／Asia/Shanghai |
-| 正式已用／余额 | 截至07:10:54已用5小时59分03秒／余额66小时00分57秒；之后继续计时，暂停排除01:13:21–01:15:17共1分56秒 |
-| 当前步骤／下一动作 | P04.3：29字段、唯一键及按需缓存；直接沿本结果快照实现，不扩展通用缓存框架。下一自查07:41:51（T+390），P08仍8小时、R仍10小时 |
-| 已通过分值 | 53／100，P01／P02／P03及P04.1／P04.2组件通过；不是完整Python驱动或性能验收通过 |
-| 当前最佳／回退 | P04组件见startup/reader-contracts.json；容量回退41242b1，P03.4回退d7fa241，源码／产物身份见startup/batch-contracts.json；回退P03.3本地cda6dd2，编码a0e1b38，数值／时间7499ffd，P02闭环c3cc2982ea8e；P01回退本地b0ac21a80，初始通路b9ca56a66／远端c6ff57e8。experimental v23及冻结reference原样保留 |
+| 正式已用／余额 | 截至09:17:39已用8小时5分48秒／余额63小时54分12秒；暂停排除1分56秒，之后继续计时 |
+| 当前步骤／下一动作 | P05.2组件通过；P05.3实现ErrorInfo、单主错及ERR暂态额度。下一自查09:41:51（T+510）；P08仍8小时、R仍10小时 |
+| 已通过分值 | 65／100，P01–P04及P05.1／P05.2组件通过；完整诊断／retry、性能及最终发行尚未验收 |
+| 当前最佳／回退 | P05.1见startup/session-public-contracts.json，回退beecae0；P04列信息见startup/columns-contracts.json，组件回退ad7bb57；读取见startup/reader-contracts.json；容量回退41242b1，P03.4回退d7fa241，源码／产物身份见startup/batch-contracts.json；回退P03.3本地cda6dd2，编码a0e1b38，数值／时间7499ffd，P02闭环c3cc2982ea8e；P01回退本地b0ac21a80，初始通路b9ca56a66／远端c6ff57e8。experimental v23及冻结reference原样保留 |
 | 运行与进程 | 两套专用mysqld已运行：8.4 PID26479、9.7 PID26486，分别使用/tmp专用目录与13384／13397回环端口；无性能worker |
 | 已批准事项 | C01／C02、A01–A08已确认；用户启动后补充“仅在本次项目推进和规定预算内，所有合理请求统一approve”。自主处理必要合理动作，既定安全／范围／精度／验收及72小时不放宽，平台实际能力另核 |
-| 待取得证据 | P04及后续完整产品、性能、分发证据；P04容量／暂态／连接聚合原生切片已通过，tuple组件已通过，公开Connection／Cursor组合仍须接通。完整错误诊断及Python公开接口未完成 |
+| 待取得证据 | P04及后续完整产品、性能、分发证据；P04容量／暂态／连接聚合原生切片已通过，tuple组件已通过，公开Connection／Cursor组合已接通。完整错误诊断及retry未完成 |
 | 修复余量R | 未分配10小时，使用时转入相应步骤并减R |
 
 正式启动后在此维护一张活动区间表：`实际开始／结束（含时区）｜步骤／用途｜合并有效时长｜成果／证据｜偏差及下一动作`。连续同类工作可合并，重叠不相加；无法归属的如实记，不一律称CPU等待。每次纠偏同步总已用、P08预测、R及下一完整单元成本；若无法可靠计时说明证据和缺口，不擅自重置。
@@ -317,9 +317,11 @@ P01提前核PyPI项目／候选及OIDC配置，P08才发行。候选Python版本
 | 2026-10-26 04:39:54–05:25:31 | P03.3 SQL词法／增量行适配与绑定控制 | 0小时45分37秒 | P03.3通过：138项Python、27项核心及Pyright／Clippy；两线数据隔离和完整字节注释分类通过。修正非ASCII／NUL／DEL分类及LF与CR差异，原失败分别保留bind-comment-initial.log、matrix-before.log及cr-before.log。T+210／T+240已自查，下一05:41:51。P08仍8小时、R仍10小时。 |
 | 2026-10-26 05:25:31–05:49:08 | P03.4批量识别与分块 | 0小时23分37秒 | P03.4通过：148项Python、31项核心、两线真实批量SQL及Pyright／Clippy通过。144个开发有效配对、1无效尝试，扫描保留；仅开发选型，不冒充B0正式性能验收。T+270已自查，P08仍8小时、R仍10小时。 |
 | 2026-10-26 05:49:08–06:53:37 | P04.1／P04.2相邻数据流组件 | 1小时04分29秒 | 容量／暂态及两线聚合／释放／中间消费通过；54字段、10读取及全212 Python／40核心、Pyright／Clippy通过。T+300、T+330自查；NoGIL仅保留架构，不声明支持。 |
-| 2026-10-26 06:53:37起，进行中 | P04.3列信息与缓存 | 未结算 | T+360于07:10:54自查：前段缓存边界推演过长，尚无此步实现成果，立即收敛直接实现；不做通用框架。分步53分；P08仍8小时、R仍10小时。 |
+| 2026-10-26 06:53:37–07:34:05 | P04.3列信息与缓存 | 0小时40分28秒 | 29字段、全局唯一键及按需缓存通过；225 Python／41核心，类型／Clippy／格式通过。T+360已纠正前段过长推演，直接实现后完成；公开会话组合继续P05。 |
+| 2026-10-26 07:34:05–08:33:31 | P05.1公开会话、状态与事务 | 59分 | 258 Python／41核心、类型／Clippy通过；公开两线33项及原生2项通过session-public-contracts.json。全链配置、绑定／组批／tuple结果、状态权威、事务、busy与关闭接通。原失败保留；未新增扫描适配或测量工具。 |
+| 2026-10-26 08:33:31–09:17:39 | P05.2完整错误目录与枚举 | 约0小时44分8秒 | 沿两线实际版本维护完整映射；非UTF8服务端错误文本归本步，ErrorInfo及ERR复制额度归P05.3。P08 8小时、R10小时保持。；T+450已汇报：两线官方客户消息与实例登记1777／1946项零差异，共享全局92／93另核；统一目录及生成物／错误出口已通过；T+480于09:14汇报，较节点晚3分钟。 |
 
-**当前恢复点：** P01／P02／P03及P04.1／P04.2组件通过，53／100分；当前P04.3。reader-contracts.json记录212 Python／40核心与当前扩展身份，公开客户端仍未完成。P03.4身份及已安装扩展哈希见startup/batch-contracts.json，原生扫描选型与原始小测见batch-recognition-choice.md／probe.log；148项Python、31项核心及两线真实SQL通过。私有_bind_sql只验证真实COM_QUERY组装，公开Connection／Cursor及整次执行尚未实现，不把探针当完整驱动验收。批量使用同词法源范围、完整行硬上限、可复用有界原生行片段；失败前缀只取完整实际响应，实际会话上下文更新、发送切换和异常发布继续在P05接通。内部组批软目标未调优，暂用硬限额，P06／P07按实测再定。P03.3词法与长值控制见binding-contracts.json，LF结束行注释、孤立CR保留；36编码实际映射与严格路由见text-contracts.json及charset事实目录，旧错误测试／失败证据保留。P02原生连接／TLS／认证／初始化／查询／关闭已实测，相关session、initialize、establish、key-formats及query日志保持有效。P04.1实际容量／暂态、连接聚合额度与独立元信息切片已通过，见startup/result-ownership-contracts.json；接收缓冲共享额度，中间行只验证计数；生产Reader的tuple／原子读取组件已通过，Cursor公开组合待P05接通；完整ErrorInfo和错误目录仍待P05，JSON私有ValueError也待正式接入DataError。两套专用数据库位于/private/tmp/sqlaero-mysql-501，秘密只在私有目录；source .runtime/env.sh后沿用独立target／venv，不修改冻结experimental／reference。PyPI已登录，release.yml／pypi发布者与无额外人工环境门禁已确认；最终发行仍待完整验收。
+**当前恢复点：** P01–P04及P05.1／P05.2组件通过，65／100分；当前P05.3。error-catalog-contracts.json保存完整目录、源码／产物及279 Python／44核心和双线错误出口证据。session-public-contracts.json记录当前源码／产物、258 Python／41核心、公开双线33项及原生2项；公开Connection／Cursor已接通，完整错误目录组件已验；ErrorInfo／retry／性能与发行仍未验收。columns-contracts.json记录225 Python／41核心、29字段／唯一键／延迟缓存及当前产物；公开新执行替换仍待P05接通。reader-contracts.json记录212 Python／40核心与当前扩展身份，公开客户端仍未完成。P03.4身份及已安装扩展哈希见startup/batch-contracts.json，原生扫描选型与原始小测见batch-recognition-choice.md／probe.log；148项Python、31项核心及两线真实SQL通过。私有_bind_sql仍只作为绑定组件探针；当前公开整次执行证据以上述session-public-contracts.json为准。批量使用同词法源范围、完整行硬上限、可复用有界原生行片段；失败前缀只取完整实际响应，实际会话上下文更新、发送切换和异常发布继续在P05接通。内部组批软目标未调优，暂用硬限额，P06／P07按实测再定。P03.3词法与长值控制见binding-contracts.json，LF结束行注释、孤立CR保留；36编码实际映射与严格路由见text-contracts.json及charset事实目录，旧错误测试／失败证据保留。P02原生连接／TLS／认证／初始化／查询／关闭已实测，相关session、initialize、establish、key-formats及query日志保持有效。P04.1实际容量／暂态、连接聚合额度与独立元信息切片已通过，见startup/result-ownership-contracts.json；接收缓冲共享额度，中间行只验证计数；生产Reader的tuple／原子读取组件已通过，Cursor公开组合待P05接通；完整ErrorInfo和错误目录仍待P05，JSON私有ValueError也待正式接入DataError。两套专用数据库位于/private/tmp/sqlaero-mysql-501，秘密只在私有目录；source .runtime/env.sh后沿用独立target／venv，不修改冻结experimental／reference。PyPI已登录，release.yml／pypi发布者与无额外人工环境门禁已确认；最终发行仍待完整验收。
 
 暂停／产品限制／安全退出时，在同一表保存：准确有效余额、已排除区间、当前代码／配置／产物及回退、测试／采集完整提交点、仍在运行的自己进程处理、缺口和下一条具体动作。保留已完成数据，不把中断运行返回成功；恢复从该点继续。只有用户明确暂停才将Goal设paused；整个目标实际达成才complete，不因局部失败或阶段预算耗尽结束。
 

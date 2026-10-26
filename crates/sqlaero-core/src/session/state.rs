@@ -153,6 +153,10 @@ impl Facts {
     pub fn metadata_codec(&self) -> Option<OutputCodec> {
         match self.results_charset.as_ref()? {
             None => Some(OutputCodec::Utf8mb3),
+            // binary disables result transcoding, just like NULL. Metadata and
+            // diagnostics retain their system text encoding; this does not
+            // change a binary data field's independent bytes output policy.
+            Some(name) if name == "binary" => Some(OutputCodec::Utf8mb3),
             Some(name) => charset::by_charset_name(name).and_then(|charset| {
                 Some(OutputCodec::for_collation(
                     charset::by_collation_name(charset.default_collation)?.id,

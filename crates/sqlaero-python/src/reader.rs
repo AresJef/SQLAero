@@ -79,7 +79,7 @@ impl Reader {
             .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
             .is_err()
         {
-            return Err(errors::client::<errors::InterfaceBusyError>(
+            return Err(errors::client(
                 py,
                 ClientErrorCode::InterfaceBusy,
                 "Cursor is busy executing or reading another operation",
@@ -93,7 +93,7 @@ impl Reader {
             Err(error) => {
                 self.closed.store(true, Ordering::Release);
                 error.into_inner().data.take();
-                Err(errors::client::<errors::InternalError>(
+                Err(errors::client(
                     py,
                     ClientErrorCode::InternalState,
                     "Cursor was retired after a native state failure",
@@ -103,7 +103,7 @@ impl Reader {
     }
     pub(crate) fn open(&self, py: Python<'_>) -> PyResult<()> {
         if self.closed.load(Ordering::Acquire) {
-            Err(errors::client::<errors::InterfaceError>(
+            Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
                 "Cursor is closed or permanently retired",
@@ -227,7 +227,7 @@ impl Reader {
         let (data, start, end) = {
             let state = self.lock(py)?;
             if state.metadata.is_none() {
-                return Err(errors::client::<errors::InterfaceError>(
+                return Err(errors::client(
                     py,
                     ClientErrorCode::SessionState,
                     "Cursor has no current row result",
@@ -246,7 +246,7 @@ impl Reader {
             });
         }
         let Some(data) = data else {
-            return Err(errors::client::<errors::InternalError>(
+            return Err(errors::client(
                 py,
                 ClientErrorCode::InternalState,
                 "unread Cursor rows have no native owner",
@@ -259,7 +259,7 @@ impl Reader {
             .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
         for row_index in start..end {
             let fields = data.rows.row(row_index).ok_or_else(|| {
-                errors::client::<errors::InternalError>(
+                errors::client(
                     py,
                     ClientErrorCode::InternalState,
                     "native row location is unavailable",
@@ -299,7 +299,7 @@ impl Reader {
             result
                 .pop()
                 .ok_or_else(|| {
-                    errors::client::<errors::InternalError>(
+                    errors::client(
                         py,
                         ClientErrorCode::InternalState,
                         "single-row output is unavailable",

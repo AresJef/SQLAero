@@ -1,6 +1,6 @@
 //! Incremental input-row adaptation and native positional request assembly.
 
-use crate::errors::{self, DataError, ProgrammingError};
+use crate::errors;
 use crate::input::{ScalarTypes, check};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
@@ -174,7 +174,7 @@ impl Row<'_> {
         check(py, budget)?;
         let width = self.width();
         if width != template.slots() {
-            return Err(errors::client::<ProgrammingError>(
+            return Err(errors::client(
                 py,
                 ClientErrorCode::ParameterCount,
                 format!(
@@ -216,7 +216,7 @@ impl Row<'_> {
                 .map_err(|error| errors::wire(py, error))?
                 .is_none()
             {
-                return Err(errors::client::<ProgrammingError>(
+                return Err(errors::client(
                     py,
                     ClientErrorCode::ParameterCount,
                     "binding position is unavailable",
@@ -241,7 +241,7 @@ impl Row<'_> {
             .map_err(|error| errors::wire(py, error))?
             .is_some()
         {
-            return Err(errors::client::<ProgrammingError>(
+            return Err(errors::client(
                 py,
                 ClientErrorCode::ParameterCount,
                 "unconsumed binding position",
@@ -263,7 +263,7 @@ struct Visit<'a> {
 impl Visit<'_> {
     fn enter(&mut self, py: Python<'_>, identity: usize) -> PyResult<()> {
         if self.active.len() >= 64 || self.active.contains(&identity) {
-            return Err(errors::client::<DataError>(
+            return Err(errors::client(
                 py,
                 ClientErrorCode::ContainerNesting,
                 format!(
@@ -321,10 +321,6 @@ fn path_text(path: &[usize]) -> String {
 pub(crate) fn template_error(py: Python<'_>, error: TemplateError) -> PyErr {
     match error {
         TemplateError::Wire(error) => errors::wire(py, error),
-        error => errors::client::<ProgrammingError>(
-            py,
-            ClientErrorCode::TemplateBinding,
-            error.to_string(),
-        ),
+        error => errors::client(py, ClientErrorCode::TemplateBinding, error.to_string()),
     }
 }

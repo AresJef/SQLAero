@@ -105,7 +105,7 @@ impl Drop for Transaction {
 impl Transaction {
     fn __enter__(&self, py: Python<'_>) -> PyResult<Py<Cursor>> {
         if self.entered.swap(true, Ordering::AcqRel) {
-            return Err(errors::client::<errors::InterfaceError>(
+            return Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
                 "This transaction context cannot be entered more than once",
@@ -118,7 +118,7 @@ impl Transaction {
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
-            return Err(errors::client::<errors::InterfaceError>(
+            return Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
                 "Connection already owns a managed transaction scope; no BEGIN was sent",
@@ -136,7 +136,7 @@ impl Transaction {
                 .facts
                 .lock()
                 .map_err(|_| {
-                    errors::client::<errors::InternalError>(
+                    errors::client(
                         py,
                         ClientErrorCode::InternalState,
                         "confirmed transaction state is unavailable",
@@ -153,7 +153,7 @@ impl Transaction {
                     .facts
                     .lock()
                     .map_err(|_| {
-                        errors::client::<errors::InternalError>(
+                        errors::client(
                             py,
                             ClientErrorCode::InternalState,
                             "confirmed transaction state is unavailable",
@@ -162,14 +162,14 @@ impl Transaction {
                     .status;
             }
             let status = status.ok_or_else(|| {
-                errors::client::<errors::InterfaceError>(
+                errors::client(
                     py,
                     ClientErrorCode::SessionState,
                     "The actual transaction state is unknown; no BEGIN was sent",
                 )
             })?;
             if status.contains(StatusFlags::SERVER_STATUS_IN_TRANS) {
-                return Err(errors::client::<errors::InterfaceError>(
+                return Err(errors::client(
                     py,
                     ClientErrorCode::SessionState,
                     "Connection already has an active server transaction; no BEGIN was sent",
@@ -195,7 +195,7 @@ impl Transaction {
                 )?;
                 input::check(py, &budget)?;
                 *self.cursor.lock().map_err(|_| {
-                    errors::client::<errors::InternalError>(
+                    errors::client(
                         py,
                         ClientErrorCode::InternalState,
                         "transaction cursor ownership is unavailable",
@@ -229,7 +229,7 @@ impl Transaction {
         _traceback: &Bound<'_, PyAny>,
     ) -> PyResult<bool> {
         if !self.owns.load(Ordering::Acquire) || self.finished.swap(true, Ordering::AcqRel) {
-            return Err(errors::client::<errors::InterfaceError>(
+            return Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
                 "This transaction context has no active entry to exit",
@@ -240,7 +240,7 @@ impl Transaction {
             .cursor
             .lock()
             .map_err(|_| {
-                errors::client::<errors::InternalError>(
+                errors::client(
                     py,
                     ClientErrorCode::InternalState,
                     "transaction cursor ownership is unavailable",

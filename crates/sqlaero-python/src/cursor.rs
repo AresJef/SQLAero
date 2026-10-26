@@ -135,7 +135,7 @@ impl Cursor {
     }
     fn settings(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Settings>> {
         self.settings.lock().map_err(|_| {
-            errors::client::<errors::InternalError>(
+            errors::client(
                 py,
                 ClientErrorCode::InternalState,
                 "Cursor configuration is unavailable after a native failure",
@@ -144,7 +144,7 @@ impl Cursor {
     }
     fn counters(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Option<Counts>>> {
         self.counts.lock().map_err(|_| {
-            errors::client::<errors::InternalError>(
+            errors::client(
                 py,
                 ClientErrorCode::InternalState,
                 "Cursor counters are unavailable after a native failure",
@@ -153,7 +153,7 @@ impl Cursor {
     }
     fn modifying(&self, py: Python<'_>, property: &str) -> PyResult<()> {
         if self.reader.is_closed() {
-            Err(errors::client::<errors::InterfaceError>(
+            Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
                 format!(
@@ -226,7 +226,7 @@ impl Cursor {
                         )?);
                     }
                     let prepared = prepared.as_mut().ok_or_else(|| {
-                        errors::client::<errors::InternalError>(
+                        errors::client(
                             py,
                             ClientErrorCode::InternalState,
                             "SQL preparation was not published",
@@ -317,7 +317,7 @@ impl Cursor {
                 last = Some((response, names_codec));
             }
             let Some((response, codec)) = last else {
-                return Err(errors::client::<errors::InternalError>(
+                return Err(errors::client(
                     py,
                     ClientErrorCode::InternalState,
                     "an execution produced no actual command",

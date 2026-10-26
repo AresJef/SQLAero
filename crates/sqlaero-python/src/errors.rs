@@ -1,11 +1,10 @@
 //! Native exception identity and immutable public constructor values.
 
 use num_bigint::BigInt;
-use pyo3::PyTypeInfo;
 use pyo3::exceptions::{PyException, PyTypeError, PyWarning};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict, PyInt, PyTuple};
-use sqlaero_core::error::ClientErrorCode;
+use pyo3::types::{PyBool, PyDict, PyInt, PyString, PyTuple, PyType};
+use sqlaero_core::error::{ClientErrorCode, ExceptionClass};
 use sqlaero_core::protocol::framing::WireError;
 
 pyo3::create_exception!(
@@ -77,11 +76,7 @@ pyo3::create_exception!(
 
 /// Construct a real driver exception with complete source metadata. User-made
 /// exceptions retain the independent, optional constructor semantics below.
-pub(crate) fn client<T: PyTypeInfo>(
-    py: Python<'_>,
-    code: ClientErrorCode,
-    message: impl Into<String>,
-) -> PyErr {
+pub(crate) fn client(py: Python<'_>, code: ClientErrorCode, message: impl Into<String>) -> PyErr {
     let keywords = PyDict::new(py);
     if let Err(error) = keywords
         .set_item("code", code as u32)
@@ -89,12 +84,27 @@ pub(crate) fn client<T: PyTypeInfo>(
     {
         return error;
     }
-    match py.get_type::<T>().call((message.into(),), Some(&keywords)) {
+    match exception_type(py, code.entry().class).call((message.into(),), Some(&keywords)) {
         Ok(value) => match value.cast_into::<PyException>() {
             Ok(value) => PyErr::from_value(value.into_any()),
             Err(error) => error.into(),
         },
         Err(error) => error,
+    }
+}
+
+fn exception_type(py: Python<'_>, class: ExceptionClass) -> Bound<'_, PyType> {
+    match class {
+        ExceptionClass::Interface => py.get_type::<InterfaceError>(),
+        ExceptionClass::InterfaceBusy => py.get_type::<InterfaceBusyError>(),
+        ExceptionClass::Database => py.get_type::<DatabaseError>(),
+        ExceptionClass::Data => py.get_type::<DataError>(),
+        ExceptionClass::Operational => py.get_type::<OperationalError>(),
+        ExceptionClass::OperationalTimeout => py.get_type::<OperationalTimeoutError>(),
+        ExceptionClass::Integrity => py.get_type::<IntegrityError>(),
+        ExceptionClass::Internal => py.get_type::<InternalError>(),
+        ExceptionClass::Programming => py.get_type::<ProgrammingError>(),
+        ExceptionClass::NotSupported => py.get_type::<NotSupportedError>(),
     }
 }
 
@@ -104,9 +114,9 @@ pub(crate) fn wire(py: Python<'_>, error: WireError) -> PyErr {
     match error {
         WireError::Allocation(error) => pyo3::exceptions::PyMemoryError::new_err(error.to_string()),
         error @ (WireError::Limit { .. } | WireError::Memory(_)) => {
-            client::<OperationalError>(py, ClientErrorCode::ResourceLimit, error.to_string())
+            client(py, ClientErrorCode::ResourceLimit, error.to_string())
         }
-        error => client::<OperationalError>(py, ClientErrorCode::Protocol, error.to_string()),
+        error => client(py, ClientErrorCode::Protocol, error.to_string()),
     }
 }
 
@@ -119,7 +129,7 @@ pub(crate) fn wire(py: Python<'_>, error: WireError) -> PyErr {
 /// traceback mechanisms remain available.
 #[pyclass(extends = PyException, subclass, module = "sqlaero.errors")]
 pub(crate) struct SQLAeroError {
-    message: String,
+    message: Py<PyString>,
     code: Option<BigInt>,
     is_server_error: Option<bool>,
     args: Py<PyTuple>,
@@ -186,20 +196,34 @@ impl SQLAeroError {
             }
         }
         let provided = message.is_some();
-        let message = message
-            .map(|value| value.extract::<String>())
-            .transpose()?
-            .unwrap_or_default();
+        let message = match message {
+            Some(value) => {
+                value
+                    .cast::<PyString>()
+                    .map_err(|_| PyTypeError::new_err("message must be str"))?;
+                // SAFETY: the attached copying/base-normalizing Unicode API
+                // receives a live str. It preserves lone surrogates without
+                // calling a str subclass's conversion hooks or retaining it.
+                unsafe {
+                    Bound::<PyAny>::from_owned_ptr_or_err(
+                        py,
+                        pyo3::ffi::PyUnicode_FromObject(value.as_ptr()),
+                    )?
+                }
+                .cast_into::<PyString>()?
+            }
+            None => PyString::new(py, ""),
+        };
         // Normalize a str subclass to plain text: no user-owned objects are
         // retained in this immutable tuple, so it cannot introduce a GC cycle.
         let args = if provided {
-            PyTuple::new(py, [message.as_str()])?
+            PyTuple::new(py, [message.clone()])?
         } else {
             PyTuple::empty(py)
         }
         .unbind();
         Ok(Self {
-            message,
+            message: message.unbind(),
             code,
             is_server_error: source,
             args,
@@ -213,8 +237,8 @@ impl SQLAeroError {
 
     /// Return the original message, without a display prefix or server request.
     #[getter]
-    fn message(&self) -> &str {
-        &self.message
+    fn message(&self, py: Python<'_>) -> Py<PyString> {
+        self.message.clone_ref(py)
     }
 
     /// Return the declared integer code, or None when manually unspecified.
@@ -235,7 +259,7 @@ impl SQLAeroError {
         self.args.clone_ref(py)
     }
 
-    fn __str__(&self) -> String {
+    fn __str__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
         let mut prefix = match self.is_server_error {
             Some(true) => "Server Error".to_owned(),
             Some(false) => "Client Error".to_owned(),
@@ -246,13 +270,29 @@ impl SQLAeroError {
             prefix.push_str(&format!(" [{code}]"));
         }
         if prefix.is_empty() {
-            return self.message.clone();
+            return Ok(self.message.clone_ref(py).into_bound(py));
         }
-        if !self.message.is_empty() {
+        let message = self.message.bind(py);
+        if !message.is_empty()? {
             prefix.push_str(": ");
-            prefix.push_str(&self.message);
         }
-        prefix
+        let prefix = crate::output::text(
+            py,
+            prefix.as_bytes(),
+            sqlaero_core::charset::output::OutputCodec::for_collation(255),
+            true,
+            None,
+        )?;
+        // SAFETY: both attached operands are owned exact Unicode values. The
+        // concatenation returns a new reference or the actual allocation error.
+        unsafe {
+            Bound::<PyAny>::from_owned_ptr_or_err(
+                py,
+                pyo3::ffi::PyUnicode_Concat(prefix.as_ptr(), message.as_ptr()),
+            )?
+        }
+        .cast_into()
+        .map_err(Into::into)
     }
 }
 
@@ -274,7 +314,8 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("InternalError", py.get_type::<InternalError>())?;
     module.add("ProgrammingError", py.get_type::<ProgrammingError>())?;
     module.add("NotSupportedError", py.get_type::<NotSupportedError>())?;
-    module.add("SQLAeroWarning", py.get_type::<SQLAeroWarning>())
+    module.add("SQLAeroWarning", py.get_type::<SQLAeroWarning>())?;
+    register_codes(module)
 }
 
 /// Map the actual native timeout category without parsing its display text.
@@ -289,20 +330,14 @@ pub(crate) fn timeout(
         TimeoutKind::Read => ClientErrorCode::ReadDeadline,
         TimeoutKind::Write => ClientErrorCode::WriteDeadline,
     };
-    client::<OperationalTimeoutError>(py, code, error.to_string())
+    client(py, code, error.to_string())
 }
 pub(crate) fn access(py: Python<'_>, error: sqlaero_core::session::shared::AccessError) -> PyErr {
     use sqlaero_core::session::shared::AccessError;
     match error {
-        AccessError::Busy => {
-            client::<InterfaceBusyError>(py, ClientErrorCode::InterfaceBusy, error.to_string())
-        }
-        AccessError::Closed => {
-            client::<InterfaceError>(py, ClientErrorCode::SessionState, error.to_string())
-        }
-        AccessError::Poisoned => {
-            client::<InternalError>(py, ClientErrorCode::InternalState, error.to_string())
-        }
+        AccessError::Busy => client(py, ClientErrorCode::InterfaceBusy, error.to_string()),
+        AccessError::Closed => client(py, ClientErrorCode::SessionState, error.to_string()),
+        AccessError::Poisoned => client(py, ClientErrorCode::InternalState, error.to_string()),
     }
 }
 pub(crate) fn channel(
@@ -316,25 +351,33 @@ pub(crate) fn channel(
             timeout(py, error)
         }
         error @ ChannelError::Transport(_) => {
-            client::<OperationalError>(py, ClientErrorCode::Transport, error.to_string())
+            client(py, ClientErrorCode::Transport, error.to_string())
         }
-        error @ ChannelError::Tls(_) => {
-            client::<OperationalError>(py, ClientErrorCode::Tls, error.to_string())
-        }
+        error @ ChannelError::Tls(_) => client(py, ClientErrorCode::Tls, error.to_string()),
     }
 }
-/// Build a server exception from actual ERR fields. The complete maintained
-/// code catalog is integrated in P05.2; these SQLSTATE classes are its fallback.
+/// Preserve actual server code/state and decode the final Python error text
+/// using the response's real encoding. Unknown encoding uses lossless byte
+/// escapes rather than claiming UTF-8 or silently replacing data.
 pub(crate) fn server(py: Python<'_>, code: u16, state: Option<[u8; 5]>, message: &[u8]) -> PyErr {
-    let state_class = state.map(|state| [state[0], state[1]]);
-    let typ = match (code, state_class) {
-        (1062 | 1451 | 1452, _) | (_, Some([b'2', b'3'])) => py.get_type::<IntegrityError>(),
-        (_, Some([b'2', b'2'])) => py.get_type::<DataError>(),
-        (_, Some([b'4', b'2'])) => py.get_type::<ProgrammingError>(),
-        (_, Some([b'0', b'A'])) => py.get_type::<NotSupportedError>(),
-        (_, Some([b'0', b'8'] | [b'4', b'0'])) => py.get_type::<OperationalError>(),
-        _ => py.get_type::<OperationalError>(),
-    };
+    server_with_codec(
+        py,
+        code,
+        state,
+        message,
+        Some(sqlaero_core::charset::output::OutputCodec::for_collation(
+            255,
+        )),
+    )
+}
+fn server_with_codec(
+    py: Python<'_>,
+    code: u16,
+    state: Option<[u8; 5]>,
+    message: &[u8],
+    codec: Option<sqlaero_core::charset::output::OutputCodec>,
+) -> PyErr {
+    let typ = exception_type(py, sqlaero_core::error::catalog::classify(code, state));
     let keywords = PyDict::new(py);
     if let Err(error) = keywords
         .set_item("code", code)
@@ -342,26 +385,93 @@ pub(crate) fn server(py: Python<'_>, code: u16, state: Option<[u8; 5]>, message:
     {
         return error;
     }
-    let message = String::from_utf8_lossy(message);
-    match typ.call((message.as_ref(),), Some(&keywords)) {
-        Ok(value) => PyErr::from_value(value),
+    let mut raw_text = false;
+    let message = match codec {
+        Some(codec) => match crate::output::text(py, message, codec, false, None) {
+            Ok(value) => value,
+            // The server can truncate its own converted ERR text at a NUL
+            // byte. Invalid diagnostic bytes must not replace its real error
+            // class/code with an unrelated UnicodeDecodeError. Resource and
+            // control exceptions still propagate unchanged.
+            Err(error) if error.is_instance_of::<pyo3::exceptions::PyUnicodeDecodeError>(py) => {
+                raw_text = true;
+                match escaped_error_text(py, message) {
+                    Ok(value) => value,
+                    Err(error) => return error,
+                }
+            }
+            Err(error) => return error,
+        },
+        None => {
+            raw_text = true;
+            match escaped_error_text(py, message) {
+                Ok(value) => value,
+                Err(error) => return error,
+            }
+        }
+    };
+    match typ.call((message,), Some(&keywords)) {
+        Ok(value) => {
+            let error = PyErr::from_value(value);
+            if raw_text {
+                let _ = error.add_note(py, "MySQL ERR text has an unknown encoding or invalid/incomplete byte sequence; message preserves the received bytes as ASCII escapes.");
+            }
+            if let Some(state) = state {
+                let state: String = state
+                    .iter()
+                    .flat_map(|byte| std::ascii::escape_default(*byte))
+                    .map(char::from)
+                    .collect();
+                let _ = error.add_note(py, format!("MySQL SQLSTATE: {state}"));
+            }
+            error
+        }
         Err(error) => error,
     }
 }
+
+fn escaped_error_text<'py>(py: Python<'py>, message: &[u8]) -> PyResult<Bound<'py, PyString>> {
+    let escaped: String = message
+        .iter()
+        .flat_map(|byte| std::ascii::escape_default(*byte))
+        .map(char::from)
+        .collect();
+    crate::output::text(
+        py,
+        escaped.as_bytes(),
+        sqlaero_core::charset::output::OutputCodec::for_collation(255),
+        true,
+        None,
+    )
+}
 pub(crate) fn query(py: Python<'_>, error: sqlaero_core::session::query::QueryError) -> PyErr {
+    query_with_codec(
+        py,
+        error,
+        Some(sqlaero_core::charset::output::OutputCodec::for_collation(
+            255,
+        )),
+    )
+}
+pub(crate) fn query_with_codec(
+    py: Python<'_>,
+    error: sqlaero_core::session::query::QueryError,
+    codec: Option<sqlaero_core::charset::output::OutputCodec>,
+) -> PyErr {
     use sqlaero_core::{result::text::ResultError, session::query::QueryError};
     match error {
         QueryError::Wire(error) | QueryError::Result(ResultError::Wire(error)) => wire(py, error),
         QueryError::Channel(error) => channel(py, error),
         QueryError::Result(ResultError::Memory(error)) => crate::output::memory(py, error),
-        QueryError::Result(ResultError::Server(error)) => server(
+        QueryError::Result(ResultError::Server(error)) => server_with_codec(
             py,
             error.error_code(),
             error.sql_state_ref().map(|state| state.as_bytes()),
             error.message_ref(),
+            codec,
         ),
         error @ (QueryError::MultipleResults { .. }
-        | QueryError::Result(ResultError::Unsupported(_))) => client::<NotSupportedError>(
+        | QueryError::Result(ResultError::Unsupported(_))) => client(
             py,
             ClientErrorCode::UnsupportedCapability,
             error.to_string(),
@@ -384,15 +494,15 @@ pub(crate) fn establish(
             error.message_ref(),
         ),
         error @ (ConnectError::Unsupported(_)
-        | ConnectError::Auth(AuthError::UnsupportedPlugin)) => client::<NotSupportedError>(
+        | ConnectError::Auth(AuthError::UnsupportedPlugin)) => client(
             py,
             ClientErrorCode::UnsupportedCapability,
             error.to_string(),
         ),
         error @ ConnectError::Auth(_) => {
-            client::<OperationalError>(py, ClientErrorCode::Authentication, error.to_string())
+            client(py, ClientErrorCode::Authentication, error.to_string())
         }
-        error => client::<OperationalError>(py, ClientErrorCode::Transport, error.to_string()),
+        error => client(py, ClientErrorCode::Transport, error.to_string()),
     }
 }
 pub(crate) fn initialize(
@@ -404,7 +514,7 @@ pub(crate) fn initialize(
         InitializeError::Connect(error) => establish(py, error),
         InitializeError::Query(error) => query(py, error),
         InitializeError::Wire(error) => wire(py, error),
-        error => client::<InterfaceError>(py, ClientErrorCode::SessionState, error.to_string()),
+        error => client(py, ClientErrorCode::SessionState, error.to_string()),
     }
 }
 
@@ -412,4 +522,38 @@ pub(crate) fn initialize(
 /// cleanup failure. Diagnostic snapshot publication is implemented in P05.3.
 pub(crate) fn additional(py: Python<'_>, primary: &PyErr, secondary: PyErr, stage: &str) {
     let _ = primary.add_note(py, format!("Additional failure at {stage}: {secondary}"));
+}
+
+/// Materialize standard IntEnum metadata once, from the same native registry
+/// used for dispatch. No per-command enumeration or duplicate mapping occurs.
+fn register_codes(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    use sqlaero_core::error::{CLIENT_CODES, catalog::SERVER_CODES};
+    let py = module.py();
+    let factory = py.import("enum")?.getattr("IntEnum")?;
+    let kwargs = PyDict::new(py);
+    kwargs.set_item("module", "sqlaero.errors")?;
+    let client = PyDict::new(py);
+    for entry in CLIENT_CODES {
+        client.set_item(entry.name, entry.code as u32)?;
+    }
+    let client = factory.call(("SQLAeroErrorCode", client), Some(&kwargs))?;
+    client.setattr("__doc__","Registered SQLAero client-origin codes. Each member documents its exact exception class and meaning.")?;
+    for entry in CLIENT_CODES {
+        client.getattr(entry.name)?.setattr("__doc__", entry.doc)?;
+    }
+    module.add("SQLAeroErrorCode", client)?;
+    let server = PyDict::new(py);
+    for entry in SERVER_CODES {
+        for name in entry.names {
+            server.set_item(*name, entry.code)?;
+        }
+    }
+    let server = factory.call(("MySQLErrorCode", server), Some(&kwargs))?;
+    server.setattr("__doc__","Known MySQL protocol ERR numbers. Warning/Note responses are not automatically raised; version aliases share their actual numeric identity.")?;
+    for entry in SERVER_CODES {
+        server
+            .getattr(entry.names[0])?
+            .setattr("__doc__", entry.doc)?;
+    }
+    module.add("MySQLErrorCode", server)
 }

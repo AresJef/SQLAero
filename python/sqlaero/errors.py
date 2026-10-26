@@ -6,8 +6,10 @@ from ._sqlaero import (
     ProgrammingError, NotSupportedError, SQLAeroWarning,
 )
 
+from .error_codes import SQLAeroErrorCode, MySQLErrorCode
+
 __all__: list[str] = [
     'SQLAeroError', 'InterfaceError', 'InterfaceBusyError', 'DatabaseError', 'DataError',
     'OperationalError', 'OperationalTimeoutError', 'IntegrityError', 'InternalError',
-    'ProgrammingError', 'NotSupportedError', 'SQLAeroWarning',
+    'ProgrammingError', 'NotSupportedError', 'SQLAeroWarning', 'SQLAeroErrorCode', 'MySQLErrorCode',
 ]

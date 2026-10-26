@@ -1,6 +1,6 @@
 //! Exact Python scalar readers; no Python objects cross into the native core.
 
-use crate::errors::{self, DataError, InterfaceError};
+use crate::errors;
 use num_bigint::BigInt;
 use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
@@ -144,7 +144,7 @@ impl ScalarTypes {
             };
             if let Some(offset) = offset {
                 if !context.utc_confirmed {
-                    return Err(errors::client::<InterfaceError>(
+                    return Err(errors::client(
                         py,
                         ClientErrorCode::SessionState,
                         "aware datetime requires a reliably confirmed UTC MySQL session; time_zone is non-UTC or unknown",
@@ -210,7 +210,7 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
     // Exact int's public constant-time size query avoids copying a huge,
     // already out-of-policy integer merely to discover its native bit count.
     if value.call_method0("bit_length")?.extract::<u64>()? > scalar::MAX_INTEGER_BITS {
-        return Err(errors::client::<DataError>(
+        return Err(errors::client(
             py,
             ClientErrorCode::NumericRange,
             "integer exceeds the 65-digit exact SQL range",
@@ -223,9 +223,7 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
 fn scalar_error(py: Python<'_>, error: ScalarError) -> PyErr {
     match error {
         ScalarError::Wire(error) => errors::wire(py, error),
-        ScalarError::Range(message) => {
-            errors::client::<DataError>(py, ClientErrorCode::NumericRange, message)
-        }
+        ScalarError::Range(message) => errors::client(py, ClientErrorCode::NumericRange, message),
     }
 }
 fn date(value: &impl PyDateAccess) -> Date {
@@ -283,11 +281,7 @@ fn codec_error(
             )
         }
         CodecError::Wire(error) => errors::wire(py, error),
-        error => errors::client::<errors::NotSupportedError>(
-            py,
-            ClientErrorCode::UnsupportedCharset,
-            error.to_string(),
-        ),
+        error => errors::client(py, ClientErrorCode::UnsupportedCharset, error.to_string()),
     }
 }
 
@@ -296,13 +290,9 @@ const WORK_BYTES: usize = 256 * 1024;
 /// Check the original whole-operation budget and actual pending Python signal.
 pub(crate) fn check(py: Python<'_>, budget: &IoBudget) -> PyResult<()> {
     py.check_signals()?;
-    budget.check().map_err(|error| {
-        errors::client::<errors::OperationalTimeoutError>(
-            py,
-            ClientErrorCode::OperationDeadline,
-            error.to_string(),
-        )
-    })
+    budget
+        .check()
+        .map_err(|error| errors::client(py, ClientErrorCode::OperationDeadline, error.to_string()))
 }
 fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
     match budget {

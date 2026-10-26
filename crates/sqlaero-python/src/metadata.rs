@@ -89,7 +89,7 @@ fn storage<T>(scope: Option<&Arc<Scope>>) -> Buffer<T> {
     scope.map_or_else(Buffer::new, Buffer::tracked)
 }
 fn internal(py: Python<'_>, message: &'static str) -> PyErr {
-    errors::client::<errors::InternalError>(py, ClientErrorCode::InternalState, message)
+    errors::client(py, ClientErrorCode::InternalState, message)
 }
 fn lock<'a, T>(py: Python<'_>, value: &'a Mutex<T>) -> PyResult<MutexGuard<'a, T>> {
     value.lock().map_err(|_| {
@@ -237,7 +237,7 @@ impl Snapshot {
             return Ok(keys);
         }
         let _guard = self.key_preparation.try_lock().map_err(|_| {
-            errors::client::<errors::InterfaceBusyError>(
+            errors::client(
                 py,
                 ClientErrorCode::InterfaceBusy,
                 "this result's column keys are already being prepared",

@@ -116,7 +116,7 @@ pub(crate) struct Connection {
 impl Connection {
     pub(crate) fn runtime(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Runtime>> {
         self.runtime.lock().map_err(|_| {
-            errors::client::<errors::InternalError>(
+            errors::client(
                 py,
                 ClientErrorCode::InternalState,
                 "Connection configuration was invalidated by a native failure",
@@ -125,7 +125,7 @@ impl Connection {
     }
     pub(crate) fn open(&self, py: Python<'_>) -> PyResult<()> {
         if self.native.is_closed() {
-            Err(errors::client::<errors::InterfaceError>(
+            Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
                 "Connection is closed or permanently retired",
@@ -137,7 +137,7 @@ impl Connection {
     fn modify(&self, py: Python<'_>, name: &str) -> PyResult<MutexGuard<'_, Runtime>> {
         let runtime = self.runtime(py)?;
         if self.native.is_closed() {
-            return Err(errors::client::<errors::InterfaceError>(
+            return Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
                 format!(
@@ -158,7 +158,7 @@ impl Connection {
             .facts
             .lock()
             .map_err(|_| {
-                errors::client::<errors::InternalError>(
+                errors::client(
                     py,
                     ClientErrorCode::InternalState,
                     "confirmed session facts are unavailable",
@@ -176,7 +176,7 @@ impl Connection {
         let job = self.query_job(py, lease, request, false)?;
         let response = self.drive(py, lease, job, budget, CommandRole::InternalControl)?;
         let Response::Rows(rows) = response else {
-            return Err(errors::client::<errors::InterfaceError>(
+            return Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
                 "execution context confirmation returned no row result",
@@ -187,7 +187,7 @@ impl Connection {
             .facts
             .lock()
             .map_err(|_| {
-                errors::client::<errors::InternalError>(
+                errors::client(
                     py,
                     ClientErrorCode::InternalState,
                     "confirmed session facts are unavailable",
@@ -199,15 +199,15 @@ impl Connection {
     }
     pub(crate) fn context(&self, py: Python<'_>) -> PyResult<(Context, bool, OutputCodec)> {
         let facts = self.native.facts.lock().map_err(|_| {
-            errors::client::<errors::InternalError>(
+            errors::client(
                 py,
                 ClientErrorCode::InternalState,
                 "confirmed session facts are unavailable",
             )
         })?;
-        let codec = facts.client_codec().ok_or_else(|| errors::client::<errors::NotSupportedError>(py, ClientErrorCode::UnsupportedCharset, "The actual client charset is unknown or unsupported; it is not reinterpreted as utf8mb4"))?;
+        let codec = facts.client_codec().ok_or_else(|| errors::client(py, ClientErrorCode::UnsupportedCharset, "The actual client charset is unknown or unsupported; it is not reinterpreted as utf8mb4"))?;
         let mode = facts.sql_mode.as_ref().ok_or_else(|| {
-            errors::client::<errors::InterfaceError>(
+            errors::client(
                 py,
                 ClientErrorCode::SessionState,
                 "SQL mode is not confirmed; safe binding requires a confirmed session context",
@@ -223,7 +223,7 @@ impl Connection {
             },
             has_mode("ANSI_QUOTES"),
             facts.metadata_codec().ok_or_else(|| {
-                errors::client::<errors::NotSupportedError>(
+                errors::client(
                     py,
                     ClientErrorCode::UnsupportedCharset,
                     "actual result metadata encoding is unknown or unsupported",
@@ -260,7 +260,7 @@ impl Connection {
             Ok(mut facts) => facts.apply(completion),
             Err(_) => {
                 lease.invalidate();
-                return Err(errors::client::<errors::InternalError>(
+                return Err(errors::client(
                     py,
                     ClientErrorCode::InternalState,
                     "The connection was retired after confirmed session state was invalidated by a native failure",
@@ -281,6 +281,12 @@ impl Connection {
         budget: &mut IoBudget,
         role: CommandRole,
     ) -> Result<Response, DriveFailure> {
+        let error_codec = self
+            .native
+            .facts
+            .lock()
+            .ok()
+            .and_then(|facts| facts.metadata_codec());
         loop {
             // Only the native session reference crosses detach. The !Send wire
             // MutexGuard remains on this thread, and no Python input is borrowed.
@@ -302,7 +308,7 @@ impl Connection {
                 }
                 Ok(Step::Wait(_)) => {
                     lease.invalidate();
-                    return Err(errors::client::<errors::InternalError>(
+                    return Err(errors::client(
                         py,
                         ClientErrorCode::InternalState,
                         "native query returned an undriven I/O wait",
@@ -329,7 +335,7 @@ impl Connection {
                     }
                     let unavailable = unavailable(&error);
                     return Err(DriveFailure {
-                        error: errors::query(py, error),
+                        error: errors::query_with_codec(py, error, error_codec),
                         unavailable,
                     });
                 }
@@ -375,8 +381,8 @@ impl Connection {
     }
     fn server_timeout(&self, py: Python<'_>, index: usize, name: &str) -> PyResult<u64> {
         self.native.facts.lock()
-            .map_err(|_| errors::client::<errors::InternalError>(py, ClientErrorCode::InternalState, "confirmed session facts are unavailable"))?
-            .server_timeouts[index].ok_or_else(|| errors::client::<errors::InterfaceError>(py, ClientErrorCode::SessionState, format!("MySQL SESSION {name} is no longer reliably confirmed; its previous value is not returned as current")))
+            .map_err(|_| errors::client(py, ClientErrorCode::InternalState, "confirmed session facts are unavailable"))?
+            .server_timeouts[index].ok_or_else(|| errors::client(py, ClientErrorCode::SessionState, format!("MySQL SESSION {name} is no longer reliably confirmed; its previous value is not returned as current")))
     }
     fn set_server_timeout(
         &self,
@@ -535,9 +541,9 @@ macro_rules! connection_api {
             /// Confirmed MySQL autocommit mode; no network read is performed.
             /// Unknown facts raise InterfaceError, including after close.
             #[getter] fn autocommit(&self,py:Python<'_>)->PyResult<bool> {
-                let facts=self.native.facts.lock().map_err(|_|errors::client::<errors::InternalError>(py,ClientErrorCode::InternalState,"confirmed session facts are unavailable"))?;
+                let facts=self.native.facts.lock().map_err(|_|errors::client(py,ClientErrorCode::InternalState,"confirmed session facts are unavailable"))?;
                 facts.status.map(|status|status.contains(sqlaero_core::protocol::StatusFlags::SERVER_STATUS_AUTOCOMMIT))
-                    .ok_or_else(||errors::client::<errors::InterfaceError>(py,ClientErrorCode::SessionState,"autocommit has not been reliably confirmed"))
+                    .ok_or_else(||errors::client(py,ClientErrorCode::SessionState,"autocommit has not been reliably confirmed"))
             }
             /// Change server SESSION autocommit after acquiring command ownership.
             /// A reliably confirmed same value sends no request and is not a ping.
@@ -854,7 +860,7 @@ pub(crate) fn connect(
             Step::Ready(value) => break value,
             Step::Control => py.check_signals()?,
             Step::Wait(_) => {
-                return Err(errors::client::<errors::InternalError>(
+                return Err(errors::client(
                     py,
                     ClientErrorCode::InternalState,
                     "initialization returned an undriven wait",

@@ -140,6 +140,10 @@ mod tests {
         let error = server_error(b"\xff\x26\x04#23000Duplicate entry", caps).unwrap();
         assert_eq!(error.error_code(), 1062);
         assert_eq!(error.message_ref(), b"Duplicate entry");
+        // The wire parser does not treat the message as a C string. Any
+        // server-side conversion truncation must remain distinguishable.
+        let error = server_error(b"\xff\x26\x04#23000\0U\0n", caps).unwrap();
+        assert_eq!(error.message_ref(), b"\0U\0n");
         assert!(server_error(b"\xff\x26", caps).is_err());
         assert!(server_error(b"\xff\x26\x04#230", caps).is_err());
     }

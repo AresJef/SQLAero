@@ -375,3 +375,44 @@ def test_network_wait_releases_gil_and_does_not_block_local_other_cursor_reads(c
         assert future.result(timeout=3) == 1
     assert network.fetchone() == (0,)
     assert connection.ping()
+
+
+@requires_mysql
+@pytest.mark.parametrize('results', ['utf8mb4', 'latin1', 'utf16', 'utf16le', 'ucs2', 'utf32', 'binary', 'NULL'])
+def test_real_error_text_follows_results_encoding_without_replacement(connection: Connection, results: str) -> None:
+    from sqlaero.errors import MySQLErrorCode
+    cursor = connection.cursor()
+    cursor.execute(f'SET character_set_results={results}')
+    cursor.execute('SELECT 1 AS `é`')
+    assert cursor.columns.names == ('é',)
+    with pytest.raises(ProgrammingError) as caught:
+        cursor.execute('SELECT `é`')
+    assert caught.value.code == MySQLErrorCode.ER_BAD_FIELD_ERROR
+    assert type(caught.value.code) is int and caught.value.is_server_error is True
+    # Both frozen server lines truncate converted ERR messages at the first
+    # NUL byte. Keep the actual received text; never invent the missing bytes
+    # or replace ProgrammingError with a diagnostic decoding exception.
+    if results in {'utf16', 'ucs2', 'utf32'}:
+        assert caught.value.message == ''
+    elif results == 'utf16le':
+        assert caught.value.message == 'U'
+        assert any('received bytes' in note for note in getattr(caught.value, '__notes__', []))
+    else:
+        assert 'é' in caught.value.message and '\x00' not in caught.value.message
+    assert any('42S22' in note for note in getattr(caught.value, '__notes__', []))
+
+
+@requires_mysql
+def test_known_code_priority_unknown_fallback_and_ordinary_warnings(connection: Connection) -> None:
+    from sqlaero.errors import DataError, DatabaseError, IntegrityError, OperationalError, SQLAeroError
+    cursor = connection.cursor()
+    for code, state, expected in [(1062, '45000', IntegrityError), (1265, '45000', DataError),
+                                  (65535, '23000', IntegrityError), (65535, '08000', OperationalError),
+                                  (65535, '40001', DatabaseError), (65535, 'HY000', DatabaseError)]:
+        with pytest.raises(SQLAeroError) as caught:
+            cursor.execute(f"SIGNAL SQLSTATE '{state}' SET MYSQL_ERRNO={code},MESSAGE_TEXT='native mapping probe'")
+        assert type(caught.value) is expected
+        assert caught.value.code == code and caught.value.is_server_error is True
+    cursor.execute('DROP TABLE IF EXISTS sqlaero_public_no_such_warning_table')
+    assert cursor.warning_count is not None and cursor.warning_count > 0
+    assert connection.ping()

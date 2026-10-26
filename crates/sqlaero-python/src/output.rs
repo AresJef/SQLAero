@@ -15,15 +15,11 @@ pub(crate) fn memory(py: Python<'_>, error: MemoryError) -> PyErr {
         MemoryError::Allocation(error) => {
             pyo3::exceptions::PyMemoryError::new_err(error.to_string())
         }
-        error => errors::client::<errors::OperationalError>(
-            py,
-            ClientErrorCode::ResourceLimit,
-            error.to_string(),
-        ),
+        error => errors::client(py, ClientErrorCode::ResourceLimit, error.to_string()),
     }
 }
 fn content(py: Python<'_>, error: ContentError) -> PyErr {
-    errors::client::<errors::DataError>(py, ClientErrorCode::DecodeContent, error.to_string())
+    errors::client(py, ClientErrorCode::DecodeContent, error.to_string())
 }
 fn unicode(py: Python<'_>, data: &[u8], codec: OutputCodec, start: usize, end: usize) -> PyErr {
     let original = match bytes(py, data) {
@@ -78,7 +74,7 @@ pub(crate) fn points(
     scope: Option<&Arc<Scope>>,
 ) -> PyResult<Buffer<u32>> {
     if let OutputCodec::Unknown(id) = codec {
-        return Err(errors::client::<errors::NotSupportedError>(
+        return Err(errors::client(
             py,
             ClientErrorCode::UnsupportedCharset,
             format!("cannot decode text with unknown MySQL collation ID {id}"),
@@ -108,7 +104,7 @@ pub(crate) fn points(
             }
             Err(CodecError::Wire(error)) => return Err(errors::wire(py, error)),
             Err(_) => {
-                return Err(errors::client::<errors::NotSupportedError>(
+                return Err(errors::client(
                     py,
                     ClientErrorCode::UnsupportedCharset,
                     "output charset conversion is unavailable",
@@ -203,7 +199,7 @@ fn json_value<'py>(
     };
     match json::decode(py, input) {
         Err(error) if error.is_instance_of::<PyValueError>(py) => {
-            let main = errors::client::<errors::DataError>(
+            let main = errors::client(
                 py,
                 ClientErrorCode::DecodeContent,
                 format!("invalid JSON result: {error}"),
@@ -227,7 +223,7 @@ pub(crate) fn field<'py>(
     if matches!(plan.kind, Kind::Text | Kind::Set | Kind::Json)
         && let OutputCodec::Unknown(id) = plan.text
     {
-        return Err(errors::client::<errors::NotSupportedError>(
+        return Err(errors::client(
             py,
             ClientErrorCode::UnsupportedCharset,
             format!("cannot decode text with unknown MySQL collation ID {id}"),

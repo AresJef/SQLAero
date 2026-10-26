@@ -87,7 +87,7 @@ fn _decode_text<'py>(data: &Bound<'py, PyBytes>, charset: &str) -> PyResult<Boun
             }
         }
         Err(CodecError::Wire(error)) => Err(errors::wire(py, error)),
-        Err(error) => Err(errors::client::<errors::NotSupportedError>(
+        Err(error) => Err(errors::client(
             py,
             sqlaero_core::error::ClientErrorCode::UnsupportedCharset,
             error.to_string(),
