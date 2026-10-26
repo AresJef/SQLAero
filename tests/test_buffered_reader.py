@@ -8,6 +8,10 @@ from datetime import time
 import pytest
 from sqlaero._sqlaero import _Rows, _rows_from_packets, DataError, InterfaceBusyError, InterfaceError
 
+# Hosted macOS may deliver a real timer after its requested 1 ms. Keep both
+# native signal tests long enough to exercise interruption inside the fetch.
+_SIGNAL_FETCH_ROWS: int = 1_000_000
+
 
 def length(data: bytes) -> bytes:
     count = len(data)
@@ -107,7 +111,7 @@ class Interrupted(Exception):
 
 
 def test_interrupted_output_releases_temporaries_and_does_not_commit() -> None:
-    value = reader([(b"1",)] * 100000)
+    value = reader([(b"1",)] * _SIGNAL_FETCH_ROWS)
     original = Interrupted("stop this fetch")
 
     def interrupt(signum: int, frame: FrameType | None) -> None:
@@ -127,11 +131,7 @@ def test_interrupted_output_releases_temporaries_and_does_not_commit() -> None:
 
 
 def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable() -> None:
-    # A real macOS timer can be delivered later than its requested 1 ms.
-    # Keep the native operation long enough for delivery on hosted runners;
-    # the callback must still observe the actual production busy guard.
-    row_count = 1_000_000
-    value = reader([(b"1",)] * row_count)
+    value = reader([(b"1",)] * _SIGNAL_FETCH_ROWS)
     observed: list[str] = []
 
     def overlap(signum: int, frame: FrameType | None) -> None:
@@ -144,7 +144,7 @@ def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable(
     previous = signal.signal(signal.SIGALRM, overlap)
     try:
         signal.setitimer(signal.ITIMER_REAL, 0.001)
-        assert len(value.fetchall()) == row_count
+        assert len(value.fetchall()) == _SIGNAL_FETCH_ROWS
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
