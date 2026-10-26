@@ -522,3 +522,203 @@ def test_independent_cursor_then_connection_cleanup_failures_keep_actual_order(c
         assert future is not None and future.result(timeout=3) == 1
     assert not cursor.closed and not connection.closed and connection.ping()
     cursor.close()
+
+
+@requires_mysql
+def test_fixed_seed_values_round_trip_through_the_public_request_path(connection: Connection) -> None:
+    import random
+    from datetime import date, time
+    seed = 20261026
+    generator = random.Random(seed)
+    cursor = connection.cursor()
+    alphabet = "Az09'\\\x00\n\r\x1a\t%_é中😀"
+    texts = [''.join(generator.choices(alphabet, k=generator.randrange(65))) for _ in range(40)]
+    integers = [generator.randrange(-(10**65 - 1), 10**65) for _ in range(20)]
+    for index, value in enumerate([*texts, *integers, None, True, False, 0.1, -0.0, 1.25e30]):
+        cursor.execute('SELECT %s', (value,))
+        row = cursor.fetchone()
+        assert row is not None and row[0] == value, (seed, index, value, row)
+        if type(value) is float:
+            assert isinstance(row[0], float) and row[0].hex() == value.hex(), (seed, index, value, row)
+    calendar_values = [date(2024, 2, 29), datetime(2024, 2, 29, 23, 59, 59, 123456),
+                       datetime(2024, 1, 1, tzinfo=timezone(timedelta(hours=5, minutes=30)))]
+    for value in calendar_values:
+        kind = 'DATE' if type(value) is date else 'DATETIME(6)'
+        cursor.execute(f'SELECT CAST(%s AS {kind})', (value,))
+        expected = value
+        if isinstance(value, datetime) and value.tzinfo is not None:
+            expected = value.astimezone(timezone.utc).replace(tzinfo=None)
+        assert cursor.fetchone() == (expected,)
+    cursor.use_timedelta = False
+    cursor.execute('SELECT CAST(%s AS TIME(6)),CAST(%s AS BINARY),CAST(%s AS BINARY)',
+                   (time(3, 4, 5, 123456), b'\x00\xffquote\'\\', bytearray(b'\x80\x00')))
+    assert cursor.fetchone() == (time(3, 4, 5, 123456), b'\x00\xffquote\'\\', b'\x80\x00')
+    cursor.use_timedelta = True
+    cursor.execute('SELECT CAST(%s AS TIME(6)),CAST(%s AS DECIMAL(65,30)),%s,%s',
+                   (timedelta(hours=-25, microseconds=1), Decimal('1234.5678901234567890123456789'),
+                    float('inf'), Decimal('sNaN')))
+    assert cursor.fetchone() == (timedelta(hours=-25, microseconds=1),
+                                Decimal('1234.5678901234567890123456789'), None, None)
+    for index in range(32):
+        rows: list[list[int | str] | tuple[int, str]] = []
+        for _ in range(generator.randrange(1, 9)):
+            pair = (generator.randrange(-1000, 1000), ''.join(generator.choices(alphabet, k=8)))
+            rows.append(list(pair) if generator.randrange(2) else pair)
+        rows.append(rows[0])  # Shared identity is a DAG, not a cycle.
+        target = tuple(rows[0]) if index % 2 else (-99999999, 'not in these rows')
+        outer = tuple(rows) if generator.randrange(2) else rows
+        cursor.execute('SELECT (%s,%s) IN %s', (*target, outer))
+        assert cursor.fetchone() == (index % 2,), (seed, index, rows, target)
+
+
+@requires_mysql
+def test_real_itemize_many_shapes_preserve_counts_and_final_result(connection: Connection) -> None:
+    cursor = connection.cursor()
+    assert cursor.execute('SELECT 1 IN %s', [1, 2, 3], itemize=False) == 1
+    assert cursor.fetchone() == (1,)
+    shared = [1, 2]
+    cursor.execute('SELECT 1 IN %s,2 IN %s', (shared, shared))
+    assert cursor.fetchone() == (1, 1)
+    assert cursor.execute('SELECT %s,%s', [(1, 'a'), [2, 'b'], (3, 'c')], many=True) == 3
+    assert cursor.row_count == 3 and cursor.fetchall() == ((3, 'c'),)
+    assert cursor.executemany('SELECT 8', [(), ()]) == 2
+    assert cursor.row_count == 2 and cursor.fetchone() == (8,)
+    assert cursor.execute('SELECT 9', (), many=True, itemize=False) == 1
+    assert cursor.fetchone() == (9,)
+
+
+@requires_mysql
+@pytest.mark.parametrize('size', [0xFFFFFF - 10, 0xFFFFFF + 7], ids=['exact-request-frame', 'split-request-and-result'])
+def test_actual_public_physical_frame_boundaries(connection: Connection, size: int) -> None:
+    # COM_QUERY + SELECT-space + two SQL quotes is 10 bytes, so the first
+    # request ends exactly on the real 0xFFFFFF boundary (empty terminator).
+    # The second case also requires a physically split result-row message.
+    connection.operation_timeout = 20
+    value = 'x' * size
+    cursor = connection.cursor()
+    assert cursor.execute('SELECT %s', (value,)) == 1
+    row = cursor.fetchone()
+    assert row == (value,) and cursor.fetchone() is None
+    assert connection.ping()
+
+
+@requires_mysql
+def test_transactions_are_observed_independently_and_implicit_commit_is_not_undone(connection: Connection) -> None:
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    table = f'b0_visibility_{connection.connection_id}'
+    extra = f'{table}_ddl'
+    cursor = connection.cursor()
+    cursor.execute(f'CREATE TABLE {table} (id INT PRIMARY KEY) ENGINE=InnoDB')
+    try:
+        with live(label) as observer:
+            check = observer.cursor()
+            with connection.transaction() as current:
+                current.execute(f'INSERT INTO {table} VALUES (1)')
+                check.execute(f'SELECT COUNT(*) FROM {table}')
+                assert check.fetchone() == (0,)
+            check.execute(f'SELECT id FROM {table}')
+            assert check.fetchall() == ((1,),)
+            with pytest.raises(ValueError, match='rollback this insert'):
+                with connection.transaction() as current:
+                    current.execute(f'INSERT INTO {table} VALUES (2)')
+                    raise ValueError('rollback this insert')
+            check.execute(f'SELECT id FROM {table}')
+            assert check.fetchall() == ((1,),)
+            with pytest.raises(ValueError, match='DDL already committed'):
+                with connection.transaction() as current:
+                    current.execute(f'INSERT INTO {table} VALUES (3)')
+                    current.execute(f'CREATE TABLE {extra} (id INT) ENGINE=InnoDB')
+                    raise ValueError('DDL already committed')
+            check.execute(f'SELECT id FROM {table} ORDER BY id')
+            assert check.fetchall() == ((1,), (3,))
+    finally:
+        cursor.execute(f'DROP TABLE IF EXISTS {extra}')
+        cursor.execute(f'DROP TABLE IF EXISTS {table}')
+
+
+@requires_mysql
+@pytest.mark.parametrize('kind', ['read', 'operation'])
+def test_actual_timeout_uses_entry_snapshot_and_retires_incomplete_response(connection: Connection, kind: str) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import time as clock_time
+    from sqlaero.errors import OperationalTimeoutError, SQLAeroErrorCode
+    connection.read_timeout = 1 if kind == 'read' else None
+    connection.operation_timeout = 5 if kind == 'read' else 1
+    cursor = connection.cursor()
+    started = Event()
+
+    def operation() -> int:
+        started.set()
+        return cursor.execute('SELECT SLEEP(3)')
+
+    before = clock_time.monotonic()
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(operation)
+        assert started.wait(2)
+        clock_time.sleep(0.05)
+        connection.read_timeout = None
+        connection.operation_timeout = None
+        with pytest.raises(OperationalTimeoutError) as caught:
+            future.result(timeout=4)
+    elapsed = clock_time.monotonic() - before
+    expected = SQLAeroErrorCode.READ_DEADLINE if kind == 'read' else SQLAeroErrorCode.OPERATION_DEADLINE
+    assert caught.value.code == expected and caught.value.is_server_error is False
+    assert not isinstance(caught.value, TimeoutError) and 0.8 <= elapsed < 3
+    assert connection.closed and not connection.ping()
+    assert connection.read_timeout is None and connection.operation_timeout is None
+    assert cursor.row_count is None and cursor.description is None
+
+
+@requires_mysql
+@pytest.mark.parametrize('label', ['84', '97'])
+@pytest.mark.parametrize('mode', ['default', 'custom'])
+def test_real_sigint_in_child_preserves_original_error_and_independent_buffer(label: str, mode: str) -> None:
+    import subprocess
+    import sys
+    code = r'''
+import json, os, signal, sys, threading, time
+from pathlib import Path
+from types import FrameType
+from typing import Any
+from sqlaero import connect
+from sqlaero.errors import OperationalError
+root = Path(sys.argv[1]); label = sys.argv[2]; mode = sys.argv[3]
+secret: dict[str, str] = json.loads((root / label / 'state.json').read_text())
+connection = connect(user='sqlaero', password=secret['test_password'], database='sqlaero_test',
+                     unix_socket=root / f'{label}.sock')
+retained = connection.cursor(); retained.execute('SELECT 7')
+cursor = connection.cursor()
+original: OperationalError | None = OperationalError('original signal handler', code=777888, is_server_error=False) if mode == 'custom' else None
+
+def interrupted(signum: int, frame: FrameType | None) -> None:
+    assert original is not None
+    raise original
+
+signal.signal(signal.SIGINT, interrupted if mode == 'custom' else signal.default_int_handler)
+timer = threading.Timer(0.1, os.kill, args=(os.getpid(), signal.SIGINT))
+start = time.monotonic(); timer.start()
+try:
+    cursor.execute('SELECT SLEEP(5)')
+except BaseException as error:
+    elapsed = time.monotonic() - start
+    assert elapsed < 2.0
+    if mode == 'custom':
+        assert error is original and isinstance(error, OperationalError) and error.code == 777888
+    else:
+        assert isinstance(error, KeyboardInterrupt)
+    assert connection.closed and not connection.ping()
+    assert cursor.row_count is None and retained.fetchone() == (7,)
+    proof: dict[str, Any] = {'label': label, 'mode': mode, 'elapsed': elapsed,
+                             'exception': type(error).__name__, 'closed': connection.closed}
+    print(json.dumps(proof))
+else:
+    raise AssertionError('the actual SIGINT did not interrupt the native wait')
+finally:
+    timer.cancel(); timer.join(); connection.close()
+'''
+    completed = subprocess.run([sys.executable, '-c', code, str(ROOT), label, mode],
+                               capture_output=True, text=True, timeout=8, check=False)
+    assert completed.returncode == 0, (completed.stdout, completed.stderr)
+    proof: dict[str, object] = json.loads(completed.stdout)
+    assert proof['closed'] is True and proof['mode'] == mode and proof['label'] == label

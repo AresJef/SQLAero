@@ -362,12 +362,12 @@ fn format_traceback(py: Python<'_>, root: &Bound<'_, ErrorInfo>) -> PyResult<Opt
         let (next, relation) = if let Some(cause) = &value.cause {
             (
                 Some(cause.clone_ref(py)),
-                "The above exception was the direct cause of the following exception:\n\n",
+                "\nThe above exception was the direct cause of the following exception:\n\n",
             )
         } else if !value.suppress_context && value.context.is_some() {
             (
                 value.context.as_ref().map(|context| context.clone_ref(py)),
-                "During handling of the above exception, another exception occurred:\n\n",
+                "\nDuring handling of the above exception, another exception occurred:\n\n",
             )
         } else {
             (None, "")

@@ -57,3 +57,32 @@ def test_native_error_preserves_python_identity_and_chaining() -> None:
         assert received is error
         assert received.__cause__ is cause
         assert received.__notes__ == ['existing note']
+
+
+def test_all_declared_exception_classes_share_the_constructor_and_exact_tree() -> None:
+    from sqlaero import errors
+    parents: dict[type[SQLAeroError], type[BaseException]] = {
+        errors.SQLAeroError: Exception,
+        errors.InterfaceError: errors.SQLAeroError,
+        errors.InterfaceBusyError: errors.InterfaceError,
+        errors.DatabaseError: errors.SQLAeroError,
+        errors.DataError: errors.DatabaseError,
+        errors.OperationalError: errors.DatabaseError,
+        errors.OperationalTimeoutError: errors.OperationalError,
+        errors.IntegrityError: errors.DatabaseError,
+        errors.InternalError: errors.DatabaseError,
+        errors.ProgrammingError: errors.DatabaseError,
+        errors.NotSupportedError: errors.DatabaseError,
+    }
+    for cls, parent in parents.items():
+        assert cls.__bases__ == (parent,)
+        error = cls('specific message', code=700000, is_server_error=False)
+        assert error.args == ('specific message',) and error.code == 700000
+        assert error.is_server_error is False and error.message == 'specific message'
+        assert str(error) == 'Client Error [700000]: specific message'
+        assert error.error_info.exception_type is cls
+        with pytest.raises(AttributeError):
+            error.code = 1  # type: ignore[misc]
+    assert not issubclass(errors.OperationalTimeoutError, TimeoutError)
+    assert issubclass(errors.SQLAeroWarning, Warning) and not issubclass(errors.SQLAeroWarning, errors.SQLAeroError)
+    assert errors.SQLAeroWarning('heads up').args == ('heads up',)

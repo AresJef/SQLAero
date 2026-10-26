@@ -131,6 +131,15 @@ fn text_bytes(value: &Option<Arc<NativeText>>) -> &[u8] {
 }
 
 impl Snapshot {
+    /// Reuse only a previously prepared unique key for optional failure detail.
+    /// This never prepares all keys or creates a Columns/ColumnInfo object.
+    pub(crate) fn diagnostic_key(&self, py: Python<'_>, index: usize) -> Option<String> {
+        let bytes = self.keys.get()?.get(index)?;
+        wtf8(py, bytes)
+            .and_then(|text| text.repr())
+            .and_then(|text| text.extract())
+            .ok()
+    }
     pub(crate) fn new(
         py: Python<'_>,
         raw: Option<Arc<NativeColumns>>,

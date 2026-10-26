@@ -57,13 +57,36 @@ pub(crate) enum CommandRole {
 pub(crate) struct DriveFailure {
     error: PyErr,
     unavailable: bool,
+    confirmed: Option<sqlaero_core::session::query::CommandConfirmation>,
 }
 impl From<PyErr> for DriveFailure {
     fn from(error: PyErr) -> Self {
         Self {
             error,
             unavailable: false,
+            confirmed: None,
         }
+    }
+}
+impl DriveFailure {
+    pub(crate) fn record_prefix(
+        self,
+        py: Python<'_>,
+        prefix: &mut sqlaero_core::session::query::ConfirmedPrefix,
+        rows: std::ops::Range<usize>,
+    ) -> PyErr {
+        if let Some(confirmed) = self.confirmed
+            && let Err(error) = prefix.record_confirmation(rows, confirmed)
+        {
+            errors::note(
+                py,
+                &self.error,
+                format!(
+                    "A complete response was received, but cumulative prefix recording failed: {error}"
+                ),
+            );
+        }
+        self.error
     }
 }
 impl From<DriveFailure> for PyErr {
@@ -294,7 +317,22 @@ impl Connection {
             let step = py.detach(|| job.advance(&mut session.channel, budget));
             match step {
                 Ok(Step::Ready(response)) => {
-                    self.publish(py, lease, response.completion())?;
+                    if let Err(error) = self.publish(py, lease, response.completion()) {
+                        errors::note(
+                            py,
+                            &error,
+                            "The server response was fully received; the later local state-publication failure does not make that response unknown.",
+                        );
+                        return Err(DriveFailure {
+                            error,
+                            unavailable: false,
+                            confirmed: Some(
+                                sqlaero_core::session::query::CommandConfirmation::from_response(
+                                    &response,
+                                ),
+                            ),
+                        });
+                    }
                     return Ok(response);
                 }
                 Ok(Step::Control) => {
@@ -316,6 +354,7 @@ impl Connection {
                     .into());
                 }
                 Err(error) => {
+                    let confirmed = job.take_confirmation();
                     match &error {
                         QueryError::Result(ResultError::Server(_)) => {
                             if let Ok(mut facts) = self.native.facts.lock() {
@@ -334,9 +373,18 @@ impl Connection {
                         _ => lease.invalidate(),
                     }
                     let unavailable = unavailable(&error);
+                    let error = errors::query_with_codec(py, error, error_codec);
+                    if confirmed.is_some() {
+                        errors::note(
+                            py,
+                            &error,
+                            "The final server OK/EOF was validated before local result ownership failed; its confirmed execution facts remain available.",
+                        );
+                    }
                     return Err(DriveFailure {
-                        error: errors::query_with_codec(py, error, error_codec),
+                        error,
                         unavailable,
+                        confirmed,
                     });
                 }
             }
@@ -374,7 +422,10 @@ impl Connection {
         let job = self.query_job(py, lease, request, true)?;
         input::check(py, budget)?;
         attempt.started = true;
-        self.drive(py, lease, job, budget, CommandRole::InternalControl)?;
+        if let Err(failure) = self.drive(py, lease, job, budget, CommandRole::InternalControl) {
+            attempt.confirmed = failure.confirmed.is_some();
+            return Err(failure.error);
+        }
         attempt.confirmed = true;
         input::check(py, budget)?;
         Ok(())

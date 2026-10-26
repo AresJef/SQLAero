@@ -160,3 +160,39 @@ def test_large_binding_returns_to_python_signal_checks() -> None:
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
+
+
+def test_failure_summaries_are_bounded_and_keep_source_unicode_error_identity() -> None:
+    source = 'x' * 2000 + '😀'
+    with pytest.raises(UnicodeEncodeError) as caught:
+        _sqlaero._bind_sql('SELECT %s', [source], charset='ascii')
+    assert caught.value.object is source and caught.value.start == 2000 and caught.value.end == 2001
+    notes = '\n'.join(getattr(caught.value, '__notes__', []))
+    assert 'args[0]' in notes and 'original length 2001' in notes and '[truncated]' in notes
+    assert source not in notes and len(notes) < 400
+
+
+def test_summary_does_not_call_unsupported_repr_or_datetime_zone_repr() -> None:
+    class Hostile:
+        def __repr__(self) -> str:
+            raise AssertionError('diagnostics must not invoke arbitrary repr')
+
+    class Zone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta:
+            raise ValueError('the original timezone conversion failure')
+
+        def __repr__(self) -> str:
+            raise AssertionError('diagnostics must not format tzinfo')
+
+    for value, expected in [(Hostile(), TypeError), (datetime(2024, 1, 1, tzinfo=Zone()), ValueError)]:
+        with pytest.raises(expected) as caught:
+            _sqlaero._bind_sql('SELECT %s', [value])
+        assert 'args[0]' in '\n'.join(getattr(caught.value, '__notes__', []))
+
+
+def test_decimal_failure_detail_uses_already_read_native_components() -> None:
+    from decimal import Decimal
+    with pytest.raises(DataError) as caught:
+        _sqlaero._bind_sql('SELECT %s', [Decimal('1e65')])
+    notes = '\n'.join(getattr(caught.value, '__notes__', []))
+    assert 'args[0]' in notes and 'exponent=65' in notes and 'digits=[1]' in notes

@@ -279,11 +279,18 @@ impl Reader {
                         match output::field(py, value, *plan, &types, Some(data.rows.scope())) {
                             Ok(value) => value,
                             Err(error) => {
+                                let key = self
+                                    .state
+                                    .lock()
+                                    .ok()
+                                    .and_then(|state| state.metadata.clone())
+                                    .and_then(|metadata| metadata.diagnostic_key(py, column_index))
+                                    .map_or_else(String::new, |key| format!(" (key={key})"));
                                 errors::note(
                                     py,
                                     &error,
                                     format!(
-                                        "while decoding result row {row_index}, column {column_index}; fetch position remains {start}"
+                                        "while decoding result row {row_index}, column {column_index}{key}; fetch position remains {start}"
                                     ),
                                 );
                                 return Err(error);
@@ -336,6 +343,7 @@ impl Reader {
     /// Return the next complete tuple row, or None after a valid result ends.
     pub(crate) fn fetchone<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         self.read(py, Some(1), true)
+            .map_err(|error| errors::at(py, error, "cursor.fetchone"))
     }
     /// Return at most size tuple rows atomically. None uses saved arraysize.
     #[pyo3(signature = (size=None))]
@@ -366,10 +374,12 @@ impl Reader {
             }
         };
         self.read(py, Some(size), false)
+            .map_err(|error| errors::at(py, error, "cursor.fetchmany"))
     }
     /// Return all remaining tuple rows, committing position only after success.
     pub(crate) fn fetchall<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
         self.read(py, None, false)
+            .map_err(|error| errors::at(py, error, "cursor.fetchall"))
     }
     /// Permanently retire this reader locally. Saved metadata remains readable.
     pub(crate) fn close(&self, py: Python<'_>) -> PyResult<()> {

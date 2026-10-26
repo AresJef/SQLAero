@@ -32,6 +32,8 @@ pub enum QueryError {
     },
 }
 
+pub use crate::result::text::CommandConfirmation;
+
 /// Actual completed prefix of one user batch. These facts are attached to a
 /// later error; they never masquerade as the failed call's success counters
 /// and do not assert that any transaction was committed.
@@ -58,6 +60,18 @@ impl ConfirmedPrefix {
     /// Returns inconsistent source-range or command-count overflow failures
     /// without partially mutating the existing confirmed prefix.
     pub fn record(&mut self, rows: Range<usize>, response: &Response) -> Result<(), WireError> {
+        self.record_confirmation(rows, CommandConfirmation::from_response(response))
+    }
+    /// Retain confirmation even when subsequent local state/result publication
+    /// fails. A confirmation says execution completed, not transaction commit.
+    ///
+    /// # Errors
+    /// Returns noncontiguous-source or command-count overflow failures.
+    pub fn record_confirmation(
+        &mut self,
+        rows: Range<usize>,
+        confirmation: CommandConfirmation,
+    ) -> Result<(), WireError> {
         if rows.start != self.source_rows || rows.end < rows.start {
             return Err(WireError::Malformed(
                 "batch confirmation is not a contiguous source prefix",
@@ -67,16 +81,11 @@ impl ConfirmedPrefix {
             .commands
             .checked_add(1)
             .ok_or(WireError::Malformed("batch command count overflow"))?;
-        let count = match response {
-            Response::Command(ok) => u128::from(ok.affected_rows()),
-            Response::Rows(result) => result.row_count as u128,
-            Response::Counted { rows, .. } => *rows as u128,
-        };
         self.commands = commands;
         self.source_rows = rows.end;
-        self.row_count += count;
-        self.warnings += u128::from(response.completion().warnings());
-        self.last_insert_id = response.completion().last_insert_id();
+        self.row_count += confirmation.count;
+        self.warnings += u128::from(confirmation.warnings);
+        self.last_insert_id = confirmation.last_insert_id;
         Ok(())
     }
 
@@ -186,6 +195,15 @@ impl Query {
         result
     }
 
+    /// Take validated full-command facts after a local completion-storage failure.
+    /// Incomplete or unexpected multiple results never yield guessed totals.
+    pub fn take_confirmation(&mut self) -> Option<CommandConfirmation> {
+        if self.unsupported_multiple {
+            None
+        } else {
+            self.collector.take_confirmation()
+        }
+    }
     /// Consume a confirmed intermediate terminator after a Control return.
     /// Apply its session facts before resuming this same command. Intermediate
     /// rows are never published as a successful public result.

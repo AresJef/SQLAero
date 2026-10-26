@@ -167,3 +167,29 @@ def test_no_row_result_has_empty_columns_but_zero_rows_keep_real_description() -
     for cls in (Columns, ColumnInfo):
         with pytest.raises(TypeError):
             cls()
+
+
+def test_fixed_seed_access_order_reuses_objects_and_preserves_old_metadata() -> None:
+    import random
+    seed = 20261026
+    generator = random.Random(seed)
+    value = result([field(b'id', table=b'u'), field(b'id', table=b'o'), field(b'label', table=b'')])
+    columns = value.columns
+    names = ('id', 'id', 'label')
+    keys = ('u.id', 'o.id', 'label')
+    for step in range(64):
+        position = generator.randrange(3)
+        operation = generator.randrange(5)
+        if operation == 0:
+            assert columns.names == names, (seed, step, operation)
+        elif operation == 1:
+            assert columns.keys == keys, (seed, step, operation)
+        elif operation == 2:
+            assert columns[position] is columns[keys[position]], (seed, step, operation)
+        elif operation == 3:
+            assert columns[position - 3] is columns[position], (seed, step, operation)
+        else:
+            assert tuple(item.name for item in columns[position:]) == names[position:], (seed, step, operation)
+    retained = columns[0]
+    value.close()
+    assert columns.keys == keys and retained is columns['u.id'] and retained.name == 'id'

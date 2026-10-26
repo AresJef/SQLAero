@@ -102,3 +102,55 @@ fn no_progress_read_expires_without_resetting_the_connection_budget() {
     stop.send(()).unwrap();
     server.join().unwrap();
 }
+
+#[test]
+fn no_progress_write_expires_against_real_socket_backpressure() {
+    use sqlaero_core::transport::channel::{Channel, ChannelError, Step};
+    use sqlaero_core::transport::socket::TransportError;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    socket2::SockRef::from(&listener)
+        .set_recv_buffer_size(4096)
+        .unwrap();
+    let address = listener.local_addr().unwrap();
+    let (stop, waiting) = mpsc::channel::<()>();
+    let server = thread::spawn(move || {
+        let (_socket, _) = listener.accept().unwrap();
+        let _ = waiting.recv_timeout(Duration::from_secs(3));
+    });
+    let mut channel = Channel::new(Transport::tcp(address).unwrap(), false);
+    let mut budget = IoBudget::new(
+        TimeoutKind::Operation,
+        Some(Duration::from_secs(2)),
+        None,
+        Some(Duration::from_millis(20)),
+    );
+    while !channel.connected().unwrap() {
+        channel.wait(Direction::Write, &mut budget).unwrap();
+    }
+    let payload = vec![b'x'; 8 * 1024 * 1024];
+    let mut writer = framing::MessageWriter::new(payload.len(), payload.len()).unwrap();
+    let outcome = loop {
+        match channel.send_step(&mut writer, &payload, &mut budget) {
+            Ok(Step::Wait(direction)) => {
+                if let Err(error) = channel.wait(direction, &mut budget) {
+                    break error;
+                }
+            }
+            Ok(Step::Control) => (),
+            Ok(Step::Ready(())) => {
+                panic!("a non-reading 4KiB peer must not accept the complete 8MiB upload")
+            }
+            Err(error) => break error,
+        }
+    };
+    assert!(matches!(
+        outcome,
+        ChannelError::Timeout(TimeoutKind::Write)
+            | ChannelError::Transport(TransportError::Timeout(TimeoutKind::Write))
+    ));
+    stop.send(()).unwrap();
+    server.join().unwrap();
+}

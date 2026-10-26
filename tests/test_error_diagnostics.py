@@ -124,3 +124,20 @@ def test_distinct_cause_context_and_notes_are_independent() -> None:
     # Mutating an original later cannot rewrite a published immutable node.
     root.__cause__.args = ('changed',)
     assert info.cause.message == 'explicit'
+
+
+def test_representative_full_traceback_matches_python_and_summary_is_stable() -> None:
+    import traceback
+    try:
+        raise ValueError('inner value')
+    except ValueError as cause:
+        try:
+            raise SQLAeroError('outer value', code=1213, is_server_error=True) from cause
+        except SQLAeroError as error:
+            error.add_note('one diagnostic note')
+            expected = ''.join(traceback.format_exception(error))
+            assert error.error_info.traceback == expected
+    plain = SQLAeroError('plain').error_info
+    assert str(plain) == 'SQLAeroError [stage=None, code=None, is_server_error=None]: plain'
+    assert repr(plain) == ("ErrorInfo(stage=None, exception_type=sqlaero.errors.SQLAeroError, "
+                           "native_type=None, code=None, os_errno=None, is_server_error=None, message='plain')")

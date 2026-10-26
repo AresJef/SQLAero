@@ -287,9 +287,15 @@ impl Visit<'_> {
             self.work = 0;
         }
         let Some(sequence) = Sequence::from(value) else {
-            return self
+            let result = self
                 .types
                 .write(value, output, self.context, Some(self.budget));
+            if let Err(error) = &result
+                && let Ok(summary) = self.types.diagnostic(value)
+            {
+                errors::note(py, error, format!("failed escape input: {summary}"));
+            }
+            return result;
         };
         self.enter(py, sequence.identity())?;
         let result = (|| {

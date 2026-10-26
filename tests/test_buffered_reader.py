@@ -146,3 +146,15 @@ def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable(
         signal.signal(signal.SIGALRM, previous)
     assert observed == ["busy"]
     assert not value.closed
+
+
+def test_failed_decode_reuses_prepared_unique_key_without_advancing_position() -> None:
+    source = packets([column('duration', 11), column('duration', 11)],
+                     [(b'12:00:00', b'25:00:00')])
+    value = _rows_from_packets(source, use_timedelta=False)
+    assert value.columns.keys == ('duration.1', 'duration.2')
+    with pytest.raises(DataError) as caught:
+        value.fetchone()
+    notes = '\n'.join(getattr(caught.value, '__notes__', []))
+    assert 'row 0, column 1' in notes and "key='duration.2'" in notes
+    assert value.position == 0 and caught.value.error_info.stage == 'cursor.fetchone'

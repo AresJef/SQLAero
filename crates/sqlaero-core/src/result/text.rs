@@ -372,6 +372,30 @@ impl Response {
     }
 }
 
+/// Small actual facts from one fully received response. This survives a later
+/// local publication failure without retaining its rows or metadata buffers.
+#[derive(Clone, Copy)]
+pub struct CommandConfirmation {
+    pub(crate) count: u128,
+    pub(crate) warnings: u16,
+    pub(crate) last_insert_id: Option<u64>,
+}
+impl CommandConfirmation {
+    /// Capture only a complete native response, never a sent/partial command.
+    #[must_use]
+    pub fn from_response(response: &Response) -> Self {
+        Self {
+            count: match response {
+                Response::Command(ok) => u128::from(ok.affected_rows()),
+                Response::Rows(result) => result.row_count as u128,
+                Response::Counted { rows, .. } => *rows as u128,
+            },
+            warnings: response.completion().warnings(),
+            last_insert_id: response.completion().last_insert_id(),
+        }
+    }
+}
+
 /// A complete ERR whose raw diagnostic allocation shares the result quota.
 /// Parsing remains delegated to mysql_common; only ownership is adapted here.
 pub struct ServerFailure {
@@ -469,6 +493,7 @@ pub struct Receiver {
     fields: Buffer<Cell>,
     column_count: usize,
     row_count: usize,
+    confirmation: Option<CommandConfirmation>,
     discard: bool,
     scope: Arc<Scope>,
     _owner: Reservation,
@@ -493,6 +518,7 @@ impl Receiver {
             fields: Buffer::tracked(&scope),
             column_count: 0,
             row_count: 0,
+            confirmation: None,
             discard,
             scope,
             _owner: owner,
@@ -525,6 +551,23 @@ impl Receiver {
         }
         result
     }
+    /// Take facts recorded after a validated final OK/EOF but before fallible
+    /// ownership. No row buffer or reference to the incoming packet is retained.
+    pub fn take_confirmation(&mut self) -> Option<CommandConfirmation> {
+        self.confirmation.take()
+    }
+    fn confirm(&mut self, packet: &OkPacket<'_>, rows: Option<usize>) {
+        if !packet
+            .status_flags()
+            .contains(StatusFlags::SERVER_MORE_RESULTS_EXISTS)
+        {
+            self.confirmation = Some(CommandConfirmation {
+                count: rows.map_or_else(|| u128::from(packet.affected_rows()), |rows| rows as u128),
+                warnings: packet.warnings(),
+                last_insert_id: packet.last_insert_id(),
+            });
+        }
+    }
     fn push_inner(&mut self, data: &[u8]) -> Result<Option<Response>, ResultError> {
         if data.first() == Some(&0xff) {
             return Err(ResultError::Server(ServerFailure::new(
@@ -535,10 +578,9 @@ impl Receiver {
         match self.phase {
             Phase::First => {
                 if data.first() == Some(&0) {
-                    let completion = Completion::new(
-                        packets::ok(data, self.capabilities, OkKind::Command)?,
-                        &self.scope,
-                    )?;
+                    let packet = packets::ok(data, self.capabilities, OkKind::Command)?;
+                    self.confirm(&packet, None);
+                    let completion = Completion::new(packet, &self.scope)?;
                     self.phase = Phase::Finished;
                     return Ok(Some(Response::Command(completion)));
                 }
@@ -599,8 +641,9 @@ impl Receiver {
                     } else {
                         OkKind::LegacyEnd
                     };
-                    let completion =
-                        Completion::new(packets::ok(data, self.capabilities, kind)?, &self.scope)?;
+                    let packet = packets::ok(data, self.capabilities, kind)?;
+                    self.confirm(&packet, Some(self.row_count));
+                    let completion = Completion::new(packet, &self.scope)?;
                     let response = if self.discard {
                         Response::Counted {
                             rows: self.row_count,
@@ -719,6 +762,64 @@ pub fn has_more(response: &Response) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validated_ack_facts_survive_completion_storage_failure_without_row_ownership() {
+        use crate::session::query::ConfirmedPrefix;
+        let pool = Pool::new(10_000);
+        let probe = Scope::new(Arc::clone(&pool), 10_000).unwrap();
+        let limit = probe.used() + size_of::<Receiver>();
+        drop(probe);
+        let scope = Scope::new(Arc::clone(&pool), limit).unwrap();
+        let mut collector = Receiver::new(
+            CapabilityFlags::CLIENT_PROTOCOL_41,
+            Arc::clone(&scope),
+            false,
+        )
+        .unwrap();
+        // Valid complete OK: affected=5, insert ID=9, AUTOCOMMIT, warnings=3.
+        // There is deliberately no remaining quota for an owned Completion.
+        assert!(matches!(
+            collector.push(&[0, 5, 9, 2, 0, 3, 0]),
+            Err(ResultError::Memory(_))
+        ));
+        let confirmed = collector
+            .take_confirmation()
+            .expect("validated final ACK facts");
+        assert!(collector.take_confirmation().is_none());
+        drop(collector);
+        drop(scope);
+        assert_eq!(pool.used(), 0);
+        let mut prefix = ConfirmedPrefix::default();
+        prefix.record_confirmation(0..0, confirmed).unwrap();
+        assert_eq!(
+            (
+                prefix.commands,
+                prefix.source_rows,
+                prefix.row_count,
+                prefix.warnings,
+                prefix.last_insert_id
+            ),
+            (1, 0, 5, 3, Some(9))
+        );
+        assert!(prefix.record_confirmation(1..2, confirmed).is_err());
+        assert_eq!(prefix.commands, 1);
+
+        let scope = Scope::new(Arc::clone(&pool), limit).unwrap();
+        let mut malformed = Receiver::new(
+            CapabilityFlags::CLIENT_PROTOCOL_41,
+            Arc::clone(&scope),
+            false,
+        )
+        .unwrap();
+        assert!(malformed.push(&[0, 5]).is_err());
+        assert!(malformed.take_confirmation().is_none());
+        drop(malformed);
+        let mut intermediate =
+            Receiver::new(CapabilityFlags::CLIENT_PROTOCOL_41, scope, false).unwrap();
+        assert!(intermediate.push(&[0, 5, 9, 10, 0, 3, 0]).is_err());
+        assert!(intermediate.take_confirmation().is_none());
+    }
 
     #[test]
     fn server_error_copy_charges_the_live_packet_peak_and_releases_ownership() {

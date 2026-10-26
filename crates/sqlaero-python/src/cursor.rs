@@ -292,8 +292,9 @@ impl Cursor {
                     let job = connection.query_job(py, &mut lease, request, !final_request)?;
                     input::check(py, &budget)?;
                     self.handoff(py, &mut begun)?;
-                    let response =
-                        connection.drive(py, &mut lease, job, &mut budget, CommandRole::UserSql)?;
+                    let response = connection
+                        .drive(py, &mut lease, job, &mut budget, CommandRole::UserSql)
+                        .map_err(|failure| failure.record_prefix(py, &mut prefix, start..end))?;
                     prefix
                         .record(start..end, &response)
                         .map_err(|error| errors::wire(py, error))?;
@@ -309,10 +310,11 @@ impl Cursor {
                 let job = connection.query_job(py, &mut lease, request, false)?;
                 input::check(py, &budget)?;
                 self.handoff(py, &mut begun)?;
-                let response =
-                    connection.drive(py, &mut lease, job, &mut budget, CommandRole::UserSql)?;
+                let response = connection
+                    .drive(py, &mut lease, job, &mut budget, CommandRole::UserSql)
+                    .map_err(|failure| failure.record_prefix(py, &mut prefix, 0..0))?;
                 prefix
-                    .record(0..1, &response)
+                    .record(0..0, &response)
                     .map_err(|error| errors::wire(py, error))?;
                 last = Some((response, names_codec));
             }

@@ -13,7 +13,7 @@ use std::sync::Arc;
 pub enum ChannelError {
     /// A classic-protocol or native storage failure.
     #[error(transparent)]
-    Wire(#[from] WireError),
+    Wire(WireError),
     /// A raw socket or readiness failure.
     #[error(transparent)]
     Transport(#[from] TransportError),
@@ -23,6 +23,22 @@ pub enum ChannelError {
     /// The original total or no-progress interval expired.
     #[error(transparent)]
     Timeout(#[from] TimeoutKind),
+}
+
+impl From<WireError> for ChannelError {
+    fn from(error: WireError) -> Self {
+        // Read/Write must return io::Error. SocketIo preserves our exact
+        // deadline kind as its source; recover that typed fact, not an errno
+        // or message guess, before the native host boundary maps the failure.
+        if let WireError::Io(io) = &error
+            && let Some(kind) = io
+                .get_ref()
+                .and_then(|source| source.downcast_ref::<TimeoutKind>())
+        {
+            return Self::Timeout(*kind);
+        }
+        Self::Wire(error)
+    }
 }
 
 /// Outcome of concrete channel work; waiting never discards message progress.
@@ -295,5 +311,29 @@ fn convert<T>(step: Progress<T>, direction: Direction) -> Step<T> {
         Progress::Ready(value) => Step::Ready(value),
         Progress::Pending => Step::Wait(direction),
         Progress::Yield => Step::Control,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn only_actual_native_deadline_sources_become_timeout_variants() {
+        for kind in [
+            TimeoutKind::Connect,
+            TimeoutKind::Operation,
+            TimeoutKind::Read,
+            TimeoutKind::Write,
+        ] {
+            let native = io::Error::new(io::ErrorKind::TimedOut, kind);
+            assert!(
+                matches!(ChannelError::from(WireError::Io(native)), ChannelError::Timeout(actual) if actual==kind)
+            );
+        }
+        let os = io::Error::new(io::ErrorKind::TimedOut, "unrelated OS timeout");
+        assert!(matches!(
+            ChannelError::from(WireError::Io(os)),
+            ChannelError::Wire(WireError::Io(_))
+        ));
     }
 }

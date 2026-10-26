@@ -329,6 +329,16 @@ impl<T: PartialEq> PartialEq<Vec<T>> for Buffer<T> {
 mod tests {
     use super::*;
     #[test]
+    fn reportable_allocator_capacity_failure_is_not_a_quota_error_or_panic() {
+        let mut bytes = Buffer::<u8>::new();
+        // Vec rejects this impossible capacity before requesting host memory;
+        // no machine-wide OOM or unsafe fault injection is involved.
+        let error = bytes.reserve(usize::MAX).unwrap_err();
+        assert!(matches!(&error, MemoryError::Allocation(_)));
+        assert!(std::error::Error::source(&error).is_some());
+        assert!(bytes.is_empty());
+    }
+    #[test]
     fn capacity_and_transient_growth_are_real_and_release_is_owned() {
         let pool = Pool::new(10_000);
         let scope = Scope::new(Arc::clone(&pool), 10_000).unwrap();

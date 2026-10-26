@@ -23,6 +23,94 @@ pub(crate) struct ScalarTypes {
 }
 
 impl ScalarTypes {
+    /// Describe only the failed input, with bounded text and no arbitrary repr
+    /// or tzinfo callback. Failure to obtain this optional detail is ignored by
+    /// callers so it cannot replace the real conversion exception.
+    pub(crate) fn diagnostic(&self, value: &Bound<'_, PyAny>) -> PyResult<String> {
+        let py = value.py();
+        let name = value
+            .get_type()
+            .name()?
+            .to_string_lossy()
+            .chars()
+            .take(64)
+            .collect::<String>();
+        if value.is_exact_instance_of::<PyString>() {
+            let length = value.len()?;
+            let preview = value
+                .get_item(pyo3::types::PySlice::new(py, 0, 32, 1))?
+                .repr()?
+                .extract::<String>()?;
+            let clipped = preview.chars().count() > 140;
+            let preview: String = preview.chars().take(140).collect();
+            return Ok(format!(
+                "{name} {preview}{} (original length {length})",
+                if length > 32 || clipped {
+                    " [truncated]"
+                } else {
+                    ""
+                }
+            ));
+        }
+        if value.is_exact_instance_of::<PyBytes>() {
+            return Ok(binary_diagnostic(
+                &name,
+                value.cast::<PyBytes>()?.as_bytes(),
+            ));
+        }
+        if value.is_exact_instance_of::<PyByteArray>() {
+            let array = value.cast::<PyByteArray>()?;
+            // SAFETY: the exact owned bytearray is protected by the GIL, with
+            // no Python callback or detach during this bounded native preview.
+            return Ok(unsafe { binary_diagnostic(&name, array.as_bytes()) });
+        }
+        if value.is_exact_instance_of::<PyInt>() {
+            let bits = value.call_method0("bit_length")?.extract::<u64>()?;
+            if bits > 512 {
+                return Ok(format!("int ({bits} bits; value preview omitted)"));
+            }
+        }
+        if value.is_none()
+            || value.is_exact_instance_of::<PyBool>()
+            || value.is_exact_instance_of::<PyInt>()
+            || value.is_exact_instance_of::<PyFloat>()
+            || value.is_exact_instance_of::<PyDate>()
+            || value.is_exact_instance_of::<PyDelta>()
+        {
+            return Ok(format!("{name} {}", value.repr()?.to_string_lossy()));
+        }
+        if value.is_exact_instance_of::<PyDateTime>() {
+            let value = value.cast::<PyDateTime>()?;
+            return Ok(format!(
+                "datetime {:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06} (tzinfo {})",
+                value.get_year(),
+                value.get_month(),
+                value.get_day(),
+                value.get_hour(),
+                value.get_minute(),
+                value.get_second(),
+                value.get_microsecond(),
+                if value.get_tzinfo().is_some() {
+                    "present; not formatted"
+                } else {
+                    "None"
+                }
+            ));
+        }
+        if value.is_exact_instance_of::<PyTime>() {
+            let value = value.cast::<PyTime>()?;
+            return Ok(format!(
+                "time {:02}:{:02}:{:02}.{:06} (tzinfo not formatted)",
+                value.get_hour(),
+                value.get_minute(),
+                value.get_second(),
+                value.get_microsecond()
+            ));
+        }
+        // Decimal errors already describe the native numeric restriction.
+        // Avoid formatting an arbitrarily long coefficient merely for notes.
+        Ok(format!("{name} (value preview omitted)"))
+    }
     pub(crate) fn decimal_type<'py>(&self, py: Python<'py>) -> &Bound<'py, PyType> {
         self.decimal.bind(py)
     }
@@ -177,14 +265,32 @@ impl ScalarTypes {
             }
             let negative = parts.get_item(0)?.extract::<u8>()? != 0;
             let digits = parts.get_item(1)?.extract::<Vec<u8>>()?;
-            return scalar::decimal(output, negative, &digits, exponent.extract::<i64>()?, limit)
-                .map_err(|e| scalar_error(py, e));
+            let exponent = exponent.extract::<i64>()?;
+            return scalar::decimal(output, negative, &digits, exponent, limit).map_err(|error| {
+                let error = scalar_error(py, error);
+                errors::note(py, &error, format!("failed Decimal components: sign={}, digits={:?}{} ({} digits), exponent={exponent}", u8::from(negative), &digits[..digits.len().min(16)], if digits.len() > 16 { " [truncated]" } else { "" }, digits.len()));
+                error
+            });
         }
         Err(PyTypeError::new_err(format!(
             "unsupported exact escape type: {}",
             value.get_type().name()?
         )))
     }
+}
+
+fn binary_diagnostic(name: &str, value: &[u8]) -> String {
+    let escaped: String = value
+        .iter()
+        .take(32)
+        .flat_map(|byte| std::ascii::escape_default(*byte))
+        .map(char::from)
+        .collect();
+    format!(
+        "{name} b'{escaped}'{} (original length {})",
+        if value.len() > 32 { " [truncated]" } else { "" },
+        value.len()
+    )
 }
 
 fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyResult<()> {
