@@ -680,8 +680,14 @@ def collect(args: argparse.Namespace) -> None:
                     if case.id in isolated:
                         continue
                     # Finish first-call checks/warmup before an adjacent pair.
-                    checked_a = a.sample(case.id, 0, role_a)
-                    checked_b = b.sample(case.id, 0, "native")
+                    # Counterbalance first-use/database creation as well as
+                    # complete-block edge positions across true cycles.
+                    orders = ("AB", "BA") if cycle % 2 == 0 else ("BA", "AB")
+                    checked: dict[str, dict[str, Any]] = {}
+                    for role in orders[0]:
+                        checked[role] = (a if role == "A" else b).sample(
+                            case.id, 0, role_a if role == "A" else "native")
+                    checked_a, checked_b = checked["A"], checked["B"]
                     if not args.legacy and checked_a["output"] != checked_b["output"]:
                         raise RuntimeError(f"Reference and candidate outputs differ: {case.id}")
                     if case.id not in parameters:
@@ -710,7 +716,7 @@ def collect(args: argparse.Namespace) -> None:
                                 isolated.add(case.id)
                                 continue
                     n = parameters[case.id]
-                    for order in ("AB", "BA"):
+                    for order in orders:
                         key = cycle, case.id, order
                         if key in existing:
                             continue
