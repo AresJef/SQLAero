@@ -6,6 +6,10 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyInt, PyString, PyTuple, PyType};
 use sqlaero_core::error::{ClientErrorCode, ExceptionClass};
 use sqlaero_core::protocol::framing::WireError;
+use std::sync::Mutex;
+
+mod diagnostics;
+pub(crate) use diagnostics::ErrorInfo;
 
 pyo3::create_exception!(
     sqlaero.errors,
@@ -111,13 +115,18 @@ fn exception_type(py: Python<'_>, class: ExceptionClass) -> Bound<'_, PyType> {
 /// Preserve an actual allocation failure; distinguish active resource bounds
 /// from malformed wire data without parsing a human error string.
 pub(crate) fn wire(py: Python<'_>, error: WireError) -> PyErr {
-    match error {
+    let detail =
+        diagnostics::Native::capture(&error, Some("sqlaero_core::protocol::framing::WireError"));
+    let mapped = match error {
         WireError::Allocation(error) => pyo3::exceptions::PyMemoryError::new_err(error.to_string()),
+        error @ WireError::Io(_) => client(py, ClientErrorCode::Transport, error.to_string()),
         error @ (WireError::Limit { .. } | WireError::Memory(_)) => {
             client(py, ClientErrorCode::ResourceLimit, error.to_string())
         }
         error => client(py, ClientErrorCode::Protocol, error.to_string()),
-    }
+    };
+    native(py, &mapped, detail);
+    mapped
 }
 
 /// Base exception for SQLAero client and server failures.
@@ -133,6 +142,7 @@ pub(crate) struct SQLAeroError {
     code: Option<BigInt>,
     is_server_error: Option<bool>,
     args: Py<PyTuple>,
+    diagnostics: Mutex<diagnostics::State>,
 }
 
 #[pymethods]
@@ -227,6 +237,7 @@ impl SQLAeroError {
             code,
             is_server_error: source,
             args,
+            diagnostics: Mutex::new(diagnostics::State::default()),
         })
     }
 
@@ -257,6 +268,57 @@ impl SQLAeroError {
     #[getter]
     fn args(&self, py: Python<'_>) -> Py<PyTuple> {
         self.args.clone_ref(py)
+    }
+
+    /// Return an immutable diagnostic snapshot. Repeated reads reuse the cached
+    /// snapshot while SQLAero has recorded no new diagnostic information. If a
+    /// later handling stage records additional errors or relevant facts, the
+    /// next read returns an updated snapshot. Previously returned snapshots
+    /// remain unchanged. Reading this property sends no request to the server.
+    #[getter]
+    fn error_info(slf: &Bound<'_, Self>) -> PyResult<Py<ErrorInfo>> {
+        let py = slf.py();
+        {
+            let value = slf.borrow();
+            let state = value.diagnostics.lock().map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "error diagnostic ownership is unavailable",
+                )
+            })?;
+            if let Some(cached) = &state.cached {
+                return Ok(cached.clone_ref(py));
+            }
+        }
+        let snapshot = diagnostics::capture(py, &PyErr::from_value(slf.clone().into_any()), None)?;
+        slf.borrow()
+            .diagnostics
+            .lock()
+            .map_err(|_| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "error diagnostic ownership is unavailable",
+                )
+            })?
+            .cached = Some(snapshot.clone_ref(py));
+        Ok(snapshot)
+    }
+
+    fn __traverse__(
+        &self,
+        visit: pyo3::class::PyVisit<'_>,
+    ) -> Result<(), pyo3::class::PyTraverseError> {
+        visit.call(&self.message)?;
+        visit.call(&self.args)?;
+        let state = self
+            .diagnostics
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.traverse(&visit)
+    }
+    fn __clear__(&mut self) {
+        self.diagnostics
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 
     fn __str__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
@@ -300,6 +362,7 @@ impl SQLAeroError {
 /// their implementation step; this is not a completed public errors module.
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<SQLAeroError>()?;
+    module.add_class::<ErrorInfo>()?;
     let py = module.py();
     module.add("InterfaceError", py.get_type::<InterfaceError>())?;
     module.add("InterfaceBusyError", py.get_type::<InterfaceBusyError>())?;
@@ -345,7 +408,11 @@ pub(crate) fn channel(
     error: sqlaero_core::transport::channel::ChannelError,
 ) -> PyErr {
     use sqlaero_core::transport::{channel::ChannelError, socket::TransportError};
-    match error {
+    let detail = diagnostics::Native::capture(
+        &error,
+        Some("sqlaero_core::transport::channel::ChannelError"),
+    );
+    let mapped = match error {
         ChannelError::Wire(error) => wire(py, error),
         ChannelError::Timeout(error) | ChannelError::Transport(TransportError::Timeout(error)) => {
             timeout(py, error)
@@ -354,7 +421,9 @@ pub(crate) fn channel(
             client(py, ClientErrorCode::Transport, error.to_string())
         }
         error @ ChannelError::Tls(_) => client(py, ClientErrorCode::Tls, error.to_string()),
-    }
+    };
+    native(py, &mapped, detail);
+    mapped
 }
 /// Preserve actual server code/state and decode the final Python error text
 /// using the response's real encoding. Unknown encoding uses lossless byte
@@ -521,7 +590,53 @@ pub(crate) fn initialize(
 /// Preserve the same primary exception while recording a real independent
 /// cleanup failure. Diagnostic snapshot publication is implemented in P05.3.
 pub(crate) fn additional(py: Python<'_>, primary: &PyErr, secondary: PyErr, stage: &str) {
-    let _ = primary.add_note(py, format!("Additional failure at {stage}: {secondary}"));
+    let captured = diagnostics::capture(py, &secondary, Some(stage));
+    note(
+        py,
+        primary,
+        format!("Additional failure at {stage}: {secondary}"),
+    );
+    if let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
+        && let Ok(mut state) = error.diagnostics.lock()
+        && let Ok(captured) = captured
+        && state.additional.try_reserve(1).is_ok()
+    {
+        state.additional.push(captured);
+        state.cached = None;
+    }
+}
+
+/// Record a real new fact without changing the primary object or older views.
+pub(crate) fn note(py: Python<'_>, primary: &PyErr, message: impl Into<String>) {
+    if primary.add_note(py, message.into()).is_ok()
+        && let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
+        && let Ok(mut state) = error.diagnostics.lock()
+    {
+        state.cached = None;
+    }
+}
+
+/// Publish the operation boundary that actually owns this failure. This is
+/// recorded only on failure and never parses a human message to infer state.
+pub(crate) fn at(py: Python<'_>, primary: PyErr, stage: &'static str) -> PyErr {
+    if let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
+        && let Ok(mut state) = error.diagnostics.lock()
+        && state.stage != Some(stage)
+    {
+        state.stage = Some(stage);
+        state.cached = None;
+    }
+    primary
+}
+
+/// Attach actual native source facts before consuming the native error value.
+fn native(py: Python<'_>, primary: &PyErr, captured: diagnostics::Native) {
+    if let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
+        && let Ok(mut state) = error.diagnostics.lock()
+    {
+        state.native = Some(captured);
+        state.cached = None;
+    }
 }
 
 /// Materialize standard IntEnum metadata once, from the same native registry

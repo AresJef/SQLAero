@@ -223,8 +223,9 @@ impl Row<'_> {
                 ));
             }
             if let Err(error) = visit.value(&source, output) {
-                let _ = error.add_note(
+                errors::note(
                     py,
+                    &error,
                     format!(
                         "while binding {}; current request was not sent",
                         path_text(&visit.path)

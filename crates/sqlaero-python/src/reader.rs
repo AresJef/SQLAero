@@ -279,7 +279,13 @@ impl Reader {
                         match output::field(py, value, *plan, &types, Some(data.rows.scope())) {
                             Ok(value) => value,
                             Err(error) => {
-                                let _ = error.add_note(py, format!("while decoding result row {row_index}, column {column_index}; fetch position remains {start}"));
+                                errors::note(
+                                    py,
+                                    &error,
+                                    format!(
+                                        "while decoding result row {row_index}, column {column_index}; fetch position remains {start}"
+                                    ),
+                                );
                                 return Err(error);
                             }
                         }

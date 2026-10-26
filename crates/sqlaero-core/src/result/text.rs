@@ -4,7 +4,7 @@ use crate::memory::{Buffer, MemoryError, Pool, Reservation, Scope};
 use crate::protocol::framing::{MAX_FRAME_PAYLOAD, WireError};
 use crate::protocol::packets::{self, OkKind};
 use mysql_common::constants::{CapabilityFlags, StatusFlags};
-use mysql_common::packets::{OkPacket, ServerError};
+use mysql_common::packets::{OkPacket, ServerError, SqlState};
 use std::mem::size_of;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -372,6 +372,66 @@ impl Response {
     }
 }
 
+/// A complete ERR whose raw diagnostic allocation shares the result quota.
+/// Parsing remains delegated to mysql_common; only ownership is adapted here.
+pub struct ServerFailure {
+    code: u16,
+    state: Option<SqlState>,
+    message: Buffer<u8>,
+    _owner: Reservation,
+}
+impl ServerFailure {
+    fn new(packet: &ServerError<'_>, scope: &Arc<Scope>) -> Result<Self, MemoryError> {
+        // The incoming packet remains charged while this copy is allocated.
+        // Buffer charges real capacity and any growth peak, not payload length.
+        let owner = scope.charge(size_of::<Self>())?;
+        let mut message = Buffer::tracked(scope);
+        message.extend_from_slice(packet.message_ref())?;
+        Ok(Self {
+            code: packet.error_code(),
+            state: packet.sql_state_ref().copied(),
+            message,
+            _owner: owner,
+        })
+    }
+    /// Actual unsigned 16-bit server number, without client inference.
+    #[must_use]
+    pub fn error_code(&self) -> u16 {
+        self.code
+    }
+    /// Actual optional protocol SQLSTATE.
+    #[must_use]
+    pub fn sql_state_ref(&self) -> Option<&SqlState> {
+        self.state.as_ref()
+    }
+    /// Received bytes, including NUL or invalid diagnostic encoding.
+    #[must_use]
+    pub fn message_ref(&self) -> &[u8] {
+        &self.message
+    }
+}
+impl std::fmt::Debug for ServerFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ServerFailure")
+            .field("code", &self.code)
+            .field("state", &self.state)
+            .field("message", &self.message)
+            .finish()
+    }
+}
+impl std::fmt::Display for ServerFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "server error {}: {}",
+            self.code,
+            String::from_utf8_lossy(&self.message)
+        )
+    }
+}
+impl std::error::Error for ServerFailure {}
+
 /// Native collection errors with their actual origin preserved.
 #[derive(Debug, thiserror::Error)]
 pub enum ResultError {
@@ -380,7 +440,7 @@ pub enum ResultError {
     Wire(#[from] WireError),
     /// A complete server ERR packet.
     #[error("MySQL command failed: {0}")]
-    Server(ServerError<'static>),
+    Server(ServerFailure),
     /// A response outside the negotiated/public scope.
     #[error("unsupported MySQL response: {0}")]
     Unsupported(&'static str),
@@ -467,9 +527,10 @@ impl Receiver {
     }
     fn push_inner(&mut self, data: &[u8]) -> Result<Option<Response>, ResultError> {
         if data.first() == Some(&0xff) {
-            return Err(ResultError::Server(
-                packets::server_error(data, self.capabilities)?.into_owned(),
-            ));
+            return Err(ResultError::Server(ServerFailure::new(
+                &packets::server_error(data, self.capabilities)?,
+                &self.scope,
+            )?));
         }
         match self.phase {
             Phase::First => {
@@ -658,6 +719,42 @@ pub fn has_more(response: &Response) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn server_error_copy_charges_the_live_packet_peak_and_releases_ownership() {
+        let caps = CapabilityFlags::CLIENT_PROTOCOL_41;
+        let pool = Pool::new(100_000);
+        let scope = Scope::new(Arc::clone(&pool), 10_000).unwrap();
+        let mut input = Buffer::tracked(&scope);
+        input.extend_from_slice(b"\xff\x26\x04#23000").unwrap();
+        input.extend_from_slice(&[b'x'; 8000]).unwrap();
+        let mut collector = Receiver::new(caps, Arc::clone(&scope), false).unwrap();
+        assert!(matches!(
+            collector.push(&input),
+            Err(ResultError::Memory(MemoryError::Result { .. }))
+        ));
+        drop(collector);
+        drop(input);
+        drop(scope);
+        assert_eq!(pool.used(), 0);
+
+        let scope = Scope::new(Arc::clone(&pool), 30_000).unwrap();
+        let mut input = Buffer::tracked(&scope);
+        input.extend_from_slice(b"\xff\x26\x04#23000a\0b").unwrap();
+        let mut collector = Receiver::new(caps, Arc::clone(&scope), false).unwrap();
+        let Err(ResultError::Server(error)) = collector.push(&input) else {
+            panic!("expected a complete ERR")
+        };
+        assert_eq!(error.error_code(), 1062);
+        assert_eq!(error.sql_state_ref().unwrap().as_bytes(), *b"23000");
+        assert_eq!(error.message_ref(), b"a\0b");
+        drop(input);
+        drop(collector);
+        drop(scope);
+        assert_ne!(pool.used(), 0);
+        drop(error);
+        assert_eq!(pool.used(), 0);
+    }
     fn packet(type_code: u8) -> Vec<u8> {
         let mut data = Vec::new();
         for value in [

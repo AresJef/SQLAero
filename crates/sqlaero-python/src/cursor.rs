@@ -348,7 +348,7 @@ impl Cursor {
             // preparation after a completely consumed final response.
             self.reader.clear_result(py)?;
             *self.counters(py)? = None;
-            let _ = error.add_note(py, prefix.diagnostic());
+            errors::note(py, error, prefix.diagnostic());
         }
         result
     }
@@ -370,11 +370,12 @@ macro_rules! cursor_api {
             /// share one deadline. Confirmed prefixes never imply a commit.
             #[pyo3(signature=(sql,args=Argument::default(),*,many=Argument::default(),itemize=Argument::default()))]
             #[pyo3(text_signature="($self, sql, args=..., *, many=False, itemize=True)")]
-            fn execute<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:Argument<'_>,many:Argument<'_>,itemize:Argument<'_>)->PyResult<Bound<'py,PyAny>> {self.run(py,sql,args,&many,&itemize)}
+            fn execute<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:Argument<'_>,many:Argument<'_>,itemize:Argument<'_>)->PyResult<Bound<'py,PyAny>> {self.run(py,sql,args,&many,&itemize).map_err(|error|errors::at(py,error,"cursor.execute"))}
             /// Execute using the same native many=True,itemize=True operation.
             fn executemany<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:&Bound<'_,PyAny>)->PyResult<Bound<'py,PyAny>> {
                 let many=true.into_pyobject(py)?.to_owned().into_any();
                 self.run(py,sql,Argument(Some(args.clone())),&Argument(Some(many.clone())),&Argument(Some(many)))
+                    .map_err(|error|errors::at(py,error,"cursor.executemany"))
             }
             /// Return the next tuple row, or None when a valid result is exhausted.
             /// Buffered fetching remains valid after its Connection is closed,
@@ -389,7 +390,7 @@ macro_rules! cursor_api {
             fn fetchall<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {self.reader.fetchall(py)}
             /// Close only this Cursor, retaining readable local metadata,
             /// counters and configuration. Its Connection remains usable.
-            pub(crate) fn close(&self,py:Python<'_>)->PyResult<()> {self.reader.close(py)}
+            pub(crate) fn close(&self,py:Python<'_>)->PyResult<()> {self.reader.close(py).map_err(|error|errors::at(py,error,"cursor.close"))}
             /// True after this Cursor has been permanently retired locally.
             #[getter] fn closed(&self)->bool {self.reader.is_closed()}
             /// Positive default row count for fetchmany(None); initial value 1.

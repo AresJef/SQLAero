@@ -465,7 +465,7 @@ macro_rules! connection_api {
                 let mut lease=match self.native.try_command() {
                     Ok(lease)=>lease,
                     Err(sqlaero_core::session::shared::AccessError::Closed)=>return Ok(()),
-                    Err(error)=>return Err(errors::access(py,error)),
+                    Err(error)=>return Err(errors::at(py,errors::access(py,error),"connection.close")),
                 };
                 let snapshot=self.runtime(py)?.timeouts;
                 let mut budget=IoBudget::new(TimeoutKind::Operation,snapshot.operation,None,snapshot.write);
@@ -489,7 +489,7 @@ macro_rules! connection_api {
                         }
                     }
                 })();
-                lease.invalidate(); result
+                lease.invalidate(); result.map_err(|error|errors::at(py,error,"connection.close"))
             }
             /// True after irreversible local retirement begins. This does not
             /// confirm server transaction completion or finished cleanup.
@@ -590,11 +590,11 @@ macro_rules! connection_api {
             fn set_innodb_lock_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,3,"innodb_lock_wait_timeout")}
             /// Send START TRANSACTION. Repeating this follows MySQL semantics,
             /// which may commit an existing transaction before opening another.
-            fn begin(&self,py:Python<'_>)->PyResult<()> { self.control(py,b"START TRANSACTION") }
+            fn begin(&self,py:Python<'_>)->PyResult<()> { self.control(py,b"START TRANSACTION").map_err(|error|errors::at(py,error,"connection.begin")) }
             /// Confirm COMMIT AND NO CHAIN NO RELEASE; never automatically retry.
-            fn commit(&self,py:Python<'_>)->PyResult<()> {self.control(py,b"COMMIT AND NO CHAIN NO RELEASE")}
+            fn commit(&self,py:Python<'_>)->PyResult<()> {self.control(py,b"COMMIT AND NO CHAIN NO RELEASE").map_err(|error|errors::at(py,error,"connection.commit"))}
             /// Confirm ROLLBACK AND NO CHAIN NO RELEASE; never infer prior commits.
-            fn rollback(&self,py:Python<'_>)->PyResult<()> {self.control(py,b"ROLLBACK AND NO CHAIN NO RELEASE")}
+            fn rollback(&self,py:Python<'_>)->PyResult<()> {self.control(py,b"ROLLBACK AND NO CHAIN NO RELEASE").map_err(|error|errors::at(py,error,"connection.rollback"))}
             /// Actively send COM_PING without reconnecting or replaying SQL.
             fn ping(&self,py:Python<'_>)->PyResult<bool> {
                 let mut budget=self.runtime(py)?.timeouts.operation();
@@ -855,7 +855,7 @@ pub(crate) fn connect(
     let ready = loop {
         match py
             .detach(|| initialize.advance())
-            .map_err(|error| errors::initialize(py, error))?
+            .map_err(|error| errors::at(py, errors::initialize(py, error), "connect"))?
         {
             Step::Ready(value) => break value,
             Step::Control => py.check_signals()?,

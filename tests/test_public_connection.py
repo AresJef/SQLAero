@@ -416,3 +416,109 @@ def test_known_code_priority_unknown_fallback_and_ordinary_warnings(connection: 
     cursor.execute('DROP TABLE IF EXISTS sqlaero_public_no_such_warning_table')
     assert cursor.warning_count is not None and cursor.warning_count > 0
     assert connection.ping()
+
+
+@requires_mysql
+def test_transaction_keeps_original_primary_refreshes_snapshot_and_captures_rollback_failure(connection: Connection) -> None:
+    from sqlaero.errors import SQLAeroError
+    primary = SQLAeroError('business failure', code=777777, is_server_error=False)
+    caught: pytest.ExceptionInfo[SQLAeroError] | None = None
+    previous = None
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    with live(label) as killer:
+        with pytest.raises(SQLAeroError) as caught:
+            with connection.transaction():
+                try:
+                    raise primary
+                except SQLAeroError as error:
+                    previous = error.error_info
+                    with killer.cursor() as control:
+                        control.execute(f'KILL CONNECTION {connection.connection_id}')
+                    raise
+    assert caught is not None and caught.value is primary and previous is not None
+    current = primary.error_info
+    assert current is not previous and primary.error_info is current
+    assert previous.additional_errors == ()
+    assert current.message == primary.message and current.code == 777777
+    assert current.traceback is not None and previous.traceback is not None
+    assert len(current.additional_errors) == 1
+    rollback = current.additional_errors[0]
+    assert rollback.stage == 'transaction.rollback'
+    assert rollback.exception_type is not None and issubclass(rollback.exception_type, SQLAeroError)
+    assert rollback.is_server_error in (True, False)
+    assert rollback.code is not None and rollback.message
+    assert current.additional_errors is current.additional_errors
+    assert connection.closed
+
+
+@requires_mysql
+def test_external_business_exception_keeps_identity_and_only_receives_notes(connection: Connection) -> None:
+    primary = ValueError('user failure')
+    caught: pytest.ExceptionInfo[ValueError] | None = None
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    with live(label) as killer:
+        with pytest.raises(ValueError) as caught:
+            with connection.transaction():
+                with killer.cursor() as control:
+                    control.execute(f'KILL CONNECTION {connection.connection_id}')
+                raise primary
+    assert caught is not None and caught.value is primary and primary.args == ('user failure',)
+    assert not hasattr(primary, 'error_info')
+    assert any('transaction.rollback' in note for note in getattr(primary, '__notes__', []))
+    assert connection.closed
+
+
+@requires_mysql
+def test_actual_native_socket_error_keeps_os_cause_without_fabricated_python_frames() -> None:
+    import socket
+    from sqlaero.errors import OperationalError
+    # Reserve then release an ephemeral local port. On this macOS host a bound
+    # non-listening socket silently drops SYNs (also with Python's socket API),
+    # whereas the now-closed port produces the actual refusal tested here.
+    with socket.socket() as reserved:
+        reserved.bind(('127.0.0.1', 0))
+        port = int(reserved.getsockname()[1])
+        reserved.close()
+        with pytest.raises(OperationalError) as caught:
+            connect(host='127.0.0.1', port=port, user='unopened', connect_timeout=1)
+    info = caught.value.error_info
+    assert info.exception_type is OperationalError and info.is_server_error is False
+    assert info.os_errno is None
+    current = info.cause
+    while current is not None and current.native_type != 'std::io::Error':
+        current = current.cause
+    assert current is not None and current.os_errno is not None
+    assert current.exception_type is None and current.code is None and current.is_server_error is None
+    assert current.traceback is None and current.message
+
+
+@requires_mysql
+def test_independent_cursor_then_connection_cleanup_failures_keep_actual_order(connection: Connection) -> None:
+    from concurrent.futures import Future, ThreadPoolExecutor
+    from threading import Event
+    import time as clock_time
+    from sqlaero.errors import InterfaceBusyError, SQLAeroError
+    primary = SQLAeroError('body failure')
+    cursor = connection.cursor()
+    started = Event()
+    future: Future[int] | None = None
+
+    def occupied() -> int:
+        started.set()
+        return cursor.execute('SELECT SLEEP(0.3)')
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with pytest.raises(SQLAeroError) as caught:
+            with connection, cursor:
+                future = executor.submit(occupied)
+                assert started.wait(2)
+                clock_time.sleep(0.03)
+                raise primary
+        assert caught.value is primary
+        later = primary.error_info.additional_errors
+        assert tuple(item.stage for item in later) == ('cursor.close', 'connection.close')
+        assert all(item.exception_type is InterfaceBusyError for item in later)
+        assert len(later) == 2 and later is primary.error_info.additional_errors
+        assert future is not None and future.result(timeout=3) == 1
+    assert not cursor.closed and not connection.closed and connection.ping()
+    cursor.close()

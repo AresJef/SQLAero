@@ -142,7 +142,7 @@ class Columns:
 Description = tuple[tuple[str, int, None, None, int | None, int | None, bool], ...]
 
 class SQLAeroError(Exception):
-    """Native root exception; the public errors module is not yet complete."""
+    """Base exception with immutable message/code/source and lazy diagnostics."""
     def __init__(self, message: str = '', *, code: int | None = None,
                  is_server_error: bool | None = None) -> None: ...
     @property
@@ -151,6 +151,68 @@ class SQLAeroError(Exception):
     def code(self) -> int | None: ...
     @property
     def is_server_error(self) -> bool | None: ...
+    @property
+    def error_info(self) -> ErrorInfo:
+        """Return a cached immutable snapshot; library-added facts refresh it.
+
+        Previously returned snapshots remain unchanged. No server request is sent.
+        """
+        ...
+
+class ErrorInfo:
+    """Read-only captured error facts; not an exception and not constructible."""
+    @property
+    def stage(self) -> str | None:
+        """Actual handling stage, or None when unrecorded."""
+        ...
+    @property
+    def exception_type(self) -> type[BaseException] | None:
+        """Actual Python class; None for a pure Rust source node."""
+        ...
+    @property
+    def native_type(self) -> str | None:
+        """Reliable native type name, not a stable matching key."""
+        ...
+    @property
+    def message(self) -> str:
+        """Frozen original node message."""
+        ...
+    @property
+    def code(self) -> int | None:
+        """Actual library code belonging to this node alone."""
+        ...
+    @property
+    def os_errno(self) -> int | None:
+        """Actual OS number of this node, never inferred from text."""
+        ...
+    @property
+    def is_server_error(self) -> bool | None:
+        """Declared library origin; external/native nodes may be None."""
+        ...
+    @property
+    def cause(self) -> ErrorInfo | None:
+        """Actual explicit/native cause, preserving shared and cyclic edges."""
+        ...
+    @property
+    def context(self) -> ErrorInfo | None:
+        """Actual Python background, even when suppressed from display."""
+        ...
+    @property
+    def suppress_context(self) -> bool:
+        """Original Python implicit-context display suppression."""
+        ...
+    @property
+    def traceback(self) -> str | None:
+        """Lazily formatted captured stack/chain; no live frames are retained."""
+        ...
+    @property
+    def notes(self) -> tuple[str, ...]:
+        """Frozen ordered notes, unaffected by later exception changes."""
+        ...
+    @property
+    def additional_errors(self) -> tuple[ErrorInfo, ...]:
+        """Independent later failures in actual order, cached as a tuple."""
+        ...
 
 class InterfaceError(SQLAeroError):
     """Invalid client interface or session state."""

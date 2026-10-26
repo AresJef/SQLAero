@@ -43,7 +43,7 @@ impl Transaction {
         }
     }
     fn note(py: Python<'_>, primary: &PyErr, message: impl Into<String>) {
-        let _ = primary.add_note(py, message.into());
+        errors::note(py, primary, message);
     }
     fn rollback_after_error(
         connection: &Connection,
@@ -85,11 +85,7 @@ impl Transaction {
             );
         }
         if let Err(error) = result {
-            Self::note(
-                py,
-                primary,
-                format!("Additional failure at transaction.rollback: {error}"),
-            );
+            errors::additional(py, primary, error, "transaction.rollback");
             if !attempt.confirmed {
                 lease.invalidate();
             }
@@ -219,7 +215,7 @@ impl Transaction {
         if result.is_err() {
             self.release();
         }
-        result
+        result.map_err(|error| errors::at(py, error, "transaction.enter"))
     }
     fn __exit__(
         &self,
@@ -266,6 +262,7 @@ impl Transaction {
                     &mut budget,
                     &mut commit,
                 ) {
+                    let error = errors::at(py, error, "transaction.commit");
                     if commit.confirmed {
                         Self::note(
                             py,
@@ -294,24 +291,16 @@ impl Transaction {
         })();
         if let Err(error) = finish {
             if let Some(existing) = &primary {
-                Self::note(
-                    py,
-                    existing,
-                    format!("Additional failure at transaction.exit: {error}"),
-                );
+                errors::additional(py, existing, error, "transaction.exit");
             } else {
-                primary = Some(error);
+                primary = Some(errors::at(py, error, "transaction.exit"));
             }
         }
         if let Some(cursor) = cursor
             && let Err(error) = cursor.borrow(py).close(py)
         {
             if let Some(existing) = &primary {
-                Self::note(
-                    py,
-                    existing,
-                    format!("Additional failure at cursor.close: {error}"),
-                );
+                errors::additional(py, existing, error, "cursor.close");
             } else {
                 primary = Some(error);
             }
