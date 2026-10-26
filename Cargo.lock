@@ -1278,7 +1278,10 @@ dependencies = [
  "jiter",
  "num-bigint 0.4.8",
  "pyo3",
+ "rustls",
+ "rustls-pki-types",
  "sqlaero-core",
+ "zeroize",
 ]
 
 [[package]]

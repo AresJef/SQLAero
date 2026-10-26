@@ -29,4 +29,18 @@ pub enum ClientErrorCode {
     InterfaceBusy = 65_546,
     /// InternalError: a real native ownership/state invariant failed.
     InternalState = 65_547,
+    /// OperationalError: actual connection preparation or transport I/O failed.
+    Transport = 65_548,
+    /// OperationalError: the negotiated TLS channel failed.
+    Tls = 65_549,
+    /// OperationalError: native authentication could not complete safely.
+    Authentication = 65_550,
+    /// NotSupportedError: an actual protocol capability is not implemented.
+    UnsupportedCapability = 65_551,
+    /// OperationalTimeoutError: original connection establishment deadline.
+    ConnectDeadline = 65_552,
+    /// OperationalTimeoutError: a read made no progress before its deadline.
+    ReadDeadline = 65_553,
+    /// OperationalTimeoutError: a write made no progress before its deadline.
+    WriteDeadline = 65_554,
 }

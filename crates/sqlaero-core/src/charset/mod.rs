@@ -164,6 +164,23 @@ pub fn by_id(id: u16) -> Option<(&'static Collation, &'static Charset)> {
     Some((collation, charset))
 }
 
+/// Match an actual canonical server name without applying configuration aliases
+/// or excluding a family that is valid only for returned metadata.
+#[must_use]
+pub fn by_charset_name(name: &str) -> Option<&'static Charset> {
+    catalog::CHARSETS
+        .iter()
+        .find(|charset| charset.name == name)
+}
+
+/// Match an actual canonical collation identity from session tracking.
+#[must_use]
+pub fn by_collation_name(name: &str) -> Option<&'static Collation> {
+    catalog::COLLATIONS
+        .iter()
+        .find(|collation| collation.name == name)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

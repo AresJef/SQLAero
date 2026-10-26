@@ -54,8 +54,21 @@ impl IoBudget {
         read: Option<Duration>,
         write: Option<Duration>,
     ) -> Self {
+        Self::starting_at(Instant::now(), total_kind, total, read, write)
+    }
+
+    /// Retain the public call's original monotonic start while its typed
+    /// configuration is being prepared. No stage receives a new total window.
+    #[must_use]
+    pub fn starting_at(
+        started: Instant,
+        total_kind: TimeoutKind,
+        total: Option<Duration>,
+        read: Option<Duration>,
+        write: Option<Duration>,
+    ) -> Self {
         Self {
-            started: Instant::now(),
+            started,
             total,
             total_kind,
             read,

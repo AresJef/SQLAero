@@ -576,7 +576,10 @@ fn command_ownership_and_close_preserve_confirmed_local_facts() {
                 scope
                     .spawn(|| {
                         assert!(matches!(connection.try_command(), Err(AccessError::Busy)));
-                        assert_eq!(connection.facts.lock().unwrap().time_zone, "+00:00");
+                        assert_eq!(
+                            connection.facts.lock().unwrap().time_zone.as_deref(),
+                            Some("+00:00")
+                        );
                     })
                     .join()
                     .unwrap();
@@ -612,8 +615,14 @@ fn command_ownership_and_close_preserve_confirmed_local_facts() {
             drop(close);
             assert!(matches!(connection.try_command(), Err(AccessError::Closed)));
             assert_eq!(
-                connection.facts.lock().unwrap().database.as_deref(),
-                Some("sqlaero_test")
+                connection
+                    .facts
+                    .lock()
+                    .unwrap()
+                    .database
+                    .as_ref()
+                    .and_then(|value| value.as_deref()),
+                Some(b"sqlaero_test".as_slice())
             );
             println!(
                 "MySQL {label}: TLS={tls}, immediate busy, native query and explicit close passed"
@@ -1025,3 +1034,131 @@ const CLIENT_CHARSETS: [&str; 36] = [
     "latin1", "latin2", "latin5", "latin7", "macce", "macroman", "swe7", "tis620", "big5", "cp932",
     "eucjpms", "euckr", "gb18030", "gb2312", "gbk", "sjis", "ujis",
 ];
+
+#[test]
+#[ignore = "requires both isolated MySQL servers; run this binary with one test thread"]
+fn tracked_session_roles_change_independently_after_actual_confirmations() {
+    use sqlaero_core::{
+        charset,
+        session::{
+            initialize::{Initialize, Options},
+            query::Query,
+            shared::Connection,
+        },
+        transport::deadline::{IoBudget, TimeoutKind},
+    };
+    let root = root();
+    for label in ["84", "97"] {
+        let mut initialize = Initialize::new(
+            Establish::new(configuration(&root, label, true, None, "localhost")).unwrap(),
+            Options {
+                encoding: charset::resolve(None, None).unwrap(),
+                autocommit: true,
+                sql_mode: None,
+                server_timeouts: [None, None, None, None],
+                result_memory_limit: 16 * 1024 * 1024,
+            },
+        );
+        let ready = loop {
+            match initialize.advance().unwrap() {
+                Step::Ready(ready) => break ready,
+                Step::Control => (),
+                Step::Wait(_) => panic!("unexpected wait"),
+            }
+        };
+        let connection = Connection::new(ready);
+        let mut lease = connection.try_command().unwrap();
+        for (sql, expected) in [
+            ("SET SESSION character_set_results=latin1", 0),
+            (
+                "SET SESSION time_zone='+08:00',sql_mode='ANSI_QUOTES,NO_BACKSLASH_ESCAPES'",
+                1,
+            ),
+            (
+                "SET SESSION net_read_timeout=17,net_write_timeout=18,wait_timeout=19,innodb_lock_wait_timeout=20",
+                2,
+            ),
+            ("SET NAMES cp1251", 3),
+            ("SET SESSION character_set_results=NULL", 4),
+            ("SET SESSION time_zone='+00:00',autocommit=0", 5),
+            ("START TRANSACTION", 6),
+            ("COMMIT AND NO CHAIN NO RELEASE", 7),
+        ] {
+            let session = lease.session().unwrap();
+            let mut request = vec![3];
+            request.extend_from_slice(sql.as_bytes());
+            let mut job = Query::new(
+                request,
+                session.capabilities,
+                session.max_send,
+                session.max_receive,
+                1024 * 1024,
+            )
+            .unwrap();
+            let mut budget = IoBudget::new(
+                TimeoutKind::Operation,
+                Some(Duration::from_secs(2)),
+                None,
+                None,
+            );
+            let response = loop {
+                match job.advance(&mut session.channel, &mut budget).unwrap() {
+                    Step::Ready(response) => break response,
+                    Step::Control => (),
+                    Step::Wait(_) => panic!("unexpected wait"),
+                }
+            };
+            let mut facts = connection.facts.lock().unwrap();
+            for entry in response.completion().session_state_info().unwrap() {
+                println!(
+                    "MySQL {label}: {sql}; tracking {:?}: {:?}",
+                    entry.data_type(),
+                    entry.data_ref()
+                );
+            }
+            facts.apply(response.completion()).unwrap();
+            let status = facts.status.unwrap();
+            use mysql_common::constants::StatusFlags as S;
+            match expected {
+                0 => {
+                    assert_eq!(facts.client_charset.as_deref(), Some("utf8mb4"));
+                    assert_eq!(
+                        facts.results_charset.as_ref().unwrap().as_deref(),
+                        Some("latin1")
+                    );
+                    assert_eq!(facts.metadata_codec().unwrap().name(), "latin1");
+                }
+                1 => {
+                    assert!(!facts.utc_confirmed());
+                    assert!(facts.sql_mode.as_ref().unwrap().contains("ANSI_QUOTES"));
+                    assert!(status.contains(S::SERVER_STATUS_NO_BACKSLASH_ESCAPES));
+                }
+                2 => assert_eq!(
+                    facts.server_timeouts,
+                    [Some(17), Some(18), Some(19), Some(20)]
+                ),
+                3 => {
+                    assert_eq!(facts.client_charset.as_deref(), Some("cp1251"));
+                    assert_eq!(facts.client_codec().unwrap().name(), "cp1251");
+                    assert_eq!(facts.connection_charset.as_deref(), Some("cp1251"));
+                    assert_eq!(facts.metadata_codec().unwrap().name(), "cp1251");
+                }
+                4 => {
+                    assert_eq!(facts.results_charset, Some(None));
+                    assert_eq!(facts.metadata_codec().unwrap().name(), "utf8mb3");
+                    assert_eq!(facts.client_codec().unwrap().name(), "cp1251");
+                }
+                5 => {
+                    assert!(facts.utc_confirmed());
+                    assert!(!status.contains(S::SERVER_STATUS_AUTOCOMMIT));
+                }
+                6 => assert!(status.contains(S::SERVER_STATUS_IN_TRANS)),
+                7 => assert!(!status.contains(S::SERVER_STATUS_IN_TRANS)),
+                _ => unreachable!(),
+            }
+        }
+        println!(
+            "MySQL {label}: independent tracked roles, modes, UTC, server timeouts, transaction status passed"
+        );
+    }
+}

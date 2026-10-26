@@ -169,6 +169,21 @@ impl Establish {
     /// # Errors
     /// Returns invalid configuration, file/key, DNS or elapsed-budget failures.
     pub fn new(params: ConnectParams) -> Result<Self, ConnectError> {
+        let budget = IoBudget::new(
+            TimeoutKind::Connect,
+            params.connect_timeout,
+            params.read_timeout,
+            params.write_timeout,
+        );
+        Self::with_budget(params, budget)
+    }
+
+    /// Continue with the original boundary-owned establishment deadline, so
+    /// configuration/TLS preparation is not granted a second timeout window.
+    ///
+    /// # Errors
+    /// Returns the same validation/preparation failures as [`Self::new`].
+    pub fn with_budget(params: ConnectParams, budget: IoBudget) -> Result<Self, ConnectError> {
         if params.user.is_empty()
             || params.user.contains('\0')
             || params.password.contains(&0)
@@ -190,12 +205,6 @@ impl Establish {
                 "logical message limits must be within 1..=1GiB",
             ));
         }
-        let budget = IoBudget::new(
-            TimeoutKind::Connect,
-            params.connect_timeout,
-            params.read_timeout,
-            params.write_timeout,
-        );
         let key = params
             .server_public_key
             .as_ref()

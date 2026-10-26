@@ -2,7 +2,7 @@
 
 use crate::memory::{Pool, Scope};
 use crate::protocol::framing::{MessageReader, MessageWriter, WireError};
-use crate::result::text::{self, Receiver, Response, ResultError};
+use crate::result::text::{self, Completion, Receiver, Response, ResultError};
 use crate::transport::channel::{Channel, ChannelError, Step};
 use crate::transport::deadline::IoBudget;
 use crate::transport::socket::WaitStatus;
@@ -104,6 +104,7 @@ pub struct Query {
     started: bool,
     unsupported_multiple: bool,
     finished: bool,
+    pending_completion: Option<Completion>,
 }
 
 impl Query {
@@ -163,6 +164,7 @@ impl Query {
             started: false,
             unsupported_multiple: false,
             finished: false,
+            pending_completion: None,
         })
     }
 
@@ -182,6 +184,13 @@ impl Query {
             self.finished = true;
         }
         result
+    }
+
+    /// Consume a confirmed intermediate terminator after a Control return.
+    /// Apply its session facts before resuming this same command. Intermediate
+    /// rows are never published as a successful public result.
+    pub fn take_completion(&mut self) -> Option<Completion> {
+        self.pending_completion.take()
     }
 
     fn advance_inner(
@@ -225,8 +234,10 @@ impl Query {
             if let Some(response) = self.collector.push(&data)? {
                 if text::has_more(&response) {
                     self.unsupported_multiple = true;
+                    self.pending_completion = Some(response.into_owned_completion());
                     self.collector =
                         Receiver::new(self.capabilities, Arc::clone(&self.scope), true)?;
+                    return Ok(Step::Control);
                 } else {
                     self.finished = true;
                     if self.unsupported_multiple {

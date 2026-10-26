@@ -1,0 +1,377 @@
+"""Public connection/cursor composition against the owned MySQL fixtures."""
+
+from collections.abc import Iterator
+from datetime import datetime, timedelta, timezone
+from decimal import Decimal
+import inspect
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+import pytest
+from sqlaero import Connection, Cursor, SSL, connect
+from sqlaero.errors import InterfaceError, ProgrammingError
+
+
+ROOT = Path(os.environ.get('SQLAERO_TEST_MYSQL_ROOT', '/private/tmp/sqlaero-mysql-501'))
+requires_mysql = pytest.mark.skipif('SQLAERO_TEST_MYSQL_ROOT' not in os.environ,
+                                   reason='requires explicitly selected owned MySQL fixtures')
+
+
+def live(label: str, **overrides: Any) -> Connection:
+    """Read private fixture credentials without printing or persisting them."""
+    secret: dict[str, str] = json.loads((ROOT / label / 'state.json').read_text())
+    settings: dict[str, Any] = {
+        'user': 'sqlaero', 'password': secret['test_password'], 'database': 'sqlaero_test',
+        'unix_socket': ROOT / f'{label}.sock', 'operation_timeout': 5,
+    }
+    settings.update(overrides)
+    return connect(**settings)
+
+
+@pytest.fixture(params=['84', '97'])
+def connection(request: pytest.FixtureRequest) -> Iterator[Connection]:
+    value = live(str(request.param))
+    try:
+        yield value
+    finally:
+        value.close()
+
+
+def test_public_signatures_and_input_preflight() -> None:
+    assert inspect.signature(connect).parameters['host'].default == '127.0.0.1'
+    assert inspect.signature(connect).parameters['user'].kind is inspect.Parameter.KEYWORD_ONLY
+    with pytest.raises(TypeError):
+        connect('root')  # type: ignore[call-arg]
+    for option in ({'host': None}, {'port': None}, {'port': True}, {'decode_json': 1},
+                   {'max_allowed_packet': None}, {'read_timeout': 0.1}, {'password': ''}):
+        with pytest.raises((TypeError, ValueError)):
+            connect(user='x', **option)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match='conflicts'):
+        connect(user='x', host='127.0.0.1', unix_socket='unopened')
+    assert 'AUTO' in repr(SSL())
+    for option in ({'mode': True}, {'mode': 'PREFERRED'}, {'min_tls_version': 1.3},
+                   {'min_tls_version': 'TLS 1 .3'}, {'server_name': '*.example.com'},
+                   {'key_password': 'do-not-print'}, {'cert_file': 'unopened'},
+                   {'mode': 'DISABLED', 'server_name': 'example.com'}):
+        with pytest.raises((TypeError, ValueError)):
+            SSL(**option)  # type: ignore[arg-type]
+
+
+@requires_mysql
+def test_actual_connect_bind_and_independent_buffered_cursors(connection: Connection) -> None:
+    assert connection.autocommit and connection.ping()
+    assert connection.ssl_mode == 'DISABLED' and connection.tls_version is None
+    assert connection.connection_id > 0 and connection.server_version
+    first = connection.cursor(tuple)
+    second = connection.cursor(Cursor)
+    assert first.rowcount == -1 and first.row_count is None and first.description is None
+    assert first.execute('SELECT %s AS n, %s AS text', [7, 'é中']) == 1
+    assert first.rowcount == first.row_count == first.affected_rows == 1
+    assert first.warning_count == 0 and first.lastrowid is None
+    saved = first.columns
+    assert saved.names == ('n', 'text')
+    assert second.execute('SELECT 9 UNION ALL SELECT 10') == 2
+    assert first.fetchone() == (7, 'é中')
+    assert second.fetchall() == ((9,), (10,))
+    assert saved.names == ('n', 'text')
+    assert first.execute('SELECT %s', None) == 1
+    assert first.fetchone() == (None,)
+    assert first.execute("SELECT '%%', '%s'") == 1
+    assert first.fetchone() == ('%%', '%s')
+    assert first.execute('SELECT 42', [], many=True) == 1
+    assert first.fetchall() == ((42,),)
+
+
+@requires_mysql
+def test_old_result_survives_local_failure_but_not_a_started_failed_request(connection: Connection) -> None:
+    cursor = connection.cursor()
+    cursor.execute('SELECT 1 UNION ALL SELECT 2')
+    saved = cursor.columns
+    with pytest.raises(ProgrammingError):
+        cursor.execute('SELECT %s', [1, 2])
+    assert cursor.row_count == 2 and cursor.fetchone() == (1,)
+    with pytest.raises(ProgrammingError):
+        cursor.execute('THIS IS NOT SQL')
+    assert cursor.rowcount == -1 and cursor.row_count is None
+    assert cursor.warning_count is None and cursor.description is None
+    assert cursor.columns.names == ()
+    assert saved.names == ('1',)
+    with pytest.raises(InterfaceError):
+        cursor.fetchone()
+    assert not connection.closed
+    cursor.execute('SELECT 3')
+    assert cursor.fetchone() == (3,)
+
+
+@requires_mysql
+def test_decode_defaults_and_execution_snapshots_are_independent(connection: Connection) -> None:
+    connection.use_decimal = False
+    cursor = connection.cursor()
+    connection.use_decimal = True
+    assert not cursor.use_decimal
+    cursor.execute('SELECT CAST(1.25 AS DECIMAL(8,2)), JSON_OBJECT(\'x\',1)')
+    cursor.use_decimal = True
+    cursor.decode_json = True
+    assert cursor.fetchone() == (1.25, '{"x": 1}')
+    cursor.execute('SELECT CAST(1.25 AS DECIMAL(8,2)), JSON_OBJECT(\'x\',1)')
+    assert cursor.fetchone() == (Decimal('1.25'), {'x': 1})
+    for name in ('decode_json', 'decode_set', 'decode_bit', 'use_decimal',
+                 'use_timedelta', 'decode_text_strict', 'decode_date_strict'):
+        with pytest.raises(TypeError):
+            setattr(cursor, name, 1)
+        with pytest.raises(TypeError):
+            setattr(connection, name, 0)
+
+
+@requires_mysql
+def test_explicit_transactions_native_batching_and_close_information(connection: Connection) -> None:
+    cursor = connection.cursor()
+    cursor.execute('CREATE TEMPORARY TABLE public_batch (id BIGINT PRIMARY KEY, value VARCHAR(32))')
+    connection.begin()
+    assert cursor.executemany('INSERT INTO public_batch VALUES (%s,%s)', [(1, 'a'), (2, 'é')]) == 2
+    connection.rollback()
+    cursor.execute('SELECT COUNT(*) FROM public_batch')
+    assert cursor.fetchone() == (0,)
+    connection.begin()
+    cursor.executemany('INSERT INTO public_batch VALUES (%s,%s)', [(3, 'c'), (4, 'd')])
+    connection.commit()
+    cursor.execute('SELECT id, value FROM public_batch ORDER BY id')
+    saved = cursor.columns
+    assert cursor.fetchone() == (3, 'c')
+    connection.close()
+    assert connection.closed and not connection.ping()
+    assert cursor.fetchall() == ((4, 'd'),)
+    cursor.arraysize = 10**1000
+    assert cursor.arraysize == 10**1000
+    cursor.close()
+    assert saved.names == ('id', 'value') and cursor.row_count == 2
+    assert connection.max_allowed_packet == 64 * 1024 * 1024
+    assert connection.server_version and connection.connection_id
+    with pytest.raises(InterfaceError, match='Cannot modify Cursor.arraysize'):
+        cursor.arraysize = 2
+    with pytest.raises(InterfaceError, match='Cannot modify Connection'):
+        connection.decode_json = True
+    with pytest.raises(InterfaceError):
+        cursor.fetchone()
+
+
+@requires_mysql
+def test_aware_datetime_uses_actual_utc_state_and_old_metadata_keeps_encoding(connection: Connection) -> None:
+    cursor = connection.cursor()
+    cursor.execute('SELECT %s', datetime(2024, 1, 2, 12, tzinfo=timezone(timedelta(hours=8))))
+    assert cursor.fetchone() == ('2024-01-02 04:00:00',)
+    cursor.execute("SET time_zone='+08:00'")
+    with pytest.raises(InterfaceError, match='UTC'):
+        cursor.execute('SELECT %s', datetime(2024, 1, 2, 12, tzinfo=timezone.utc))
+    cursor.execute("SET time_zone='+00:00'")
+    cursor.execute('SELECT 1 AS `é`')
+    saved = cursor.columns
+    cursor.execute('SET NAMES latin1')
+    cursor.execute("SELECT 'é' AS `é`")
+    assert cursor.fetchone() == ('é',) and cursor.columns.names == ('é',)
+    assert saved.names == ('é',)
+
+
+@requires_mysql
+def test_managed_transaction_commit_rollback_manual_segments_and_nesting(connection: Connection) -> None:
+    with connection.cursor() as setup:
+        setup.execute('CREATE TEMPORARY TABLE managed_tx (id INT PRIMARY KEY)')
+    with connection.transaction(tuple) as cursor:
+        cursor.execute('INSERT INTO managed_tx VALUES (%s)', 1)
+        with pytest.raises(InterfaceError, match='scope'):
+            with connection.transaction():
+                pytest.fail('nested scope must not execute')
+    assert cursor.closed and not connection.closed
+    check = connection.cursor()
+    check.execute('SELECT id FROM managed_tx')
+    assert check.fetchall() == ((1,),)
+    failed: Cursor | None = None
+    original = ValueError('business failure identity')
+    with pytest.raises(ValueError) as caught:
+        with connection.transaction() as failed:
+            failed.execute('INSERT INTO managed_tx VALUES (2)')
+            raise original
+    assert caught.value is original
+    assert failed is not None and failed.closed
+    check.execute('SELECT id FROM managed_tx')
+    assert check.fetchall() == ((1,),)
+    with connection.transaction(Cursor) as segmented:
+        segmented.execute('INSERT INTO managed_tx VALUES (3)')
+        connection.commit()
+        connection.begin()
+        segmented.execute('INSERT INTO managed_tx VALUES (4)')
+    check.execute('SELECT id FROM managed_tx ORDER BY id')
+    assert check.fetchall() == ((1,), (3,), (4,))
+    connection.begin()
+    with pytest.raises(InterfaceError, match='active server transaction'):
+        with connection.transaction():
+            pytest.fail('existing transaction must not be replaced')
+    connection.rollback()
+    with connection.transaction():
+        pass
+
+
+@requires_mysql
+def test_client_properties_and_remote_timeouts_have_distinct_effects(connection: Connection) -> None:
+    for getter, setter in (
+        ('net_read_timeout', connection.set_net_read_timeout),
+        ('net_write_timeout', connection.set_net_write_timeout),
+        ('wait_timeout', connection.set_wait_timeout),
+        ('innodb_lock_wait_timeout', connection.set_innodb_lock_wait_timeout),
+    ):
+        assert isinstance(getattr(connection, getter), int)
+        setter(17)
+        assert getattr(connection, getter) == 17
+        setter(17)
+        for bad in (None, True, 1.1, '2'):
+            with pytest.raises(TypeError):
+                setter(bad)  # type: ignore[arg-type]
+        for bad in (0, -1):
+            with pytest.raises(ValueError):
+                setter(bad)
+        assert getattr(Connection, getter).__doc__
+    cursor = connection.cursor()
+    cursor.execute('SET SESSION net_read_timeout=18')
+    assert connection.net_read_timeout == 18
+    connection.read_timeout = 2
+    connection.write_timeout = 3
+    connection.operation_timeout = 4
+    assert (connection.read_timeout, connection.write_timeout, connection.operation_timeout) == (2, 3, 4)
+    cursor.execute('SELECT @@SESSION.net_read_timeout,@@SESSION.net_write_timeout')
+    assert cursor.fetchone() == (18, 17)
+    connection.close()
+    assert connection.net_read_timeout == 18
+    with pytest.raises(InterfaceError):
+        connection.set_net_read_timeout(18)
+
+
+@requires_mysql
+@pytest.mark.parametrize('label', ['84', '97'])
+def test_public_tcp_and_unix_tls_share_prepared_materials(label: str) -> None:
+    configuration = SSL(ca_file=ROOT / 'tls/ca.pem', mode='VERIFY_IDENTITY',
+                        min_tls_version='TLS 1.3', server_name='localhost')
+    with live(label, unix_socket=None, host='127.0.0.1',
+              port=13384 if label == '84' else 13397, ssl=configuration) as tcp:
+        assert tcp.ssl_mode == 'VERIFY_IDENTITY' and tcp.tls_version == 'TLSv1.3'
+        with tcp.cursor() as cursor:
+            cursor.execute('SELECT %s', b'\x00\xff')
+            assert cursor.fetchone() == (b'\x00\xff',)
+    with live(label, ssl=configuration) as unix:
+        assert unix.ssl_mode == 'VERIFY_IDENTITY' and unix.ping()
+    assert tcp.closed and unix.closed
+
+
+@requires_mysql
+def test_failed_routine_cannot_leave_a_false_utc_fact(connection: Connection) -> None:
+    from sqlaero.errors import SQLAeroError
+    cursor = connection.cursor()
+    cursor.execute('DROP PROCEDURE IF EXISTS sqlaero_public_set_error')
+    cursor.execute("CREATE PROCEDURE sqlaero_public_set_error() BEGIN SET time_zone='+08:00'; SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='state changed before failure'; END")
+    with pytest.raises(SQLAeroError):
+        cursor.execute('CALL sqlaero_public_set_error()')
+    cursor.execute('DROP PROCEDURE sqlaero_public_set_error')
+    cursor.execute('SELECT @@SESSION.time_zone')
+    assert cursor.fetchone() == ('+08:00',)
+    with pytest.raises(InterfaceError, match='UTC'):
+        cursor.execute('SELECT %s', datetime(2024, 1, 1, tzinfo=timezone.utc))
+    cursor.execute("SET time_zone='+00:00'")
+    cursor.execute('SELECT %s', datetime(2024, 1, 1, tzinfo=timezone.utc))
+    assert cursor.fetchone() == ('2024-01-01 00:00:00',)
+
+
+@requires_mysql
+@pytest.mark.parametrize('encoding', ['utf16', 'utf16le', 'ucs2', 'utf32'])
+def test_context_confirmation_uses_its_actual_server_only_encoding(connection: Connection, encoding: str) -> None:
+    cursor = connection.cursor()
+    cursor.execute(f'SET character_set_results={encoding}')
+    with pytest.raises(ProgrammingError):
+        cursor.execute('THIS IS NOT SQL')
+    cursor.execute("SELECT %s AS `é`", 'é中')
+    assert cursor.fetchone() == ('é中',)
+    assert cursor.columns.names == ('é',)
+    assert cursor.columns[0].catalog == 'def'
+    cursor.execute('SET character_set_results=NULL')
+    with pytest.raises(ProgrammingError):
+        cursor.execute('THIS IS STILL NOT SQL')
+    cursor.execute('SELECT 1 AS `é`')
+    assert cursor.fetchone() == (1,) and cursor.columns.names == ('é',)
+
+
+@requires_mysql
+def test_unexpected_multi_results_are_drained_and_update_actual_session_facts(connection: Connection) -> None:
+    from sqlaero.errors import NotSupportedError
+    cursor = connection.cursor()
+    cursor.execute('DROP PROCEDURE IF EXISTS sqlaero_public_multi')
+    cursor.execute("CREATE PROCEDURE sqlaero_public_multi() BEGIN SELECT 1; SET time_zone='+08:00'; SELECT 2; END")
+    try:
+        with pytest.raises(NotSupportedError):
+            cursor.execute('CALL sqlaero_public_multi()')
+        assert not connection.closed and cursor.columns.names == ()
+        with pytest.raises(InterfaceError, match='UTC'):
+            cursor.execute('SELECT %s', datetime(2024, 1, 1, tzinfo=timezone.utc))
+        cursor.execute('SELECT @@SESSION.time_zone')
+        assert cursor.fetchone() == ('+08:00',)
+    finally:
+        cursor.execute('DROP PROCEDURE sqlaero_public_multi')
+
+
+@requires_mysql
+@pytest.mark.parametrize('label', ['84', '97'])
+def test_native_complete_row_splitting_and_failed_call_prefix(label: str) -> None:
+    from sqlaero.errors import SQLAeroError
+    with live(label, max_allowed_packet='2KB') as connection:
+        cursor = connection.cursor()
+        cursor.execute('CREATE TEMPORARY TABLE split_public (id INT PRIMARY KEY,value VARCHAR(128))')
+        rows = [(index, 'x' * 100) for index in range(100)]
+        assert cursor.executemany('INSERT INTO split_public VALUES (%s,%s)', rows) == 100
+        assert cursor.row_count == 100 and cursor.warning_count == 0
+        cursor.execute('SELECT COUNT(*) FROM split_public')
+        assert cursor.fetchone() == (100,)
+        cursor.execute('TRUNCATE TABLE split_public')
+        broken: list[object] = [(index, 'x' * 100) for index in range(100)]
+        broken[70] = (70, object())
+        with pytest.raises(TypeError) as caught:
+            cursor.executemany('INSERT INTO split_public VALUES (%s,%s)', broken)  # type: ignore[arg-type]
+        assert cursor.row_count is None and cursor.rowcount == -1 and cursor.description is None
+        assert any('confirmed ' in note for note in getattr(caught.value, '__notes__', []))
+        cursor.execute('SELECT COUNT(*) FROM split_public')
+        count = cursor.fetchone()
+        assert count is not None and isinstance(count[0], int) and 0 < count[0] < 70
+        # A server error also leaves the healthy wire usable, while aggregate
+        # failed-call counters do not report the already confirmed prefix.
+        with pytest.raises(SQLAeroError):
+            cursor.execute('INSERT INTO split_public VALUES (%s,%s)', (0, 'duplicate'))
+        assert cursor.row_count is None
+        cursor.execute('SELECT 42')
+        assert cursor.fetchone() == (42,)
+
+
+@requires_mysql
+def test_network_wait_releases_gil_and_does_not_block_local_other_cursor_reads(connection: Connection) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import time as clock_time
+    from sqlaero.errors import InterfaceBusyError
+    buffered = connection.cursor()
+    buffered.execute('SELECT 5 UNION ALL SELECT 6')
+    network = connection.cursor()
+    started = Event()
+
+    def operation() -> int:
+        started.set()
+        return network.execute('SELECT SLEEP(1)')
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(operation)
+        assert started.wait(2)
+        clock_time.sleep(0.03)
+        assert buffered.fetchall() == ((5,), (6,))
+        with pytest.raises(InterfaceBusyError):
+            connection.begin()
+        with pytest.raises(InterfaceBusyError):
+            network.execute('SELECT 99')
+        assert future.result(timeout=3) == 1
+    assert network.fetchone() == (0,)
+    assert connection.ping()

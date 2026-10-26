@@ -19,6 +19,9 @@ pub enum MaterialError {
     /// An encrypted key requires an explicit password.
     #[error("encrypted PKCS#8 private key requires a password")]
     PasswordRequired,
+    /// A password was supplied for an unencrypted key.
+    #[error("key_password must be None for an unencrypted private key")]
+    UnexpectedPassword,
     /// Decryption failed without exposing the password or private key.
     #[error("cannot decrypt PKCS#8 key: incorrect password or unsupported modern encryption")]
     Decryption,
@@ -74,6 +77,9 @@ pub fn private_key(
             Ok(PrivatePkcs8KeyDer::from(plaintext.as_bytes().to_vec()).into())
         }
         "PRIVATE KEY" | "RSA PRIVATE KEY" | "EC PRIVATE KEY" => {
+            if password.is_some() {
+                return Err(MaterialError::UnexpectedPassword);
+            }
             PrivateKeyDer::try_from(document.as_bytes().to_vec())
                 .map_err(|_| MaterialError::PrivateKey)
         }

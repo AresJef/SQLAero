@@ -1,7 +1,8 @@
 //! Immediate command ownership and separately accessible confirmed local facts.
 
 use super::connect::ServerMetadata;
-use super::initialize::{Confirmed, Ready};
+use super::initialize::Ready;
+use super::state::Facts;
 use crate::protocol::framing::{MessageWriter, WireError};
 use crate::transport::channel::{Channel, ChannelError, Step};
 use crate::transport::deadline::IoBudget;
@@ -45,7 +46,7 @@ pub struct Connection {
     pub metadata: ServerMetadata,
     /// One authoritative set of confirmed facts. Borrow briefly and release
     /// before invoking Python or waiting for network I/O.
-    pub facts: Mutex<Confirmed>,
+    pub facts: Mutex<Facts>,
     /// Shared capacity ownership for all live native results and snapshots.
     pub result_pool: std::sync::Arc<crate::memory::Pool>,
 }
@@ -74,7 +75,7 @@ impl Connection {
             wire: Mutex::new(Some(wire)),
             closed: AtomicBool::new(false),
             metadata: authenticated.metadata,
-            facts: Mutex::new(ready.confirmed),
+            facts: Mutex::new(ready.confirmed.into()),
             result_pool: crate::memory::Pool::new(total_result_memory_limit),
         }
     }

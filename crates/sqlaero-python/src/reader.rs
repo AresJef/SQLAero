@@ -20,6 +20,13 @@ struct ReadData {
     plans: Buffer<Plan>,
     _owner: Reservation,
 }
+/// Fully prepared but unpublished result. All fallible native/Python output
+/// preparation finishes before Cursor exposes this execution's new snapshot.
+pub(crate) struct PreparedResult {
+    metadata: Arc<metadata::Snapshot>,
+    data: Option<Arc<ReadData>>,
+    total: usize,
+}
 struct State {
     data: Option<Arc<ReadData>>,
     metadata: Option<Arc<metadata::Snapshot>>,
@@ -48,6 +55,9 @@ pub(crate) struct Reader {
     types: Py<ScalarTypes>,
 }
 impl Reader {
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::Acquire)
+    }
     pub(crate) fn empty(types: Py<ScalarTypes>) -> Self {
         Self {
             state: Mutex::new(State {
@@ -91,7 +101,7 @@ impl Reader {
             }
         }
     }
-    fn open(&self, py: Python<'_>) -> PyResult<()> {
+    pub(crate) fn open(&self, py: Python<'_>) -> PyResult<()> {
         if self.closed.load(Ordering::Acquire) {
             Err(errors::client::<errors::InterfaceError>(
                 py,
@@ -111,6 +121,14 @@ impl Reader {
         options: Options,
         codec: OutputCodec,
     ) -> PyResult<()> {
+        self.publish(py, Self::prepare(py, rows, options, codec)?)
+    }
+    pub(crate) fn prepare(
+        py: Python<'_>,
+        rows: Buffered,
+        options: Options,
+        codec: OutputCodec,
+    ) -> PyResult<PreparedResult> {
         let metadata = metadata::Snapshot::new(
             py,
             Some(Arc::clone(&rows.columns)),
@@ -147,6 +165,18 @@ impl Reader {
                 _owner: owner,
             }))
         };
+        Ok(PreparedResult {
+            metadata,
+            data,
+            total,
+        })
+    }
+    pub(crate) fn publish(&self, py: Python<'_>, prepared: PreparedResult) -> PyResult<()> {
+        let PreparedResult {
+            metadata,
+            data,
+            total,
+        } = prepared;
         let old = {
             let mut state = self.lock(py)?;
             let old_metadata = state.metadata.replace(metadata);
@@ -178,6 +208,11 @@ impl Reader {
     }
     pub(crate) fn metadata(&self, py: Python<'_>) -> PyResult<Option<Arc<metadata::Snapshot>>> {
         Ok(self.lock(py)?.metadata.clone())
+    }
+
+    pub(crate) fn set_arraysize(&self, py: Python<'_>, value: usize) -> PyResult<()> {
+        self.lock(py)?.arraysize = value;
+        Ok(())
     }
 
     fn read<'py>(

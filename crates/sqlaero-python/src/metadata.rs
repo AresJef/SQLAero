@@ -368,6 +368,7 @@ impl Snapshot {
             Attr::Table => Some(Label::Table),
             Attr::OriginalTable => Some(Label::OriginalTable),
             Attr::Database => Some(Label::Database),
+            Attr::Catalog => Some(Label::Catalog),
             _ => None,
         };
         if let Some(label) = label {
@@ -425,7 +426,6 @@ impl Snapshot {
             Attr::NonUniqueKey => Ok(boolean(py, column.flags & 8 != 0)),
             Attr::Flags => integer(py, u64::from(column.flags)),
             Attr::Decimals => integer(py, u64::from(column.decimals)),
-            Attr::Catalog => literal(Some("def")),
             _ => Err(internal(py, "invalid metadata attribute action")),
         }
     }

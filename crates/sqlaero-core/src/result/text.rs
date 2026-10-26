@@ -193,7 +193,14 @@ impl Column {
             position = end;
         }
         let catalog = labels[0].start - base..labels[0].end - base;
-        if data.get(catalog) != Some(b"def".as_slice()) {
+        // character_set_results also converts metadata labels, including the
+        // constant catalog. Every admitted legacy charset preserves ASCII;
+        // server-only UTF-16/UCS-2/UTF-32 use these exact forms. This validates
+        // the catalog without guessing the encoding of any other label.
+        if !matches!(
+            data.get(catalog),
+            Some(b"def" | b"\0d\0e\0f" | b"d\0e\0f\0" | b"\0\0\0d\0\0\0e\0\0\0f")
+        ) {
             return Err(WireError::Malformed("invalid column catalog"));
         }
         if length(data, &mut position)? != Some(12) || data.len().saturating_sub(position) != 12 {
@@ -350,10 +357,17 @@ impl Response {
     /// Move real completion facts into session-state ownership.
     #[must_use]
     pub fn into_completion(self) -> OkPacket<'static> {
+        self.into_owned_completion().into_packet()
+    }
+
+    /// Keep completion capacity owned across a bounded control yield between
+    /// unexpected result sets, without retaining their discarded row data.
+    #[must_use]
+    pub fn into_owned_completion(self) -> Completion {
         match self {
-            Self::Command(ok) => ok.into_packet(),
-            Self::Rows(rows) => rows.completion.into_packet(),
-            Self::Counted { completion, .. } => completion.into_packet(),
+            Self::Command(ok) => ok,
+            Self::Rows(rows) => rows.completion,
+            Self::Counted { completion, .. } => completion,
         }
     }
 }

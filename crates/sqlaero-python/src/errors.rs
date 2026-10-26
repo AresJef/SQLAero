@@ -276,3 +276,140 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add("NotSupportedError", py.get_type::<NotSupportedError>())?;
     module.add("SQLAeroWarning", py.get_type::<SQLAeroWarning>())
 }
+
+/// Map the actual native timeout category without parsing its display text.
+pub(crate) fn timeout(
+    py: Python<'_>,
+    error: sqlaero_core::transport::deadline::TimeoutKind,
+) -> PyErr {
+    use sqlaero_core::transport::deadline::TimeoutKind;
+    let code = match error {
+        TimeoutKind::Connect => ClientErrorCode::ConnectDeadline,
+        TimeoutKind::Operation => ClientErrorCode::OperationDeadline,
+        TimeoutKind::Read => ClientErrorCode::ReadDeadline,
+        TimeoutKind::Write => ClientErrorCode::WriteDeadline,
+    };
+    client::<OperationalTimeoutError>(py, code, error.to_string())
+}
+pub(crate) fn access(py: Python<'_>, error: sqlaero_core::session::shared::AccessError) -> PyErr {
+    use sqlaero_core::session::shared::AccessError;
+    match error {
+        AccessError::Busy => {
+            client::<InterfaceBusyError>(py, ClientErrorCode::InterfaceBusy, error.to_string())
+        }
+        AccessError::Closed => {
+            client::<InterfaceError>(py, ClientErrorCode::SessionState, error.to_string())
+        }
+        AccessError::Poisoned => {
+            client::<InternalError>(py, ClientErrorCode::InternalState, error.to_string())
+        }
+    }
+}
+pub(crate) fn channel(
+    py: Python<'_>,
+    error: sqlaero_core::transport::channel::ChannelError,
+) -> PyErr {
+    use sqlaero_core::transport::{channel::ChannelError, socket::TransportError};
+    match error {
+        ChannelError::Wire(error) => wire(py, error),
+        ChannelError::Timeout(error) | ChannelError::Transport(TransportError::Timeout(error)) => {
+            timeout(py, error)
+        }
+        error @ ChannelError::Transport(_) => {
+            client::<OperationalError>(py, ClientErrorCode::Transport, error.to_string())
+        }
+        error @ ChannelError::Tls(_) => {
+            client::<OperationalError>(py, ClientErrorCode::Tls, error.to_string())
+        }
+    }
+}
+/// Build a server exception from actual ERR fields. The complete maintained
+/// code catalog is integrated in P05.2; these SQLSTATE classes are its fallback.
+pub(crate) fn server(py: Python<'_>, code: u16, state: Option<[u8; 5]>, message: &[u8]) -> PyErr {
+    let state_class = state.map(|state| [state[0], state[1]]);
+    let typ = match (code, state_class) {
+        (1062 | 1451 | 1452, _) | (_, Some([b'2', b'3'])) => py.get_type::<IntegrityError>(),
+        (_, Some([b'2', b'2'])) => py.get_type::<DataError>(),
+        (_, Some([b'4', b'2'])) => py.get_type::<ProgrammingError>(),
+        (_, Some([b'0', b'A'])) => py.get_type::<NotSupportedError>(),
+        (_, Some([b'0', b'8'] | [b'4', b'0'])) => py.get_type::<OperationalError>(),
+        _ => py.get_type::<OperationalError>(),
+    };
+    let keywords = PyDict::new(py);
+    if let Err(error) = keywords
+        .set_item("code", code)
+        .and_then(|()| keywords.set_item("is_server_error", true))
+    {
+        return error;
+    }
+    let message = String::from_utf8_lossy(message);
+    match typ.call((message.as_ref(),), Some(&keywords)) {
+        Ok(value) => PyErr::from_value(value),
+        Err(error) => error,
+    }
+}
+pub(crate) fn query(py: Python<'_>, error: sqlaero_core::session::query::QueryError) -> PyErr {
+    use sqlaero_core::{result::text::ResultError, session::query::QueryError};
+    match error {
+        QueryError::Wire(error) | QueryError::Result(ResultError::Wire(error)) => wire(py, error),
+        QueryError::Channel(error) => channel(py, error),
+        QueryError::Result(ResultError::Memory(error)) => crate::output::memory(py, error),
+        QueryError::Result(ResultError::Server(error)) => server(
+            py,
+            error.error_code(),
+            error.sql_state_ref().map(|state| state.as_bytes()),
+            error.message_ref(),
+        ),
+        error @ (QueryError::MultipleResults { .. }
+        | QueryError::Result(ResultError::Unsupported(_))) => client::<NotSupportedError>(
+            py,
+            ClientErrorCode::UnsupportedCapability,
+            error.to_string(),
+        ),
+    }
+}
+pub(crate) fn establish(
+    py: Python<'_>,
+    error: sqlaero_core::session::connect::ConnectError,
+) -> PyErr {
+    use sqlaero_core::{protocol::auth::AuthError, session::connect::ConnectError};
+    match error {
+        ConnectError::Wire(error) | ConnectError::Auth(AuthError::Wire(error)) => wire(py, error),
+        ConnectError::Channel(error) => channel(py, error),
+        ConnectError::Timeout(error) => timeout(py, error),
+        ConnectError::Auth(AuthError::Server(error)) => server(
+            py,
+            error.error_code(),
+            error.sql_state_ref().map(|state| state.as_bytes()),
+            error.message_ref(),
+        ),
+        error @ (ConnectError::Unsupported(_)
+        | ConnectError::Auth(AuthError::UnsupportedPlugin)) => client::<NotSupportedError>(
+            py,
+            ClientErrorCode::UnsupportedCapability,
+            error.to_string(),
+        ),
+        error @ ConnectError::Auth(_) => {
+            client::<OperationalError>(py, ClientErrorCode::Authentication, error.to_string())
+        }
+        error => client::<OperationalError>(py, ClientErrorCode::Transport, error.to_string()),
+    }
+}
+pub(crate) fn initialize(
+    py: Python<'_>,
+    error: sqlaero_core::session::initialize::InitializeError,
+) -> PyErr {
+    use sqlaero_core::session::initialize::InitializeError;
+    match error {
+        InitializeError::Connect(error) => establish(py, error),
+        InitializeError::Query(error) => query(py, error),
+        InitializeError::Wire(error) => wire(py, error),
+        error => client::<InterfaceError>(py, ClientErrorCode::SessionState, error.to_string()),
+    }
+}
+
+/// Preserve the same primary exception while recording a real independent
+/// cleanup failure. Diagnostic snapshot publication is implemented in P05.3.
+pub(crate) fn additional(py: Python<'_>, primary: &PyErr, secondary: PyErr, stage: &str) {
+    let _ = primary.add_note(py, format!("Additional failure at {stage}: {secondary}"));
+}

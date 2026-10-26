@@ -64,6 +64,12 @@ pub(crate) struct Rows<'py> {
     empty: bool,
 }
 impl<'py> Rows<'py> {
+    pub(crate) fn remaining(&self) -> usize {
+        self.count.saturating_sub(self.position)
+    }
+    pub(crate) fn empty_root(&self) -> bool {
+        self.empty
+    }
     pub(crate) fn new(root: &Bound<'py, PyAny>, many: bool, itemize: bool) -> Self {
         let outer = if many { Sequence::from(root) } else { None };
         let empty = outer.as_ref().is_some_and(|outer| outer.len() == 0);
@@ -85,17 +91,26 @@ impl<'py> Rows<'py> {
         }
         let index = self.position;
         self.position += 1;
+        self.at(index).map(Some)
+    }
+    /// Re-read only a rollover row when a confirmed session context changed.
+    /// Normal rollover reuses encoded bytes and never calls this method.
+    pub(crate) fn at(&self, index: usize) -> PyResult<Row<'py>> {
         let (value, outer, path) = match &self.outer {
             Some(outer) if !self.empty => (outer.get(index)?, Some(outer.identity()), vec![index]),
             _ => (self.root.clone(), None, Vec::new()),
         };
-        Ok(Some(Row {
+        Ok(Row {
             value,
             outer,
             path,
             itemize: self.itemize,
             zero_positions: self.empty,
-        }))
+        })
+    }
+
+    pub(crate) fn position(&self) -> usize {
+        self.position
     }
 }
 
