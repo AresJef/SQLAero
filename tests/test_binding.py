@@ -196,3 +196,13 @@ def test_decimal_failure_detail_uses_already_read_native_components() -> None:
         _sqlaero._bind_sql('SELECT %s', [Decimal('1e65')])
     notes = '\n'.join(getattr(caught.value, '__notes__', []))
     assert 'args[0]' in notes and 'exponent=65' in notes and 'digits=[1]' in notes
+
+
+@pytest.mark.parametrize(("args", "itemize", "location"), [
+    ([[1, 2], [True, object()]], False, "args[1][1]"),
+    ([[1, 2], object()], True, "args[1]"),
+])
+def test_failed_leaf_keeps_its_location_after_successful_siblings(args: object, itemize: bool, location: str) -> None:
+    with pytest.raises(TypeError) as caught:
+        _sqlaero._bind_sql("SELECT %s,%s" if itemize else "SELECT %s", args, itemize=itemize)
+    assert f"while binding {location};" in "\n".join(caught.value.__notes__)

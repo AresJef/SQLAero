@@ -207,7 +207,6 @@ impl Row<'_> {
         let mut cursor = 0;
         for index in 0..width {
             let source = if let Some(row) = &row {
-                visit.path.push(index);
                 row.get(index)?
             } else {
                 self.value.clone()
@@ -223,7 +222,7 @@ impl Row<'_> {
                     "binding position is unavailable",
                 ));
             }
-            if let Err(error) = visit.value(&source, output) {
+            if let Err(error) = visit.value(&source, output, row.as_ref().map(|_| index)) {
                 errors::note(
                     py,
                     &error,
@@ -233,9 +232,6 @@ impl Row<'_> {
                     ),
                 );
                 return Err(error);
-            }
-            if row.is_some() {
-                visit.path.pop();
             }
         }
         if template
@@ -285,7 +281,7 @@ pub(crate) fn encode_value(
         path: Vec::new(),
         work: 0,
     }
-    .value(value, &mut output)?;
+    .value(value, &mut output, None)?;
     check(value.py(), budget)?;
     Ok(output)
 }
@@ -308,24 +304,43 @@ impl Visit<'_> {
         self.active.push(identity);
         Ok(())
     }
-    fn value(&mut self, value: &Bound<'_, PyAny>, output: &mut Vec<u8>) -> PyResult<()> {
+    /// Defer a leaf's diagnostic index until failure. Containers still keep
+    /// their actual ancestry while traversing; successful scalars need no
+    /// path allocation or push/pop and preserve the identical error location.
+    fn value(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
         let py = value.py();
         self.work += 1;
         if self.work >= 16384 {
-            check(py, self.budget)?;
+            if let Err(error) = check(py, self.budget) {
+                if let Some(index) = child {
+                    self.path.push(index);
+                }
+                return Err(error);
+            }
             self.work = 0;
         }
         let Some(sequence) = Sequence::from(value) else {
             let result = self
                 .types
                 .write(value, output, self.context, Some(self.budget));
-            if let Err(error) = &result
-                && let Ok(summary) = self.types.diagnostic(value)
-            {
-                errors::note(py, error, format!("failed escape input: {summary}"));
+            if let Err(error) = &result {
+                if let Some(index) = child {
+                    self.path.push(index);
+                }
+                if let Ok(summary) = self.types.diagnostic(value) {
+                    errors::note(py, error, format!("failed escape input: {summary}"));
+                }
             }
             return result;
         };
+        if let Some(index) = child {
+            self.path.push(index);
+        }
         self.enter(py, sequence.identity())?;
         let result = (|| {
             writer::append(output, b"(", self.context.limit)
@@ -335,14 +350,18 @@ impl Visit<'_> {
                     writer::append(output, b",", self.context.limit)
                         .map_err(|error| errors::wire(py, error))?;
                 }
-                self.path.push(index);
-                self.value(&sequence.get(index)?, output)?;
-                self.path.pop();
+                let value = sequence.get(index).inspect_err(|_| {
+                    self.path.push(index);
+                })?;
+                self.value(&value, output, Some(index))?;
             }
             writer::append(output, b")", self.context.limit)
                 .map_err(|error| errors::wire(py, error))
         })();
         self.active.pop();
+        if result.is_ok() && child.is_some() {
+            self.path.pop();
+        }
         result
     }
 }
