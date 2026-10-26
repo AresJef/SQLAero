@@ -600,7 +600,8 @@ def package_identity(package: str | None) -> dict[str, object]:
 def collect(args: argparse.Namespace) -> None:
     directory = Path(args.output).resolve()
     directory.mkdir(parents=True, exist_ok=True)
-    selected = [case for case in cases() if any(case.id.startswith(prefix) for prefix in args.prefix)]
+    selected = [case for case in cases() if case.id in args.case or
+                any(case.id.startswith(prefix) for prefix in args.prefix)]
     if args.legacy:
         selected = [case for case in selected if case.family == "escape" and not case.no_backslash]
     if not selected:
@@ -832,6 +833,7 @@ def main() -> None:
     parser.add_argument("--candidate")
     parser.add_argument("--legacy", action="store_true")
     parser.add_argument("--prefix", action="append", default=[])
+    parser.add_argument("--case", action="append", default=[], help="Select an exact case ID without prefix expansion")
     parser.add_argument("--config")
     parser.add_argument("--cycles", type=int, default=12)
     parser.add_argument("--seconds", type=float, default=600)
@@ -845,7 +847,7 @@ def main() -> None:
     elif args.command == "summarize":
         summarize(Path(args.output))
     else:
-        if not args.prefix:
+        if not args.prefix and not args.case:
             args.prefix = [""]
         if args.cycles <= 0 or args.seconds <= 0 or args.minimum_ms <= 0 or args.target_ms <= 0:
             raise ValueError("Positive cycles, budget and batch lengths are required")
