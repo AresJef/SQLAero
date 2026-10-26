@@ -4,7 +4,7 @@ use crate::errors;
 use crate::input::{ScalarTypes, check};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
-use smallvec::SmallVec;
+use smallvec::{SmallVec, smallvec};
 use sqlaero_core::bind::{
     Context,
     template::{Template, TemplateError},
@@ -98,8 +98,10 @@ impl<'py> Rows<'py> {
     /// Normal rollover reuses encoded bytes and never calls this method.
     pub(crate) fn at(&self, index: usize) -> PyResult<Row<'py>> {
         let (value, outer, path) = match &self.outer {
-            Some(outer) if !self.empty => (outer.get(index)?, Some(outer.identity()), vec![index]),
-            _ => (self.root.clone(), None, Vec::new()),
+            Some(outer) if !self.empty => {
+                (outer.get(index)?, Some(outer.identity()), smallvec![index])
+            }
+            _ => (self.root.clone(), None, SmallVec::new()),
         };
         Ok(Row {
             value,
@@ -118,7 +120,7 @@ impl<'py> Rows<'py> {
 pub(crate) struct Row<'py> {
     value: Bound<'py, PyAny>,
     outer: Option<usize>,
-    path: Vec<usize>,
+    path: SmallVec<[usize; 4]>,
     itemize: bool,
     zero_positions: bool,
 }
@@ -257,7 +259,7 @@ struct Visit<'a> {
     // Common shallow ancestry stays inline. This is an allocation hint, not
     // the nesting limit: deeper valid paths spill with checked reservation.
     active: SmallVec<[usize; 4]>,
-    path: Vec<usize>,
+    path: SmallVec<[usize; 4]>,
     work: usize,
 }
 
@@ -278,7 +280,7 @@ pub(crate) fn encode_value(
         context,
         budget,
         active: SmallVec::new(),
-        path: Vec::new(),
+        path: SmallVec::new(),
         work: 0,
     }
     .value(value, &mut output, None)?;
