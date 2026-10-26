@@ -59,6 +59,73 @@ fn _encode_scalar<'py>(
     Ok(PyBytes::new(module.py(), &request))
 }
 
+/// Own the actual native writer output; conversion is only for untimed checks.
+#[pyclass(frozen, module = "sqlaero._sqlaero")]
+struct _EncodedValue {
+    bytes: Vec<u8>,
+}
+
+#[pymethods]
+impl _EncodedValue {
+    fn __len__(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Copy diagnostic bytes outside a performance measurement.
+    fn to_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, &self.bytes)
+    }
+}
+
+/// Private measurement boundary for the production native value visitor.
+/// The returned owner is not a public escape API or a Python SQL string.
+#[pyfunction]
+#[pyo3(pass_module, signature = (data, *, no_backslash=false))]
+fn _encode_value(
+    module: &Bound<'_, PyModule>,
+    data: &Bound<'_, PyAny>,
+    no_backslash: bool,
+) -> PyResult<_EncodedValue> {
+    _prepare_encoder(module, no_backslash)?.encode(data)
+}
+
+/// Retain the same prepared charset/type context as a real Connection.
+#[pyclass(frozen, module = "sqlaero._sqlaero")]
+struct _ValueEncoder {
+    types: Py<input::ScalarTypes>,
+    context: sqlaero_core::bind::Context,
+}
+
+#[pymethods]
+impl _ValueEncoder {
+    /// Run the production visitor into a fresh owned native value buffer.
+    fn encode(&self, data: &Bound<'_, PyAny>) -> PyResult<_EncodedValue> {
+        use sqlaero_core::transport::deadline::{IoBudget, TimeoutKind};
+        let budget = IoBudget::new(TimeoutKind::Operation, None, None, None);
+        binding::encode_value(data, &self.types.borrow(data.py()), &self.context, &budget)
+            .map(|bytes| _EncodedValue { bytes })
+    }
+}
+
+/// Prepare only the context that production prepares outside value traversal.
+#[pyfunction]
+#[pyo3(pass_module, signature = (*, no_backslash=false))]
+fn _prepare_encoder(module: &Bound<'_, PyModule>, no_backslash: bool) -> PyResult<_ValueEncoder> {
+    let types = module
+        .getattr("_scalar_types")?
+        .cast_into::<input::ScalarTypes>()?
+        .unbind();
+    let encoding = sqlaero_core::charset::resolve(None, None)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let context = sqlaero_core::bind::Context {
+        codec: sqlaero_core::charset::codec::Codec::new(encoding.charset),
+        no_backslash_escapes: no_backslash,
+        utc_confirmed: true,
+        limit: 67108864,
+    };
+    Ok(_ValueEncoder { types, context })
+}
+
 /// Validate the actual strict native codec before lazy row decoding is wired.
 #[pyfunction]
 #[pyo3(signature = (data, *, charset="utf8mb4"))]
@@ -338,6 +405,10 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(_parse_size, module)?)?;
     module.add_function(wrap_pyfunction!(_decode_json, module)?)?;
     module.add_function(wrap_pyfunction!(_encode_scalar, module)?)?;
+    module.add_class::<_EncodedValue>()?;
+    module.add_class::<_ValueEncoder>()?;
+    module.add_function(wrap_pyfunction!(_encode_value, module)?)?;
+    module.add_function(wrap_pyfunction!(_prepare_encoder, module)?)?;
     module.add_function(wrap_pyfunction!(_decode_text, module)?)?;
     module.add_function(wrap_pyfunction!(_bind_sql, module)?)?;
     module.add_function(wrap_pyfunction!(_decode_field, module)?)?;

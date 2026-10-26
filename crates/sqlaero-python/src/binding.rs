@@ -261,6 +261,32 @@ struct Visit<'a> {
     path: Vec<usize>,
     work: usize,
 }
+
+/// Measure the production value visitor without copying its bytes into Python.
+/// SQL compilation and positional row assembly are measured separately. This
+/// entry retains every scalar, container, deadline, and capacity check used by
+/// `Row::fill`; it does not implement an alternative escape algorithm.
+pub(crate) fn encode_value(
+    value: &Bound<'_, PyAny>,
+    types: &ScalarTypes,
+    context: &Context,
+    budget: &IoBudget,
+) -> PyResult<Vec<u8>> {
+    check(value.py(), budget)?;
+    let mut output = Vec::new();
+    Visit {
+        types,
+        context,
+        budget,
+        active: Vec::new(),
+        path: Vec::new(),
+        work: 0,
+    }
+    .value(value, &mut output)?;
+    check(value.py(), budget)?;
+    Ok(output)
+}
+
 impl Visit<'_> {
     fn enter(&mut self, py: Python<'_>, identity: usize) -> PyResult<()> {
         if self.active.len() >= 64 || self.active.contains(&identity) {
