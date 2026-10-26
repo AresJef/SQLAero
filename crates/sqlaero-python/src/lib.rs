@@ -1,7 +1,21 @@
 //! Python input and output boundary for SQLAero's native MySQL core.
 
-use pyo3::exceptions::PyValueError;
+mod binding;
+mod config;
+mod connection;
+mod cursor;
+mod errors;
+mod input;
+mod json;
+mod metadata;
+mod output;
+mod reader;
+mod retry;
+mod transaction;
+
+use pyo3::exceptions::{PyUnicodeDecodeError, PyValueError};
 use pyo3::prelude::*;
+use pyo3::types::{PyBytes, PyString};
 
 /// Exercise the shared native size parser through the installed extension.
 ///
@@ -12,8 +26,404 @@ fn _parse_size(value: &str) -> PyResult<usize> {
         .map_err(|error| PyValueError::new_err(error.to_string()))
 }
 
+/// Exercise the single-pass output decoder before result-set integration.
+#[pyfunction]
+fn _decode_json<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
+    json::decode(py, data)
+}
+
+/// Exercise the actual native scalar reader/writer before SQL binding is wired.
+/// The returned bytes are diagnostic output, never per-value SQL Python str.
+#[pyfunction]
+#[pyo3(pass_module, signature = (data, *, utc_confirmed=true, limit=67108864, charset=None, no_backslash=false))]
+fn _encode_scalar<'py>(
+    module: &Bound<'py, PyModule>,
+    data: &Bound<'py, PyAny>,
+    utc_confirmed: bool,
+    limit: usize,
+    charset: Option<&str>,
+    no_backslash: bool,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let owner = module.getattr("_scalar_types")?;
+    let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
+    let mut request = Vec::new();
+    let encoding = sqlaero_core::charset::resolve(charset, None)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let context = sqlaero_core::bind::Context {
+        codec: sqlaero_core::charset::codec::Codec::new(encoding.charset),
+        no_backslash_escapes: no_backslash,
+        utc_confirmed,
+        limit,
+    };
+    types.write(data, &mut request, &context, None)?;
+    Ok(PyBytes::new(module.py(), &request))
+}
+
+/// Own the actual native writer output; conversion is only for untimed checks.
+#[pyclass(frozen, module = "sqlaero._sqlaero")]
+struct _EncodedValue {
+    bytes: Vec<u8>,
+}
+
+#[pymethods]
+impl _EncodedValue {
+    fn __len__(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Copy diagnostic bytes outside a performance measurement.
+    fn to_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, &self.bytes)
+    }
+}
+
+/// Private measurement boundary for the production native value visitor.
+/// The returned owner is not a public escape API or a Python SQL string.
+#[pyfunction]
+#[pyo3(pass_module, signature = (data, *, no_backslash=false))]
+fn _encode_value(
+    module: &Bound<'_, PyModule>,
+    data: &Bound<'_, PyAny>,
+    no_backslash: bool,
+) -> PyResult<_EncodedValue> {
+    _prepare_encoder(module, no_backslash)?.encode(data)
+}
+
+/// Retain the same prepared charset/type context as a real Connection.
+#[pyclass(frozen, module = "sqlaero._sqlaero")]
+struct _ValueEncoder {
+    types: Py<input::ScalarTypes>,
+    context: sqlaero_core::bind::Context,
+}
+
+#[pymethods]
+impl _ValueEncoder {
+    /// Run the production visitor into a fresh owned native value buffer.
+    fn encode(&self, data: &Bound<'_, PyAny>) -> PyResult<_EncodedValue> {
+        use sqlaero_core::transport::deadline::{IoBudget, TimeoutKind};
+        let budget = IoBudget::new(TimeoutKind::Operation, None, None, None);
+        binding::encode_value(data, &self.types.borrow(data.py()), &self.context, &budget)
+            .map(|bytes| _EncodedValue { bytes })
+    }
+}
+
+/// Prepare only the context that production prepares outside value traversal.
+#[pyfunction]
+#[pyo3(pass_module, signature = (*, no_backslash=false))]
+fn _prepare_encoder(module: &Bound<'_, PyModule>, no_backslash: bool) -> PyResult<_ValueEncoder> {
+    let types = module
+        .getattr("_scalar_types")?
+        .cast_into::<input::ScalarTypes>()?
+        .unbind();
+    let encoding = sqlaero_core::charset::resolve(None, None)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let context = sqlaero_core::bind::Context {
+        codec: sqlaero_core::charset::codec::Codec::new(encoding.charset),
+        no_backslash_escapes: no_backslash,
+        utc_confirmed: true,
+        limit: 67108864,
+    };
+    Ok(_ValueEncoder { types, context })
+}
+
+/// Validate the actual strict native codec before lazy row decoding is wired.
+#[pyfunction]
+#[pyo3(signature = (data, *, charset="utf8mb4"))]
+fn _decode_text<'py>(data: &Bound<'py, PyBytes>, charset: &str) -> PyResult<Bound<'py, PyString>> {
+    use sqlaero_core::charset::{
+        codec::{Codec, CodecError},
+        resolve,
+    };
+    let py = data.py();
+    let codec = Codec::new(
+        resolve(Some(charset), None)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?
+            .charset,
+    );
+    match codec.decode(data.as_bytes()) {
+        Ok(text) => Ok(PyString::new(py, &text)),
+        Err(CodecError::Decode { start, end }) => {
+            match py.get_type::<PyUnicodeDecodeError>().call1((
+                codec.name(),
+                data,
+                start,
+                end,
+                "invalid or incomplete byte sequence",
+            )) {
+                Ok(error) => Err(PyErr::from_value(error)),
+                Err(error) => Err(error),
+            }
+        }
+        Err(CodecError::Wire(error)) => Err(errors::wire(py, error)),
+        Err(error) => Err(errors::client(
+            py,
+            sqlaero_core::error::ClientErrorCode::UnsupportedCharset,
+            error.to_string(),
+        )),
+    }
+}
+
+/// Return actual native COM_QUERY requests from the incremental binder.
+/// Production executes one prepared request before asking for the next row;
+/// this private correctness probe only materializes the final request bytes.
+#[pyfunction]
+#[pyo3(pass_module, signature = (sql, args, *, many=false, itemize=true, charset=None, no_backslash=false, ansi_quotes=false, timeout_ns=None, limit=67108864))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private probe mirrors the separately specified binding controls"
+)]
+fn _bind_sql<'py>(
+    module: &Bound<'py, PyModule>,
+    sql: &Bound<'py, PyString>,
+    args: &Bound<'py, PyAny>,
+    many: bool,
+    itemize: bool,
+    charset: Option<&str>,
+    no_backslash: bool,
+    ansi_quotes: bool,
+    timeout_ns: Option<u64>,
+    limit: usize,
+) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+    use sqlaero_core::{
+        bind::{Context, template::Compiler},
+        charset::{codec::Codec, resolve},
+        transport::deadline::{IoBudget, TimeoutKind},
+    };
+    let py = module.py();
+    let budget = IoBudget::new(
+        TimeoutKind::Operation,
+        timeout_ns.map(std::time::Duration::from_nanos),
+        None,
+        None,
+    );
+    input::check(py, &budget)?;
+    let owner = module.getattr("_scalar_types")?;
+    let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
+    let context = Context {
+        codec: Codec::new(
+            resolve(charset, None)
+                .map_err(|error| PyValueError::new_err(error.to_string()))?
+                .charset,
+        ),
+        no_backslash_escapes: no_backslash,
+        utc_confirmed: true,
+        limit,
+    };
+    let mut encoded = Vec::new();
+    // SQL source is not a sent request yet: the final binder applies its
+    // complete byte bound after placeholder replacement, not to this template.
+    let source_context = Context {
+        limit: usize::MAX,
+        ..context
+    };
+    input::text(sql, &mut encoded, &source_context, false, Some(&budget))?;
+    let mut compiler = if many && itemize {
+        Compiler::for_batch(encoded, context.codec, no_backslash, ansi_quotes)
+    } else {
+        Compiler::new(encoded, context.codec, no_backslash, ansi_quotes)
+    };
+    let mut template = loop {
+        let step = py
+            .detach(|| compiler.advance())
+            .map_err(|error| binding::template_error(py, error))?;
+        input::check(py, &budget)?;
+        if let Some(template) = step {
+            break template;
+        }
+    };
+    let mut rows = binding::Rows::new(args, many, itemize);
+    let output = pyo3::types::PyList::empty(py);
+    if let Some(layout) = template.prepare_merge() {
+        let mut blocks = sqlaero_core::bind::batch::Blocks::new(&template, &layout, limit, limit)
+            .map_err(|error| errors::wire(py, error))?;
+        // One bounded native row fragment handles unknown expansion and normal
+        // rollover. Its allocation is reused; no per-row Python SQL exists.
+        let mut encoded = Vec::new();
+        while let Some(row) = rows.next()? {
+            row.bind_fragment(
+                &template,
+                &types,
+                &context,
+                &budget,
+                layout.row.clone(),
+                &mut encoded,
+            )?;
+            if !blocks
+                .push(&encoded)
+                .map_err(|error| errors::wire(py, error))?
+            {
+                if let Some(request) = blocks.take().map_err(|error| errors::wire(py, error))? {
+                    output.append(PyBytes::new(py, &request))?;
+                }
+                if !blocks
+                    .push(&encoded)
+                    .map_err(|error| errors::wire(py, error))?
+                {
+                    return Err(PyValueError::new_err(
+                        "legal first row did not fit empty request",
+                    ));
+                }
+            }
+        }
+        if let Some(request) = blocks.take().map_err(|error| errors::wire(py, error))? {
+            output.append(PyBytes::new(py, &request))?;
+        }
+        return Ok(output);
+    }
+    while let Some(row) = rows.next()? {
+        let request = row.bind(&template, &types, &context, &budget)?;
+        output.append(PyBytes::new(py, &request))?;
+    }
+    Ok(output)
+}
+
+/// Exercise the production output action chosen from actual column metadata.
+/// SQL NULL remains None; this private probe is not a public row API.
+#[pyfunction]
+#[pyo3(pass_module, signature = (type_code, data, *, collation_id=255, flags=0, length=0, decode_json=false, decode_set=false, decode_bit=false, use_decimal=true, use_timedelta=true, decode_text_strict=true, decode_date_strict=true))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private probe mirrors explicit output metadata and the seven frozen policies"
+)]
+fn _decode_field<'py>(
+    module: &Bound<'py, PyModule>,
+    type_code: u8,
+    data: Option<&Bound<'py, PyBytes>>,
+    collation_id: u16,
+    flags: u16,
+    length: u32,
+    decode_json: bool,
+    decode_set: bool,
+    decode_bit: bool,
+    use_decimal: bool,
+    use_timedelta: bool,
+    decode_text_strict: bool,
+    decode_date_strict: bool,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = module.py();
+    let Some(data) = data else {
+        return Ok(py.None().into_bound(py));
+    };
+    let owner = module.getattr("_scalar_types")?;
+    let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
+    let options = sqlaero_core::result::decode::Options {
+        decode_json,
+        decode_set,
+        decode_bit,
+        use_decimal,
+        use_timedelta,
+        decode_text_strict,
+        decode_date_strict,
+    };
+    let plan = sqlaero_core::result::decode::Plan::new(
+        type_code,
+        flags,
+        collation_id,
+        length,
+        options,
+        sqlaero_core::charset::output::OutputCodec::for_collation(255),
+    );
+    output::field(py, data.as_bytes(), plan, &types, None)
+}
+
+/// Exercise the production buffered Reader using complete real-format packets.
+/// It does not open a network connection or expose a second public Cursor API.
+#[pyfunction]
+#[pyo3(pass_module, signature = (packets, *, name_collation_id=255, decode_json=false, decode_set=false, decode_bit=false, use_decimal=true, use_timedelta=true, decode_text_strict=true, decode_date_strict=true))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private packet fixture supplies the exact execute-time output policy"
+)]
+fn _rows_from_packets(
+    module: &Bound<'_, PyModule>,
+    packets: &Bound<'_, pyo3::types::PyList>,
+    name_collation_id: u16,
+    decode_json: bool,
+    decode_set: bool,
+    decode_bit: bool,
+    use_decimal: bool,
+    use_timedelta: bool,
+    decode_text_strict: bool,
+    decode_date_strict: bool,
+) -> PyResult<reader::Reader> {
+    use sqlaero_core::{
+        protocol::CapabilityFlags,
+        result::text::{Receiver, Response},
+    };
+    let py = module.py();
+    let capabilities = CapabilityFlags::CLIENT_PROTOCOL_41 | CapabilityFlags::CLIENT_DEPRECATE_EOF;
+    let mut collector = Receiver::isolated(capabilities, 256 * 1024 * 1024)
+        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    let mut complete = None;
+    for index in 0..packets.len() {
+        if complete.is_some() {
+            return Err(PyValueError::new_err(
+                "packet fixture contains a second response",
+            ));
+        }
+        let packet = packets.get_item(index)?.cast_into::<PyBytes>()?;
+        complete = collector
+            .push(packet.as_bytes())
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        py.check_signals()?;
+    }
+    let response =
+        complete.ok_or_else(|| PyValueError::new_err("packet fixture has no complete response"))?;
+    let types = module
+        .getattr("_scalar_types")?
+        .cast_into::<input::ScalarTypes>()?
+        .unbind();
+    let result = reader::Reader::empty(types);
+    let options = sqlaero_core::result::decode::Options {
+        decode_json,
+        decode_set,
+        decode_bit,
+        use_decimal,
+        use_timedelta,
+        decode_text_strict,
+        decode_date_strict,
+    };
+    match response {
+        Response::Rows(rows) => result.install(
+            py,
+            rows,
+            options,
+            sqlaero_core::charset::output::OutputCodec::for_collation(name_collation_id),
+        )?,
+        _ => result.clear_result(py)?,
+    }
+    Ok(result)
+}
+
 #[pymodule]
 fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
+    errors::register(module)?;
+    module.add(
+        "_scalar_types",
+        Py::new(module.py(), input::ScalarTypes::new(module.py())?)?,
+    )?;
     module.add_function(wrap_pyfunction!(_parse_size, module)?)?;
+    module.add_function(wrap_pyfunction!(_decode_json, module)?)?;
+    module.add_function(wrap_pyfunction!(_encode_scalar, module)?)?;
+    module.add_class::<_EncodedValue>()?;
+    module.add_class::<_ValueEncoder>()?;
+    module.add_function(wrap_pyfunction!(_encode_value, module)?)?;
+    module.add_function(wrap_pyfunction!(_prepare_encoder, module)?)?;
+    module.add_function(wrap_pyfunction!(_decode_text, module)?)?;
+    module.add_function(wrap_pyfunction!(_bind_sql, module)?)?;
+    module.add_function(wrap_pyfunction!(_decode_field, module)?)?;
+    module.add_class::<reader::Reader>()?;
+    module.add_class::<metadata::Columns>()?;
+    module.add_class::<metadata::ColumnInfo>()?;
+    module.add_class::<config::Ssl>()?;
+    module.add_class::<connection::Connection>()?;
+    module.add_class::<cursor::Cursor>()?;
+    module.add_class::<transaction::Transaction>()?;
+    module.add_class::<retry::RetryRule>()?;
+    module.add_class::<retry::Retry>()?;
+    module.add_class::<retry::RetryAttempt>()?;
+    module.add_class::<retry::RetryIterator>()?;
+    module.add_function(wrap_pyfunction!(connection::connect, module)?)?;
+    module.add_function(wrap_pyfunction!(_rows_from_packets, module)?)?;
     Ok(())
 }
