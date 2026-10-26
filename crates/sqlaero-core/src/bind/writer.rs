@@ -20,8 +20,11 @@ pub fn append(output: &mut Vec<u8>, bytes: &[u8], limit: usize) -> Result<(), Wi
 /// Returns a size/overflow or reservation failure before modifying the buffer.
 pub fn binary(output: &mut Vec<u8>, value: &[u8], limit: usize) -> Result<(), WireError> {
     binary_start(output, value.len(), limit)?;
-    binary_fragment(output, value, limit)?;
-    binary_end(output, limit)
+    // The complete literal was checked and reserved before the first write.
+    // Streaming callers retain their per-fragment checks below.
+    append_hex(output, value);
+    output.extend_from_slice(b"' AS BINARY)");
+    Ok(())
 }
 
 /// Reserve and begin one exact-width binary literal before incremental writes.
@@ -51,12 +54,16 @@ pub fn binary_fragment(output: &mut Vec<u8>, value: &[u8], limit: usize) -> Resu
         limit,
     })?;
     reserve(output, length, limit)?;
+    append_hex(output, value);
+    Ok(())
+}
+
+/// Append native hex pairs after the caller checked the exact output width.
+fn append_hex(output: &mut Vec<u8>, value: &[u8]) {
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     for byte in value {
-        output.push(HEX[usize::from(byte >> 4)]);
-        output.push(HEX[usize::from(byte & 15)]);
+        output.extend_from_slice(&[HEX[usize::from(byte >> 4)], HEX[usize::from(byte & 15)]]);
     }
-    Ok(())
 }
 
 /// Complete the single binary literal after all source fragments were written.
@@ -91,5 +98,27 @@ mod tests {
         let before = output.clone();
         assert!(binary(&mut output, b"x", 24).is_err());
         assert_eq!(output, before);
+    }
+
+    #[test]
+    fn complete_and_fragmented_binary_writes_preserve_every_byte() {
+        let bytes: Vec<u8> = (0..=255).collect();
+        let expected = format!(
+            "CAST(X'{}' AS BINARY)",
+            bytes
+                .iter()
+                .map(|byte| format!("{byte:02X}"))
+                .collect::<String>()
+        );
+        let mut complete = Vec::new();
+        binary(&mut complete, &bytes, expected.len()).unwrap();
+        assert_eq!(complete, expected.as_bytes());
+        let mut fragmented = Vec::new();
+        binary_start(&mut fragmented, bytes.len(), expected.len()).unwrap();
+        for fragment in bytes.chunks(17) {
+            binary_fragment(&mut fragmented, fragment, expected.len()).unwrap();
+        }
+        binary_end(&mut fragmented, expected.len()).unwrap();
+        assert_eq!(fragmented, complete);
     }
 }
