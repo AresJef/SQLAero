@@ -5,11 +5,22 @@ connection, parameter binding, result buffering and decoding core. Python values
 are adapted at the boundary; SQL literals are written into the current native
 request rather than generated as per-value Python SQL strings.
 
-The current functional development baseline has been exercised on macOS arm64,
-CPython 3.13.3 and dedicated MySQL 8.4.13 / 9.7.4 instances. Formal performance,
-the CPython 3.12–3.15 release matrix and the first reconstructed release are
-still under validation. Async, free-threaded Python and additional operating
-systems are future work, not current support claims.
+The 0.2 alpha release targets macOS arm64, regular-GIL CPython 3.12–3.15,
+and MySQL 8.4 / 9.7. The release workflow builds and installs each actual wheel,
+tests it against both dedicated server lines, and reconstructs a wheel from the
+source distribution before publishing. The macOS 11.0 wheel deployment tag is
+a build target, not evidence that every older macOS release was tested.
+Async, free-threaded Python, Intel, Linux and Windows remain future work.
+
+## Install
+
+```sh
+python -m pip install --pre 'sqlaero==0.2.0a1'
+```
+
+This alpha is a new Rust client. It is not an API-compatible update to the old
+Cython 0.1 alpha. See the [release notes](docs/releases/v0.2.0a1.md) for scope,
+validation boundaries and migration cautions.
 
 ## Build from source
 
@@ -25,8 +36,12 @@ python -m pytest -q
 pyright
 ```
 
-The reconstruction is not yet the version available from PyPI. Do not use an
-older PyPI release as a substitute for this source baseline.
+Running the full integration suite also requires the two isolated local MySQL
+fixtures. On a macOS arm64 development machine with `mysql@8.4`, `mysql@9.7`
+and `openssl@4` installed through Homebrew, run `python tools/mysql_fixture.py
+prepare` before the tests and `python tools/mysql_fixture.py stop` afterward.
+The utility uses its own loopback ports and private temporary data directories;
+it does not start Homebrew services or use their default database directories.
 
 ## Query and fetch
 
@@ -101,9 +116,19 @@ The public typing aliases are in `sqlaero.typing`; retry preserves callable
 parameters and return inference. Execution never reconnects or replays SQL
 implicitly.
 
-## Development references
+## Performance and development
 
-Local development follows `AGENTS.md`, the final specification at
-`docs/connection-reconstruction-research.md`, and the unique execution ledger at
-`tasks/rust-sync-kernel/plan.md`. The frozen experimental/reference directories
-are development evidence, not product runtime or distribution contents.
+On the measured macOS arm64 / CPython 3.13.3 machine, the final native combination
+passed 480 main and 204 independent protection scenarios against its initial
+functional Rust baseline. Representative improvements included 1.61× for a
+1,000-element string list, 1.58× for binding 1,000 INSERT rows, and 1.16–1.19×
+for materializing 10,000 numeric/text rows. These are particular native phases,
+not promises about total application or network-query latency. Some smaller
+costs remained within the agreed 5% protection band.
+
+The older experimental escape implementation remains faster on most same-text
+escape microbenchmarks. Its Python-string return contract differs from this
+client's Rust request writer; no universal speed advantage is claimed.
+Frozen experiments, private test credentials and local timing records are not
+runtime dependencies or distribution contents. Public error and retry guides,
+source tests and dependency notices accompany the new client.
