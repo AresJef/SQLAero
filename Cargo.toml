@@ -33,6 +33,7 @@ core-foundation-sys = "=0.8.7"
 itoa = "=1.0.18"
 zmij = "=1.0.23"
 memchr = "=2.8.3"
+smallvec = "=1.16.4"
 getrandom = { version = "=0.3.4", features = ["std"] }
 
 [workspace.lints.rust]

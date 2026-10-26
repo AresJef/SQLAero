@@ -4,6 +4,7 @@ use crate::errors;
 use crate::input::{ScalarTypes, check};
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyTuple};
+use smallvec::SmallVec;
 use sqlaero_core::bind::{
     Context,
     template::{Template, TemplateError},
@@ -188,7 +189,7 @@ impl Row<'_> {
             types,
             context,
             budget,
-            active: Vec::new(),
+            active: SmallVec::new(),
             path: self.path,
             work: 0,
         };
@@ -257,7 +258,9 @@ struct Visit<'a> {
     types: &'a ScalarTypes,
     context: &'a Context,
     budget: &'a IoBudget,
-    active: Vec<usize>,
+    // Common shallow ancestry stays inline. This is an allocation hint, not
+    // the nesting limit: deeper valid paths spill with checked reservation.
+    active: SmallVec<[usize; 4]>,
     path: Vec<usize>,
     work: usize,
 }
@@ -278,7 +281,7 @@ pub(crate) fn encode_value(
         types,
         context,
         budget,
-        active: Vec::new(),
+        active: SmallVec::new(),
         path: Vec::new(),
         work: 0,
     }

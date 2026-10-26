@@ -1282,6 +1282,7 @@ dependencies = [
  "pyo3",
  "rustls",
  "rustls-pki-types",
+ "smallvec",
  "sqlaero-core",
  "zeroize",
 ]

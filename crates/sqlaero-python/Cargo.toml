@@ -20,6 +20,7 @@ rustls.workspace = true
 rustls-pki-types.workspace = true
 zeroize.workspace = true
 getrandom.workspace = true
+smallvec.workspace = true
 
 [lints]
 workspace = true
