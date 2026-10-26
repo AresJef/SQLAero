@@ -9,5 +9,6 @@ pub mod error;
 pub mod memory;
 pub mod protocol;
 pub mod result;
+pub mod retry;
 pub mod session;
 pub mod transport;

@@ -10,6 +10,7 @@ mod json;
 mod metadata;
 mod output;
 mod reader;
+mod retry;
 mod transaction;
 
 use pyo3::exceptions::{PyUnicodeDecodeError, PyValueError};
@@ -347,6 +348,10 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<connection::Connection>()?;
     module.add_class::<cursor::Cursor>()?;
     module.add_class::<transaction::Transaction>()?;
+    module.add_class::<retry::RetryRule>()?;
+    module.add_class::<retry::Retry>()?;
+    module.add_class::<retry::RetryAttempt>()?;
+    module.add_class::<retry::RetryIterator>()?;
     module.add_function(wrap_pyfunction!(connection::connect, module)?)?;
     module.add_function(wrap_pyfunction!(_rows_from_packets, module)?)?;
     Ok(())

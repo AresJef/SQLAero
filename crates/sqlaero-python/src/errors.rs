@@ -254,7 +254,7 @@ impl SQLAeroError {
 
     /// Return the declared integer code, or None when manually unspecified.
     #[getter]
-    fn code(&self) -> Option<&BigInt> {
+    pub(crate) fn code(&self) -> Option<&BigInt> {
         self.code.as_ref()
     }
 

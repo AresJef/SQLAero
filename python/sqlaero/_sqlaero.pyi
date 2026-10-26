@@ -293,17 +293,8 @@ def _rows_from_packets(packets: list[bytes], *, name_collation_id: int = 255,
     """Load complete protocol packets into the same native buffered reader."""
     ...
 
-from datetime import date, datetime, time, timedelta
-from decimal import Decimal
-from os import PathLike
-from typing import TypeAlias
-
-EscapeScalar: TypeAlias = None | bool | int | float | Decimal | str | bytes | bytearray | date | datetime | time | timedelta
-# Container members are checked recursively by the native boundary. Any here
-# permits ordinary narrowly typed lists without list invariance false errors;
-# it does not admit additional outer container kinds or runtime scalar types.
-EscapeInput: TypeAlias = EscapeScalar | list[Any] | tuple[Any, ...]
-PathInput: TypeAlias = str | PathLike[str] | PathLike[bytes]
+from .typing import EscapeInput as EscapeInput, PathInput as PathInput, ErrorTypesInput, ErrorCodesInput
+from types import TracebackType
 
 class SSL:
     """Immutable native TLS policy and validated reusable PEM materials."""
@@ -346,31 +337,71 @@ class Connection:
         ...
     @property
     def net_read_timeout(self) -> int:
-        """MySQL server SESSION upload-wait seconds; cached reads send no SQL."""
+        """MySQL server-side SESSION whole seconds for waiting for more client upload data.
+
+        connect(None) preserves and confirms the server default, not disables it.
+        Cached reads send no SQL and remain readable after close. An unknown fact
+        raises InterfaceError instead of returning stale data."""
         ...
     def set_net_read_timeout(self, value: int) -> None:
-        """Set actual server SESSION upload-wait seconds; positive int only."""
+        """Set MySQL server-side SESSION net_read_timeout in positive whole seconds.
+
+        Only int excluding bool; None/bad types raise TypeError, zero/negative raise
+        ValueError. MySQL decides upper limits/normalization; actual confirmed values
+        are cached. A change sends SET under the operation deadline. Reliable same
+        values still check lifecycle/ownership, then send no SQL. Closed/busy calls
+        raise InterfaceError/InterfaceBusyError; success returns None."""
         ...
     @property
     def net_write_timeout(self) -> int:
-        """MySQL server SESSION download-write seconds, not client write_timeout."""
+        """MySQL server-side SESSION whole seconds for writing result data to this client.
+
+        connect(None) preserves and confirms the server default, not disables it.
+        Cached reads send no SQL and remain readable after close. An unknown fact
+        raises InterfaceError instead of returning stale data."""
         ...
     def set_net_write_timeout(self, value: int) -> None:
-        """Set actual server SESSION download-write seconds; positive int only."""
+        """Set MySQL server-side SESSION net_write_timeout in positive whole seconds.
+
+        Only int excluding bool; None/bad types raise TypeError, zero/negative raise
+        ValueError. MySQL decides upper limits/normalization; actual confirmed values
+        are cached. A change sends SET under the operation deadline. Reliable same
+        values still check lifecycle/ownership, then send no SQL. Closed/busy calls
+        raise InterfaceError/InterfaceBusyError; success returns None."""
         ...
     @property
     def wait_timeout(self) -> int:
-        """MySQL server SESSION idle seconds; reliable cache readable after close."""
+        """MySQL server-side SESSION whole seconds for session idle time.
+
+        connect(None) preserves and confirms the server default, not disables it.
+        Cached reads send no SQL and remain readable after close. An unknown fact
+        raises InterfaceError instead of returning stale data."""
         ...
     def set_wait_timeout(self, value: int) -> None:
-        """Set MySQL SESSION idle seconds; changes send one server SET."""
+        """Set MySQL server-side SESSION wait_timeout in positive whole seconds.
+
+        Only int excluding bool; None/bad types raise TypeError, zero/negative raise
+        ValueError. MySQL decides upper limits/normalization; actual confirmed values
+        are cached. A change sends SET under the operation deadline. Reliable same
+        values still check lifecycle/ownership, then send no SQL. Closed/busy calls
+        raise InterfaceError/InterfaceBusyError; success returns None."""
         ...
     @property
     def innodb_lock_wait_timeout(self) -> int:
-        """MySQL server SESSION row-lock seconds, distinct from metadata locks."""
+        """MySQL server-side SESSION whole seconds for an InnoDB row lock, not a metadata lock.
+
+        connect(None) preserves and confirms the server default, not disables it.
+        Cached reads send no SQL and remain readable after close. An unknown fact
+        raises InterfaceError instead of returning stale data."""
         ...
     def set_innodb_lock_wait_timeout(self, value: int) -> None:
-        """Set actual MySQL SESSION row-lock seconds; positive int only."""
+        """Set MySQL server-side SESSION innodb_lock_wait_timeout in positive whole seconds.
+
+        Only int excluding bool; None/bad types raise TypeError, zero/negative raise
+        ValueError. MySQL decides upper limits/normalization; actual confirmed values
+        are cached. A change sends SET under the operation deadline. Reliable same
+        values still check lifecycle/ownership, then send no SQL. Closed/busy calls
+        raise InterfaceError/InterfaceBusyError; success returns None."""
         ...
     @property
     def autocommit(self) -> bool:
@@ -378,23 +409,46 @@ class Connection:
         ...
     @property
     def connect_timeout(self) -> int | None:
-        """Client-side establishment limit in whole seconds; None disables."""
+        """Client-side whole-call establishment seconds; default 10, None disables.
+
+        Positive int excluding bool; bad types/values raise TypeError/ValueError.
+        Covers preparation, dialing, authentication and initialization; no extra
+        network cleanup grace. Read-only after creation, readable after close."""
         ...
     @property
     def read_timeout(self) -> int | None:
-        """Client-side no-read-progress limit in seconds; local and snapshot-based."""
+        """Client-side maximum network read wait without progress, in whole seconds.
+
+        Default None disables; positive int or None, excluding bool. Bad type/value
+        raises TypeError/ValueError. Actual progress restarts this interval; readiness
+        does not. Local assignment sends no SQL and affects subsequent operations.
+        Not a total-response timer. Readable after close; modification then fails.
+        Expiry does not establish SQL cancellation or confirmed rollback."""
         ...
     @read_timeout.setter
     def read_timeout(self, value: int | None) -> None: ...
     @property
     def write_timeout(self) -> int | None:
-        """Client-side no-write-progress limit in seconds; local and snapshot-based."""
+        """Client-side maximum network write wait without progress, in whole seconds.
+
+        Default None disables; positive int or None, excluding bool. Bad type/value
+        raises TypeError/ValueError. Actual progress restarts this interval, not the
+        total upload/operation deadline. Local assignment affects subsequent commands
+        and sends no SQL. Saved value is readable after close; modification fails.
+        Expiry does not establish SQL cancellation or confirmed rollback."""
         ...
     @write_timeout.setter
     def write_timeout(self, value: int | None) -> None: ...
     @property
     def operation_timeout(self) -> int | None:
-        """Client-side whole-operation seconds, shared by binding and all batches."""
+        """Client-side total whole-second limit shared by an operation's batches.
+
+        Default None disables; positive int or None excluding bool, with
+        TypeError/ValueError on invalid type/value. Covers binding, necessary internal
+        confirmation, sending, complete reception and state/result publication;
+        progress does not reset it. Does not time buffered fetch or transaction-body
+        user code. Assignment affects new operations without SQL; readable after
+        close, modification fails. No new network cleanup grace or implied rollback."""
         ...
     @operation_timeout.setter
     def operation_timeout(self, value: int | None) -> None: ...
@@ -570,10 +624,77 @@ def connect(*, user: str, host: str = '127.0.0.1', port: int = 3306,
             decode_set: bool = False, decode_bit: bool = False, use_decimal: bool = True,
             use_timedelta: bool = True, decode_text_strict: bool = True,
             decode_date_strict: bool = True) -> Connection:
-    """Create and fully initialize a native sync MySQL connection."""
+    """Create and fully initialize a native sync MySQL connection.
+
+    Client connect_timeout defaults to 10; read/write/operation_timeout to None.
+    Values are positive whole-second int excluding bool, or None to disable the
+    applicable client limit. Type/value errors raise TypeError/ValueError.
+    Establishment includes preparation/authentication/initialization; operation
+    timeout covers later complete commands, not buffered fetch or transaction-body
+    code. Progress restarts only read/write waits. No extra network cleanup grace
+    or implied SQL cancellation/rollback follows expiry.
+
+    MySQL server SESSION net_read_timeout (upload), net_write_timeout (download),
+    wait_timeout (idle) and innodb_lock_wait_timeout (row lock) default to None:
+    preserve then confirm their actual server values. Supplied positive int values
+    are initialized together where possible; MySQL decides upper normalization.
+    Later remote changes use explicit set_* methods; local runtime timeouts use
+    property assignment. See each property's precise lifecycle/unknown semantics.
+    """
     ...
 
 class _Transaction:
     """Private managed scope returned by Connection.transaction()."""
     def __enter__(self) -> Cursor: ...
     def __exit__(self, typ: object, value: object, traceback: object) -> bool: ...
+
+
+class RetryRule:
+    """Read-only AND condition; separate rules are ORed by Retry."""
+    def __init__(self, *, error_types: ErrorTypesInput | None = None,
+                 error_codes: ErrorCodesInput | None = None) -> None: ...
+    @property
+    def error_types(self) -> tuple[type[Exception], ...] | None:
+        """Normalized classes, or None for no type constraint."""
+        ...
+    @property
+    def error_codes(self) -> tuple[int, ...] | None:
+        """Normalized plain integer codes, or None for no code constraint."""
+        ...
+
+class Retry:
+    """Reusable read-only retry configuration; traversals have independent state."""
+    def __init__(self, *rules: RetryRule, max_attempts: int | None = 3,
+                 wait_interval: int | float = 1.0, wait_multiplier: int | float = 1.0,
+                 max_wait_interval: int | float = 10.0, wait_jitter: bool = False) -> None: ...
+    def __iter__(self) -> Iterator[RetryAttempt]: ...
+    @property
+    def rules(self) -> tuple[RetryRule, ...]:
+        """Immutable ORed rule tuple."""
+        ...
+    @property
+    def max_attempts(self) -> int | None:
+        """Attempts including the first; None is unlimited."""
+        ...
+    @property
+    def wait_interval(self) -> int | float:
+        """Nonnegative initial seconds; first attempt does not wait."""
+        ...
+    @property
+    def wait_multiplier(self) -> int | float:
+        """Finite multiplier >= 1; jitter does not change the base sequence."""
+        ...
+    @property
+    def max_wait_interval(self) -> int | float:
+        """Mandatory finite cap, applied to every retry delay."""
+        ...
+    @property
+    def wait_jitter(self) -> bool:
+        """Whether actual delays are uniform from zero through capped base."""
+        ...
+
+class RetryAttempt:
+    """Context yielded by Retry; no public constructor is provided."""
+    def __enter__(self) -> RetryAttempt: ...
+    def __exit__(self, exc_type: type[BaseException] | None,
+                 exc: BaseException | None, traceback: TracebackType | None) -> bool: ...

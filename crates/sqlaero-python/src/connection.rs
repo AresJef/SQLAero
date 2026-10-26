@@ -504,10 +504,17 @@ macro_rules! connection_api {
             #[getter] fn tls_version(&self)->Option<&str> { self.tls_version }
             /// Client-side establishment timeout in whole seconds. None disables
             /// its total limit. Read-only after creation and readable after close.
+            /// Default 10; positive int or None, excluding bool. Invalid type/value
+            /// raises TypeError/ValueError. Covers configuration, authentication
+            /// and required initialization, without an extra network cleanup grace.
             #[getter] fn connect_timeout(&self,py:Python<'_>)->PyResult<Option<u64>> { Ok(self.runtime(py)?.timeouts.connect.map(|v|v.as_secs())) }
             /// Client-side read wait without progress, in whole seconds. None
             /// disables it. Local assignment affects only subsequent operations,
             /// sends no SQL, and is rejected after this connection is retired.
+            /// Default None; positive int or None, excluding bool. Invalid type/value
+            /// raises TypeError/ValueError. Progress restarts only this interval;
+            /// readiness does not. Does not cap a complete response. Saved values
+            /// remain readable after close; expiry does not prove SQL cancellation.
             #[getter] fn read_timeout(&self,py:Python<'_>)->PyResult<Option<u64>> { Ok(self.runtime(py)?.timeouts.read.map(|v|v.as_secs())) }
             #[setter] fn set_read_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()> {
                 let value=config::timeout(Some(value),"read_timeout")?; self.modify(py,"read_timeout")?.timeouts.read=value; Ok(())
@@ -516,6 +523,10 @@ macro_rules! connection_api {
             /// disables it; actual progress restarts only this wait interval.
             /// Local assignment affects subsequent operations, sends no SQL,
             /// and fails after close while the saved value remains readable.
+            /// Default None; positive int or None, excluding bool. Invalid type/value
+            /// raises TypeError/ValueError. Does not cap a complete upload; the
+            /// connect/operation deadline may expire earlier. Expiry does not
+            /// prove server cancellation or confirmed transaction rollback.
             #[getter] fn write_timeout(&self,py:Python<'_>)->PyResult<Option<u64>> { Ok(self.runtime(py)?.timeouts.write.map(|v|v.as_secs())) }
             #[setter] fn set_write_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()> {
                 let value=config::timeout(Some(value),"write_timeout")?; self.modify(py,"write_timeout")?.timeouts.write=value; Ok(())
@@ -525,6 +536,11 @@ macro_rules! connection_api {
             /// confirmations. Progress does not restart it. None disables it.
             /// Local assignment affects subsequent operations and sends no SQL;
             /// after close modification fails but the saved value stays readable.
+            /// Default None; positive int or None, excluding bool. Invalid type/value
+            /// raises TypeError/ValueError. Includes request preparation, reception
+            /// and state/result publication, but not buffered fetching or user
+            /// transaction-block code. Expiry grants no new network cleanup period
+            /// and does not prove SQL cancellation or confirmed rollback.
             #[getter] fn operation_timeout(&self,py:Python<'_>)->PyResult<Option<u64>> { Ok(self.runtime(py)?.timeouts.operation.map(|v|v.as_secs())) }
             #[setter] fn set_operation_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()> {
                 let value=config::timeout(Some(value),"operation_timeout")?; self.modify(py,"operation_timeout")?.timeouts.operation=value; Ok(())
@@ -558,35 +574,59 @@ macro_rules! connection_api {
             /// client data. The initial actual value is read even when omitted
             /// from connect. Cached reads send no SQL and remain valid after
             /// close; unknown facts raise InterfaceError rather than return stale data.
+            /// connect(None) preserves then confirms the actual server default;
+            /// it does not disable the server timeout. Reading sends no SQL.
             #[getter] fn net_read_timeout(&self,py:Python<'_>)->PyResult<u64>{self.server_timeout(py,0,"net_read_timeout")}
             /// Set MySQL SESSION net_read_timeout to a positive whole-second
             /// int. None/bool/float are rejected. Reliable same-value updates
             /// acquire command ownership but send no SQL; changes use the shared
             /// operation deadline and cache the server's actual confirmed value.
+            /// Invalid type/value raises TypeError/ValueError; 0/negative fail.
+            /// Server-specific upper bounds/normalization are decided by MySQL.
+            /// Reliable same-value updates send no SQL after lifecycle/ownership
+            /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
             fn set_net_read_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,0,"net_read_timeout")}
             /// MySQL server-side session seconds for writing to this client;
             /// distinct from client-side write_timeout. Reliable cached reads
             /// remain available after close and never send SQL. Unknown raises InterfaceError.
+            /// connect(None) preserves then confirms the actual server default;
+            /// it does not disable the server timeout. Reading sends no SQL.
             #[getter] fn net_write_timeout(&self,py:Python<'_>)->PyResult<u64>{self.server_timeout(py,1,"net_write_timeout")}
             /// Set MySQL SESSION net_write_timeout in positive whole seconds.
             /// Only int is accepted, excluding bool/None. A true change sends
             /// one SET and stores the server-confirmed value; closed/busy calls fail.
+            /// Invalid type/value raises TypeError/ValueError; 0/negative fail.
+            /// Server-specific upper bounds/normalization are decided by MySQL.
+            /// Reliable same-value updates send no SQL after lifecycle/ownership
+            /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
             fn set_net_write_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,1,"net_write_timeout")}
             /// MySQL server-side session idle timeout in whole seconds. This
             /// cached fact is not a client operation timer or a live health check.
             /// Reliable values remain readable after close; unknown raises InterfaceError.
+            /// connect(None) preserves then confirms the actual server default;
+            /// it does not disable the server timeout. Reading sends no SQL.
             #[getter] fn wait_timeout(&self,py:Python<'_>)->PyResult<u64>{self.server_timeout(py,2,"wait_timeout")}
             /// Set MySQL SESSION wait_timeout using a positive int in whole
             /// seconds, excluding bool/None. A true change sends one SET, with
             /// actual server normalization retained. Closed/busy operations fail.
+            /// Invalid type/value raises TypeError/ValueError; 0/negative fail.
+            /// Server-specific upper bounds/normalization are decided by MySQL.
+            /// Reliable same-value updates send no SQL after lifecycle/ownership
+            /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
             fn set_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,2,"wait_timeout")}
             /// MySQL server-side InnoDB row-lock wait timeout in whole seconds;
             /// it does not control metadata locks or guarantee transaction rollback.
             /// Reliable cached values remain readable after close; unknown raises InterfaceError.
+            /// connect(None) preserves then confirms the actual server default;
+            /// it does not disable the server timeout. Reading sends no SQL.
             #[getter] fn innodb_lock_wait_timeout(&self,py:Python<'_>)->PyResult<u64>{self.server_timeout(py,3,"innodb_lock_wait_timeout")}
             /// Set MySQL SESSION innodb_lock_wait_timeout using a positive
             /// whole-second int, excluding bool/None. Changes send one SET and
             /// retain actual confirmed server values; closed/busy operations fail.
+            /// Invalid type/value raises TypeError/ValueError; 0/negative fail.
+            /// Server-specific upper bounds/normalization are decided by MySQL.
+            /// Reliable same-value updates send no SQL after lifecycle/ownership
+            /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
             fn set_innodb_lock_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,3,"innodb_lock_wait_timeout")}
             /// Send START TRANSACTION. Repeating this follows MySQL semantics,
             /// which may commit an existing transaction before opening another.
@@ -651,6 +691,21 @@ fn configured_size(
 /// keyword-only; default TCP is 127.0.0.1:3306 with VERIFY_IDENTITY, while an
 /// explicit Unix socket defaults to plain local transport. Initialization
 /// confirms UTC, encoding, autocommit and server timeout values before return.
+///
+/// Timeouts are positive whole-second integers, excluding bool; type/value
+/// errors raise TypeError/ValueError. Client connect_timeout defaults to 10 and
+/// covers this entire call; None disables that limit. Client read_timeout and
+/// write_timeout default to None and bound network waits without progress.
+/// Client operation_timeout defaults to None and bounds each later complete
+/// command, not buffered fetching or user transaction-block code. Expiry does
+/// not establish server cancellation and grants no new network-cleanup grace.
+///
+/// MySQL server-side SESSION net_read_timeout (upload), net_write_timeout
+/// (download), wait_timeout (idle) and innodb_lock_wait_timeout (InnoDB row lock)
+/// all default to None: preserve the server setting, then confirm its actual
+/// value. Supplied values are applied during initialization; MySQL decides any
+/// version-specific upper limit or normalization. Later remote changes use
+/// explicit set_* methods; three local runtime timeouts use property assignment.
 #[pyfunction]
 #[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,server_public_key_path=None,autocommit=Argument::default(),sql_mode=None,connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
 #[pyo3(

@@ -1275,6 +1275,7 @@ dependencies = [
 name = "sqlaero-python"
 version = "0.2.0-alpha.1"
 dependencies = [
+ "getrandom 0.3.4",
  "jiter",
  "num-bigint 0.4.8",
  "pyo3",

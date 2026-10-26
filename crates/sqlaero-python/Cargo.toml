@@ -19,6 +19,7 @@ num-bigint.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true
 zeroize.workspace = true
+getrandom.workspace = true
 
 [lints]
 workspace = true
