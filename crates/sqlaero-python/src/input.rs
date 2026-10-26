@@ -441,6 +441,12 @@ pub(crate) fn text(
         }
         error
     })?;
+    if quoted && text.len() <= WORK_BYTES {
+        return context
+            .codec
+            .literal(text, output, context.no_backslash_escapes, context.limit)
+            .map_err(|error| codec_error(source, text, context.codec.name(), error));
+    }
     if quoted {
         writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))?;
     }

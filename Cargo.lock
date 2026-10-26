@@ -1256,6 +1256,7 @@ dependencies = [
  "flate2",
  "itoa",
  "libc",
+ "memchr",
  "mio",
  "mysql_common",
  "num-bigint 0.4.8",

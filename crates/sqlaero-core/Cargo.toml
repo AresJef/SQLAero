@@ -23,6 +23,7 @@ num-bigint.workspace = true
 thiserror.workspace = true
 itoa.workspace = true
 zmij.workspace = true
+memchr.workspace = true
 
 [dev-dependencies]
 regex = "=1.13.1"

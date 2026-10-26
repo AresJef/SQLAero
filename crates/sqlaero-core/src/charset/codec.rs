@@ -1,7 +1,7 @@
 //! Strict conversion and SQL quoting under one prepared MySQL charset route.
 
 use super::{Charset, CodecRoute, multibyte, single_byte};
-use crate::bind::writer::append;
+use crate::bind::writer::{append, reserve};
 use crate::protocol::framing::WireError;
 use std::borrow::Cow;
 
@@ -108,6 +108,30 @@ impl Codec {
         no_backslash: bool,
         limit: usize,
     ) -> Result<(), CodecError> {
+        let bytes = text.as_bytes();
+        // The portable memchr implementation owns CPU-specific dispatch.
+        // Below one ordinary SIMD block, keep the small existing writer.
+        // Rejecting any control byte is conservative: tabs and other harmless
+        // controls simply use the general path, with identical SQL output.
+        if bytes.len() >= 16
+            && matches!(self.charset.route, CodecRoute::Utf8)
+            && if no_backslash {
+                memchr::memchr(b'\'', bytes).is_none()
+            } else {
+                memchr::memchr3(b'\'', b'"', b'\\', bytes).is_none()
+                    && bytes.iter().copied().min().unwrap_or(u8::MAX) >= 0x20
+            }
+        {
+            let length = bytes.len().checked_add(2).ok_or(WireError::Limit {
+                required: usize::MAX,
+                limit,
+            })?;
+            reserve(output, length, limit)?;
+            output.push(b'\'');
+            output.extend_from_slice(bytes);
+            output.push(b'\'');
+            return Ok(());
+        }
         append(output, b"'", limit)?;
         self.literal_fragment(text, output, no_backslash, limit)?;
         append(output, b"'", limit)?;
@@ -329,6 +353,40 @@ fn escaped<const MODE: u8>(
 mod tests {
     use super::*;
     use crate::charset::resolve;
+    #[test]
+    fn complete_utf8_literal_matches_verified_fragment_for_every_byte_character() {
+        let codec = Codec::new(resolve(None, None).unwrap().charset);
+        for no_backslash in [false, true] {
+            for marker in 0..=255_u8 {
+                let value = format!("abcdefghijklmnop{}abcdefghijklmnop", char::from(marker));
+                let mut expected = vec![b'\''];
+                codec
+                    .literal_fragment(&value, &mut expected, no_backslash, 1024)
+                    .unwrap();
+                expected.push(b'\'');
+                let mut actual = Vec::new();
+                codec
+                    .literal(&value, &mut actual, no_backslash, expected.len())
+                    .unwrap();
+                assert_eq!(
+                    actual, expected,
+                    "marker={marker}, no_backslash={no_backslash}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ordinary_utf8_complete_reservation_keeps_exact_limit_and_original_prefix() {
+        let codec = Codec::new(resolve(None, None).unwrap().charset);
+        let value = "abcdefghijklmnop";
+        let mut actual = b"prefix".to_vec();
+        let limit = actual.len() + value.len() + 2;
+        assert!(codec.literal(value, &mut actual, false, limit - 1).is_err());
+        assert_eq!(actual, b"prefix");
+        codec.literal(value, &mut actual, false, limit).unwrap();
+        assert_eq!(actual, b"prefix'abcdefghijklmnop'");
+    }
     #[test]
     fn native_utf8_quotes_actual_sql_metacharacters_without_touching_patterns() {
         let codec = Codec::new(resolve(None, None).unwrap().charset);
