@@ -127,7 +127,11 @@ def test_interrupted_output_releases_temporaries_and_does_not_commit() -> None:
 
 
 def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable() -> None:
-    value = reader([(b"1",)] * 100000)
+    # A real macOS timer can be delivered later than its requested 1 ms.
+    # Keep the native operation long enough for delivery on hosted runners;
+    # the callback must still observe the actual production busy guard.
+    row_count = 1_000_000
+    value = reader([(b"1",)] * row_count)
     observed: list[str] = []
 
     def overlap(signum: int, frame: FrameType | None) -> None:
@@ -140,7 +144,7 @@ def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable(
     previous = signal.signal(signal.SIGALRM, overlap)
     try:
         signal.setitimer(signal.ITIMER_REAL, 0.001)
-        assert len(value.fetchall()) == 100000
+        assert len(value.fetchall()) == row_count
     finally:
         signal.setitimer(signal.ITIMER_REAL, 0)
         signal.signal(signal.SIGALRM, previous)
