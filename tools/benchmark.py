@@ -718,8 +718,11 @@ def collect(args: argparse.Namespace) -> None:
                         while key not in existing:
                             if time.perf_counter_ns() >= deadline:
                                 raise TimeoutError("Collection wall budget reached; complete groups saved")
-                            a.prepare(case.id, n, role_a)
-                            b.prepare(case.id, n, "native")
+                            # Balance real preparation recency as well as
+                            # measurement position, especially for fetch pools.
+                            for role in order:
+                                (a if role == "A" else b).prepare(
+                                    case.id, n, role_a if role == "A" else "native")
                             pair_start = time.perf_counter_ns()
                             samples: dict[str, dict[str, Any]] = {}
                             for role in order:
