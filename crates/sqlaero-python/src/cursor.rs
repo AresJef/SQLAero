@@ -118,6 +118,12 @@ pub(crate) struct Cursor {
     counts: Mutex<Option<Counts>>,
 }
 impl Cursor {
+    /// Stop future operations after mandatory transaction cleanup failed. Any
+    /// already active Reader operation retains and releases its own data.
+    pub(crate) fn retire(&self) {
+        self.reader.retire();
+    }
+
     pub(crate) fn new(
         connection: Py<Connection>,
         types: Py<ScalarTypes>,

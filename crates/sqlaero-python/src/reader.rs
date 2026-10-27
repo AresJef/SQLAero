@@ -54,10 +54,15 @@ struct State {
 }
 
 /// A concrete per-Cursor operation owner. It never owns the connection wire.
-pub(crate) struct Operation<'a>(&'a AtomicBool);
+pub(crate) struct Operation<'a>(&'a Reader);
 impl Drop for Operation<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        // Retirement never frees an active fetch's owned Arc. Clear only the
+        // Reader's retained rows after that operation reaches its safe exit.
+        if self.0.closed.load(Ordering::Acquire) {
+            self.0.release_retired_rows();
+        }
+        self.0.active.store(false, Ordering::Release);
     }
 }
 
@@ -102,7 +107,22 @@ impl Reader {
                 "Cursor is busy executing or reading another operation",
             ));
         }
-        Ok(Operation(&self.active))
+        Ok(Operation(self))
+    }
+    fn release_retired_rows(&self) {
+        let released = match self.state.lock() {
+            Ok(mut state) => state.data.take(),
+            Err(error) => error.into_inner().data.take(),
+        };
+        drop(released);
+    }
+    /// Mandatory context cleanup can retire a busy Cursor without cancelling
+    /// its current local operation or destroying metadata and saved counters.
+    pub(crate) fn retire(&self) {
+        self.closed.store(true, Ordering::Release);
+        if !self.active.load(Ordering::Acquire) {
+            self.release_retired_rows();
+        }
     }
     fn lock(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, State>> {
         match self.state.lock() {

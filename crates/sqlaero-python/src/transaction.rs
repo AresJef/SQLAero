@@ -245,6 +245,7 @@ impl Transaction {
             .take();
         let business = (!value.is_none()).then(|| PyErr::from_value(value.clone()));
         let mut primary = business.as_ref().map(|error| error.clone_ref(py));
+        let mut commit_confirmed = false;
         let finish = (|| {
             let mut budget = connection.runtime(py)?.timeouts.operation();
             let mut lease = connection
@@ -255,13 +256,15 @@ impl Transaction {
                 Self::rollback_after_error(&connection, py, &mut lease, &mut budget, primary);
             } else {
                 let mut commit = ControlAttempt::default();
-                if let Err(error) = connection.control_recorded(
+                let result = connection.control_recorded(
                     py,
                     &mut lease,
                     b"COMMIT AND NO CHAIN NO RELEASE",
                     &mut budget,
                     &mut commit,
-                ) {
+                );
+                commit_confirmed = commit.confirmed;
+                if let Err(error) = result {
                     let error = errors::at(py, error, "transaction.commit");
                     if commit.confirmed {
                         Self::note(
@@ -299,9 +302,19 @@ impl Transaction {
         if let Some(cursor) = cursor
             && let Err(error) = cursor.borrow(py).close(py)
         {
+            // This mandatory cleanup differs from an ordinary busy close:
+            // the completed context must not leave its Cursor reusable.
+            cursor.borrow(py).retire();
             if let Some(existing) = &primary {
                 errors::additional(py, existing, error, "cursor.close");
             } else {
+                if commit_confirmed {
+                    Self::note(
+                        py,
+                        &error,
+                        "COMMIT was fully confirmed; subsequent Cursor cleanup failed. No rollback or repeated commit was sent.",
+                    );
+                }
                 primary = Some(error);
             }
         }

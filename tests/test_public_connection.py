@@ -8,7 +8,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from sqlaero import Connection, Cursor, SSL, connect
@@ -800,6 +800,76 @@ def test_independent_cursor_then_connection_cleanup_failures_keep_actual_order(c
         assert future is not None and future.result(timeout=3) == 1
     assert not cursor.closed and not connection.closed and connection.ping()
     cursor.close()
+
+
+@requires_mysql
+def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fetch(connection: Connection) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import signal
+    from types import FrameType
+    from sqlaero.errors import InterfaceBusyError
+
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    name = f'sqlaero_cleanup_ack_{connection.connection_id}'
+    setup = connection.cursor()
+    setup.execute(f'CREATE TABLE {name}(id INT PRIMARY KEY) ENGINE=InnoDB')
+    ready, fetching, exited = Event(), Event(), Event()
+    cursors: list[Cursor] = []
+    rows = 1_000_000
+    document = '[' + '0,' * (rows - 1) + '0]'
+
+    def transaction_body() -> None:
+        try:
+            with connection.transaction() as current:
+                current.execute(f'INSERT INTO {name} VALUES (1)')
+                current.decode_json = True
+                current.execute('SELECT CAST(%s AS JSON) AS payload', (document,))
+                cursors.append(current)
+                ready.set()
+                assert fetching.wait(3), 'fetch did not reach its existing signal boundary'
+        finally:
+            exited.set()
+
+    def overlap(signum: int, frame: FrameType | None) -> None:
+        fetching.set()
+        assert exited.wait(3), 'transaction exit did not finish while the fetch was paused'
+
+    previous = signal.signal(signal.SIGALRM, overlap)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(transaction_body)
+            assert ready.wait(3)
+            current = cursors[0]
+            signal.setitimer(signal.ITIMER_REAL, 0.001)
+            try:
+                row = current.fetchone()
+            finally:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+            assert fetching.is_set()
+            assert row is not None and isinstance(row[0], list)
+            payload = cast(list[int], row[0])
+            assert len(payload) == rows and payload[0] == payload[-1] == 0
+            with pytest.raises(InterfaceBusyError) as caught:
+                future.result(timeout=3)
+            assert any('COMMIT was fully confirmed' in note
+                       for note in getattr(caught.value, '__notes__', []))
+            assert caught.value.error_info.stage == 'cursor.close'
+            assert current.closed
+            assert current.columns.names == ('payload',) and current.row_count == 1
+            with pytest.raises(InterfaceError, match='closed|retired'):
+                current.fetchone()
+            with pytest.raises(InterfaceError, match='closed|retired'):
+                current.execute('SELECT 77')
+        assert connection.ping()
+        with live(label) as observer:
+            check = observer.cursor()
+            check.execute(f'SELECT id FROM {name}')
+            assert check.fetchall() == ((1,),)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+        setup.execute(f'DROP TABLE IF EXISTS {name}')
 
 
 @requires_mysql
