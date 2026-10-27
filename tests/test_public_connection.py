@@ -376,6 +376,27 @@ def test_public_tcp_and_unix_tls_share_prepared_materials(label: str) -> None:
 
 
 @requires_mysql
+@pytest.mark.parametrize('label', ['84', '97'])
+def test_explicit_tls_roots_preserve_name_policy_and_replace_trust(label: str) -> None:
+    from sqlaero.errors import OperationalError
+
+    settings = {'unix_socket': None, 'host': '127.0.0.1',
+                'port': 13384 if label == '84' else 13397}
+    # The real peer contains an IP SAN. Explicit roots retain OS name policy.
+    with live(label, **settings, ssl=SSL(ca_file=ROOT / 'tls/ca.pem',
+                                        mode='VERIFY_IDENTITY')) as value:
+        assert value.ping() and value.tls_version
+    with live(label, ssl=SSL(ca_file=ROOT / 'tls/ca.pem', mode='VERIFY_CA')) as value:
+        assert value.ping()
+    with pytest.raises(OperationalError) as caught:
+        live(label, **settings, ssl=SSL(ca_file=ROOT / 'tls/ca.pem',
+                                       mode='VERIFY_IDENTITY', server_name='unrelated.invalid'))
+    assert caught.value.is_server_error is False
+    with pytest.raises(OperationalError):
+        live(label, **settings, ssl=SSL(ca_file=ROOT / 'tls/client.pem', mode='VERIFY_CA'))
+
+
+@requires_mysql
 def test_failed_routine_cannot_leave_a_false_utc_fact(connection: Connection) -> None:
     from sqlaero.errors import SQLAeroError
     cursor = connection.cursor()
