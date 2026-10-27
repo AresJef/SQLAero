@@ -598,14 +598,17 @@ def package_identity(package: str | None) -> dict[str, object]:
 
 
 def collect(args: argparse.Namespace) -> None:
-    directory = Path(args.output).resolve()
-    directory.mkdir(parents=True, exist_ok=True)
     selected = [case for case in cases() if case.id in args.case or
                 any(case.id.startswith(prefix) for prefix in args.prefix)]
     if args.legacy:
         selected = [case for case in selected if case.family == "escape" and not case.no_backslash]
+    missing = set(args.case) - {case.id for case in selected}
+    if missing:
+        raise ValueError(f"Unknown or inapplicable case IDs: {sorted(missing)}")
     if not selected:
         raise ValueError("No applicable cases selected")
+    directory = Path(args.output).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
     parameters: dict[str, int] = {}
     if args.config:
         config = cast(dict[str, Any], json.loads(Path(args.config).read_text()))
