@@ -78,6 +78,39 @@ def test_native_file_preparation_keeps_source_and_connect_stage(tmp_path: Path) 
     assert current.exception_type is None and current.code is None
 
 
+@pytest.mark.parametrize(('payload', 'expected_code', 'server_error'), [
+    (b'\xff\x10\x04Too many connections', 1040, True),
+    (b'\xff', 65539, False),
+    (b'\xff\x10', 65539, False),
+], ids=['complete-pre-handshake-err', 'missing-code', 'truncated-code'])
+def test_initial_err_uses_unnegotiated_protocol_format(
+    payload: bytes, expected_code: int, server_error: bool,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    import socket
+    from sqlaero.errors import SQLAeroError
+
+    with socket.socket() as listener, ThreadPoolExecutor(max_workers=1) as executor:
+        listener.bind(('127.0.0.1', 0))
+        listener.listen(1)
+        listener.settimeout(3)
+
+        def send_initial_error() -> None:
+            with listener.accept()[0] as peer:
+                peer.sendall(len(payload).to_bytes(3, 'little') + b'\x00' + payload)
+
+        sent = executor.submit(send_initial_error)
+        with pytest.raises(SQLAeroError) as caught:
+            connect(user='unopened', host='127.0.0.1', port=listener.getsockname()[1],
+                    ssl=SSL(mode='DISABLED'), connect_timeout=2)
+        sent.result(timeout=3)
+    assert caught.value.code == expected_code
+    assert caught.value.is_server_error is server_error
+    assert caught.value.error_info.stage == 'connect'
+    if server_error:
+        assert caught.value.message == 'Too many connections'
+
+
 ROOT = Path(os.environ.get('SQLAERO_TEST_MYSQL_ROOT', '/private/tmp/sqlaero-mysql-501'))
 requires_mysql = pytest.mark.skipif('SQLAERO_TEST_MYSQL_ROOT' not in os.environ,
                                    reason='requires explicitly selected owned MySQL fixtures')
@@ -394,6 +427,63 @@ def test_explicit_tls_roots_preserve_name_policy_and_replace_trust(label: str) -
     assert caught.value.is_server_error is False
     with pytest.raises(OperationalError):
         live(label, **settings, ssl=SSL(ca_file=ROOT / 'tls/client.pem', mode='VERIFY_CA'))
+
+
+@requires_mysql
+@pytest.mark.parametrize('hint', [b'mysql_native_password', b'unrecognized_hint'])
+def test_greeting_plugin_is_only_a_hint_before_actual_authentication(hint: bytes) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    import select
+    import socket
+    import time as clock_time
+
+    observed: list[int] = []
+    with socket.socket() as listener, ThreadPoolExecutor(max_workers=1) as executor:
+        listener.bind(('127.0.0.1', 0))
+        listener.listen(1)
+        listener.settimeout(3)
+
+        def relay_changed_greeting() -> None:
+            """Alter only the real greeting; forward subsequent TLS bytes unchanged."""
+            with listener.accept()[0] as client, socket.create_connection(('127.0.0.1', 13384), 3) as server:
+                client.settimeout(3)
+
+                def receive_exact(peer: socket.socket, count: int) -> bytes:
+                    parts = bytearray()
+                    while len(parts) < count:
+                        block = peer.recv(count - len(parts))
+                        if not block:
+                            raise EOFError('test greeting ended before its frame was complete')
+                        parts.extend(block)
+                    return bytes(parts)
+
+                header = receive_exact(server, 4)
+                payload = receive_exact(server, int.from_bytes(header[:3], 'little'))
+                original = b'caching_sha2_password\x00'
+                assert payload.endswith(original)
+                payload = payload[:-len(original)] + hint + b'\x00'
+                client.sendall(len(payload).to_bytes(3, 'little') + header[3:] + payload)
+                end = clock_time.monotonic() + 5
+                while clock_time.monotonic() < end:
+                    readable, _, _ = select.select([client, server], [], [], 0.1)
+                    for source in readable:
+                        block = source.recv(65536)
+                        if not block:
+                            return
+                        if source is client:
+                            observed.append(len(block))
+                        (server if source is client else client).sendall(block)
+                raise TimeoutError('test authentication relay exceeded its fixed deadline')
+
+        relayed = executor.submit(relay_changed_greeting)
+        try:
+            with live('84', unix_socket=None, host='127.0.0.1', port=listener.getsockname()[1],
+                      connect_timeout=3, ssl=SSL(ca_file=ROOT / 'tls/ca.pem',
+                                               mode='VERIFY_IDENTITY', server_name='localhost')) as value:
+                assert value.ping()
+        finally:
+            relayed.result(timeout=6)
+    assert observed, 'a supported login must be sent before judging the actual requested plugin'
 
 
 @requires_mysql

@@ -158,7 +158,6 @@ pub struct Establish {
     metadata: Option<ServerMetadata>,
     capabilities: CapabilityFlags,
     nonce: [u8; 20],
-    plugin: Vec<u8>,
 }
 
 impl Establish {
@@ -232,7 +231,6 @@ impl Establish {
             metadata: None,
             capabilities: CapabilityFlags::empty(),
             nonce: [0; 20],
-            plugin: Vec::new(),
         })
     }
 
@@ -363,8 +361,7 @@ impl Establish {
             if self.phase == Phase::Greeting {
                 if data.first() == Some(&0xff) {
                     return Err(AuthError::Server(
-                        packets::server_error(&data, CapabilityFlags::CLIENT_PROTOCOL_41)?
-                            .into_owned(),
+                        packets::server_error(&data, CapabilityFlags::empty())?.into_owned(),
                     )
                     .into());
                 }
@@ -388,10 +385,13 @@ impl Establish {
                     .nonce()
                     .try_into()
                     .map_err(|_| WireError::Malformed("invalid greeting nonce"))?;
-                self.plugin = greeting
+                // The greeting name is a hint, not this account's final
+                // authentication requirement. Declare our supported plugin in
+                // login and judge any subsequent AuthSwitch independently.
+                greeting
                     .auth_plugin_name_ref()
-                    .ok_or(ConnectError::Unsupported("authentication plugin missing"))?
-                    .to_vec();
+                    .filter(|name| !name.is_empty())
+                    .ok_or(ConnectError::Unsupported("authentication plugin missing"))?;
                 let required = CapabilityFlags::CLIENT_PROTOCOL_41
                     | CapabilityFlags::CLIENT_SECURE_CONNECTION
                     | CapabilityFlags::CLIENT_PLUGIN_AUTH
@@ -483,7 +483,7 @@ impl Establish {
     fn prepare_login(&mut self) -> Result<(), ConnectError> {
         let secure = self.channel.as_ref().is_some_and(Channel::secure);
         let auth = CachingSha2::new(
-            &self.plugin,
+            b"caching_sha2_password",
             std::mem::take(&mut self.params.password),
             self.nonce,
             secure,

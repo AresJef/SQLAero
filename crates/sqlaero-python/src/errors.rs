@@ -565,7 +565,7 @@ pub(crate) fn establish(
             error.message_ref(),
         ),
         error @ (ConnectError::Unsupported(_)
-        | ConnectError::Auth(AuthError::UnsupportedPlugin)) => client(
+        | ConnectError::Auth(AuthError::UnsupportedPlugin(_))) => client(
             py,
             ClientErrorCode::UnsupportedCapability,
             error.to_string(),

@@ -22,8 +22,8 @@ pub enum AuthError {
     #[error("MySQL authentication failed: {0}")]
     Server(ServerError<'static>),
     /// The requested plugin is outside this client's declared support.
-    #[error("server requested an unsupported authentication plugin")]
-    UnsupportedPlugin,
+    #[error("unsupported authentication plugin '{0}'; only caching_sha2_password is supported")]
+    UnsupportedPlugin(String),
     /// Bare TCP full authentication requires a separately trusted local key.
     #[error(
         "bare TCP full authentication requires server_public_key_path; automatic server-key fetching is disabled"
@@ -39,6 +39,19 @@ pub enum AuthError {
         "RSA-OAEP password encryption failed; check key size or use verified TLS or a Unix socket"
     )]
     Encryption,
+}
+
+fn unsupported_plugin(plugin: &[u8]) -> AuthError {
+    let mut name: String = plugin
+        .iter()
+        .take(32)
+        .flat_map(|byte| std::ascii::escape_default(*byte))
+        .map(char::from)
+        .collect();
+    if plugin.len() > 32 {
+        name.push_str(" [truncated]");
+    }
+    AuthError::UnsupportedPlugin(name)
 }
 
 /// Load the caller's explicit local trust material. This is also checked when
@@ -115,7 +128,7 @@ impl CachingSha2 {
         send_limit: usize,
     ) -> Result<Self, AuthError> {
         if plugin != b"caching_sha2_password" {
-            return Err(AuthError::UnsupportedPlugin);
+            return Err(unsupported_plugin(plugin));
         }
         Ok(Self {
             password,
@@ -198,7 +211,7 @@ impl CachingSha2 {
                     return Err(WireError::Malformed("trailing AuthSwitch fields").into());
                 }
                 if request.auth_plugin() != AuthPlugin::CachingSha2Password {
-                    return Err(AuthError::UnsupportedPlugin);
+                    return Err(unsupported_plugin(request.auth_plugin().as_bytes()));
                 }
                 self.nonce = request.plugin_data().try_into().map_err(|_| {
                     WireError::Malformed("AuthSwitch challenge must contain 20 bytes")
@@ -313,6 +326,37 @@ mod tests {
         assert!(matches!(
             auth.advance(&[0, 0, 0, 2, 0, 0, 0]).unwrap(),
             AuthResponse::Complete(_)
+        ));
+    }
+
+    #[test]
+    fn unsupported_actual_switch_is_rejected_with_bounded_escaped_name() {
+        for name in [b"mysql_native_password".to_vec(), b"unknown\n".repeat(1000)] {
+            let mut auth = auth(true);
+            let mut packet = vec![0xfe];
+            packet.extend_from_slice(&name);
+            packet.push(0);
+            packet.extend_from_slice(&[0x42; 20]);
+            packet.push(0);
+            let error = auth
+                .advance(&packet)
+                .err()
+                .expect("unsupported actual plugin");
+            assert!(matches!(error, AuthError::UnsupportedPlugin(_)));
+            let display = error.to_string();
+            assert!(!display.contains('\n') && !display.contains("private-test-value"));
+            assert!(display.len() < 256);
+            assert_eq!(auth.phase, Phase::Failed);
+            assert!(auth.password.is_empty());
+        }
+    }
+
+    #[test]
+    fn authentication_err_still_requires_the_negotiated_sqlstate_marker() {
+        let mut auth = auth(true);
+        assert!(matches!(
+            auth.advance(b"\xff\x10\x04Too many connections"),
+            Err(AuthError::Wire(_))
         ));
     }
 
