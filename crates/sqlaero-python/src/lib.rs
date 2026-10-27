@@ -315,14 +315,8 @@ fn _decode_field<'py>(
         decode_text_strict,
         decode_date_strict,
     };
-    let plan = sqlaero_core::result::decode::Plan::new(
-        type_code,
-        flags,
-        collation_id,
-        length,
-        options,
-        sqlaero_core::charset::output::OutputCodec::for_collation(255),
-    );
+    let plan =
+        sqlaero_core::result::decode::Plan::new(type_code, flags, collation_id, length, options);
     output::field(py, data.as_bytes(), plan, &types, None)
 }
 

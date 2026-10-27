@@ -1,7 +1,7 @@
 """Public connection/cursor composition against the owned MySQL fixtures."""
 
 from collections.abc import Iterator
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import inspect
 import json
@@ -124,6 +124,31 @@ def test_closed_autocommit_setter_records_stage_without_rewriting_error(connecti
         connection.set_autocommit(False)
     assert caught.value.error_info.stage == 'connection.set_autocommit'
     assert caught.value.is_server_error is False
+
+
+@requires_mysql
+@pytest.mark.parametrize('result_charset', ['utf8mb4', 'utf16', 'utf16le', 'ucs2', 'utf32'])
+def test_date_fallback_uses_calendar_wire_text_not_metadata_encoding(
+    connection: Connection, result_charset: str,
+) -> None:
+    from sqlaero.errors import DataError
+
+    cursor = connection.cursor()
+    cursor.execute("SET SESSION sql_mode=''")
+    cursor.execute('SET SESSION character_set_results=%s', result_charset)
+    cursor.decode_date_strict = False
+    sql = ("SELECT CAST('0000-00-00' AS DATE) AS zero_date, "
+           "CAST('0000-00-00 00:00:00' AS DATETIME) AS zero_datetime, "
+           "CAST('2024-02-29' AS DATE) AS valid_date, "
+           "CAST('2024-02-29 01:02:03.123456' AS DATETIME(6)) AS valid_datetime")
+    cursor.execute(sql)
+    assert cursor.fetchone() == ('0000-00-00', '0000-00-00 00:00:00', date(2024, 2, 29),
+                                 datetime(2024, 2, 29, 1, 2, 3, 123456))
+    cursor.decode_date_strict = True
+    cursor.execute(sql)
+    with pytest.raises(DataError):
+        cursor.fetchone()
+    assert cursor.row_count == 1 and not connection.closed
 
 
 def test_public_signatures_and_input_preflight() -> None:

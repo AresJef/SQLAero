@@ -71,6 +71,44 @@ def test_failed_whole_fetch_keeps_its_original_start_and_next_row() -> None:
     assert another.position == 0
 
 
+@pytest.mark.parametrize(('type_code', 'valid', 'invalid'), [
+    (3, b'12', b"bad'\n\\\x00value"),
+    (10, b'2024-02-29', b'2026-02-31'),
+    (11, b'12:00:00', b'-25:00:00'),
+    (245, b'{}', b'{"bad":' + b'x' * 100000),
+], ids=['integer', 'date', 'duration', 'long-json'])
+def test_failed_field_has_one_bounded_raw_preview_and_absolute_location(
+    type_code: int, valid: bytes, invalid: bytes,
+) -> None:
+    value = _rows_from_packets(
+        packets([column('bad_field', type_code)], [(valid,), (valid,), (invalid,)]),
+        decode_json=True, use_timedelta=False,
+    )
+    assert value.columns.keys == ('bad_field',)
+    first = value.fetchone()
+    with pytest.raises(DataError) as caught:
+        value.fetchmany(2)
+    assert value.position == 1
+    notes = '\n'.join(getattr(caught.value, '__notes__', []))
+    assert 'row 2, column 0' in notes and 'bad_field' in notes
+    assert "field b'" in notes
+    preview = notes.split('; field ', 1)[1]
+    assert len(preview) <= 160 and '\x00' not in preview and '\n' not in preview
+    assert f'original length {len(invalid)}' in preview
+    if len(invalid) > 24:
+        assert '[truncated]' in preview
+    assert value.fetchone() == first and value.position == 2
+
+
+def test_unicode_field_error_keeps_original_object_without_duplicate_preview() -> None:
+    value = _rows_from_packets(packets([column('text', 253, 255)], [(b'A\xffB',)]))
+    with pytest.raises(UnicodeDecodeError) as caught:
+        value.fetchone()
+    assert caught.value.object == b'A\xffB' and caught.value.start == 1
+    assert "field b'" not in '\n'.join(getattr(caught.value, '__notes__', []))
+    assert value.position == 0
+
+
 def test_results_remain_independent_and_close_preserves_local_information() -> None:
     first = reader([(b"1",), (b"2",)])
     second = reader([(b"7",)])

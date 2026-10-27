@@ -1,7 +1,9 @@
 //! Buffered fetch ownership and one atomic position commit per output call.
 
-use crate::{errors, input::ScalarTypes, metadata, output};
-use pyo3::exceptions::{PyOverflowError, PyStopIteration, PyTypeError, PyValueError};
+use crate::{errors, input, input::ScalarTypes, metadata, output};
+use pyo3::exceptions::{
+    PyOverflowError, PyStopIteration, PyTypeError, PyUnicodeDecodeError, PyValueError,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyInt, PyTuple};
 use sqlaero_core::charset::output::OutputCodec;
@@ -170,7 +172,6 @@ impl Reader {
                         column.collation_id,
                         column.column_length,
                         options,
-                        codec,
                     ))
                     .map_err(|error| output::memory(py, error))?;
             }
@@ -268,11 +269,19 @@ impl Reader {
                                 .and_then(|state| state.metadata.clone())
                                 .and_then(|metadata| metadata.diagnostic_key(py, column_index))
                                 .map_or_else(String::new, |key| format!(" (key={key})"));
+                            // Keep standard Unicode diagnostics without another
+                            // field copy. Other failures share one bounded byte
+                            // preview, independently of the output value's type.
+                            let preview = if error.is_instance_of::<PyUnicodeDecodeError>(py) {
+                                String::new()
+                            } else {
+                                format!("; {}", input::binary_diagnostic("field", value, 24))
+                            };
                             errors::note(
                                 py,
                                 &error,
                                 format!(
-                                    "while decoding result row {row_index}, column {column_index}{key}; fetch position remains {start}"
+                                    "while decoding result row {row_index}, column {column_index}{key}; fetch position remains {start}{preview}"
                                 ),
                             );
                             return Err(error);
