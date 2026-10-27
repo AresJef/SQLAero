@@ -1,10 +1,12 @@
 """Private native extension declarations."""
 
-from typing import Any, Iterator, overload
+from typing import Any, Iterator, Never, Self, final, overload
 from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as MySQLErrorCode
 
+@final
 class ColumnInfo:
     """Immutable metadata for one column at its original result position."""
+    def __new__(cls, _factory_only: Never, /) -> Self: ...
     @property
     def index(self) -> int:
         """Zero-based original column position."""
@@ -122,8 +124,10 @@ class ColumnInfo:
         """Validated protocol catalog, def."""
         ...
 
+@final
 class Columns:
     """Immutable ordered column metadata with exact unique-key lookup."""
+    def __new__(cls, _factory_only: Never, /) -> Self: ...
     def __len__(self) -> int: ...
     def __iter__(self) -> Iterator[ColumnInfo]: ...
     @overload
@@ -159,8 +163,10 @@ class SQLAeroError(Exception):
         """
         ...
 
+@final
 class ErrorInfo:
     """Read-only captured error facts; not an exception and not constructible."""
+    def __new__(cls, _factory_only: Never, /) -> Self: ...
     @property
     def stage(self) -> str | None:
         """Actual handling stage, or None when unrecorded."""
@@ -229,7 +235,7 @@ class OperationalTimeoutError(OperationalError):
 class IntegrityError(DatabaseError):
     """A database integrity constraint was violated."""
 class InternalError(DatabaseError):
-    """An actual internal driver invariant failed."""
+    """A reliably identified internal driver or server condition failed."""
 class ProgrammingError(DatabaseError):
     """A SQL command or binding contract was rejected."""
 class NotSupportedError(DatabaseError):
@@ -311,6 +317,7 @@ def _rows_from_packets(packets: list[bytes], *, name_collation_id: int = 255,
 from .typing import EscapeInput as EscapeInput, PathInput as PathInput, ErrorTypesInput, ErrorCodesInput
 from types import TracebackType
 
+@final
 class SSL:
     """Immutable native TLS policy and validated reusable PEM materials."""
     def __init__(self, *, mode: str | None = None, min_tls_version: str | None = None,
@@ -318,11 +325,22 @@ class SSL:
                  key_file: PathInput | None = None, key_password: str | None = None,
                  server_name: str | None = None) -> None: ...
 
+@final
 class Connection:
     """Fully initialized native sync connection, created by connect()."""
+    def __new__(cls, _factory_only: Never, /) -> Self: ...
     def cursor(self, cursor: type[Cursor] | type[tuple[Any, ...]] | None = None) -> Cursor: ...
     def transaction(self, cursor: type[Cursor] | type[tuple[Any, ...]] | None = None) -> _Transaction: ...
-    def close(self) -> None: ...
+    def close(self) -> None:
+        """Permanently retire this connection. COM_QUIT is sent without a response.
+        Only write_timeout and operation_timeout apply; read_timeout is not
+        used. If both applicable limits are None, there is no library-imposed
+        deadline. Sending failure still performs local transport cleanup and
+        keeps the connection retired. Timeout or interruption grants no fresh
+        network budget or cleanup grace. Repeated completed close returns None;
+        overlapping operations raise InterfaceBusyError.
+        """
+        ...
     def begin(self) -> None: ...
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
@@ -485,49 +503,112 @@ class Connection:
         ...
     @property
     def decode_json(self) -> bool:
-        """Native JSON decoding; default False, copied only to new Cursors."""
+        """Default False. False returns the original JSON text as str. True parses
+        the complete JSON into Python values; malformed, incomplete or out-of-
+        range content raises DataError without text fallback. This applies to
+        JSON fields, not JSON-looking TEXT. SQL NULL remains None.
+
+        This local default is copied only to new Cursors; existing Cursors and
+        results do not change. Exact bool assignment only; other types raise
+        TypeError. Reads and assignments send no SQL. Saved values remain
+        readable after close, but assignment after close raises InterfaceError.
+        """
         ...
     @decode_json.setter
     def decode_json(self, value: bool) -> None: ...
     @property
     def decode_set(self) -> bool:
-        """SET tuple decoding; default False, copied only to new Cursors."""
+        """Default False. False returns SET text as str. True returns an ordered
+        tuple[str, ...]; the empty SET is (), and an empty member is preserved.
+        SQL NULL remains None.
+
+        This local default is copied only to new Cursors; existing Cursors and
+        results do not change. Exact bool assignment only; other types raise
+        TypeError. Reads and assignments send no SQL. Saved values remain
+        readable after close, but assignment after close raises InterfaceError.
+        """
         ...
     @decode_set.setter
     def decode_set(self, value: bool) -> None: ...
     @property
     def decode_bit(self) -> bool:
-        """BIT integer decoding; default False, copied only to new Cursors."""
+        """Default False. False returns the exact BIT bytes, including leading zero
+        bytes. True returns an unsigned big-endian int, never a bool. Invalid
+        BIT contents raise DataError. SQL NULL remains None.
+
+        This local default is copied only to new Cursors; existing Cursors and
+        results do not change. Exact bool assignment only; other types raise
+        TypeError. Reads and assignments send no SQL. Saved values remain
+        readable after close, but assignment after close raises InterfaceError.
+        """
         ...
     @decode_bit.setter
     def decode_bit(self, value: bool) -> None: ...
     @property
     def use_decimal(self) -> bool:
-        """Exact Decimal output; default True, copied only to new Cursors."""
+        """Default True. True returns exact decimal.Decimal values for DECIMAL.
+        False uses the native correctly rounded binary64 parser and returns
+        float, potentially losing decimal precision; invalid or non-finite
+        results raise DataError. SQL NULL remains None.
+
+        This local default is copied only to new Cursors; existing Cursors and
+        results do not change. Exact bool assignment only; other types raise
+        TypeError. Reads and assignments send no SQL. Saved values remain
+        readable after close, but assignment after close raises InterfaceError.
+        """
         ...
     @use_decimal.setter
     def use_decimal(self, value: bool) -> None: ...
     @property
     def use_timedelta(self) -> bool:
-        """TIME duration output; default True, copied only to new Cursors."""
+        """Default True. True returns datetime.timedelta for MySQL TIME, including
+        negative and multi-day durations. False returns datetime.time and raises
+        DataError for negative values or durations at least 24 hours. SQL NULL
+        remains None.
+
+        This local default is copied only to new Cursors; existing Cursors and
+        results do not change. Exact bool assignment only; other types raise
+        TypeError. Reads and assignments send no SQL. Saved values remain
+        readable after close, but assignment after close raises InterfaceError.
+        """
         ...
     @use_timedelta.setter
     def use_timedelta(self, value: bool) -> None: ...
     @property
     def decode_text_strict(self) -> bool:
-        """Strict text decoding; default True, copied only to new Cursors."""
+        """Default True. True raises UnicodeDecodeError for invalid text bytes.
+        False preserves undecodable bytes through surrogateescape, without
+        replacement characters. Binary fields remain bytes and input encoding is
+        unaffected. SQL NULL remains None.
+
+        This local default is copied only to new Cursors; existing Cursors and
+        results do not change. Exact bool assignment only; other types raise
+        TypeError. Reads and assignments send no SQL. Saved values remain
+        readable after close, but assignment after close raises InterfaceError.
+        """
         ...
     @decode_text_strict.setter
     def decode_text_strict(self, value: bool) -> None: ...
     @property
     def decode_date_strict(self) -> bool:
-        """Strict date decoding; default True, copied only to new Cursors."""
+        """Default True. True raises DataError for zero or otherwise
+        unrepresentable DATE/DATETIME values. False returns their original
+        calendar text as str. Valid values retain date/datetime output in both
+        modes. SQL NULL remains None.
+
+        This local default is copied only to new Cursors; existing Cursors and
+        results do not change. Exact bool assignment only; other types raise
+        TypeError. Reads and assignments send no SQL. Saved values remain
+        readable after close, but assignment after close raises InterfaceError.
+        """
         ...
     @decode_date_strict.setter
     def decode_date_strict(self, value: bool) -> None: ...
 
+@final
 class Cursor:
     """Independent buffered results, created by Connection.cursor()."""
+    def __new__(cls, _factory_only: Never, /) -> Self: ...
     def execute(self, sql: str, args: EscapeInput = ..., *, many: bool = False,
                 itemize: bool = True) -> int: ...
     def executemany(self, sql: str, args: EscapeInput) -> int: ...
@@ -583,43 +664,111 @@ class Cursor:
         ...
     @property
     def decode_json(self) -> bool:
-        """Native JSON decoding; changes apply only to new executions."""
+        """Default False. False returns the original JSON text as str. True parses
+        the complete JSON into Python values; malformed, incomplete or out-of-
+        range content raises DataError without text fallback. This applies to
+        JSON fields, not JSON-looking TEXT. SQL NULL remains None.
+
+        The initial value is copied from Connection. Changes apply only to
+        subsequent executions; existing results keep their execution-time
+        snapshot. Exact bool assignment only; other types raise TypeError. Reads
+        and assignments send no SQL. Saved values remain readable after close,
+        but assignment after close raises InterfaceError.
+        """
         ...
     @decode_json.setter
     def decode_json(self, value: bool) -> None: ...
     @property
     def decode_set(self) -> bool:
-        """SET tuple decoding; changes apply only to new executions."""
+        """Default False. False returns SET text as str. True returns an ordered
+        tuple[str, ...]; the empty SET is (), and an empty member is preserved.
+        SQL NULL remains None.
+
+        The initial value is copied from Connection. Changes apply only to
+        subsequent executions; existing results keep their execution-time
+        snapshot. Exact bool assignment only; other types raise TypeError. Reads
+        and assignments send no SQL. Saved values remain readable after close,
+        but assignment after close raises InterfaceError.
+        """
         ...
     @decode_set.setter
     def decode_set(self, value: bool) -> None: ...
     @property
     def decode_bit(self) -> bool:
-        """BIT integer decoding; changes apply only to new executions."""
+        """Default False. False returns the exact BIT bytes, including leading zero
+        bytes. True returns an unsigned big-endian int, never a bool. Invalid
+        BIT contents raise DataError. SQL NULL remains None.
+
+        The initial value is copied from Connection. Changes apply only to
+        subsequent executions; existing results keep their execution-time
+        snapshot. Exact bool assignment only; other types raise TypeError. Reads
+        and assignments send no SQL. Saved values remain readable after close,
+        but assignment after close raises InterfaceError.
+        """
         ...
     @decode_bit.setter
     def decode_bit(self, value: bool) -> None: ...
     @property
     def use_decimal(self) -> bool:
-        """Exact Decimal output; changes apply only to new executions."""
+        """Default True. True returns exact decimal.Decimal values for DECIMAL.
+        False uses the native correctly rounded binary64 parser and returns
+        float, potentially losing decimal precision; invalid or non-finite
+        results raise DataError. SQL NULL remains None.
+
+        The initial value is copied from Connection. Changes apply only to
+        subsequent executions; existing results keep their execution-time
+        snapshot. Exact bool assignment only; other types raise TypeError. Reads
+        and assignments send no SQL. Saved values remain readable after close,
+        but assignment after close raises InterfaceError.
+        """
         ...
     @use_decimal.setter
     def use_decimal(self, value: bool) -> None: ...
     @property
     def use_timedelta(self) -> bool:
-        """TIME duration output; changes apply only to new executions."""
+        """Default True. True returns datetime.timedelta for MySQL TIME, including
+        negative and multi-day durations. False returns datetime.time and raises
+        DataError for negative values or durations at least 24 hours. SQL NULL
+        remains None.
+
+        The initial value is copied from Connection. Changes apply only to
+        subsequent executions; existing results keep their execution-time
+        snapshot. Exact bool assignment only; other types raise TypeError. Reads
+        and assignments send no SQL. Saved values remain readable after close,
+        but assignment after close raises InterfaceError.
+        """
         ...
     @use_timedelta.setter
     def use_timedelta(self, value: bool) -> None: ...
     @property
     def decode_text_strict(self) -> bool:
-        """Strict text decoding; changes apply only to new executions."""
+        """Default True. True raises UnicodeDecodeError for invalid text bytes.
+        False preserves undecodable bytes through surrogateescape, without
+        replacement characters. Binary fields remain bytes and input encoding is
+        unaffected. SQL NULL remains None.
+
+        The initial value is copied from Connection. Changes apply only to
+        subsequent executions; existing results keep their execution-time
+        snapshot. Exact bool assignment only; other types raise TypeError. Reads
+        and assignments send no SQL. Saved values remain readable after close,
+        but assignment after close raises InterfaceError.
+        """
         ...
     @decode_text_strict.setter
     def decode_text_strict(self, value: bool) -> None: ...
     @property
     def decode_date_strict(self) -> bool:
-        """Strict date decoding; changes apply only to new executions."""
+        """Default True. True raises DataError for zero or otherwise
+        unrepresentable DATE/DATETIME values. False returns their original
+        calendar text as str. Valid values retain date/datetime output in both
+        modes. SQL NULL remains None.
+
+        The initial value is copied from Connection. Changes apply only to
+        subsequent executions; existing results keep their execution-time
+        snapshot. Exact bool assignment only; other types raise TypeError. Reads
+        and assignments send no SQL. Saved values remain readable after close,
+        but assignment after close raises InterfaceError.
+        """
         ...
     @decode_date_strict.setter
     def decode_date_strict(self, value: bool) -> None: ...
@@ -664,6 +813,7 @@ class _Transaction:
     def __exit__(self, typ: object, value: object, traceback: object) -> bool: ...
 
 
+@final
 class RetryRule:
     """Read-only AND condition; separate rules are ORed by Retry."""
     def __init__(self, *, error_types: ErrorTypesInput | None = None,
@@ -677,6 +827,7 @@ class RetryRule:
         """Normalized plain integer codes, or None for no code constraint."""
         ...
 
+@final
 class Retry:
     """Reusable read-only retry configuration; traversals have independent state."""
     def __init__(self, *rules: RetryRule, max_attempts: int | None = 3,
@@ -708,8 +859,10 @@ class Retry:
         """Whether actual delays are uniform from zero through capped base."""
         ...
 
+@final
 class RetryAttempt:
     """Context yielded by Retry; no public constructor is provided."""
+    def __new__(cls, _factory_only: Never, /) -> Self: ...
     def __enter__(self) -> RetryAttempt: ...
     def __exit__(self, exc_type: type[BaseException] | None,
                  exc: BaseException | None, traceback: TracebackType | None) -> bool: ...

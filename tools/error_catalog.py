@@ -217,8 +217,10 @@ def generate(check: bool) -> None:
                   "        Some([b'2',b'3']) => ExceptionClass::Integrity,",
                   "        Some([b'4',b'2']) => ExceptionClass::Programming,",
                   '        _ => ExceptionClass::Database,','    }','}',''])
-    declarations = ['"""'+banner+'"""','from enum import IntEnum','', 'class SQLAeroErrorCode(IntEnum):',
-                    '    """Stable SQLAero client-origin codes; each member documents its exact class."""']
+    declarations = ['"""'+banner+'"""','from enum import IntEnum', 'from ._sqlaero import (']
+    declarations.extend(f'    {name} as {name},' for name in ('SQLAeroError', *CLASSES, 'SQLAeroWarning', 'ErrorInfo'))
+    declarations.extend([')', '', 'class SQLAeroErrorCode(IntEnum):',
+                    '    """Stable SQLAero client-origin codes; each member documents its exact class."""'])
     for row in client:
         declarations.extend([f"    {row['name']} = {row['code']}", f'    {quoted(description(row,False))}'])
     declarations.extend(['','class MySQLErrorCode(IntEnum):','    """Known direct server ERR numbers; ordinary warnings are not automatically raised."""'])
@@ -240,7 +242,10 @@ def generate(check: bool) -> None:
     docs.extend(['','## Frozen sources',''])
     docs.extend('- '+json.dumps(value,ensure_ascii=False) for value in data['sources'])
     outputs={ROOT/'crates/sqlaero-core/src/error.rs':'\n'.join(rust),ROOT/'crates/sqlaero-core/src/error/catalog.rs':'\n'.join(table),
-             ROOT/'python/sqlaero/error_codes.pyi':'\n'.join(declarations),ROOT/'docs/error-codes.md':'\n'.join(docs)+'\n'}
+             ROOT/'python/sqlaero/errors.pyi':'\n'.join(declarations),
+             ROOT/'python/sqlaero/error_codes.pyi':('"""Public error-code identities, declared once in errors.pyi."""\n'
+                 'from .errors import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as MySQLErrorCode\n'),
+             ROOT/'docs/error-codes.md':'\n'.join(docs)+'\n'}
     # rustfmt is part of deterministic Rust output, not an independent registry.
     import subprocess
     for path,content in outputs.items():

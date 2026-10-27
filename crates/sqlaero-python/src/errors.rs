@@ -57,7 +57,7 @@ pyo3::create_exception!(
     sqlaero.errors,
     InternalError,
     DatabaseError,
-    "An internal protocol or driver invariant failed."
+    "A reliably identified internal driver or server condition failed."
 );
 pyo3::create_exception!(
     sqlaero.errors,
@@ -358,8 +358,7 @@ impl SQLAeroError {
     }
 }
 
-/// Register the native root. Detailed categories and diagnostics are added at
-/// their implementation step; this is not a completed public errors module.
+/// Register all public native exceptions, immutable diagnostics and code enums.
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<SQLAeroError>()?;
     module.add_class::<ErrorInfo>()?;

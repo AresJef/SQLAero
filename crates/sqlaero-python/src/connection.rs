@@ -667,9 +667,12 @@ macro_rules! connection_api {
                 let scope=Arc::clone(&slf.transaction_scope);
                 Ok(crate::transaction::Transaction::new(slf.into(),scope))
             }
-            /// Permanently retire this connection. COM_QUIT is sent without a
-            /// response using the existing write/operation deadline. Repeated
-            /// completed close is None; true overlapping operations are busy.
+            /// Permanently retire this connection. COM_QUIT is sent without a response.
+            /// Only write_timeout and operation_timeout apply; read_timeout is not used.
+            /// If both applicable limits are None, there is no library-imposed deadline.
+            /// Sending failure still performs local transport cleanup and keeps the connection retired.
+            /// Timeout or interruption grants no fresh network budget or cleanup grace.
+            /// Repeated completed close returns None; overlapping operations raise InterfaceBusyError.
             fn close(&self, py:Python<'_>) -> PyResult<()> {
                 let mut lease=match self.native.try_command() {
                     Ok(lease)=>lease,
@@ -872,13 +875,13 @@ macro_rules! connection_api {
     }
 }
 connection_api! {
-    (decode_json,set_decode_json,"Decode JSON using the native parser. Default False. This local bool supplies defaults only to subsequently created Cursors; changing it sends no SQL, never changes existing results, and fails after this connection is retired. Saved values remain readable."),
-    (decode_set,set_decode_set,"Decode MySQL SET as an ordered tuple of str rather than its original text. Default False. Local defaults apply only to new Cursors; assignment sends no SQL and fails after retirement. Saved values remain readable."),
-    (decode_bit,set_decode_bit,"Decode MySQL BIT as an unsigned int instead of bytes. Default False. Local defaults apply only to new Cursors; assignment sends no SQL and fails after retirement. Saved values remain readable."),
-    (use_decimal,set_use_decimal,"Decode DECIMAL as exact decimal.Decimal when True, binary64 float when False. Default True. Local defaults affect only new Cursors, send no SQL, and cannot be changed after retirement. Saved values remain readable."),
-    (use_timedelta,set_use_timedelta,"Decode MySQL TIME as timedelta when True, time when False. Default True. Clock-mode values outside one day are errors. Local defaults apply only to new Cursors; assignment sends no SQL and fails after retirement."),
-    (decode_text_strict,set_decode_text_strict,"Reject invalid text bytes when True; recover invalid bytes with surrogateescape when False. Default True. Local defaults affect only new Cursors and send no SQL; modification fails after retirement. Saved values remain readable."),
-    (decode_date_strict,set_decode_date_strict,"Reject invalid MySQL calendar dates when True; return the complete original text when False. Default True. Local defaults affect only new Cursors, send no SQL, and cannot be changed after retirement. Saved values remain readable."),
+    (decode_json,set_decode_json,"Default False. False returns the original JSON text as str. True parses the complete JSON into Python values; malformed, incomplete or out-of-range content raises DataError without text fallback. This applies to JSON fields, not JSON-looking TEXT. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_set,set_decode_set,"Default False. False returns SET text as str. True returns an ordered tuple[str, ...]; the empty SET is (), and an empty member is preserved. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_bit,set_decode_bit,"Default False. False returns the exact BIT bytes, including leading zero bytes. True returns an unsigned big-endian int, never a bool. Invalid BIT contents raise DataError. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (use_decimal,set_use_decimal,"Default True. True returns exact decimal.Decimal values for DECIMAL. False uses the native correctly rounded binary64 parser and returns float, potentially losing decimal precision; invalid or non-finite results raise DataError. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (use_timedelta,set_use_timedelta,"Default True. True returns datetime.timedelta for MySQL TIME, including negative and multi-day durations. False returns datetime.time and raises DataError for negative values or durations at least 24 hours. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_text_strict,set_decode_text_strict,"Default True. True raises UnicodeDecodeError for invalid text bytes. False preserves undecodable bytes through surrogateescape, without replacement characters. Binary fields remain bytes and input encoding is unaffected. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_date_strict,set_decode_date_strict,"Default True. True raises DataError for zero or otherwise unrepresentable DATE/DATETIME values. False returns their original calendar text as str. Valid values retain date/datetime output in both modes. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
 }
 
 fn configured_bool(value: &Argument<'_>, name: &str, default: bool) -> PyResult<bool> {

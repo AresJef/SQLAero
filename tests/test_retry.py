@@ -151,7 +151,7 @@ def test_rules_required_attempt_creation_and_context_protocol() -> None:
     with pytest.raises(TypeError):
         Retry(ValueError)  # type: ignore[arg-type]
     with pytest.raises(TypeError):
-        RetryAttempt()
+        RetryAttempt()  # pyright: ignore[reportCallIssue] -- attempts come from Retry
     iterator = iter(Retry(RetryRule(error_types=ValueError), wait_interval=0))
     attempt = next(iterator)
     with pytest.raises(RuntimeError, match='previous'):
