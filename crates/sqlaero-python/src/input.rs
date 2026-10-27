@@ -400,6 +400,9 @@ fn codec_error(
 const WORK_BYTES: usize = 256 * 1024;
 
 /// Check the original whole-operation budget and actual pending Python signal.
+// Keep the Python-error path out of the recursive value visitor's stack frame.
+// This boundary remains checked at every existing signal/deadline checkpoint.
+#[inline(never)]
 pub(crate) fn check(py: Python<'_>, budget: &IoBudget) -> PyResult<()> {
     py.check_signals()?;
     budget.check().map_err(|error| errors::timeout(py, error))

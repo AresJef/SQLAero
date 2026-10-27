@@ -289,20 +289,6 @@ pub(crate) fn encode_value(
 }
 
 impl Visit<'_> {
-    /// Keep infrequent Python checks and failure decoration out of the
-    /// recursive visitor frame, without restricting other check call sites.
-    #[inline(never)]
-    fn check_work(&mut self, py: Python<'_>, child: Option<usize>) -> PyResult<()> {
-        if let Err(error) = check(py, self.budget) {
-            if let Some(index) = child {
-                self.path.push(index);
-            }
-            return Err(error);
-        }
-        self.work = 0;
-        Ok(())
-    }
-
     fn enter(&mut self, py: Python<'_>, identity: usize) -> PyResult<()> {
         if self.active.len() >= 64 || self.active.contains(&identity) {
             return Err(errors::client(
@@ -332,7 +318,13 @@ impl Visit<'_> {
         let py = value.py();
         self.work += 1;
         if self.work >= 16384 {
-            self.check_work(py, child)?;
+            if let Err(error) = check(py, self.budget) {
+                if let Some(index) = child {
+                    self.path.push(index);
+                }
+                return Err(error);
+            }
+            self.work = 0;
         }
         let Some(sequence) = Sequence::from(value) else {
             let result = self
