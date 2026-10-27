@@ -118,7 +118,14 @@ implicitly.
 
 ## Performance and development
 
-On the measured macOS arm64 / CPython 3.13.3 machine, the final native combination
+The following figures belong to the original release evidence, not to a later
+local audit-remediation artifact. Current repair and acceptance status is tracked
+in the [audit remediation plan](tasks/rust-sync-audit-remediation/plan.md).
+The frozen performance report retains its original generation-time status;
+subsequent original-release outcomes are recorded in the
+[publication evidence](evidence/rust-sync-kernel/final/publication.json).
+
+On the measured macOS arm64 / CPython 3.13.3 machine, the original frozen W06 combination
 passed 480 main and 204 independent protection scenarios against its initial
 functional Rust baseline. Representative improvements included 1.61× for a
 1,000-element string list, 1.58× for binding 1,000 INSERT rows, and 1.16–1.19×

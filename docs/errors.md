@@ -88,10 +88,15 @@ Cursor counters are unknown; confirmed prefix facts remain in diagnostics.
 recursively dump the graph or print object addresses. Notes appear in a full
 Python traceback rather than automatically appearing in `str(error)`.
 
-Actual server ERR text is decoded using its response encoding. Both frozen
-MySQL lines can truncate converted UTF-16/UCS-2/UTF-32 error text at a NUL byte.
-SQLAero preserves the text actually received, including an empty message; an
-invalid/incomplete diagnostic sequence is shown as lossless byte escapes with
-a note, retaining the real server exception class/code. Missing server bytes
-are not reconstructed. SQLSTATE remains a diagnostic note rather than an
+Server ERR text uses a response encoding only when that fact is confirmed.
+Arbitrary SQL can change the result encoding and then fail without returning
+metadata that identifies the new encoding. In that case the received bytes are
+shown as lossless ASCII byte escapes with an explicit unconfirmed-encoding note;
+being decodable by the old codec does not prove that codec is still correct.
+The real class, code, source and SQLSTATE diagnostic are preserved. No extra
+query or guessed encoding is used to repair error text.
+
+Both frozen MySQL lines can truncate converted UTF-16/UCS-2/UTF-32 error text at
+a NUL byte. Missing server bytes are never reconstructed, including when the
+received message is empty. SQLSTATE remains a diagnostic note rather than an
 additional public exception attribute.
