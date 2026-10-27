@@ -379,8 +379,16 @@ pub struct CommandConfirmation {
     pub(crate) count: u128,
     pub(crate) warnings: u16,
     pub(crate) last_insert_id: Option<u64>,
+    status: StatusFlags,
 }
 impl CommandConfirmation {
+    /// Status bits validated in the complete final terminator. They do not
+    /// supply missing SESSION_TRACK values after local ownership failed.
+    #[must_use]
+    pub const fn status(self) -> StatusFlags {
+        self.status
+    }
+
     /// Capture only a complete native response, never a sent/partial command.
     #[must_use]
     pub fn from_response(response: &Response) -> Self {
@@ -392,6 +400,7 @@ impl CommandConfirmation {
             },
             warnings: response.completion().warnings(),
             last_insert_id: response.completion().last_insert_id(),
+            status: response.completion().status_flags(),
         }
     }
 }
@@ -494,6 +503,7 @@ pub struct Receiver {
     column_count: usize,
     row_count: usize,
     confirmation: Option<CommandConfirmation>,
+    server_err_received: bool,
     discard: bool,
     scope: Arc<Scope>,
     _owner: Reservation,
@@ -519,6 +529,7 @@ impl Receiver {
             column_count: 0,
             row_count: 0,
             confirmation: None,
+            server_err_received: false,
             discard,
             scope,
             _owner: owner,
@@ -556,6 +567,12 @@ impl Receiver {
     pub fn take_confirmation(&mut self) -> Option<CommandConfirmation> {
         self.confirmation.take()
     }
+    /// A complete validated ERR remains a received response even if retaining
+    /// its diagnostic bytes subsequently exceeds the local allocation quota.
+    #[must_use]
+    pub const fn received_server_err(&self) -> bool {
+        self.server_err_received
+    }
     fn confirm(&mut self, packet: &OkPacket<'_>, rows: Option<usize>) {
         if !packet
             .status_flags()
@@ -565,13 +582,16 @@ impl Receiver {
                 count: rows.map_or_else(|| u128::from(packet.affected_rows()), |rows| rows as u128),
                 warnings: packet.warnings(),
                 last_insert_id: packet.last_insert_id(),
+                status: packet.status_flags(),
             });
         }
     }
     fn push_inner(&mut self, data: &[u8]) -> Result<Option<Response>, ResultError> {
         if data.first() == Some(&0xff) {
+            let packet = packets::server_error(data, self.capabilities)?;
+            self.server_err_received = true;
             return Err(ResultError::Server(ServerFailure::new(
-                &packets::server_error(data, self.capabilities)?,
+                &packet,
                 &self.scope,
             )?));
         }
@@ -786,6 +806,7 @@ mod tests {
         let confirmed = collector
             .take_confirmation()
             .expect("validated final ACK facts");
+        assert_eq!(confirmed.status(), StatusFlags::SERVER_STATUS_AUTOCOMMIT);
         assert!(collector.take_confirmation().is_none());
         drop(collector);
         drop(scope);
@@ -834,6 +855,8 @@ mod tests {
             collector.push(&input),
             Err(ResultError::Memory(MemoryError::Result { .. }))
         ));
+        assert!(collector.received_server_err());
+        assert!(collector.take_confirmation().is_none());
         drop(collector);
         drop(input);
         drop(scope);

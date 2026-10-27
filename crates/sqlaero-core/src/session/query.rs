@@ -34,6 +34,17 @@ pub enum QueryError {
 
 pub use crate::result::text::CommandConfirmation;
 
+/// Actual request-transfer progress, independent of response or commit facts.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RequestProgress {
+    /// No request bytes have been accepted by the transport writer.
+    NotSent,
+    /// Sending started, including plaintext accepted by a TLS writer.
+    Sending,
+    /// The complete request and required TLS records have been flushed.
+    AwaitingResponse,
+}
+
 /// Actual completed prefix of one user batch. These facts are attached to a
 /// later error; they never masquerade as the failed call's success counters
 /// and do not assert that any transaction was committed.
@@ -117,6 +128,23 @@ pub struct Query {
 }
 
 impl Query {
+    /// Read existing framing facts only when needed for failure handling.
+    #[must_use]
+    pub fn progress(&self) -> RequestProgress {
+        if self.sent {
+            RequestProgress::AwaitingResponse
+        } else if self.sender.has_started() {
+            RequestProgress::Sending
+        } else {
+            RequestProgress::NotSent
+        }
+    }
+    /// A validated ERR is a complete failure response, not a lost response.
+    #[must_use]
+    pub fn received_server_err(&self) -> bool {
+        self.collector.received_server_err()
+    }
+
     /// Prepare a native request that already includes its command byte. SQL
     /// binding writes directly into this request before the network phase.
     ///

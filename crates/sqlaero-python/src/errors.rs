@@ -473,9 +473,24 @@ fn server_with_codec(
         },
         None => {
             raw_text = true;
-            match escaped_error_text(py, message) {
-                Ok(value) => value,
-                Err(error) => return error,
+            // ASCII bytes are already a reversible representation; preserve
+            // normal server punctuation instead of needlessly escaping it.
+            if message.is_ascii() {
+                match crate::output::text(
+                    py,
+                    message,
+                    sqlaero_core::charset::output::OutputCodec::for_collation(255),
+                    true,
+                    None,
+                ) {
+                    Ok(value) => value,
+                    Err(error) => return error,
+                }
+            } else {
+                match escaped_error_text(py, message) {
+                    Ok(value) => value,
+                    Err(error) => return error,
+                }
             }
         }
     };
@@ -483,7 +498,7 @@ fn server_with_codec(
         Ok(value) => {
             let error = PyErr::from_value(value);
             if raw_text {
-                let _ = error.add_note(py, "MySQL ERR text has an unknown encoding or invalid/incomplete byte sequence; message preserves the received bytes as ASCII escapes.");
+                let _ = error.add_note(py, "MySQL ERR text has an unconfirmed encoding or invalid/incomplete byte sequence; message preserves the received bytes as ASCII with lossless byte escapes where needed.");
             }
             if let Some(state) = state {
                 let state: String = state

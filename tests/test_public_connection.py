@@ -505,6 +505,59 @@ def test_failed_routine_cannot_leave_a_false_utc_fact(connection: Connection) ->
 
 
 @requires_mysql
+def test_unknown_session_change_retires_mutable_facts_but_keeps_owned_result(connection: Connection) -> None:
+    from sqlaero.errors import OperationalTimeoutError
+
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    name = f'sqlaero_unconfirmed_{connection.connection_id}'
+    cursor = connection.cursor()
+    retained = connection.cursor()
+    retained.execute('SELECT 7 AS retained')
+    cursor.execute(f'CREATE PROCEDURE {name}() BEGIN SET SESSION autocommit=0; '
+                   'SET SESSION net_read_timeout=19; DO SLEEP(2); END')
+    connection.operation_timeout = 1
+    try:
+        with pytest.raises(OperationalTimeoutError):
+            cursor.execute(f'CALL {name}()')
+        assert connection.closed
+        for attribute in ('autocommit', 'net_read_timeout', 'net_write_timeout',
+                          'wait_timeout', 'innodb_lock_wait_timeout'):
+            with pytest.raises(InterfaceError, match='confirmed'):
+                getattr(connection, attribute)
+        assert retained.fetchone() == (7,)
+        assert retained.columns.names == ('retained',)
+        assert connection.connection_id > 0
+    finally:
+        with live(label) as cleanup:
+            cleanup.cursor().execute(f'DROP PROCEDURE IF EXISTS {name}')
+
+
+@requires_mysql
+def test_same_failed_command_cannot_reinterpret_err_bytes_with_old_encoding(connection: Connection) -> None:
+    from sqlaero.errors import SQLAeroError
+
+    cursor = connection.cursor()
+    name = f'sqlaero_err_codec_{connection.connection_id}'
+    cursor.execute(f"CREATE PROCEDURE {name}() BEGIN SET character_set_results=utf8mb4; "
+                   "SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='é'; END")
+    cursor.execute('SET character_set_results=latin1')
+    # Confirm latin1 before the failing command; its own later SET has no OK.
+    cursor.execute('SELECT 1')
+    try:
+        with pytest.raises(SQLAeroError) as caught:
+            cursor.execute(f'CALL {name}()')
+        error = caught.value
+        assert error.code == 1644 and error.is_server_error is True
+        assert error.message == r'\xc3\xa9'
+        assert any('encoding' in note and 'unconfirmed' in note
+                   for note in getattr(error, '__notes__', []))
+        cursor.execute('SELECT @@SESSION.character_set_results')
+        assert cursor.fetchone() == ('utf8mb4',)
+    finally:
+        cursor.execute(f'DROP PROCEDURE IF EXISTS {name}')
+
+
+@requires_mysql
 @pytest.mark.parametrize('encoding', ['utf16', 'utf16le', 'ucs2', 'utf32'])
 def test_context_confirmation_uses_its_actual_server_only_encoding(connection: Connection, encoding: str) -> None:
     cursor = connection.cursor()
@@ -602,7 +655,7 @@ def test_network_wait_releases_gil_and_does_not_block_local_other_cursor_reads(c
 
 @requires_mysql
 @pytest.mark.parametrize('results', ['utf8mb4', 'latin1', 'utf16', 'utf16le', 'ucs2', 'utf32', 'binary', 'NULL'])
-def test_real_error_text_follows_results_encoding_without_replacement(connection: Connection, results: str) -> None:
+def test_real_error_bytes_are_lossless_when_response_encoding_is_unconfirmed(connection: Connection, results: str) -> None:
     from sqlaero.errors import MySQLErrorCode
     cursor = connection.cursor()
     cursor.execute(f'SET character_set_results={results}')
@@ -621,7 +674,9 @@ def test_real_error_text_follows_results_encoding_without_replacement(connection
         assert caught.value.message == 'U'
         assert any('received bytes' in note for note in getattr(caught.value, '__notes__', []))
     else:
-        assert 'é' in caught.value.message and '\x00' not in caught.value.message
+        expected_bytes = r'\xe9' if results == 'latin1' else r'\xc3\xa9'
+        assert expected_bytes in caught.value.message and '\x00' not in caught.value.message
+    assert any('unconfirmed encoding' in note for note in getattr(caught.value, '__notes__', []))
     assert any('42S22' in note for note in getattr(caught.value, '__notes__', []))
 
 
@@ -891,6 +946,101 @@ def test_actual_timeout_uses_entry_snapshot_and_retires_incomplete_response(conn
     assert connection.closed and not connection.ping()
     assert connection.read_timeout is None and connection.operation_timeout is None
     assert cursor.row_count is None and cursor.description is None
+
+
+@requires_mysql
+def test_batch_timeout_reports_current_unknown_range_and_confirmed_prefix(connection: Connection) -> None:
+    from sqlaero.errors import OperationalTimeoutError
+
+    connection.operation_timeout = 1
+    cursor = connection.cursor()
+    with pytest.raises(OperationalTimeoutError) as caught:
+        cursor.execute('SELECT SLEEP(%s)', [0, 2, 0], many=True)
+    notes = '\n'.join(getattr(caught.value, '__notes__', []))
+    assert 'covering source rows 0..1' in notes
+    assert 'current source rows 1..2' in notes
+    assert 'fully sent' in notes and 'outcome is unknown' in notes
+    assert 'not attempted' in notes
+    assert connection.closed and cursor.row_count is None
+    assert cursor.rowcount == -1 and cursor.warning_count is None
+
+
+@requires_mysql
+@pytest.mark.parametrize('label', ['84', '97'])
+def test_direct_commit_lost_confirmation_reports_unknown_without_replay(label: str) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    import select
+    import socket
+    import time as clock_time
+    from tempfile import TemporaryDirectory
+    from sqlaero.errors import OperationalError
+
+    observed: list[str] = []
+    with TemporaryDirectory(prefix='ack-', dir=ROOT) as directory, live(label) as observer, socket.socket(socket.AF_UNIX) as listener, ThreadPoolExecutor(max_workers=1) as executor:
+        endpoint = Path(directory) / 'commit.sock'
+        listener.bind(str(endpoint))
+        listener.listen(1)
+        listener.settimeout(3)
+
+        def drop_only_commit_ack() -> None:
+            """Forward real local packets, then withhold one actual COMMIT OK."""
+            with listener.accept()[0] as client, socket.socket(socket.AF_UNIX) as server:
+                server.settimeout(3)
+                client.settimeout(3)
+                server.connect(str(ROOT / f'{label}.sock'))
+
+                def receive_exact(peer: socket.socket, size: int) -> bytes:
+                    data = bytearray()
+                    while len(data) < size:
+                        block = peer.recv(size - len(data))
+                        if not block:
+                            raise EOFError('test relay ended before a complete packet')
+                        data.extend(block)
+                    return bytes(data)
+
+                commit = False
+                deadline = clock_time.monotonic() + 6
+                while clock_time.monotonic() < deadline:
+                    readable, _, _ = select.select([client, server], [], [], 0.1)
+                    for peer in readable:
+                        header = receive_exact(peer, 4)
+                        size = int.from_bytes(header[:3], 'little')
+                        assert size < 1024 * 1024, 'this fixed fixture sends only small packets'
+                        payload = receive_exact(peer, size)
+                        if peer is client:
+                            if payload == b'\x03COMMIT AND NO CHAIN NO RELEASE':
+                                observed.append('COMMIT')
+                                commit = True
+                            server.sendall(header + payload)
+                        else:
+                            if commit:
+                                assert payload[:1] == b'\x00'
+                                observed.append('server OK withheld')
+                                return
+                            client.sendall(header + payload)
+                raise TimeoutError('the fixed COMMIT acknowledgement was not observed')
+
+        future = executor.submit(drop_only_commit_ack)
+        value = live(label, unix_socket=endpoint, autocommit=False, connect_timeout=3)
+        name = f'sqlaero_commit_ack_{value.connection_id}'
+        check = observer.cursor()
+        check.execute(f'CREATE TABLE {name}(id INT PRIMARY KEY) ENGINE=InnoDB')
+        try:
+            value.cursor().execute(f'INSERT INTO {name} VALUES (1)')
+            with pytest.raises(OperationalError) as caught:
+                value.commit()
+            future.result(timeout=6)
+            notes = '\n'.join(getattr(caught.value, '__notes__', []))
+            assert 'COMMIT outcome is unknown' in notes
+            assert 'fully sent' in notes
+            assert caught.value.error_info.stage == 'connection.commit'
+            assert caught.value.is_server_error is False and value.closed
+            assert observed == ['COMMIT', 'server OK withheld']
+            check.execute(f'SELECT id FROM {name}')
+            assert check.fetchall() == ((1,),)
+        finally:
+            value.close()
+            check.execute(f'DROP TABLE IF EXISTS {name}')
 
 
 @requires_mysql

@@ -22,7 +22,7 @@ use sqlaero_core::{
     session::{
         connect::{ConnectParams, Endpoint, Establish},
         initialize::{Initialize, Options as InitOptions},
-        query::{Query, QueryError},
+        query::{CommandConfirmation, Query, QueryError, RequestProgress},
         shared::{CommandLease, Connection as NativeConnection},
     },
     transport::{
@@ -52,23 +52,64 @@ pub(crate) enum CommandRole {
     UserSql,
     InternalControl,
 }
+#[derive(Clone, Copy)]
+enum FailureOutcome {
+    NotSent,
+    Sending,
+    AwaitingResponse,
+    ServerErr,
+    Confirmed,
+    Consumed,
+}
+impl FailureOutcome {
+    fn unknown(self) -> bool {
+        matches!(self, Self::Sending | Self::AwaitingResponse)
+    }
+    fn diagnostic(self) -> &'static str {
+        match self {
+            Self::NotSent => "The current request was not sent.",
+            Self::Sending => {
+                "Sending of the current request began, but no complete response was received; its execution outcome is unknown. Entered sending does not prove server receipt or nonexecution. No replay was sent."
+            }
+            Self::AwaitingResponse => {
+                "The current request was fully sent, but no complete server response was received; its execution outcome is unknown. This does not mean it was not executed. No replay was sent."
+            }
+            Self::ServerErr => {
+                "A complete server ERR was received for the current request; it does not prove zero side effects or a transaction rollback."
+            }
+            Self::Confirmed => {
+                "The final server response was fully confirmed before the later local failure; execution is not unknown. Command confirmation alone does not imply transaction commit."
+            }
+            Self::Consumed => {
+                "All unsupported multiple results were fully consumed; their final session state was confirmed, but no public result was published."
+            }
+        }
+    }
+}
 /// A real native availability failure is distinguished from an original
 /// Python exception, even if a signal handler raises the same exception class.
 pub(crate) struct DriveFailure {
     error: PyErr,
     unavailable: bool,
-    confirmed: Option<sqlaero_core::session::query::CommandConfirmation>,
-}
-impl From<PyErr> for DriveFailure {
-    fn from(error: PyErr) -> Self {
-        Self {
-            error,
-            unavailable: false,
-            confirmed: None,
-        }
-    }
+    confirmed: Option<CommandConfirmation>,
+    outcome: FailureOutcome,
 }
 impl DriveFailure {
+    fn new(
+        py: Python<'_>,
+        error: PyErr,
+        outcome: FailureOutcome,
+        unavailable: bool,
+        confirmed: Option<CommandConfirmation>,
+    ) -> Self {
+        errors::note(py, &error, outcome.diagnostic());
+        Self {
+            error,
+            unavailable,
+            confirmed,
+            outcome,
+        }
+    }
     pub(crate) fn record_prefix(
         self,
         py: Python<'_>,
@@ -76,7 +117,7 @@ impl DriveFailure {
         rows: std::ops::Range<usize>,
     ) -> PyErr {
         if let Some(confirmed) = self.confirmed
-            && let Err(error) = prefix.record_confirmation(rows, confirmed)
+            && let Err(error) = prefix.record_confirmation(rows.clone(), confirmed)
         {
             errors::note(
                 py,
@@ -86,6 +127,14 @@ impl DriveFailure {
                 ),
             );
         }
+        errors::note(
+            py,
+            &self.error,
+            format!(
+                "The current source rows {}..{} belong to this request; any subsequent source rows were not attempted.",
+                rows.start, rows.end
+            ),
+        );
         self.error
     }
 }
@@ -280,7 +329,16 @@ impl Connection {
         completion: &sqlaero_core::protocol::OkPacket<'_>,
     ) -> PyResult<()> {
         let applied = match self.native.facts.lock() {
-            Ok(mut facts) => facts.apply(completion),
+            Ok(mut facts) => {
+                let result = facts.apply(completion);
+                if result.is_err() {
+                    // The terminator's status is valid, but partially decoded
+                    // SESSION_TRACK values must never remain a mixed snapshot.
+                    facts.invalidate_settings();
+                    facts.database = None;
+                }
+                result
+            }
             Err(_) => {
                 lease.invalidate();
                 return Err(errors::client(
@@ -296,6 +354,47 @@ impl Connection {
         }
         Ok(())
     }
+    /// Retire an incomplete exchange using its actual framing/ACK facts. This
+    /// common exit also handles original Python control exceptions unchanged.
+    fn query_failure(
+        &self,
+        py: Python<'_>,
+        lease: &mut CommandLease<'_>,
+        job: &mut Query,
+        error: PyErr,
+        unavailable: bool,
+        keep_unsent: bool,
+    ) -> DriveFailure {
+        let progress = job.progress();
+        let confirmed = job.take_confirmation();
+        let outcome = if let Some(confirmation) = confirmed {
+            if let Ok(mut facts) = self.native.facts.lock() {
+                facts.invalidate_settings();
+                facts.database = None;
+                facts.status = Some(confirmation.status());
+            }
+            FailureOutcome::Confirmed
+        } else {
+            if progress != RequestProgress::NotSent
+                && let Ok(mut facts) = self.native.facts.lock()
+            {
+                facts.invalidate_unconfirmed();
+            }
+            if job.received_server_err() {
+                FailureOutcome::ServerErr
+            } else {
+                match progress {
+                    RequestProgress::NotSent => FailureOutcome::NotSent,
+                    RequestProgress::Sending => FailureOutcome::Sending,
+                    RequestProgress::AwaitingResponse => FailureOutcome::AwaitingResponse,
+                }
+            }
+        };
+        if !keep_unsent || progress != RequestProgress::NotSent {
+            lease.invalidate();
+        }
+        DriveFailure::new(py, error, outcome, unavailable, confirmed)
+    }
     pub(crate) fn drive(
         &self,
         py: Python<'_>,
@@ -304,57 +403,67 @@ impl Connection {
         budget: &mut IoBudget,
         role: CommandRole,
     ) -> Result<Response, DriveFailure> {
-        let error_codec = self
-            .native
-            .facts
-            .lock()
-            .ok()
-            .and_then(|facts| facts.metadata_codec());
+        // A user command can change result encoding and then return ERR without
+        // SESSION_TRACK. Its entry codec cannot certify these diagnostic bytes.
+        // Fixed internal controls cannot perform such an unreported change.
+        let error_codec = (role == CommandRole::InternalControl)
+            .then(|| {
+                self.native
+                    .facts
+                    .lock()
+                    .ok()
+                    .and_then(|facts| facts.metadata_codec())
+            })
+            .flatten();
         loop {
             // Only the native session reference crosses detach. The !Send wire
             // MutexGuard remains on this thread, and no Python input is borrowed.
-            let session = lease.session().map_err(|error| errors::access(py, error))?;
+            let session = match lease.session() {
+                Ok(session) => session,
+                Err(error) => {
+                    return Err(self.query_failure(
+                        py,
+                        lease,
+                        &mut job,
+                        errors::access(py, error),
+                        false,
+                        false,
+                    ));
+                }
+            };
             let step = py.detach(|| job.advance(&mut session.channel, budget));
             match step {
                 Ok(Step::Ready(response)) => {
                     if let Err(error) = self.publish(py, lease, response.completion()) {
-                        errors::note(
+                        return Err(DriveFailure::new(
                             py,
-                            &error,
-                            "The server response was fully received; the later local state-publication failure does not make that response unknown.",
-                        );
-                        return Err(DriveFailure {
                             error,
-                            unavailable: false,
-                            confirmed: Some(
-                                sqlaero_core::session::query::CommandConfirmation::from_response(
-                                    &response,
-                                ),
-                            ),
-                        });
+                            FailureOutcome::Confirmed,
+                            false,
+                            Some(CommandConfirmation::from_response(&response)),
+                        ));
                     }
                     return Ok(response);
                 }
                 Ok(Step::Control) => {
-                    if let Some(completion) = job.take_completion() {
-                        self.publish(py, lease, &completion)?;
+                    if let Some(completion) = job.take_completion()
+                        && let Err(error) = self.publish(py, lease, &completion)
+                    {
+                        return Err(self.query_failure(py, lease, &mut job, error, false, false));
                     }
                     if let Err(error) = input::check(py, budget) {
-                        lease.invalidate();
-                        return Err(error.into());
+                        return Err(self.query_failure(py, lease, &mut job, error, false, true));
                     }
                 }
                 Ok(Step::Wait(_)) => {
-                    lease.invalidate();
-                    return Err(errors::client(
+                    let error = errors::client(
                         py,
                         ClientErrorCode::InternalState,
                         "native query returned an undriven I/O wait",
-                    )
-                    .into());
+                    );
+                    return Err(self.query_failure(py, lease, &mut job, error, false, false));
                 }
                 Err(error) => {
-                    let confirmed = job.take_confirmation();
                     match &error {
                         QueryError::Result(ResultError::Server(_)) => {
                             if let Ok(mut facts) = self.native.facts.lock() {
@@ -364,28 +473,52 @@ impl Connection {
                                     // Arbitrary SQL/triggers may already have
                                     // applied settings before this error.
                                     facts.invalidate_settings();
+                                    facts.database = None;
                                 }
                             }
+                            let mapped = errors::query_with_codec(py, error, error_codec);
+                            return Err(DriveFailure::new(
+                                py,
+                                mapped,
+                                FailureOutcome::ServerErr,
+                                false,
+                                None,
+                            ));
                         }
                         QueryError::MultipleResults { completion } => {
-                            self.publish(py, lease, completion)?;
+                            if let Err(error) = self.publish(py, lease, completion) {
+                                return Err(
+                                    self.query_failure(py, lease, &mut job, error, false, false)
+                                );
+                            }
+                            return Err(DriveFailure::new(
+                                py,
+                                errors::query_with_codec(py, error, error_codec),
+                                FailureOutcome::Consumed,
+                                false,
+                                None,
+                            ));
                         }
-                        _ => lease.invalidate(),
+                        _ => (),
                     }
                     let unavailable = unavailable(&error);
-                    let error = errors::query_with_codec(py, error, error_codec);
-                    if confirmed.is_some() {
-                        errors::note(
-                            py,
-                            &error,
-                            "The final server OK/EOF was validated before local result ownership failed; its confirmed execution facts remain available.",
-                        );
-                    }
-                    return Err(DriveFailure {
+                    let keep_unsent = matches!(
                         error,
+                        QueryError::Channel(
+                            sqlaero_core::transport::channel::ChannelError::Timeout(_)
+                                | sqlaero_core::transport::channel::ChannelError::Transport(
+                                    sqlaero_core::transport::socket::TransportError::Timeout(_)
+                                )
+                        )
+                    );
+                    return Err(self.query_failure(
+                        py,
+                        lease,
+                        &mut job,
+                        errors::query_with_codec(py, error, error_codec),
                         unavailable,
-                        confirmed,
-                    });
+                        keep_unsent,
+                    ));
                 }
             }
         }
@@ -421,11 +554,31 @@ impl Connection {
             .map_err(|error| errors::wire(py, error))?;
         let job = self.query_job(py, lease, request, true)?;
         input::check(py, budget)?;
-        attempt.started = true;
         if let Err(failure) = self.drive(py, lease, job, budget, CommandRole::InternalControl) {
+            attempt.started = !matches!(failure.outcome, FailureOutcome::NotSent);
             attempt.confirmed = failure.confirmed.is_some();
+            if failure.outcome.unknown() {
+                // These are this library's fixed controls, not a parser or
+                // inference over arbitrary user SQL.
+                let action = match sql {
+                    b"COMMIT AND NO CHAIN NO RELEASE" => Some("COMMIT"),
+                    b"ROLLBACK AND NO CHAIN NO RELEASE" => Some("ROLLBACK"),
+                    b"START TRANSACTION" => Some("BEGIN"),
+                    _ => None,
+                };
+                if let Some(action) = action {
+                    errors::note(
+                        py,
+                        &failure.error,
+                        format!(
+                            "{action} outcome is unknown; no complete confirmation was received. The action was not replayed and must not be assumed unexecuted."
+                        ),
+                    );
+                }
+            }
             return Err(failure.error);
         }
+        attempt.started = true;
         attempt.confirmed = true;
         input::check(py, budget)?;
         Ok(())
