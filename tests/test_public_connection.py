@@ -682,15 +682,24 @@ def test_real_error_bytes_are_lossless_when_response_encoding_is_unconfirmed(con
 
 @requires_mysql
 def test_known_code_priority_unknown_fallback_and_ordinary_warnings(connection: Connection) -> None:
-    from sqlaero.errors import DataError, DatabaseError, IntegrityError, OperationalError, SQLAeroError
+    from sqlaero.errors import DataError, DatabaseError, IntegrityError, InternalError, NotSupportedError, OperationalError, SQLAeroError
     cursor = connection.cursor()
     for code, state, expected in [(1062, '45000', IntegrityError), (1265, '45000', DataError),
+                                  (1052, '23000', ProgrammingError), (1461, '23000', OperationalError),
+                                  (1205, '45000', OperationalError), (3024, '45000', OperationalError),
+                                  (1295, '45000', NotSupportedError), (1712, '45000', InternalError),
+                                  (1030, '45000', DatabaseError), (4154, '45000', IntegrityError),
                                   (65535, '23000', IntegrityError), (65535, '08000', OperationalError),
+                                  (65535, '0A000', NotSupportedError), (65535, '22003', DataError),
+                                  (65535, '42000', ProgrammingError),
                                   (65535, '40001', DatabaseError), (65535, 'HY000', DatabaseError)]:
         with pytest.raises(SQLAeroError) as caught:
             cursor.execute(f"SIGNAL SQLSTATE '{state}' SET MYSQL_ERRNO={code},MESSAGE_TEXT='native mapping probe'")
         assert type(caught.value) is expected
         assert caught.value.code == code and caught.value.is_server_error is True
+        assert caught.value.message == 'native mapping probe'
+        assert caught.value.error_info.stage == 'cursor.execute'
+        assert any(state in note for note in caught.value.error_info.notes)
     cursor.execute('DROP TABLE IF EXISTS sqlaero_public_no_such_warning_table')
     assert cursor.warning_count is not None and cursor.warning_count > 0
     assert connection.ping()

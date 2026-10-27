@@ -22,79 +22,32 @@ EVIDENCE = ROOT / 'evidence/rust-sync-kernel/startup'
 REGISTRY = ROOT / 'data/error-catalog.json'
 CLASSES = ('InterfaceError','InterfaceBusyError','DatabaseError','DataError','OperationalError',
            'OperationalTimeoutError','IntegrityError','InternalError','ProgrammingError','NotSupportedError')
-# These explicit known-condition decisions precede SQLSTATE categorization.
-OVERRIDES: dict[str, str] = {
-    'ER_DUP_ENTRY': 'IntegrityError', 'ER_DUP_KEY': 'IntegrityError',
-    'ER_CHECK_CONSTRAINT_VIOLATED': 'IntegrityError', 'ER_NO_DEFAULT_FOR_FIELD': 'IntegrityError',
-    'ER_FOREIGN_DUPLICATE_KEY_WITH_CHILD_INFO': 'IntegrityError',
-    'ER_FOREIGN_DUPLICATE_KEY_WITHOUT_CHILD_INFO': 'IntegrityError',
-    'ER_LOCK_DEADLOCK': 'OperationalError', 'ER_LOCK_WAIT_TIMEOUT': 'OperationalError',
-    'ER_QUERY_INTERRUPTED': 'OperationalError', 'ER_QUERY_TIMEOUT': 'OperationalError',
-    'ER_ACCESS_DENIED_ERROR': 'OperationalError', 'ER_ACCESS_DENIED_NO_PASSWORD_ERROR': 'OperationalError',
-    'ER_DBACCESS_DENIED_ERROR': 'OperationalError', 'ER_TABLEACCESS_DENIED_ERROR': 'OperationalError',
-    'ER_COLUMNACCESS_DENIED_ERROR': 'OperationalError', 'ER_PROCACCESS_DENIED_ERROR': 'OperationalError',
-    'ER_SPECIFIC_ACCESS_DENIED_ERROR': 'OperationalError', 'ER_SESSION_WAS_KILLED': 'OperationalError',
-    'ER_CON_COUNT_ERROR': 'OperationalError', 'ER_USER_LIMIT_REACHED': 'OperationalError',
-    'ER_TOO_MANY_USER_CONNECTIONS': 'OperationalError', 'ER_OUT_OF_RESOURCES': 'OperationalError',
-    'ER_OUTOFMEMORY': 'OperationalError', 'ER_DISK_FULL': 'OperationalError',
-    'ER_RECORD_FILE_FULL': 'OperationalError', 'ER_STACK_OVERRUN': 'OperationalError',
-    'ER_STACK_OVERRUN_NEED_MORE': 'OperationalError', 'ER_LOCK_TABLE_FULL': 'OperationalError',
-    'ER_CANT_CREATE_FILE': 'OperationalError', 'ER_CANT_CREATE_TABLE': 'OperationalError',
-    'ER_CANT_CREATE_DB': 'OperationalError', 'ER_CANT_OPEN_FILE': 'OperationalError',
-    'ER_CANT_READ_DIR': 'OperationalError', 'ER_ERROR_ON_READ': 'OperationalError',
-    'ER_ERROR_ON_WRITE': 'OperationalError', 'ER_FILE_NOT_FOUND': 'OperationalError',
-    'ER_CANT_GET_STAT': 'OperationalError', 'ER_CANT_LOCK': 'OperationalError',
-    'ER_NOT_SUPPORTED_YET': 'NotSupportedError', 'ER_UNSUPPORTED_EXTENSION': 'NotSupportedError',
-    'ER_FEATURE_DISABLED': 'NotSupportedError', 'ER_UNKNOWN_STORAGE_ENGINE': 'NotSupportedError',
-    'ER_PLUGIN_IS_NOT_LOADED': 'NotSupportedError',
-    'ER_INTERNAL_ERROR': 'InternalError', 'ER_NOT_KEYFILE': 'InternalError',
-    'ER_CRASHED_ON_USAGE': 'InternalError', 'ER_CRASHED_ON_REPAIR': 'InternalError',
-    'ER_WARN_DATA_OUT_OF_RANGE': 'DataError', 'WARN_DATA_TRUNCATED': 'DataError',
-    'ER_TRUNCATED_WRONG_VALUE': 'DataError', 'ER_TRUNCATED_WRONG_VALUE_FOR_FIELD': 'DataError',
-    'ER_DATA_TOO_LONG': 'DataError', 'ER_WARN_INVALID_TIMESTAMP': 'DataError',
-    'ER_INVALID_CHARACTER_STRING': 'DataError', 'ER_ILLEGAL_VALUE_FOR_TYPE': 'DataError',
-    'ER_DIVISION_BY_ZERO': 'DataError', 'ER_WRONG_VALUE_FOR_TYPE': 'DataError',
-    'ER_WRONG_VALUE': 'DataError', 'ER_WRONG_TYPE_FOR_VAR': 'DataError',
-    'ER_WRONG_VALUE_FOR_VAR': 'DataError', 'ER_WARN_NULL_TO_NOTNULL': 'IntegrityError',
-    'EE_UNKNOWN_CHARSET': 'NotSupportedError', 'EE_UNKNOWN_COLLATION': 'NotSupportedError',
-    'EE_COLLATION_ALIAS_ERROR': 'NotSupportedError',
-}
-CLASS_BY_STATE: dict[str, str] = {
-    '08':'OperationalError', '0A':'NotSupportedError', '22':'DataError',
-    '23':'IntegrityError', '42':'ProgrammingError',
-    # Known catalog conditions have these additional explicit categories;
-    # unknown-code fallback intentionally does not include them.
-    '07':'ProgrammingError', '21':'ProgrammingError', '24':'ProgrammingError',
-    '25':'ProgrammingError', '28':'OperationalError', '40':'OperationalError',
-}
-WORDS = {'DB':'database','DBS':'databases','CANT':'cannot','COL':'column','COLS':'columns',
-         'COLL':'collation','CHARSET':'character set','COLLATION':'collation','NUM':'number',
-         'ARG':'argument','ARGS':'arguments','VAR':'variable','VARS':'variables','FUNC':'function',
-         'FK':'foreign key','PK':'primary key','REF':'reference','TRX':'transaction','TX':'transaction',
-         'OUTOFMEMORY':'out of memory','OOM':'out of memory','STMT':'statement',
-         'WRONG':'invalid','NDB':'NDB','SQL':'SQL','JSON':'JSON','XML':'XML','GTID':'GTID',
-         'SSL':'SSL','TLS':'TLS','IO':'I/O','DDL':'DDL','DML':'DML','UDF':'UDF','XA':'XA',
-         'PTHREAD':'POSIX thread','LH':'Lakehouse','SRS':'spatial reference system'}
 
 
 def digest(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def client_inputs() -> list[dict[str, Any]]:
-    """Capture existing registered meanings without renumbering a used code."""
-    source = (ROOT / 'crates/sqlaero-core/src/error.rs').read_text()
-    values: list[dict[str, Any]] = []
-    for doc, name, number in re.findall(r'    /// ([^\n]+)\n    (\w+) = ([\d_]+),', source):
-        category, meaning = doc.split(': ', 1)
-        if category not in CLASSES:
-            raise ValueError(f'Unknown client category: {category}')
-        public = re.sub(r'(?<=[a-z0-9])(?=[A-Z])', '_', name).upper()
-        values.append({'code': int(number.replace('_','')), 'rust_name': name,
-                       'name': public, 'class': category, 'meaning': meaning})
-    if len(values) != 19:
-        raise ValueError('Expected the 19 already implemented client codes')
-    return values
+def message_fingerprints(source: str) -> dict[str, str]:
+    """Fingerprint official English conditions without redistributing templates."""
+    messages: dict[str, list[str]] = {}
+    symbol: str | None = None
+    continuing: str | None = None
+    for line in source.splitlines():
+        if entry := re.match(r'^((?:ER|WARN|OBSOLETE)_\w+)', line):
+            symbol = entry[1]
+            continuing = None
+        elif symbol and (english := re.match(r'^\s+eng\s+(.+)$', line)):
+            if symbol in messages:
+                raise ValueError(f'Duplicate official English condition: {symbol}')
+            messages[symbol] = [english[1]]
+            continuing = symbol
+        elif continuing is not None and line.lstrip().startswith('"'):
+            messages[continuing].append(line.strip())
+        else:
+            continuing = None
+    return {name: hashlib.sha256('\n'.join(parts).encode()).hexdigest()
+            for name, parts in messages.items()}
 
 
 def installed(version: str, label: str) -> tuple[dict[int, dict[str, str]], list[dict[str, str]], list[dict[str, Any]]]:
@@ -107,8 +60,10 @@ def installed(version: str, label: str) -> tuple[dict[int, dict[str, str]], list
     definitions = {name: int(code) for name, code in re.findall(r'^#define (\w+) (\d+)$', header.read_text(), re.M)}
     codes: dict[int, dict[str, str]] = {}
     excluded: list[dict[str, Any]] = []
+    source_text = source.read_text()
+    fingerprints = message_fingerprints(source_text)
     number = 1000
-    for line in source.read_text().splitlines():
+    for line in source_text.splitlines():
         if start := re.match(r'^start-error-number\s+(\d+)', line):
             number = int(start[1])
         elif entry := re.match(r'^((?:ER|WARN|OBSOLETE)_\w+)(?:\s+(\w{5}))?', line):
@@ -122,7 +77,7 @@ def installed(version: str, label: str) -> tuple[dict[int, dict[str, str]], list
             else:
                 if definitions.get(symbol) != number or observed[number] != (symbol,state):
                     raise ValueError(f'Official header/source/runtime mismatch at {version} {number}: {symbol}')
-                codes[number] = {'name':symbol,'sqlstate':state}
+                codes[number] = {'name':symbol,'sqlstate':state, 'message_sha256':fingerprints[symbol]}
             number += 1
     sources = [{'kind':kind,'path':str(path),'sha256':digest(path)} for kind,path in (
         ('official installed client messages',source),('official installed generated header',header),('actual dedicated-server registration',observed_path))]
@@ -131,9 +86,21 @@ def installed(version: str, label: str) -> tuple[dict[int, dict[str, str]], list
 
 def globals_for(label: str) -> tuple[dict[int, dict[str, str]], dict[str, str]]:
     path = EVIDENCE / f'global-errors-{label}.html'
-    text = unescape(re.sub(r'<[^>]*>', ' ', path.read_text()))
-    pairs = re.findall(r'Error number:\s*(\d+)\s*;\s*Symbol:\s*([A-Z][A-Z_0-9]+)', text)
-    values = {int(code): {'name':symbol,'sqlstate':'HY000'} for code,symbol in pairs}
+    values: dict[int, dict[str, str]] = {}
+    for block in re.findall(r'<li class="listitem">(.*?)</li>', path.read_text(), re.S):
+        text = unescape(re.sub(r'<[^>]*>', ' ', block))
+        identity = re.search(r'Error number:\s*(\d+)\s*;\s*Symbol:\s*([A-Z][A-Z_0-9]+)', text)
+        if identity is None:
+            continue
+        message = re.search(r'<p>\s*Message:(.*?)</p>', block, re.S)
+        if message is None:
+            raise ValueError(f'Official global condition has no message: {identity[1]}')
+        condition = ' '.join(unescape(re.sub(r'<[^>]*>', ' ', message[1])).split())
+        code = int(identity[1])
+        if code in values:
+            raise ValueError(f'Duplicate official global condition: {code}')
+        values[code] = {'name':identity[2], 'sqlstate':'HY000',
+                        'message_sha256':hashlib.sha256(condition.encode()).hexdigest()}
     if not values or any(code < 1 or code > 999 for code in values):
         raise ValueError('Invalid official global-error facts')
     version = '8.4' if label == '84' else '9.7'
@@ -142,51 +109,54 @@ def globals_for(label: str) -> tuple[dict[int, dict[str, str]], dict[str, str]]:
                     'path':str(path),'sha256':digest(path)}
 
 
-def classify(symbol: str, state: str) -> tuple[str, str]:
-    if symbol in OVERRIDES:
-        return OVERRIDES[symbol], 'Explicit known-condition semantic decision, ahead of SQLSTATE.'
-    if symbol.startswith('EE_'):
-        return 'OperationalError', 'Known shared system/file/resource operation condition.'
-    if state[:2] in CLASS_BY_STATE:
-        return CLASS_BY_STATE[state[:2]], f'Explicit known-condition SQLSTATE class {state[:2]}.'
-    return 'DatabaseError', 'Known general database condition without a reliably narrower DB-API category.'
-
-
-def meaning(symbol: str) -> str:
-    words = re.sub(r'^(?:ER|EE|WARN)_', '', symbol).split('_')
-    return ' '.join(WORDS.get(word, word.lower()) for word in words)
-
-
 def snapshot() -> None:
+    """Refresh facts only; changed conditions require an explicit semantic review.
+
+    Classes, explanations, client definitions and aliases are maintained in the
+    declaration, never inferred from SQLSTATE, names or already generated Rust.
+    All comparisons finish before atomic replacement of the previous registry.
+    """
+    maintained: dict[str, Any] = json.loads(REGISTRY.read_text())
     versions: dict[str, dict[int, dict[str, str]]] = {}
     sources: list[dict[str, str]] = []
     excluded: list[dict[str, Any]] = []
-    for version,label in [('8.4','84'),('9.7','97')]:
-        codes, provenance, omitted = installed(version,label)
+    for version, label in [('8.4', '84'), ('9.7', '97')]:
+        codes, provenance, omitted = installed(version, label)
         shared, source = globals_for(label)
         versions[version] = codes | shared
-        sources.extend(provenance + [source])
+        sources.extend(provenance + ([source] if source else []))
         excluded.extend(omitted)
-    server: list[dict[str, Any]] = []
-    all_codes: set[int] = set()
-    for values in versions.values():
-        all_codes.update(values)
-    for code in sorted(all_codes):
-        conditions = {version: values[code] for version,values in versions.items() if code in values}
-        decisions = {classify(value['name'],value['sqlstate'])[0] for value in conditions.values()}
-        if len(decisions) != 1:
-            raise ValueError(f'Version-specific class decision required for {code}: {conditions}')
-        latest = conditions.get('9.7',next(iter(conditions.values())))
-        category,basis = classify(latest['name'],latest['sqlstate'])
-        server.append({'code':code,'name':latest['name'],'class':category,'meaning':meaning(latest['name']),
-                       'basis':basis,'versions':conditions})
-    data = {'schema':1,'recorded_at':datetime.now(timezone.utc).isoformat(),
-            'scope':'Registered official client-message conditions plus applicable shared globals; no log-only MY or other libraries CR codes. Warning/Note responses never automatically raise; mappings apply only to an actual protocol ERR.',
-            'versions':{'8.4':'8.4.13','9.7':'9.7.4'},'sources':sources,
-            'client':client_inputs(),'server':server,'excluded':excluded}
-    REGISTRY.write_text(json.dumps(data,ensure_ascii=False,indent=2)+'\n')
-    print(json.dumps({'server_union':len(server),'per_version':{version:len(values) for version,values in versions.items()},
-                      'classes':dict(Counter(row['class'] for row in server))},sort_keys=True))
+    expected = {row['code']: row for row in maintained['server']}
+    actual: dict[int, dict[str, dict[str, str]]] = {}
+    for version, entries in versions.items():
+        for code, facts in entries.items():
+            actual.setdefault(code, {})[version] = facts
+    changed = sorted(code for code in expected.keys() | actual.keys()
+                     if code not in expected or code not in actual
+                     or expected[code]['versions'] != actual[code])
+    if changed:
+        raise ValueError(f'Semantic review required for added, removed or changed conditions: {changed}')
+    for origin in ('client', 'server'):
+        for row in maintained[origin]:
+            if row['class'] not in CLASSES or not row['meaning']:
+                raise ValueError(f'Invalid maintained declaration: {origin} {row["code"]}')
+    maintained.update(recorded_at=datetime.now(timezone.utc).isoformat(),
+                      sources=sources, excluded=excluded)
+    import os
+    import tempfile
+    temporary: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=REGISTRY.parent,
+                                         prefix='.error-catalog-', delete=False) as output:
+            temporary = Path(output.name)
+            output.write(json.dumps(maintained, ensure_ascii=False, indent=2) + '\n')
+        os.replace(temporary, REGISTRY)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+    print(json.dumps({'server_union':len(expected),
+                      'per_version':{version:len(entries) for version, entries in versions.items()},
+                      'classes':dict(Counter(row['class'] for row in maintained['server']))}, sort_keys=True))
 
 
 def quoted(value: str) -> str:
