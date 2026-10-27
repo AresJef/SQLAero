@@ -6,12 +6,76 @@ from decimal import Decimal
 import inspect
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Any
 
 import pytest
 from sqlaero import Connection, Cursor, SSL, connect
 from sqlaero.errors import InterfaceError, ProgrammingError
+
+
+class PreparationReached(Exception):
+    """Stop accepted configuration at the existing PathLike boundary."""
+
+
+class StopBeforeNativePreparation:
+    """Expose whether memory limits were checked before external preparation."""
+
+    def __fspath__(self) -> str:
+        raise PreparationReached('validated configuration reached path preparation')
+
+
+@pytest.mark.parametrize('name', ['result_memory_limit', 'total_result_memory_limit'])
+@pytest.mark.parametrize('value', [sys.maxsize + 1, str(sys.maxsize + 1), 2 * sys.maxsize + 1])
+def test_result_memory_limit_rejects_above_signed_platform_bound(name: str, value: object) -> None:
+    with pytest.raises(ValueError, match=name):
+        connect(user='unopened', server_public_key_path=StopBeforeNativePreparation(),
+                **{name: value})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize('name', ['result_memory_limit', 'total_result_memory_limit'])
+@pytest.mark.parametrize('value', [sys.maxsize, str(sys.maxsize)])
+def test_result_memory_limit_accepts_signed_bound_without_allocating_it(name: str, value: object) -> None:
+    with pytest.raises(PreparationReached):
+        connect(user='unopened', server_public_key_path=StopBeforeNativePreparation(),
+                **{name: value})  # type: ignore[arg-type]
+
+
+def test_connect_preparation_deadline_uses_the_connect_code(tmp_path: Path) -> None:
+    import time as clock_time
+    from sqlaero.errors import OperationalTimeoutError, SQLAeroErrorCode
+
+    class SlowPath:
+        """Consume the actual establishment budget without opening a socket."""
+
+        def __fspath__(self) -> str:
+            clock_time.sleep(1.05)
+            return str(tmp_path / 'unopened-key.pem')
+
+    with pytest.raises(OperationalTimeoutError) as caught:
+        connect(user='unopened', unix_socket=tmp_path / 'unopened.sock',
+                ssl=SSL(mode='DISABLED'), server_public_key_path=SlowPath(), connect_timeout=1)
+    assert caught.value.code == SQLAeroErrorCode.CONNECT_DEADLINE
+    assert caught.value.is_server_error is False
+    assert caught.value.error_info.stage == 'connect'
+
+
+def test_native_file_preparation_keeps_source_and_connect_stage(tmp_path: Path) -> None:
+    import errno
+    from sqlaero.errors import OperationalError, SQLAeroErrorCode
+
+    with pytest.raises(OperationalError) as caught:
+        connect(user='unopened', unix_socket=tmp_path / 'unopened.sock',
+                ssl=SSL(mode='DISABLED'), server_public_key_path=tmp_path / 'missing-key.pem')
+    assert caught.value.code == SQLAeroErrorCode.TRANSPORT
+    info = caught.value.error_info
+    assert info.stage == 'connect' and info.native_type is not None
+    current = info.cause
+    while current is not None and current.native_type != 'std::io::Error':
+        current = current.cause
+    assert current is not None and current.os_errno == errno.ENOENT
+    assert current.exception_type is None and current.code is None
 
 
 ROOT = Path(os.environ.get('SQLAERO_TEST_MYSQL_ROOT', '/private/tmp/sqlaero-mysql-501'))
@@ -37,6 +101,29 @@ def connection(request: pytest.FixtureRequest) -> Iterator[Connection]:
         yield value
     finally:
         value.close()
+
+
+@requires_mysql
+@pytest.mark.parametrize('name', ['net_read_timeout', 'net_write_timeout', 'wait_timeout',
+                                  'innodb_lock_wait_timeout'])
+def test_server_timeout_failure_records_its_public_stage(connection: Connection, name: str) -> None:
+    from sqlaero.errors import SQLAeroError
+
+    with pytest.raises(SQLAeroError) as caught:
+        getattr(connection, 'set_' + name)(10**100)
+    assert caught.value.is_server_error is True
+    assert caught.value.error_info.stage == 'connection.set_' + name
+    assert name in caught.value.message
+    assert connection.ping()
+
+
+@requires_mysql
+def test_closed_autocommit_setter_records_stage_without_rewriting_error(connection: Connection) -> None:
+    connection.close()
+    with pytest.raises(InterfaceError) as caught:
+        connection.set_autocommit(False)
+    assert caught.value.error_info.stage == 'connection.set_autocommit'
+    assert caught.value.is_server_error is False
 
 
 def test_public_signatures_and_input_preflight() -> None:

@@ -396,9 +396,7 @@ const WORK_BYTES: usize = 256 * 1024;
 /// Check the original whole-operation budget and actual pending Python signal.
 pub(crate) fn check(py: Python<'_>, budget: &IoBudget) -> PyResult<()> {
     py.check_signals()?;
-    budget
-        .check()
-        .map_err(|error| errors::client(py, ClientErrorCode::OperationDeadline, error.to_string()))
+    budget.check().map_err(|error| errors::timeout(py, error))
 }
 fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
     match budget {

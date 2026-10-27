@@ -441,31 +441,36 @@ impl Connection {
         value: &Bound<'_, PyAny>,
         index: usize,
         name: &str,
+        stage: &'static str,
     ) -> PyResult<()> {
-        let mut budget = self.runtime(py)?.timeouts.operation();
-        let value = config::positive(value, name)?;
-        let mut lease = self
-            .native
-            .try_command()
-            .map_err(|error| errors::access(py, error))?;
-        if self
-            .server_timeout(py, index, name)
-            .ok()
-            .map(BigUint::from)
-            .as_ref()
-            == Some(&value)
-        {
-            return Ok(());
-        }
-        let mut sql = Vec::new();
-        writer::append(&mut sql, b"SET SESSION ", self.max_send)
-            .map_err(|error| errors::wire(py, error))?;
-        writer::append(&mut sql, name.as_bytes(), self.max_send)
-            .map_err(|error| errors::wire(py, error))?;
-        writer::append(&mut sql, b"=", self.max_send).map_err(|error| errors::wire(py, error))?;
-        writer::append(&mut sql, value.to_str_radix(10).as_bytes(), self.max_send)
-            .map_err(|error| errors::wire(py, error))?;
-        self.control_with(py, &mut lease, &sql, &mut budget)
+        (|| {
+            let mut budget = self.runtime(py)?.timeouts.operation();
+            let value = config::positive(value, name)?;
+            let mut lease = self
+                .native
+                .try_command()
+                .map_err(|error| errors::access(py, error))?;
+            if self
+                .server_timeout(py, index, name)
+                .ok()
+                .map(BigUint::from)
+                .as_ref()
+                == Some(&value)
+            {
+                return Ok(());
+            }
+            let mut sql = Vec::new();
+            writer::append(&mut sql, b"SET SESSION ", self.max_send)
+                .map_err(|error| errors::wire(py, error))?;
+            writer::append(&mut sql, name.as_bytes(), self.max_send)
+                .map_err(|error| errors::wire(py, error))?;
+            writer::append(&mut sql, b"=", self.max_send)
+                .map_err(|error| errors::wire(py, error))?;
+            writer::append(&mut sql, value.to_str_radix(10).as_bytes(), self.max_send)
+                .map_err(|error| errors::wire(py, error))?;
+            self.control_with(py, &mut lease, &sql, &mut budget)
+        })()
+        .map_err(|error| errors::at(py, error, stage))
     }
     pub(crate) fn selector(py: Python<'_>, selector: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         if selector.is_some_and(|value| {
@@ -615,11 +620,13 @@ macro_rules! connection_api {
             /// Change server SESSION autocommit after acquiring command ownership.
             /// A reliably confirmed same value sends no request and is not a ping.
             fn set_autocommit(&self,py:Python<'_>,enabled:&Bound<'_,PyAny>)->PyResult<()> {
-                let mut budget=self.runtime(py)?.timeouts.operation();
-                let enabled=config::boolean(enabled,"enabled")?;
-                let mut lease=self.native.try_command().map_err(|error|errors::access(py,error))?;
-                if self.autocommit(py).ok()==Some(enabled) {return Ok(())}
-                self.control_with(py,&mut lease,if enabled {b"SET SESSION autocommit=1"}else{b"SET SESSION autocommit=0"},&mut budget)
+                (|| {
+                    let mut budget=self.runtime(py)?.timeouts.operation();
+                    let enabled=config::boolean(enabled,"enabled")?;
+                    let mut lease=self.native.try_command().map_err(|error|errors::access(py,error))?;
+                    if self.autocommit(py).ok()==Some(enabled) {return Ok(())}
+                    self.control_with(py,&mut lease,if enabled {b"SET SESSION autocommit=1"}else{b"SET SESSION autocommit=0"},&mut budget)
+                })().map_err(|error|errors::at(py,error,"connection.set_autocommit"))
             }
             /// MySQL server-side session seconds for waiting for more uploaded
             /// client data. The initial actual value is read even when omitted
@@ -636,7 +643,7 @@ macro_rules! connection_api {
             /// Server-specific upper bounds/normalization are decided by MySQL.
             /// Reliable same-value updates send no SQL after lifecycle/ownership
             /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
-            fn set_net_read_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,0,"net_read_timeout")}
+            fn set_net_read_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,0,"net_read_timeout","connection.set_net_read_timeout")}
             /// MySQL server-side session seconds for writing to this client;
             /// distinct from client-side write_timeout. Reliable cached reads
             /// remain available after close and never send SQL. Unknown raises InterfaceError.
@@ -650,7 +657,7 @@ macro_rules! connection_api {
             /// Server-specific upper bounds/normalization are decided by MySQL.
             /// Reliable same-value updates send no SQL after lifecycle/ownership
             /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
-            fn set_net_write_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,1,"net_write_timeout")}
+            fn set_net_write_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,1,"net_write_timeout","connection.set_net_write_timeout")}
             /// MySQL server-side session idle timeout in whole seconds. This
             /// cached fact is not a client operation timer or a live health check.
             /// Reliable values remain readable after close; unknown raises InterfaceError.
@@ -664,7 +671,7 @@ macro_rules! connection_api {
             /// Server-specific upper bounds/normalization are decided by MySQL.
             /// Reliable same-value updates send no SQL after lifecycle/ownership
             /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
-            fn set_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,2,"wait_timeout")}
+            fn set_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,2,"wait_timeout","connection.set_wait_timeout")}
             /// MySQL server-side InnoDB row-lock wait timeout in whole seconds;
             /// it does not control metadata locks or guarantee transaction rollback.
             /// Reliable cached values remain readable after close; unknown raises InterfaceError.
@@ -678,7 +685,7 @@ macro_rules! connection_api {
             /// Server-specific upper bounds/normalization are decided by MySQL.
             /// Reliable same-value updates send no SQL after lifecycle/ownership
             /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
-            fn set_innodb_lock_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,3,"innodb_lock_wait_timeout")}
+            fn set_innodb_lock_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,3,"innodb_lock_wait_timeout","connection.set_innodb_lock_wait_timeout")}
             /// Send START TRANSACTION. Repeating this follows MySQL semantics,
             /// which may commit an existing transaction before opening another.
             fn begin(&self,py:Python<'_>)->PyResult<()> { self.control(py,b"START TRANSACTION").map_err(|error|errors::at(py,error,"connection.begin")) }
@@ -878,13 +885,13 @@ pub(crate) fn connect(
         &result_memory_limit,
         "result_memory_limit",
         256 * 1024 * 1024,
-        usize::MAX,
+        isize::MAX as usize,
     )?;
     let total_limit = configured_size(
         &total_result_memory_limit,
         "total_result_memory_limit",
         512 * 1024 * 1024,
-        usize::MAX,
+        isize::MAX as usize,
     )?;
     let server_public_key =
         config::optional_path(server_public_key_path, "server_public_key_path")?;
@@ -928,7 +935,7 @@ pub(crate) fn connect(
     let selected = ssl.as_deref().unwrap_or(&default_ssl);
     let ssl_mode = selected.mode_name(unix);
     let tls = selected.prepare(unix, &host)?;
-    input::check(py, &budget)?;
+    input::check(py, &budget).map_err(|error| errors::at(py, error, "connect"))?;
     let params = ConnectParams {
         endpoint: match socket {
             Some(socket) => Endpoint::Unix(socket),
@@ -947,7 +954,7 @@ pub(crate) fn connect(
     };
     let establish = py
         .detach(|| Establish::with_budget(params, budget))
-        .map_err(|error| errors::establish(py, error))?;
+        .map_err(|error| errors::at(py, errors::establish(py, error), "connect"))?;
     let mut initialize = Initialize::new(
         establish,
         InitOptions {

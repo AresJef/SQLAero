@@ -552,7 +552,9 @@ pub(crate) fn establish(
     error: sqlaero_core::session::connect::ConnectError,
 ) -> PyErr {
     use sqlaero_core::{protocol::auth::AuthError, session::connect::ConnectError};
-    match error {
+    let detail =
+        diagnostics::Native::capture(&error, Some("sqlaero_core::session::connect::ConnectError"));
+    let mapped = match error {
         ConnectError::Wire(error) | ConnectError::Auth(AuthError::Wire(error)) => wire(py, error),
         ConnectError::Channel(error) => channel(py, error),
         ConnectError::Timeout(error) => timeout(py, error),
@@ -572,7 +574,9 @@ pub(crate) fn establish(
             client(py, ClientErrorCode::Authentication, error.to_string())
         }
         error => client(py, ClientErrorCode::Transport, error.to_string()),
-    }
+    };
+    native(py, &mapped, detail);
+    mapped
 }
 pub(crate) fn initialize(
     py: Python<'_>,
