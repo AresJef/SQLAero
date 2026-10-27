@@ -3,8 +3,10 @@
 # pyright: reportPrivateUsage=false
 
 import signal
+import sys
 from types import FrameType
 from datetime import time
+from typing import Any, cast
 import pytest
 from sqlaero._sqlaero import _Rows, _rows_from_packets, DataError, InterfaceBusyError, InterfaceError
 
@@ -146,6 +148,50 @@ def test_fetch_size_validation_never_changes_position(size: object) -> None:
 
 class Interrupted(Exception):
     """An original user exception that must survive output cancellation."""
+
+
+@pytest.mark.parametrize('shape', ['array', 'object'])
+@pytest.mark.parametrize('interrupt', [True, False], ids=['interrupt', 'continue'])
+def test_single_large_json_checks_signals_before_finishing_the_field(shape: str, interrupt: bool) -> None:
+    """Observe partial native work, rather than imposing a timer precision SLA."""
+    count = 300_000
+    document = (b'[' + b'123456789,' * (count - 1) + b'123456789]' if shape == 'array'
+                else b'{' + b','.join(f'"k{index}":123456789'.encode('ascii')
+                                     for index in range(count)) + b'}')
+    value = _rows_from_packets(packets([column('payload', 245, 255)], [(document,)]), decode_json=True)
+    original = Interrupted('stop one JSON field')
+    observed: list[int] = []
+    baseline = sys.getallocatedblocks()
+
+    def check_progress(signum: int, frame: FrameType | None) -> None:
+        # Noncached integers create real CPython objects. Ignore a signal that
+        # precedes decoding; an old field-end-only check observes the full set.
+        allocated = sys.getallocatedblocks() - baseline
+        if allocated < 1024:
+            return
+        if not observed:
+            observed.append(allocated)
+        if interrupt:
+            raise original
+
+    previous = signal.signal(signal.SIGALRM, check_progress)
+    result: tuple[Any, ...] | None = None
+    try:
+        signal.setitimer(signal.ITIMER_REAL, 0.001, 0.001)
+        if interrupt:
+            with pytest.raises(Interrupted) as caught:
+                value.fetchone()
+            assert caught.value is original and not hasattr(original, 'error_info')
+            assert value.position == 0
+        else:
+            result = cast(tuple[Any, ...], value.fetchone())
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert observed and 1024 <= observed[0] < count // 2, observed
+    if interrupt:
+        result = cast(tuple[Any, ...], value.fetchone())
+    assert result is not None and len(result[0]) == count and value.position == 1
 
 
 def test_interrupted_output_releases_temporaries_and_does_not_commit() -> None:

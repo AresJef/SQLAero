@@ -8,6 +8,9 @@ use pyo3::types::{PyDict, PyList, PyString};
 // Keep the fixed jiter Python parser's container recursion bound. Its number
 // decoder also retains the upstream 4,300-digit resource bound.
 const MAX_DEPTH: usize = 200;
+// Share a work counter across nested containers. Resetting it per container
+// would let many short nested arrays defer interruption for an entire field.
+const SIGNAL_WORK: usize = 4096;
 
 /// Decode one complete JSON document directly into its final Python objects.
 ///
@@ -17,7 +20,8 @@ const MAX_DEPTH: usize = 200;
 pub(crate) fn decode<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
     let mut parser = Jiter::new(data);
     let peek = parser.peek().map_err(|error| syntax(&parser, error))?;
-    let value = read_value(py, &mut parser, peek, 0)?;
+    let mut until_check = SIGNAL_WORK;
+    let value = read_value(py, &mut parser, peek, 0, &mut until_check)?;
     parser.finish().map_err(|error| syntax(&parser, error))?;
     Ok(value)
 }
@@ -31,6 +35,7 @@ fn read_value<'py>(
     parser: &mut Jiter<'_>,
     peek: Peek,
     depth: usize,
+    until_check: &mut usize,
 ) -> PyResult<Bound<'py, PyAny>> {
     match peek {
         Peek::Null => {
@@ -57,7 +62,8 @@ fn read_value<'py>(
                 .known_array()
                 .map_err(|error| syntax(parser, error))?;
             while let Some(item) = next {
-                result.append(read_value(py, parser, item, depth + 1)?)?;
+                check_work(py, until_check)?;
+                result.append(read_value(py, parser, item, depth + 1, until_check)?)?;
                 next = parser.array_step().map_err(|error| syntax(parser, error))?;
             }
             Ok(result.into_any())
@@ -70,8 +76,9 @@ fn read_value<'py>(
                 Err(error) => return Err(syntax(parser, error)),
             };
             while let Some(key) = next {
+                check_work(py, until_check)?;
                 let item = parser.peek().map_err(|error| syntax(parser, error))?;
-                result.set_item(key, read_value(py, parser, item, depth + 1)?)?;
+                result.set_item(key, read_value(py, parser, item, depth + 1, until_check)?)?;
                 next = match parser.next_key() {
                     Ok(key) => key.map(|key| PyString::new(py, key)),
                     Err(error) => return Err(syntax(parser, error)),
@@ -89,6 +96,16 @@ fn read_value<'py>(
             value => Ok(value.into_pyobject(py)?.into_any()),
         },
     }
+}
+
+#[inline]
+fn check_work(py: Python<'_>, until_check: &mut usize) -> PyResult<()> {
+    *until_check -= 1;
+    if *until_check == 0 {
+        *until_check = SIGNAL_WORK;
+        py.check_signals()?;
+    }
+    Ok(())
 }
 
 fn check_depth(depth: usize) -> PyResult<()> {
