@@ -156,6 +156,8 @@ class Interrupted(Exception):
 @pytest.mark.parametrize('interrupt', [True, False], ids=['interrupt', 'continue'])
 def test_single_large_json_checks_signals_before_finishing_the_field(shape: str, interrupt: bool) -> None:
     """Observe partial native work, rather than imposing a timer precision SLA."""
+    import gc
+
     count = 1_000_000
     document = (b'[' + b'123456789,' * (count - 1) + b'123456789]' if shape == 'array'
                 else b'{' + b','.join(f'"k{index}":123456789'.encode('ascii')
@@ -166,13 +168,23 @@ def test_single_large_json_checks_signals_before_finishing_the_field(shape: str,
     baseline = sys.getallocatedblocks()
 
     def check_progress(signum: int, frame: FrameType | None) -> None:
+        if observed:
+            return
         # Noncached integers create real CPython objects. Ignore a signal that
         # precedes decoding; an old field-end-only check observes the full set.
         allocated = sys.getallocatedblocks() - baseline
         if allocated < 1024:
             return
-        if not observed:
-            observed.append(allocated)
+        observed.append(allocated)
+        alarm.start(0)
+        # Arbitrary application handlers may inspect GC containers. Every
+        # visible tuple must already have initialized slots, including while
+        # the enclosing row is still decoding this one long JSON field.
+        for temporary in gc.get_objects():
+            if type(temporary) is tuple:
+                candidate = cast(tuple[object, ...], temporary)
+                if len(candidate) == 1:
+                    _ = candidate[0]
         if interrupt:
             raise original
 
@@ -196,22 +208,37 @@ def test_single_large_json_checks_signals_before_finishing_the_field(shape: str,
 
 
 def test_interrupted_output_releases_temporaries_and_does_not_commit() -> None:
-    value = reader([(b"1",)] * _SIGNAL_FETCH_ROWS)
+    import gc
+
+    marker = 1472853690
+    value = reader([(str(marker).encode(),)] * _SIGNAL_FETCH_ROWS)
     original = Interrupted("stop this fetch")
+    observed: list[bool] = []
 
     def interrupt(signum: int, frame: FrameType | None) -> None:
-        raise original
+        alarm.start(0)
+        # Observe an actual output tuple, rather than accepting an exception
+        # delivered before fetch entry or after the result has committed.
+        for temporary in gc.get_objects():
+            if type(temporary) is tuple:
+                candidate = cast(tuple[object, ...], temporary)
+                if len(candidate) == 1 and type(candidate[0]) is int and candidate[0] == marker:
+                    observed.append(True)
+                    del candidate, temporary
+                    raise original
+        alarm.start(0.0001)
 
     alarm = NativeAlarm(interrupt)
     try:
-        alarm.start(0.001)
+        alarm.start(0.0001)
         with pytest.raises(Interrupted) as caught:
             value.fetchall()
         assert caught.value is original
     finally:
         alarm.close()
+    assert observed == [True]
     assert value.position == 0
-    assert value.fetchone() == (1,)
+    assert value.fetchone() == (marker,)
 
 
 def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable() -> None:

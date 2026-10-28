@@ -10,6 +10,59 @@ use sqlaero_core::memory::{Buffer, MemoryError, Scope};
 use sqlaero_core::result::decode::{self, ContentError, Integer, Kind, Plan};
 use std::sync::Arc;
 
+/// Fill one final tuple without exposing its unfinished slots to Python GC.
+/// The iterator may decode values or check signals. Keep the tuple untracked
+/// until all slots are valid; already completed children remain normal values.
+/// The sole owned reference also cleans up initialized slots on any exception.
+/// Supported GIL builds protect allocation through immediate untracking; a
+/// future free-threaded adapter must preserve that same unpublished ownership.
+pub(crate) fn tuple_from_values<'py>(
+    py: Python<'py>,
+    mut values: impl ExactSizeIterator<Item = PyResult<Bound<'py, PyAny>>>,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let length = isize::try_from(values.len()).map_err(|_| {
+        pyo3::exceptions::PyOverflowError::new_err("tuple length exceeds Py_ssize_t")
+    })?;
+    // SAFETY: attached CPython returns an owned exact tuple or NULL with its
+    // original allocation error. No Python callback runs between this return
+    // and untracking. The empty tuple is shared and must not be re-tracked.
+    let tuple = unsafe {
+        let tuple = Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyTuple_New(length))?
+            .cast_into_unchecked::<PyTuple>();
+        if length != 0 {
+            pyo3::ffi::PyObject_GC_UnTrack(tuple.as_ptr().cast());
+        }
+        tuple
+    };
+    for index in 0..length {
+        let value = values.next().ok_or_else(|| {
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "native tuple iterator ended early",
+            )
+        })??;
+        // SAFETY: this private tuple has one owner, is hidden from GC, and
+        // index is within its allocated length. Each new slot steals exactly
+        // one owned final value; no initialized slot is overwritten.
+        unsafe { pyo3::ffi::PyTuple_SET_ITEM(tuple.as_ptr(), index, value.into_ptr()) };
+    }
+    if let Some(extra) = values.next() {
+        extra?;
+        return Err(errors::client(
+            py,
+            ClientErrorCode::InternalState,
+            "native tuple iterator exceeded its declared length",
+        ));
+    }
+    if length != 0 {
+        // SAFETY: every slot is initialized and the tuple is still untracked.
+        // It may now safely become visible to ordinary GC and user callbacks.
+        unsafe { pyo3::ffi::PyObject_GC_Track(tuple.as_ptr().cast()) };
+    }
+    Ok(tuple)
+}
+
 pub(crate) fn memory(py: Python<'_>, error: MemoryError) -> PyErr {
     match error {
         MemoryError::Allocation(error) => {

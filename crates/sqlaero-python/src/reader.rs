@@ -17,21 +17,6 @@ use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-/// Let PyO3 fill the final tuple directly from a fallible native iterator.
-/// The wrapper owns only the current final value or its original exception;
-/// it adds no Python object, intermediate collection or unsafe tuple writer.
-struct Decoded<'py>(PyResult<Bound<'py, PyAny>>);
-
-impl<'py> IntoPyObject<'py> for Decoded<'py> {
-    type Target = PyAny;
-    type Output = Bound<'py, PyAny>;
-    type Error = PyErr;
-
-    fn into_pyobject(self, _py: Python<'py>) -> PyResult<Self::Output> {
-        self.0
-    }
-}
-
 struct ReadData {
     rows: Buffered,
     plans: Buffer<Plan>,
@@ -315,13 +300,13 @@ impl Reader {
             Ok(value)
         };
         let row = if DIRECT {
-            PyTuple::new(
+            output::tuple_from_values(
                 py,
                 fields
                     .iter()
                     .zip(data.plans.iter())
                     .enumerate()
-                    .map(|(index, (cell, plan))| Decoded(decode(index, cell, *plan))),
+                    .map(|(index, (cell, plan))| decode(index, cell, *plan)),
             )?
             .into_any()
         } else {
@@ -342,7 +327,7 @@ impl Reader {
 
     /// Materialize the final result without changing the caller's position.
     /// The buffered specialization preserves the old wide-row ownership graph;
-    /// the direct specialization delegates partial tuple cleanup to PyO3.
+    /// the direct specialization hides unfinished tuples across callbacks.
     fn materialize<'py, const DIRECT: bool>(
         &self,
         py: Python<'py>,
@@ -356,11 +341,9 @@ impl Reader {
             if one {
                 self.row_tuple::<true>(py, data, types, start, start)
             } else {
-                PyTuple::new(
+                output::tuple_from_values(
                     py,
-                    range.map(|index| {
-                        Decoded(self.row_tuple::<true>(py, data, types, index, start))
-                    }),
+                    range.map(|index| self.row_tuple::<true>(py, data, types, index, start)),
                 )
                 .map(Bound::into_any)
             }
