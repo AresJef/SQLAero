@@ -26,7 +26,6 @@ jobs:
       run:
         shell: bash
     env:
-      SQLAERO_TEST_MYSQL_ROOT: ${{ runner.temp }}/sqlaero-mysql
       SQLAERO_NATIVE_MYSQL: "1"
       HOMEBREW_NO_AUTO_UPDATE: "1"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
@@ -56,6 +55,8 @@ jobs:
           import sys
           with Path(os.environ['GITHUB_PATH']).open('a', encoding='utf-8') as output:
               output.write(str(Path(sys.executable).parent) + '\n')
+          with Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8') as output:
+              output.write('SQLAERO_TEST_MYSQL_ROOT=' + str(Path(os.environ['RUNNER_TEMP']) / 'sqlaero-mysql') + '\n')
           PY
           mkdir -p probe-evidence
       - name: Provision native MySQL executables
