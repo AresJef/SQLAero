@@ -1,7 +1,7 @@
 //! Final Python values from prepared native fields; no Python decoder loops.
 
 use crate::{errors, input::ScalarTypes, json};
-use pyo3::exceptions::{PyUnicodeDecodeError, PyValueError};
+use pyo3::exceptions::PyUnicodeDecodeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateTime, PyDelta, PyString, PyTime, PyTuple};
 use sqlaero_core::charset::{codec::CodecError, output::OutputCodec};
@@ -198,7 +198,7 @@ fn json_value<'py>(
         converted.as_slice()
     };
     match json::decode(py, input) {
-        Err(error) if error.is_instance_of::<PyValueError>(py) => {
+        Err(json::DecodeFailure::Invalid(error)) => {
             let main = errors::client(
                 py,
                 ClientErrorCode::DecodeContent,
@@ -207,7 +207,8 @@ fn json_value<'py>(
             main.set_cause(py, Some(error));
             Err(main)
         }
-        result => result,
+        Err(json::DecodeFailure::Python(error)) => Err(error),
+        Ok(result) => Ok(result),
     }
 }
 

@@ -74,6 +74,9 @@ exact list/tuple provide positional, nested and batch structure. Third-party
 arrays/tables, arbitrary subclasses and memoryview are outside this first version.
 Nonfinite float/Decimal values become NULL. Aware datetime inputs normalize to
 UTC and require a reliably confirmed UTC session.
+`datetime.time` inputs preserve their clock fields and microseconds, ignore
+`tzinfo`, and never call timezone methods. For example, `00:30+01:00` is written
+as `'00:30:00'`; unlike aware `datetime`, it is not converted to UTC.
 
 `executemany(sql, rows)` is the same native `many=True, itemize=True` path.
 Approved INSERT/REPLACE VALUES forms merge complete rows within the actual

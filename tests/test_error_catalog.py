@@ -32,6 +32,25 @@ def test_complete_registry_matches_independent_reviewed_semantics() -> None:
         assert actual == expected[origin]
 
 
+@pytest.mark.parametrize(('number', 'explanation'), [
+    (2, 'A file read failed; the server message includes the file and operating-system cause'),
+    (1308, 'LEAVE or ITERATE refers to a label with no matching target'),
+    (1320, 'A stored function contains no RETURN statement'),
+    (1321, 'A stored function reached its end without executing RETURN'),
+    (1337, 'Local variables and conditions must be declared before cursors and handlers'),
+    (1338, 'Cursors must be declared before handlers in a stored program'),
+    (1886, 'The table lacks an index required by the requested operation'),
+    (3600, 'Window processing requires the TempTable internal temporary-memory storage engine'),
+    (3838, 'The plugin must not be loaded through the early-plugin interface'),
+    (6421, 'Lakehouse incremental loading cannot be combined with validation mode'),
+    (6446, 'A JSON duality view definition has invalid, duplicate or conflicting annotations'),
+])
+def test_enum_documents_condition_not_abbreviated_identifier(number: int, explanation: str) -> None:
+    """Keep independently reviewed meanings, including misleading legacy names."""
+    member = MySQLErrorCode(number)
+    assert member.__doc__ is not None and explanation in member.__doc__
+
+
 def test_condition_fingerprint_detects_english_continuations_without_copying_templates() -> None:
     from tools import error_catalog
 

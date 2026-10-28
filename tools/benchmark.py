@@ -166,6 +166,17 @@ def cases() -> list[Case]:
             for schema in ("mixed", "wide"):
                 result.append(Case(f"execute/{server}/unix/roundtrip/{schema}/R{size}",
                     {"server": server, "transport": "unix", "rows": size, "schema": schema}, "roundtrip"))
+    # Exercise the repaired single-token work path using the existing paired
+    # runner. These inputs are prepared once, outside normal call timing.
+    for name, payload in (
+        ("ascii-small", b'"' + b'a' * 1024 + b'"'),
+        ("ascii-large", b'"' + b'a' * 1048576 + b'"'),
+        ("unicode-large", ('"' + 'é中😀' * 65536 + '"').encode()),
+        ("escapes-large", b'"' + b'\\u0001' * 65536 + b'"'),
+        ("first-key", b'{"' + b'k' * 32768 + b'":1}'),
+        ("later-key", b'{"first":0,"' + b'k' * 32768 + b'":1}'),
+    ):
+        result.append(Case(f"decode-json/{name}", payload, "decode-json"))
     return result
 
 
@@ -197,6 +208,9 @@ def target(case: Case, native: Any, legacy: Any | None, sessions: dict[str, Any]
         bind = native._bind_sql
         return Task(lambda: bind(case.sql, case.value, many=case.many,
                                  itemize=case.itemize, no_backslash=case.no_backslash))
+    if case.family == "decode-json":
+        decode = native._decode_json
+        return Task(lambda: decode(case.value))
     return network_target(case, native, sessions)
 
 
@@ -465,7 +479,7 @@ def worker(package: str | None, with_legacy: bool) -> None:
                            "output": outputs["/".join(key)], "clock": calibration})
             result["untimed_preparation"] = preparations.get(key)
             result["warmup"] = warmups[key]
-            result["cpu_quality"] = collection[case_id].family in {"escape", "bind", "fetch"}
+            result["cpu_quality"] = collection[case_id].family in {"escape", "bind", "fetch", "decode-json"}
             print(json.dumps(result), flush=True)
         except BaseException as error:
             print(json.dumps({"error": type(error).__name__, "message": str(error),
@@ -703,7 +717,7 @@ def collect(args: argparse.Namespace) -> None:
                             sb = calibrated_sample(b, case, n, "native")
                             probes.extend((sa, sb))
                             fastest = min(int(sa["wall_ns"]), int(sb["wall_ns"]))
-                            if case.family not in {"escape", "bind", "fetch"} or fastest >= args.target_ms * 1e6 or n >= 10_000_000:
+                            if case.family not in {"escape", "bind", "fetch", "decode-json"} or fastest >= args.target_ms * 1e6 or n >= 10_000_000:
                                 break
                             n = min(10_000_000, max(n + 1, math.ceil(n * args.target_ms * 1e6 / max(fastest, 1))))
                         parameters[case.id] = n
@@ -712,13 +726,15 @@ def collect(args: argparse.Namespace) -> None:
                             "cycles": args.cycles, "target_ms": args.target_ms,
                             "minimum_ms": args.minimum_ms, "runner_sha256": metadata["runner_sha256"],
                             "cases": metadata["cases"]}, indent=2))
-                        if case.family in {"escape", "bind", "fetch"}:
-                            controls = [control(a, case, n, role_a), control(b, case, n, "native")]
-                            append(directory / "controls.jsonl", {"case": case.id, "n": n, "controls": controls})
-                            if not all(item["passed"] for item in controls):
-                                isolated.add(case.id)
-                                continue
                     n = parameters[case.id]
+                    if args.command == "calibrate" and cycle == 0 and case.family in {"escape", "bind", "fetch", "decode-json"}:
+                        # A supplied call count can be reused, but its control
+                        # evidence cannot be reused for a new native artifact.
+                        controls = [control(a, case, n, role_a), control(b, case, n, "native")]
+                        append(directory / "controls.jsonl", {"case": case.id, "n": n, "controls": controls})
+                        if not all(item["passed"] for item in controls):
+                            isolated.add(case.id)
+                            continue
                     for order in orders:
                         key = cycle, case.id, order
                         if key in existing:

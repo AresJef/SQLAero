@@ -376,10 +376,14 @@ macro_rules! cursor_api {
             /// Omitted args sends original SQL; explicit None binds one NULL.
             /// many/itemize are exact bool and keyword-only. All request chunks
             /// share one deadline. Confirmed prefixes never imply a commit.
+            /// datetime.time keeps its clock fields and microseconds, ignores
+            /// tzinfo and never calls timezone methods; 00:30+01:00 remains
+            /// 00:30:00. Aware datetime, in contrast, is normalized to UTC.
             #[pyo3(signature=(sql,args=Argument::default(),*,many=Argument::default(),itemize=Argument::default()))]
             #[pyo3(text_signature="($self, sql, args=..., *, many=False, itemize=True)")]
             fn execute<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:Argument<'_>,many:Argument<'_>,itemize:Argument<'_>)->PyResult<Bound<'py,PyAny>> {self.run(py,sql,args,&many,&itemize).map_err(|error|errors::at(py,error,"cursor.execute"))}
             /// Execute using the same native many=True,itemize=True operation.
+            /// Input value and timezone rules are the same as execute().
             fn executemany<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:&Bound<'_,PyAny>)->PyResult<Bound<'py,PyAny>> {
                 let many=true.into_pyobject(py)?.to_owned().into_any();
                 self.run(py,sql,Argument(Some(args.clone())),&Argument(Some(many.clone())),&Argument(Some(many)))

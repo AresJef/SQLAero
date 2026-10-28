@@ -1,6 +1,6 @@
 """Private native extension declarations."""
 
-from typing import Any, Iterator, Never, Self, final, overload
+from typing import Any, Iterator, Literal, Never, Self, final, overload
 from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as MySQLErrorCode
 
 @final
@@ -361,11 +361,11 @@ class Connection:
         """Actual server connection identity, still readable after close."""
         ...
     @property
-    def ssl_mode(self) -> str:
+    def ssl_mode(self) -> Literal["DISABLED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"]:
         """Resolved TLS policy, still readable after close."""
         ...
     @property
-    def tls_version(self) -> str | None:
+    def tls_version(self) -> Literal["TLSv1.2", "TLSv1.3"] | None:
         """Actual negotiated TLS version, or None for plain transport."""
         ...
     @property
@@ -610,8 +610,18 @@ class Cursor:
     """Independent buffered results, created by Connection.cursor()."""
     def __new__(cls, _factory_only: Never, /) -> Self: ...
     def execute(self, sql: str, args: EscapeInput = ..., *, many: bool = False,
-                itemize: bool = True) -> int: ...
-    def executemany(self, sql: str, args: EscapeInput) -> int: ...
+                itemize: bool = True) -> int:
+        """Execute SQL using the native value encoder and positional binding.
+
+        Exact datetime.time values preserve their clock and microseconds;
+        tzinfo is ignored without calling timezone methods. For example,
+        00:30+01:00 is encoded as '00:30:00'. Aware datetime values instead
+        follow the documented UTC conversion rule.
+        """
+        ...
+    def executemany(self, sql: str, args: EscapeInput) -> int:
+        """Execute a batch using execute's input and datetime.time rules."""
+        ...
     def fetchone(self) -> tuple[object, ...] | None: ...
     def fetchmany(self, size: int | None = None) -> tuple[tuple[object, ...], ...]: ...
     def fetchall(self) -> tuple[tuple[object, ...], ...]: ...

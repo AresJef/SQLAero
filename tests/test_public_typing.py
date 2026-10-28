@@ -29,12 +29,17 @@ def test_public_stub_modules_export_the_same_native_identities() -> None:
 
 def test_installed_types_reject_forbidden_construction_and_subclassing(tmp_path: Path) -> None:
     """Use the real Pyright executable, not string checks on the stub source."""
-    positive = '''from typing import assert_type
+    positive = '''from typing import Literal, assert_type
 from sqlaero import connect, Connection, Cursor, Columns, ColumnInfo, SSL
 from sqlaero.errors import SQLAeroError, ErrorInfo, OperationalError, MySQLErrorCode
 from sqlaero.retry import Retry, RetryRule, retry
 connection = connect(user="type check only", ssl=SSL())
 assert_type(connection, Connection)
+assert_type(connection.ssl_mode, Literal["DISABLED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"])
+assert_type(connection.tls_version, Literal["TLSv1.2", "TLSv1.3"] | None)
+def accepts_mode(_mode: Literal["DISABLED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"]) -> None:
+    pass
+accepts_mode(connection.ssl_mode)
 cursor = connection.cursor()
 assert_type(cursor, Cursor)
 assert_type(cursor.columns, Columns)

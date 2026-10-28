@@ -5,6 +5,11 @@ texts are preserved under `licenses/third-party/`. This inventory describes the
 current aarch64-apple-darwin graph; it is regenerated when the shipped graph changes.
 The package license expression does not replace its original copyright notices.
 
+SQLAero carries a narrowly patched jiter 0.17.0 at `third-party/jiter/`.
+Its upstream MIT license and platform scanners are preserved. The local changes
+add fallible work checkpoints used only by the Python result boundary; provenance,
+scope and upgrade instructions are in `third-party/jiter/SQLAERO_PATCH.md`.
+
 | Package | Version | Declared license | Original texts |
 | --- | --- | --- | --- |
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | [LICENSE-0BSD](licenses/third-party/adler2-2.0.1/LICENSE-0BSD), [LICENSE-APACHE](licenses/third-party/adler2-2.0.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/adler2-2.0.1/LICENSE-MIT) |

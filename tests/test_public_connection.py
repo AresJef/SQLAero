@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import inspect
+from itertools import count
 import json
 import os
 import sys
@@ -13,6 +14,8 @@ from typing import Any, cast
 import pytest
 from sqlaero import Connection, Cursor, SSL, connect
 from sqlaero.errors import InterfaceError, ProgrammingError
+
+_JSON_SIGNAL_IDS = count(7812394560000)
 
 
 class PreparationReached(Exception):
@@ -994,6 +997,202 @@ def test_transactions_are_observed_independently_and_implicit_commit_is_not_undo
 
 
 @requires_mysql
+@pytest.mark.parametrize('primary_kind', ['normal', 'builtin', 'library'])
+@pytest.mark.parametrize('scope_worker', [False, True])
+def test_transaction_busy_exit_reports_unattempted_action_on_final_primary(
+    connection: Connection, primary_kind: str, scope_worker: bool,
+) -> None:
+    """Busy is an acquisition failure, not an attempted server transaction control."""
+    from concurrent.futures import Future, ThreadPoolExecutor
+    import time as clock_time
+    from sqlaero.errors import InterfaceBusyError, SQLAeroError
+
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    original: BaseException | None = (None if primary_kind == 'normal' else
+        ValueError('preserved business primary') if primary_kind == 'builtin' else
+        SQLAeroError('preserved library primary', code=70001, is_server_error=False))
+    saved_info = original.error_info if isinstance(original, SQLAeroError) else None
+    scoped: Cursor | None = None
+    caught: BaseException | None = None
+    future: Future[int] | None = None
+    with live(label) as observer, ThreadPoolExecutor(max_workers=1) as executor:
+        check = observer.cursor()
+        try:
+            with connection.transaction() as current:
+                scoped = current
+                worker = current if scope_worker else connection.cursor()
+                future = executor.submit(worker.execute, 'SELECT SLEEP(0.3)')
+                deadline = clock_time.monotonic() + 2
+                while True:
+                    check.execute('SELECT INFO FROM information_schema.PROCESSLIST WHERE ID=%s', connection.connection_id)
+                    row = check.fetchone()
+                    if row and row[0] == 'SELECT SLEEP(0.3)':
+                        break
+                    assert clock_time.monotonic() < deadline, 'no real in-flight command observed'
+                    clock_time.sleep(0.001)
+                if original is not None:
+                    raise original
+        except BaseException as error:
+            caught = error
+        assert caught is not None and scoped is not None
+        assert future is not None
+        assert future.result(timeout=3) == 1
+    action = 'COMMIT' if original is None else 'ROLLBACK'
+    assert any(f'{action} was not attempted' in note for note in getattr(caught, '__notes__', []))
+    assert scoped is not None and scoped.closed and not connection.closed
+    assert 'still active' not in '\n'.join(getattr(caught, '__notes__', []))
+    if original is None:
+        assert isinstance(caught, InterfaceBusyError)
+        assert caught.error_info.stage == 'transaction.exit'
+    else:
+        assert caught is original
+        if isinstance(original, SQLAeroError):
+            assert original.code == 70001 and original.is_server_error is False
+            assert original.error_info is not saved_info
+            assert saved_info is not None and saved_info.additional_errors == ()
+            assert original.error_info.additional_errors[0].exception_type is InterfaceBusyError
+        else:
+            assert not hasattr(original, 'error_info')
+    connection.rollback()
+    assert connection.ping()
+
+
+@requires_mysql
+def test_busy_exit_does_not_infer_active_transaction_during_implicit_commit(connection: Connection) -> None:
+    """An in-flight DDL may already have committed before its response is available."""
+    from concurrent.futures import Future, ThreadPoolExecutor
+    import time as clock_time
+    from sqlaero.errors import InterfaceBusyError
+
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    base = f'review_exit_{connection.connection_id}'
+    setup = connection.cursor()
+    setup.execute(f'CREATE TABLE {base}(id INT) ENGINE=InnoDB')
+    setup.execute(f'CREATE TABLE {base}_ddl(id INT) ENGINE=InnoDB')
+    future: Future[int] | None = None
+    try:
+        with live(label) as observer, ThreadPoolExecutor(max_workers=1) as executor:
+            check = observer.cursor()
+            check.execute(f'LOCK TABLES {base}_ddl READ')
+            try:
+                with pytest.raises(InterfaceBusyError) as caught:
+                    with connection.transaction() as current:
+                        current.execute(f'INSERT INTO {base} VALUES (1)')
+                        worker = connection.cursor()
+                        statement = f'ALTER TABLE {base}_ddl ADD COLUMN added INT'
+                        future = executor.submit(worker.execute, statement)
+                        deadline = clock_time.monotonic() + 2
+                        while True:
+                            check.execute('SELECT INFO FROM information_schema.PROCESSLIST WHERE ID=%s', connection.connection_id)
+                            row = check.fetchone()
+                            if row and row[0] == statement:
+                                break
+                            assert clock_time.monotonic() < deadline
+                            clock_time.sleep(0.001)
+                notes = '\n'.join(getattr(caught.value, '__notes__', []))
+                assert 'COMMIT was not attempted' in notes and 'still active' not in notes
+            finally:
+                check.execute('UNLOCK TABLES')
+            assert future is not None and future.result(timeout=3) == 0
+            check.execute(f'SELECT id FROM {base}')
+            assert check.fetchall() == ((1,),)
+        with connection.transaction():
+            pass
+    finally:
+        setup.execute(f'DROP TABLE IF EXISTS {base}_ddl')
+        setup.execute(f'DROP TABLE IF EXISTS {base}')
+
+
+@requires_mysql
+@pytest.mark.parametrize('method', ['fetchone', 'fetchmany', 'fetchall', 'iterator'])
+@pytest.mark.parametrize('handler_mode', ['raise', 'custom', 'keyboard', 'memory', 'return', 'reenter'])
+def test_large_json_signal_preserves_real_fetch_state(
+    connection: Connection, method: str, handler_mode: str,
+) -> None:
+    """Check real native progress, reentry and all shared fetch commit boundaries."""
+    import gc
+    import signal
+    from types import FrameType
+    from sqlaero.errors import InterfaceBusyError
+
+    cursor = connection.cursor()
+    cursor.decode_json = True
+    marker = next(_JSON_SIGNAL_IDS)
+    size = 1024 * 1024
+    cursor.execute('SELECT JSON_ARRAY(%s+n, CASE WHEN n=0 THEN \'short\' ELSE '
+                   'REPEAT(CONVERT(CHAR(1) USING utf8mb4), %s) END) AS payload '
+                   'FROM (SELECT 0 AS n UNION ALL SELECT 1) AS input_rows ORDER BY n', (marker, size))
+    saved = cursor.columns
+    first = None
+    if method in ('fetchone', 'iterator'):
+        first = cursor.fetchone()
+        assert first == ([marker, 'short'],)
+    original: BaseException
+    if handler_mode == 'keyboard':
+        original = KeyboardInterrupt('original JSON interrupt')
+    elif handler_mode == 'memory':
+        original = MemoryError('original JSON handler allocation error')
+    elif handler_mode == 'custom':
+        class HandlerFailure(Exception):
+            """An application-owned exception unrelated to the library hierarchy."""
+        original = HandlerFailure('original custom JSON handler failure')
+    else:
+        original = ValueError('original JSON handler failure')
+    observed: list[int] = []
+
+    def handler(_signum: int, _frame: FrameType | None) -> None:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        if observed:
+            return
+        for value in gc.get_objects():
+            if type(value) is not list:
+                continue
+            candidate = cast(list[object], value)
+            if len(candidate) in (1, 2) and type(candidate[0]) is int and candidate[0] == marker + 1:
+                signal.setitimer(signal.ITIMER_REAL, 0)
+                observed.append(len(candidate))
+                if handler_mode == 'reenter':
+                    with pytest.raises(InterfaceBusyError):
+                        cursor.fetchone()
+                if handler_mode in ('raise', 'custom', 'keyboard', 'memory'):
+                    raise original
+                return
+        signal.setitimer(signal.ITIMER_REAL, 0.0001)
+
+    previous = signal.signal(signal.SIGALRM, handler)
+    result: object = None
+    try:
+        try:
+            signal.setitimer(signal.ITIMER_REAL, 0.0001)
+            if method == 'fetchone': result = cursor.fetchone()
+            elif method == 'fetchmany': result = cursor.fetchmany(2)
+            elif method == 'fetchall': result = cursor.fetchall()
+            else: result = next(cursor)
+        except BaseException as error:
+            assert handler_mode in ('raise', 'custom', 'keyboard', 'memory') and error is original
+        else:
+            assert handler_mode in ('return', 'reenter')
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert observed == [1]
+    assert cursor.rowcount == 2 and saved.names == ('payload',)
+    if handler_mode in ('raise', 'custom', 'keyboard', 'memory'):
+        rows = cursor.fetchall()
+        assert len(rows) == (1 if first is not None else 2)
+        assert not hasattr(original, 'error_info')
+    else:
+        assert result is not None
+        rows = (result,) if method in ('fetchone', 'iterator') else result
+    assert isinstance(rows, tuple)
+    assert rows[-1] == ([marker + 1, '\x01' * size],)
+    assert cursor.fetchone() is None
+    assert first is None or first == ([marker, 'short'],)
+    cursor.execute('SELECT 1')
+    assert cursor.fetchone() == (1,)
+
+
+@requires_mysql
 @pytest.mark.parametrize('kind', ['read', 'operation'])
 def test_actual_timeout_uses_entry_snapshot_and_retires_incomplete_response(connection: Connection, kind: str) -> None:
     from concurrent.futures import ThreadPoolExecutor
@@ -1174,3 +1373,28 @@ finally:
     assert completed.returncode == 0, (completed.stdout, completed.stderr)
     proof: dict[str, object] = json.loads(completed.stdout)
     assert proof['closed'] is True and proof['mode'] == mode and proof['label'] == label
+
+
+@requires_mysql
+@pytest.mark.parametrize('business_failure', [False, True])
+def test_transaction_closed_exit_preserves_unattempted_action(
+    connection: Connection, business_failure: bool,
+) -> None:
+    """Closing in the block cannot become a fictitious server control failure."""
+    original = ValueError('original closed-scope business error')
+    saved_cursor: Cursor | None = None
+    with pytest.raises(ValueError if business_failure else InterfaceError) as caught:
+        with connection.transaction() as cursor:
+            saved_cursor = cursor
+            connection.close()
+            if business_failure:
+                raise original
+    action = 'ROLLBACK' if business_failure else 'COMMIT'
+    assert saved_cursor is not None and saved_cursor.closed
+    assert connection.closed
+    notes = '\n'.join(getattr(caught.value, '__notes__', ()))
+    assert f'{action} was not attempted' in notes
+    assert 'No transaction-control command was sent' in notes
+    assert 'still active' not in notes
+    if business_failure:
+        assert caught.value is original

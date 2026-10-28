@@ -608,12 +608,23 @@ pub(crate) fn initialize(
 /// Preserve the same primary exception while recording a real independent
 /// cleanup failure. Diagnostic snapshot publication is implemented in P05.3.
 pub(crate) fn additional(py: Python<'_>, primary: &PyErr, secondary: PyErr, stage: &str) {
+    let message = format!("Additional failure at {stage}: {secondary}");
+    additional_detail(py, primary, secondary, stage, Some(message));
+}
+
+/// Record an independent failure while letting its owner compose one fact block.
+/// A deferred note must be supplied by that boundary after its cleanup finishes.
+pub(crate) fn additional_detail(
+    py: Python<'_>,
+    primary: &PyErr,
+    secondary: PyErr,
+    stage: &str,
+    message: Option<String>,
+) {
     let captured = diagnostics::capture(py, &secondary, Some(stage));
-    note(
-        py,
-        primary,
-        format!("Additional failure at {stage}: {secondary}"),
-    );
+    if let Some(message) = message {
+        note(py, primary, message);
+    }
     if let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
         && let Ok(mut state) = error.diagnostics.lock()
         && let Ok(captured) = captured

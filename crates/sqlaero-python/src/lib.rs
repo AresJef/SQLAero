@@ -29,7 +29,7 @@ fn _parse_size(value: &str) -> PyResult<usize> {
 /// Exercise the single-pass output decoder before result-set integration.
 #[pyfunction]
 fn _decode_json<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
-    json::decode(py, data)
+    json::decode(py, data).map_err(json::DecodeFailure::into_python)
 }
 
 /// Exercise the actual native scalar reader/writer before SQL binding is wired.
