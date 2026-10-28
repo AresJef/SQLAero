@@ -10,6 +10,29 @@ use sqlaero_core::memory::{Buffer, MemoryError, Scope};
 use sqlaero_core::result::decode::{self, ContentError, Integer, Kind, Plan};
 use std::sync::Arc;
 
+/// Construct a final tuple from already decoded stack values. Array iteration
+/// only transfers owned references, so no callback can see unfinished slots.
+pub(crate) fn tuple_from_ready<'py, const N: usize>(
+    py: Python<'py>,
+    values: [Bound<'py, PyAny>; N],
+) -> PyResult<Bound<'py, PyTuple>> {
+    let length = isize::try_from(N).map_err(|_| {
+        pyo3::exceptions::PyOverflowError::new_err("tuple length exceeds Py_ssize_t")
+    })?;
+    // SAFETY: supported builds hold the GIL. The constructor returns an exact
+    // owned tuple or its original error; every following operation just moves
+    // an initialized array element into a distinct in-bounds slot. No Python
+    // allocation, conversion or signal check occurs while the slots are empty.
+    unsafe {
+        let tuple = Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyTuple_New(length))?
+            .cast_into_unchecked::<PyTuple>();
+        for (index, value) in values.into_iter().enumerate() {
+            pyo3::ffi::PyTuple_SET_ITEM(tuple.as_ptr(), index as isize, value.into_ptr());
+        }
+        Ok(tuple)
+    }
+}
+
 /// Fill one final tuple without exposing its unfinished slots to Python GC.
 /// The iterator may decode values or check signals. Keep the tuple untracked
 /// until all slots are valid; already completed children remain normal values.

@@ -300,14 +300,36 @@ impl Reader {
             Ok(value)
         };
         let row = if DIRECT {
-            output::tuple_from_values(
-                py,
-                fields
-                    .iter()
-                    .zip(data.plans.iter())
-                    .enumerate()
-                    .map(|(index, (cell, plan))| decode(index, cell, *plan)),
-            )?
+            let mut values = fields
+                .iter()
+                .zip(data.plans.iter())
+                .enumerate()
+                .map(|(index, (cell, plan))| decode(index, cell, *plan));
+            let length = values.len();
+            let mut next = || {
+                values.next().unwrap_or_else(|| {
+                    Err(errors::client(
+                        py,
+                        ClientErrorCode::InternalState,
+                        "native row ended early",
+                    ))
+                })
+            };
+            // This existing specialization admits at most four fields. Decode
+            // those final values before allocating the row tuple; stack arrays
+            // need neither a heap buffer nor GC registration transitions.
+            match length {
+                0 => output::tuple_from_ready(py, []),
+                1 => output::tuple_from_ready(py, [next()?]),
+                2 => output::tuple_from_ready(py, [next()?, next()?]),
+                3 => output::tuple_from_ready(py, [next()?, next()?, next()?]),
+                4 => output::tuple_from_ready(py, [next()?, next()?, next()?, next()?]),
+                _ => Err(errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "native narrow row exceeds its prepared width",
+                )),
+            }?
             .into_any()
         } else {
             let mut values = Vec::new();
@@ -340,6 +362,9 @@ impl Reader {
         if DIRECT {
             if one {
                 self.row_tuple::<true>(py, data, types, start, start)
+            } else if range.len() == 1 {
+                let row = self.row_tuple::<true>(py, data, types, start, start)?;
+                output::tuple_from_ready(py, [row]).map(Bound::into_any)
             } else {
                 output::tuple_from_values(
                     py,
