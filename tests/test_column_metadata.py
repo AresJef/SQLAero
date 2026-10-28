@@ -166,7 +166,7 @@ def test_no_row_result_has_empty_columns_but_zero_rows_keep_real_description() -
     assert len(rows.columns) == 1
     for cls in (Columns, ColumnInfo):
         with pytest.raises(TypeError):
-            cls()
+            cls()  # pyright: ignore[reportCallIssue] -- intentional invalid construction
 
 
 def test_fixed_seed_access_order_reuses_objects_and_preserves_old_metadata() -> None:

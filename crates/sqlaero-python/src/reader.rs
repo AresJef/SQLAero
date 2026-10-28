@@ -1,7 +1,9 @@
 //! Buffered fetch ownership and one atomic position commit per output call.
 
-use crate::{errors, input::ScalarTypes, metadata, output};
-use pyo3::exceptions::{PyOverflowError, PyStopIteration, PyTypeError, PyValueError};
+use crate::{errors, input, input::ScalarTypes, metadata, output};
+use pyo3::exceptions::{
+    PyOverflowError, PyStopIteration, PyTypeError, PyUnicodeDecodeError, PyValueError,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyInt, PyTuple};
 use sqlaero_core::charset::output::OutputCodec;
@@ -14,21 +16,6 @@ use sqlaero_core::result::{
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
-
-/// Let PyO3 fill the final tuple directly from a fallible native iterator.
-/// The wrapper owns only the current final value or its original exception;
-/// it adds no Python object, intermediate collection or unsafe tuple writer.
-struct Decoded<'py>(PyResult<Bound<'py, PyAny>>);
-
-impl<'py> IntoPyObject<'py> for Decoded<'py> {
-    type Target = PyAny;
-    type Output = Bound<'py, PyAny>;
-    type Error = PyErr;
-
-    fn into_pyobject(self, _py: Python<'py>) -> PyResult<Self::Output> {
-        self.0
-    }
-}
 
 struct ReadData {
     rows: Buffered,
@@ -52,10 +39,15 @@ struct State {
 }
 
 /// A concrete per-Cursor operation owner. It never owns the connection wire.
-pub(crate) struct Operation<'a>(&'a AtomicBool);
+pub(crate) struct Operation<'a>(&'a Reader);
 impl Drop for Operation<'_> {
     fn drop(&mut self) {
-        self.0.store(false, Ordering::Release);
+        // Retirement never frees an active fetch's owned Arc. Clear only the
+        // Reader's retained rows after that operation reaches its safe exit.
+        if self.0.closed.load(Ordering::Acquire) {
+            self.0.release_retired_rows();
+        }
+        self.0.active.store(false, Ordering::Release);
     }
 }
 
@@ -100,7 +92,22 @@ impl Reader {
                 "Cursor is busy executing or reading another operation",
             ));
         }
-        Ok(Operation(&self.active))
+        Ok(Operation(self))
+    }
+    fn release_retired_rows(&self) {
+        let released = match self.state.lock() {
+            Ok(mut state) => state.data.take(),
+            Err(error) => error.into_inner().data.take(),
+        };
+        drop(released);
+    }
+    /// Mandatory context cleanup can retire a busy Cursor without cancelling
+    /// its current local operation or destroying metadata and saved counters.
+    pub(crate) fn retire(&self) {
+        self.closed.store(true, Ordering::Release);
+        if !self.active.load(Ordering::Acquire) {
+            self.release_retired_rows();
+        }
     }
     fn lock(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, State>> {
         match self.state.lock() {
@@ -170,7 +177,6 @@ impl Reader {
                         column.collation_id,
                         column.column_length,
                         options,
-                        codec,
                     ))
                     .map_err(|error| output::memory(py, error))?;
             }
@@ -268,11 +274,19 @@ impl Reader {
                                 .and_then(|state| state.metadata.clone())
                                 .and_then(|metadata| metadata.diagnostic_key(py, column_index))
                                 .map_or_else(String::new, |key| format!(" (key={key})"));
+                            // Keep standard Unicode diagnostics without another
+                            // field copy. Other failures share one bounded byte
+                            // preview, independently of the output value's type.
+                            let preview = if error.is_instance_of::<PyUnicodeDecodeError>(py) {
+                                String::new()
+                            } else {
+                                format!("; {}", input::binary_diagnostic("field", value, 24))
+                            };
                             errors::note(
                                 py,
                                 &error,
                                 format!(
-                                    "while decoding result row {row_index}, column {column_index}{key}; fetch position remains {start}"
+                                    "while decoding result row {row_index}, column {column_index}{key}; fetch position remains {start}{preview}"
                                 ),
                             );
                             return Err(error);
@@ -286,13 +300,13 @@ impl Reader {
             Ok(value)
         };
         let row = if DIRECT {
-            PyTuple::new(
+            output::tuple_from_values(
                 py,
                 fields
                     .iter()
                     .zip(data.plans.iter())
                     .enumerate()
-                    .map(|(index, (cell, plan))| Decoded(decode(index, cell, *plan))),
+                    .map(|(index, (cell, plan))| decode(index, cell, *plan)),
             )?
             .into_any()
         } else {
@@ -313,7 +327,7 @@ impl Reader {
 
     /// Materialize the final result without changing the caller's position.
     /// The buffered specialization preserves the old wide-row ownership graph;
-    /// the direct specialization delegates partial tuple cleanup to PyO3.
+    /// the direct specialization hides unfinished tuples across callbacks.
     fn materialize<'py, const DIRECT: bool>(
         &self,
         py: Python<'py>,
@@ -327,11 +341,9 @@ impl Reader {
             if one {
                 self.row_tuple::<true>(py, data, types, start, start)
             } else {
-                PyTuple::new(
+                output::tuple_from_values(
                     py,
-                    range.map(|index| {
-                        Decoded(self.row_tuple::<true>(py, data, types, index, start))
-                    }),
+                    range.map(|index| self.row_tuple::<true>(py, data, types, index, start)),
                 )
                 .map(Bound::into_any)
             }

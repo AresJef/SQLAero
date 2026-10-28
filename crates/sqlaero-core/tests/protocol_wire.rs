@@ -4,6 +4,7 @@ use sqlaero_core::protocol::{framing, packets};
 use sqlaero_core::transport::deadline::{Direction, IoBudget, TimeoutKind};
 use sqlaero_core::transport::socket::Transport;
 use std::net::SocketAddr;
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -47,17 +48,21 @@ fn greeting(mut transport: Transport, prefix: &[u8]) {
 #[test]
 #[ignore = "requires the two isolated local MySQL servers"]
 fn both_mysql_lines_provide_a_valid_protocol_10_greeting() {
+    #[cfg(unix)]
     let root = std::env::var_os("SQLAERO_TEST_MYSQL_ROOT")
         .map(PathBuf::from)
         .expect("set SQLAERO_TEST_MYSQL_ROOT to the isolated fixture directory");
     for (port, prefix) in [(13384, b"8.4.".as_slice()), (13397, b"9.7.".as_slice())] {
         let address = SocketAddr::from(([127, 0, 0, 1], port));
         greeting(Transport::tcp(address).unwrap(), prefix);
-        let label = if port == 13384 { "84" } else { "97" };
-        greeting(
-            Transport::unix(&root.join(format!("{label}.sock"))).unwrap(),
-            prefix,
-        );
+        #[cfg(unix)]
+        {
+            let label = if port == 13384 { "84" } else { "97" };
+            greeting(
+                Transport::unix(&root.join(format!("{label}.sock"))).unwrap(),
+                prefix,
+            );
+        }
     }
 }
 
@@ -95,10 +100,27 @@ fn no_progress_read_expires_without_resetting_the_connection_budget() {
             .unwrap(),
         framing::Progress::Pending
     ));
-    assert!(matches!(
-        transport.wait(Direction::Read, &mut budget),
-        Err(TransportError::Timeout(TimeoutKind::Read))
-    ));
+    // Readiness is advisory on every backend. Keep the original budget and
+    // retry the real read, as production does, rather than requiring one poll.
+    loop {
+        match transport.wait(Direction::Read, &mut budget) {
+            Err(TransportError::Timeout(TimeoutKind::Read)) => break,
+            Err(error) => panic!("unexpected read wait failure: {error}"),
+            Ok(_) => match message.step(
+                &mut transport.io(&mut budget),
+                &mut framing::Sequence::default(),
+            ) {
+                Ok(framing::Progress::Pending | framing::Progress::Yield) => (),
+                Err(framing::WireError::Io(error))
+                    if error.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    assert_eq!(budget.check_io(Direction::Read), Err(TimeoutKind::Read));
+                    break;
+                }
+                other => panic!("a silent peer must not yield a message: {other:?}"),
+            },
+        }
+    }
     stop.send(()).unwrap();
     server.join().unwrap();
 }

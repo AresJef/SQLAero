@@ -1,4 +1,4 @@
-//! Generated from data/error-catalog.json (SHA-256 a29fb8e7774ce544cff1f905eaec98d8b5369db5c047484c04c56836172872aa); edit the registry and run tools/error_catalog.py.
+//! Generated from data/error-catalog.json (SHA-256 60741095b355992c95153838d9f3f4bbd52d4c57f83e1b4802b1ddb55c9844e2); edit the registry and run tools/error_catalog.py.
 
 /// Exact native exception categories used by the maintained error registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

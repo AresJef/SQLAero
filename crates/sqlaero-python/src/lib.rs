@@ -29,7 +29,7 @@ fn _parse_size(value: &str) -> PyResult<usize> {
 /// Exercise the single-pass output decoder before result-set integration.
 #[pyfunction]
 fn _decode_json<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, PyAny>> {
-    json::decode(py, data)
+    json::decode(py, data).map_err(json::DecodeFailure::into_python)
 }
 
 /// Exercise the actual native scalar reader/writer before SQL binding is wired.
@@ -315,14 +315,8 @@ fn _decode_field<'py>(
         decode_text_strict,
         decode_date_strict,
     };
-    let plan = sqlaero_core::result::decode::Plan::new(
-        type_code,
-        flags,
-        collation_id,
-        length,
-        options,
-        sqlaero_core::charset::output::OutputCodec::for_collation(255),
-    );
+    let plan =
+        sqlaero_core::result::decode::Plan::new(type_code, flags, collation_id, length, options);
     output::field(py, data.as_bytes(), plan, &types, None)
 }
 

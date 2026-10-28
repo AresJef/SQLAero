@@ -1,15 +1,117 @@
 """Public maintained IntEnums, native exception identity, and Unicode messages."""
 
 from enum import IntEnum
+from copy import deepcopy
 import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from sqlaero.errors import MySQLErrorCode, SQLAeroErrorCode, SQLAeroError, IntegrityError
 
 
+def reviewed_expectations() -> dict[str, dict[int, str]]:
+    """Load a fixed audit oracle which the product generator cannot rewrite."""
+    path = Path(__file__).parent / 'data/error-classification-audit-20261026.tsv'
+    result: dict[str, dict[int, str]] = {'client': {}, 'server': {}}
+    for line in path.read_text(encoding='utf-8').splitlines():
+        if line.startswith('#'):
+            continue
+        origin, code, category, evidence, rationale = line.split('\t')
+        assert evidence and rationale and int(code) not in result[origin]
+        result[origin][int(code)] = category
+    assert len(result['server']) == 2046 and len(result['client']) == 19
+    return result
+
+
+def test_complete_registry_matches_independent_reviewed_semantics() -> None:
+    source: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text(encoding='utf-8'))
+    expected = reviewed_expectations()
+    for origin in ('client', 'server'):
+        actual = {row['code']: row['class'] for row in source[origin]}
+        assert actual == expected[origin]
+
+
+@pytest.mark.parametrize(('number', 'explanation'), [
+    (2, 'A file read failed; the server message includes the file and operating-system cause'),
+    (1308, 'LEAVE or ITERATE refers to a label with no matching target'),
+    (1320, 'A stored function contains no RETURN statement'),
+    (1321, 'A stored function reached its end without executing RETURN'),
+    (1337, 'Local variables and conditions must be declared before cursors and handlers'),
+    (1338, 'Cursors must be declared before handlers in a stored program'),
+    (1886, 'The table lacks an index required by the requested operation'),
+    (3600, 'Window processing requires the TempTable internal temporary-memory storage engine'),
+    (3838, 'The plugin must not be loaded through the early-plugin interface'),
+    (6421, 'Lakehouse incremental loading cannot be combined with validation mode'),
+    (6446, 'A JSON duality view definition has invalid, duplicate or conflicting annotations'),
+])
+def test_enum_documents_condition_not_abbreviated_identifier(number: int, explanation: str) -> None:
+    """Keep independently reviewed meanings, including misleading legacy names."""
+    member = MySQLErrorCode(number)
+    assert member.__doc__ is not None and explanation in member.__doc__
+
+
+def test_condition_fingerprint_detects_english_continuations_without_copying_templates() -> None:
+    from tools import error_catalog
+
+    source = 'ER_EXAMPLE\n eng "first"\n  "second"\n fre "autre"\n'
+    original = error_catalog.message_fingerprints(source)
+    assert original == error_catalog.message_fingerprints(source.replace('autre', 'différent'))
+    assert original != error_catalog.message_fingerprints(source.replace('second', 'changed'))
+    assert len(original['ER_EXAMPLE']) == 64
+
+
+@pytest.mark.parametrize('change', ['none', 'added', 'removed', 'message', 'state'])
+def test_fact_refresh_preserves_reviewed_semantics_or_refuses_atomic_update(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, change: str,
+) -> None:
+    from tools import error_catalog
+
+    maintained: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text(encoding='utf-8'))
+    row = next(entry for entry in maintained['server'] if entry['code'] == 1052)
+    row['class'] = 'ProgrammingError'
+    row['basis'] = 'Reviewed column ambiguity, not a relationship constraint failure.'
+    row['meaning'] = 'reviewed public meaning retained on fact refresh'
+    for entry in maintained['server']:
+        for facts in entry['versions'].values():
+            facts['message_sha256'] = 'a' * 64
+    registry = tmp_path / 'error-catalog.json'
+    registry.write_text(json.dumps(maintained, ensure_ascii=False), encoding='utf-8')
+    before = registry.read_bytes()
+    versions = {version: {entry['code']: deepcopy(entry['versions'][version])
+                          for entry in maintained['server'] if version in entry['versions']}
+                for version in ('8.4', '9.7')}
+    if change == 'added':
+        versions['9.7'][65535] = {'name': 'ER_UNREVIEWED', 'sqlstate': '23000', 'message_sha256': 'b' * 64}
+    elif change == 'removed':
+        versions['9.7'].pop(1052)
+    elif change == 'message':
+        versions['9.7'][1052]['message_sha256'] = 'b' * 64
+    elif change == 'state':
+        versions['9.7'][1052]['sqlstate'] = 'HY000'
+
+    def installed(version: str, label: str) -> tuple[dict[int, dict[str, str]], list[dict[str, str]], list[dict[str, Any]]]:
+        return versions[version], [], []
+
+    def globals_for(label: str) -> tuple[dict[int, dict[str, str]], dict[str, str]]:
+        return {}, {}
+
+    monkeypatch.setattr(error_catalog, 'REGISTRY', registry)
+    monkeypatch.setattr(error_catalog, 'installed', installed)
+    monkeypatch.setattr(error_catalog, 'globals_for', globals_for)
+    if change != 'none':
+        with pytest.raises(ValueError, match='review required'):
+            error_catalog.snapshot()
+        assert registry.read_bytes() == before
+    else:
+        error_catalog.snapshot()
+        refreshed = json.loads(registry.read_text(encoding='utf-8'))
+        assert refreshed['server'] == maintained['server']
+        assert refreshed['client'] == maintained['client']
+
+
 def test_public_enums_match_all_frozen_values_aliases_and_individual_docs() -> None:
-    source: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text())
+    source: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text(encoding='utf-8'))
     assert issubclass(MySQLErrorCode, IntEnum) and issubclass(SQLAeroErrorCode, IntEnum)
     for row in source['client']:
         member = SQLAeroErrorCode.__members__[row['name']]

@@ -76,7 +76,6 @@ impl Plan {
         collation_id: u16,
         length: u32,
         options: Options,
-        fallback: OutputCodec,
     ) -> Self {
         use mysql_common::constants::ColumnFlags;
         let unsigned = flags & ColumnFlags::UNSIGNED_FLAG.bits() != 0;
@@ -138,10 +137,14 @@ impl Plan {
             }
             _ => Kind::Bytes,
         };
-        let text = if matches!(kind, Kind::Decimal { .. }) {
+        // Numeric and calendar text uses the protocol's ASCII representation,
+        // even when character_set_results converts metadata or normal strings.
+        // A calendar fallback must retain these original bytes in that format.
+        let text = if matches!(
+            kind,
+            Kind::Decimal { .. } | Kind::Date { .. } | Kind::Datetime { .. }
+        ) {
             OutputCodec::for_collation(11)
-        } else if matches!(kind, Kind::Date { .. } | Kind::Datetime { .. }) {
-            fallback
         } else if type_code == 245 && collation_id == 63 {
             OutputCodec::for_collation(255)
         } else {

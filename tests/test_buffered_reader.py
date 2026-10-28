@@ -2,10 +2,12 @@
 
 # pyright: reportPrivateUsage=false
 
-import signal
+import sys
 from types import FrameType
 from datetime import time
+from typing import Any, cast
 import pytest
+from _native_signal import NativeAlarm
 from sqlaero._sqlaero import _Rows, _rows_from_packets, DataError, InterfaceBusyError, InterfaceError
 
 # Hosted macOS may deliver a real timer after its requested 1 ms. Keep both
@@ -19,7 +21,9 @@ def length(data: bytes) -> bytes:
         return bytes([count]) + data
     if count < 65536:
         return b"\xfc" + count.to_bytes(2, "little") + data
-    return b"\xfd" + count.to_bytes(3, "little") + data
+    if count < 1 << 24:
+        return b"\xfd" + count.to_bytes(3, "little") + data
+    return b"\xfe" + count.to_bytes(8, "little") + data
 
 
 def column(name: str, type_code: int = 3, collation_id: int = 63) -> bytes:
@@ -71,6 +75,44 @@ def test_failed_whole_fetch_keeps_its_original_start_and_next_row() -> None:
     assert another.position == 0
 
 
+@pytest.mark.parametrize(('type_code', 'valid', 'invalid'), [
+    (3, b'12', b"bad'\n\\\x00value"),
+    (10, b'2024-02-29', b'2026-02-31'),
+    (11, b'12:00:00', b'-25:00:00'),
+    (245, b'{}', b'{"bad":' + b'x' * 100000),
+], ids=['integer', 'date', 'duration', 'long-json'])
+def test_failed_field_has_one_bounded_raw_preview_and_absolute_location(
+    type_code: int, valid: bytes, invalid: bytes,
+) -> None:
+    value = _rows_from_packets(
+        packets([column('bad_field', type_code)], [(valid,), (valid,), (invalid,)]),
+        decode_json=True, use_timedelta=False,
+    )
+    assert value.columns.keys == ('bad_field',)
+    first = value.fetchone()
+    with pytest.raises(DataError) as caught:
+        value.fetchmany(2)
+    assert value.position == 1
+    notes = '\n'.join(getattr(caught.value, '__notes__', []))
+    assert 'row 2, column 0' in notes and 'bad_field' in notes
+    assert "field b'" in notes
+    preview = notes.split('; field ', 1)[1]
+    assert len(preview) <= 160 and '\x00' not in preview and '\n' not in preview
+    assert f'original length {len(invalid)}' in preview
+    if len(invalid) > 24:
+        assert '[truncated]' in preview
+    assert value.fetchone() == first and value.position == 2
+
+
+def test_unicode_field_error_keeps_original_object_without_duplicate_preview() -> None:
+    value = _rows_from_packets(packets([column('text', 253, 255)], [(b'A\xffB',)]))
+    with pytest.raises(UnicodeDecodeError) as caught:
+        value.fetchone()
+    assert caught.value.object == b'A\xffB' and caught.value.start == 1
+    assert "field b'" not in '\n'.join(getattr(caught.value, '__notes__', []))
+    assert value.position == 0
+
+
 def test_results_remain_independent_and_close_preserves_local_information() -> None:
     first = reader([(b"1",), (b"2",)])
     second = reader([(b"7",)])
@@ -110,24 +152,93 @@ class Interrupted(Exception):
     """An original user exception that must survive output cancellation."""
 
 
+@pytest.mark.parametrize('shape', ['array', 'object'])
+@pytest.mark.parametrize('interrupt', [True, False], ids=['interrupt', 'continue'])
+def test_single_large_json_checks_signals_before_finishing_the_field(shape: str, interrupt: bool) -> None:
+    """Observe partial native work, rather than imposing a timer precision SLA."""
+    import gc
+
+    count = 1_000_000
+    document = (b'[' + b'123456789,' * (count - 1) + b'123456789]' if shape == 'array'
+                else b'{' + b','.join(f'"k{index}":123456789'.encode('ascii')
+                                     for index in range(count)) + b'}')
+    value = _rows_from_packets(packets([column('payload', 245, 255)], [(document,)]), decode_json=True)
+    original = Interrupted('stop one JSON field')
+    observed: list[int] = []
+    baseline = sys.getallocatedblocks()
+
+    def check_progress(signum: int, frame: FrameType | None) -> None:
+        if observed:
+            return
+        # Noncached integers create real CPython objects. Ignore a signal that
+        # precedes decoding; an old field-end-only check observes the full set.
+        allocated = sys.getallocatedblocks() - baseline
+        if allocated < 1024:
+            return
+        observed.append(allocated)
+        alarm.start(0)
+        # Arbitrary application handlers may inspect GC containers. Every
+        # visible tuple must already have initialized slots, including while
+        # the enclosing row is still decoding this one long JSON field.
+        for temporary in gc.get_objects():
+            if type(temporary) is tuple:
+                candidate = cast(tuple[object, ...], temporary)
+                if len(candidate) == 1:
+                    _ = candidate[0]
+        if interrupt:
+            raise original
+
+    alarm = NativeAlarm(check_progress)
+    result: tuple[Any, ...] | None = None
+    try:
+        alarm.start(0.001, 0.001)
+        if interrupt:
+            with pytest.raises(Interrupted) as caught:
+                value.fetchone()
+            assert caught.value is original and not hasattr(original, 'error_info')
+            assert value.position == 0
+        else:
+            result = cast(tuple[Any, ...], value.fetchone())
+    finally:
+        alarm.close()
+    assert observed and 1024 <= observed[0] < count // 2, observed
+    if interrupt:
+        result = cast(tuple[Any, ...], value.fetchone())
+    assert result is not None and len(result[0]) == count and value.position == 1
+
+
 def test_interrupted_output_releases_temporaries_and_does_not_commit() -> None:
-    value = reader([(b"1",)] * _SIGNAL_FETCH_ROWS)
+    import gc
+
+    marker = 1472853690
+    value = reader([(str(marker).encode(),)] * _SIGNAL_FETCH_ROWS)
     original = Interrupted("stop this fetch")
+    observed: list[bool] = []
 
     def interrupt(signum: int, frame: FrameType | None) -> None:
-        raise original
+        alarm.start(0)
+        # Observe an actual output tuple, rather than accepting an exception
+        # delivered before fetch entry or after the result has committed.
+        for temporary in gc.get_objects():
+            if type(temporary) is tuple:
+                candidate = cast(tuple[object, ...], temporary)
+                if len(candidate) == 1 and type(candidate[0]) is int and candidate[0] == marker:
+                    observed.append(True)
+                    del candidate, temporary
+                    raise original
+        alarm.start(0.0001)
 
-    previous = signal.signal(signal.SIGALRM, interrupt)
+    alarm = NativeAlarm(interrupt)
     try:
-        signal.setitimer(signal.ITIMER_REAL, 0.001)
+        alarm.start(0.0001)
         with pytest.raises(Interrupted) as caught:
             value.fetchall()
         assert caught.value is original
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        alarm.close()
+    assert observed == [True]
     assert value.position == 0
-    assert value.fetchone() == (1,)
+    assert value.fetchone() == (marker,)
 
 
 def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable() -> None:
@@ -141,13 +252,12 @@ def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable(
         except InterfaceBusyError:
             observed.append("busy")
 
-    previous = signal.signal(signal.SIGALRM, overlap)
+    alarm = NativeAlarm(overlap)
     try:
-        signal.setitimer(signal.ITIMER_REAL, 0.001)
+        alarm.start(0.001)
         assert len(value.fetchall()) == _SIGNAL_FETCH_ROWS
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        alarm.close()
     assert observed == ["busy"]
     assert not value.closed
 

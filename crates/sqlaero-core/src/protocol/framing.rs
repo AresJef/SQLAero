@@ -250,6 +250,13 @@ pub struct MessageWriter {
 }
 
 impl MessageWriter {
+    /// Whether the byte writer accepted any frame bytes. With TLS this is
+    /// conservative evidence of entered sending, not proof of server receipt.
+    #[must_use]
+    pub const fn has_started(&self) -> bool {
+        self.header_sent != 0 || self.offset != 0 || self.complete
+    }
+
     /// Return whether every frame has been accepted by the byte writer. A TLS
     /// channel separately flushes its encrypted records before reporting sent.
     #[must_use]
@@ -538,6 +545,12 @@ mod tests {
         };
         let mut send = MessageWriter::new(input.len(), 64).unwrap();
         let mut sequence = Sequence::new(255);
+        assert!(!send.has_started());
+        assert!(matches!(
+            send.step(&mut stream, input, &mut sequence).unwrap(),
+            Progress::Pending
+        ));
+        assert!(!send.has_started());
         for _ in 0..128 {
             if matches!(
                 send.step(&mut stream, input, &mut sequence).unwrap(),
@@ -546,6 +559,7 @@ mod tests {
                 break;
             }
         }
+        assert!(send.has_started() && send.is_complete());
         assert_eq!(sequence.next(), 0);
         stream.bytes.set_position(0);
         let mut receive = MessageReader::new(64);

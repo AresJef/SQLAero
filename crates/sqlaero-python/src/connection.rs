@@ -22,7 +22,7 @@ use sqlaero_core::{
     session::{
         connect::{ConnectParams, Endpoint, Establish},
         initialize::{Initialize, Options as InitOptions},
-        query::{Query, QueryError},
+        query::{CommandConfirmation, Query, QueryError, RequestProgress},
         shared::{CommandLease, Connection as NativeConnection},
     },
     transport::{
@@ -52,23 +52,64 @@ pub(crate) enum CommandRole {
     UserSql,
     InternalControl,
 }
+#[derive(Clone, Copy)]
+enum FailureOutcome {
+    NotSent,
+    Sending,
+    AwaitingResponse,
+    ServerErr,
+    Confirmed,
+    Consumed,
+}
+impl FailureOutcome {
+    fn unknown(self) -> bool {
+        matches!(self, Self::Sending | Self::AwaitingResponse)
+    }
+    fn diagnostic(self) -> &'static str {
+        match self {
+            Self::NotSent => "The current request was not sent.",
+            Self::Sending => {
+                "Sending of the current request began, but no complete response was received; its execution outcome is unknown. Entered sending does not prove server receipt or nonexecution. No replay was sent."
+            }
+            Self::AwaitingResponse => {
+                "The current request was fully sent, but no complete server response was received; its execution outcome is unknown. This does not mean it was not executed. No replay was sent."
+            }
+            Self::ServerErr => {
+                "A complete server ERR was received for the current request; it does not prove zero side effects or a transaction rollback."
+            }
+            Self::Confirmed => {
+                "The final server response was fully confirmed before the later local failure; execution is not unknown. Command confirmation alone does not imply transaction commit."
+            }
+            Self::Consumed => {
+                "All unsupported multiple results were fully consumed; their final session state was confirmed, but no public result was published."
+            }
+        }
+    }
+}
 /// A real native availability failure is distinguished from an original
 /// Python exception, even if a signal handler raises the same exception class.
 pub(crate) struct DriveFailure {
     error: PyErr,
     unavailable: bool,
-    confirmed: Option<sqlaero_core::session::query::CommandConfirmation>,
-}
-impl From<PyErr> for DriveFailure {
-    fn from(error: PyErr) -> Self {
-        Self {
-            error,
-            unavailable: false,
-            confirmed: None,
-        }
-    }
+    confirmed: Option<CommandConfirmation>,
+    outcome: FailureOutcome,
 }
 impl DriveFailure {
+    fn new(
+        py: Python<'_>,
+        error: PyErr,
+        outcome: FailureOutcome,
+        unavailable: bool,
+        confirmed: Option<CommandConfirmation>,
+    ) -> Self {
+        errors::note(py, &error, outcome.diagnostic());
+        Self {
+            error,
+            unavailable,
+            confirmed,
+            outcome,
+        }
+    }
     pub(crate) fn record_prefix(
         self,
         py: Python<'_>,
@@ -76,7 +117,7 @@ impl DriveFailure {
         rows: std::ops::Range<usize>,
     ) -> PyErr {
         if let Some(confirmed) = self.confirmed
-            && let Err(error) = prefix.record_confirmation(rows, confirmed)
+            && let Err(error) = prefix.record_confirmation(rows.clone(), confirmed)
         {
             errors::note(
                 py,
@@ -86,6 +127,14 @@ impl DriveFailure {
                 ),
             );
         }
+        errors::note(
+            py,
+            &self.error,
+            format!(
+                "The current source rows {}..{} belong to this request; any subsequent source rows were not attempted.",
+                rows.start, rows.end
+            ),
+        );
         self.error
     }
 }
@@ -280,7 +329,16 @@ impl Connection {
         completion: &sqlaero_core::protocol::OkPacket<'_>,
     ) -> PyResult<()> {
         let applied = match self.native.facts.lock() {
-            Ok(mut facts) => facts.apply(completion),
+            Ok(mut facts) => {
+                let result = facts.apply(completion);
+                if result.is_err() {
+                    // The terminator's status is valid, but partially decoded
+                    // SESSION_TRACK values must never remain a mixed snapshot.
+                    facts.invalidate_settings();
+                    facts.database = None;
+                }
+                result
+            }
             Err(_) => {
                 lease.invalidate();
                 return Err(errors::client(
@@ -296,6 +354,47 @@ impl Connection {
         }
         Ok(())
     }
+    /// Retire an incomplete exchange using its actual framing/ACK facts. This
+    /// common exit also handles original Python control exceptions unchanged.
+    fn query_failure(
+        &self,
+        py: Python<'_>,
+        lease: &mut CommandLease<'_>,
+        job: &mut Query,
+        error: PyErr,
+        unavailable: bool,
+        keep_unsent: bool,
+    ) -> DriveFailure {
+        let progress = job.progress();
+        let confirmed = job.take_confirmation();
+        let outcome = if let Some(confirmation) = confirmed {
+            if let Ok(mut facts) = self.native.facts.lock() {
+                facts.invalidate_settings();
+                facts.database = None;
+                facts.status = Some(confirmation.status());
+            }
+            FailureOutcome::Confirmed
+        } else {
+            if progress != RequestProgress::NotSent
+                && let Ok(mut facts) = self.native.facts.lock()
+            {
+                facts.invalidate_unconfirmed();
+            }
+            if job.received_server_err() {
+                FailureOutcome::ServerErr
+            } else {
+                match progress {
+                    RequestProgress::NotSent => FailureOutcome::NotSent,
+                    RequestProgress::Sending => FailureOutcome::Sending,
+                    RequestProgress::AwaitingResponse => FailureOutcome::AwaitingResponse,
+                }
+            }
+        };
+        if !keep_unsent || progress != RequestProgress::NotSent {
+            lease.invalidate();
+        }
+        DriveFailure::new(py, error, outcome, unavailable, confirmed)
+    }
     pub(crate) fn drive(
         &self,
         py: Python<'_>,
@@ -304,57 +403,67 @@ impl Connection {
         budget: &mut IoBudget,
         role: CommandRole,
     ) -> Result<Response, DriveFailure> {
-        let error_codec = self
-            .native
-            .facts
-            .lock()
-            .ok()
-            .and_then(|facts| facts.metadata_codec());
+        // A user command can change result encoding and then return ERR without
+        // SESSION_TRACK. Its entry codec cannot certify these diagnostic bytes.
+        // Fixed internal controls cannot perform such an unreported change.
+        let error_codec = (role == CommandRole::InternalControl)
+            .then(|| {
+                self.native
+                    .facts
+                    .lock()
+                    .ok()
+                    .and_then(|facts| facts.metadata_codec())
+            })
+            .flatten();
         loop {
             // Only the native session reference crosses detach. The !Send wire
             // MutexGuard remains on this thread, and no Python input is borrowed.
-            let session = lease.session().map_err(|error| errors::access(py, error))?;
+            let session = match lease.session() {
+                Ok(session) => session,
+                Err(error) => {
+                    return Err(self.query_failure(
+                        py,
+                        lease,
+                        &mut job,
+                        errors::access(py, error),
+                        false,
+                        false,
+                    ));
+                }
+            };
             let step = py.detach(|| job.advance(&mut session.channel, budget));
             match step {
                 Ok(Step::Ready(response)) => {
                     if let Err(error) = self.publish(py, lease, response.completion()) {
-                        errors::note(
+                        return Err(DriveFailure::new(
                             py,
-                            &error,
-                            "The server response was fully received; the later local state-publication failure does not make that response unknown.",
-                        );
-                        return Err(DriveFailure {
                             error,
-                            unavailable: false,
-                            confirmed: Some(
-                                sqlaero_core::session::query::CommandConfirmation::from_response(
-                                    &response,
-                                ),
-                            ),
-                        });
+                            FailureOutcome::Confirmed,
+                            false,
+                            Some(CommandConfirmation::from_response(&response)),
+                        ));
                     }
                     return Ok(response);
                 }
                 Ok(Step::Control) => {
-                    if let Some(completion) = job.take_completion() {
-                        self.publish(py, lease, &completion)?;
+                    if let Some(completion) = job.take_completion()
+                        && let Err(error) = self.publish(py, lease, &completion)
+                    {
+                        return Err(self.query_failure(py, lease, &mut job, error, false, false));
                     }
                     if let Err(error) = input::check(py, budget) {
-                        lease.invalidate();
-                        return Err(error.into());
+                        return Err(self.query_failure(py, lease, &mut job, error, false, true));
                     }
                 }
                 Ok(Step::Wait(_)) => {
-                    lease.invalidate();
-                    return Err(errors::client(
+                    let error = errors::client(
                         py,
                         ClientErrorCode::InternalState,
                         "native query returned an undriven I/O wait",
-                    )
-                    .into());
+                    );
+                    return Err(self.query_failure(py, lease, &mut job, error, false, false));
                 }
                 Err(error) => {
-                    let confirmed = job.take_confirmation();
                     match &error {
                         QueryError::Result(ResultError::Server(_)) => {
                             if let Ok(mut facts) = self.native.facts.lock() {
@@ -364,28 +473,52 @@ impl Connection {
                                     // Arbitrary SQL/triggers may already have
                                     // applied settings before this error.
                                     facts.invalidate_settings();
+                                    facts.database = None;
                                 }
                             }
+                            let mapped = errors::query_with_codec(py, error, error_codec);
+                            return Err(DriveFailure::new(
+                                py,
+                                mapped,
+                                FailureOutcome::ServerErr,
+                                false,
+                                None,
+                            ));
                         }
                         QueryError::MultipleResults { completion } => {
-                            self.publish(py, lease, completion)?;
+                            if let Err(error) = self.publish(py, lease, completion) {
+                                return Err(
+                                    self.query_failure(py, lease, &mut job, error, false, false)
+                                );
+                            }
+                            return Err(DriveFailure::new(
+                                py,
+                                errors::query_with_codec(py, error, error_codec),
+                                FailureOutcome::Consumed,
+                                false,
+                                None,
+                            ));
                         }
-                        _ => lease.invalidate(),
+                        _ => (),
                     }
                     let unavailable = unavailable(&error);
-                    let error = errors::query_with_codec(py, error, error_codec);
-                    if confirmed.is_some() {
-                        errors::note(
-                            py,
-                            &error,
-                            "The final server OK/EOF was validated before local result ownership failed; its confirmed execution facts remain available.",
-                        );
-                    }
-                    return Err(DriveFailure {
+                    let keep_unsent = matches!(
                         error,
+                        QueryError::Channel(
+                            sqlaero_core::transport::channel::ChannelError::Timeout(_)
+                                | sqlaero_core::transport::channel::ChannelError::Transport(
+                                    sqlaero_core::transport::socket::TransportError::Timeout(_)
+                                )
+                        )
+                    );
+                    return Err(self.query_failure(
+                        py,
+                        lease,
+                        &mut job,
+                        errors::query_with_codec(py, error, error_codec),
                         unavailable,
-                        confirmed,
-                    });
+                        keep_unsent,
+                    ));
                 }
             }
         }
@@ -421,11 +554,31 @@ impl Connection {
             .map_err(|error| errors::wire(py, error))?;
         let job = self.query_job(py, lease, request, true)?;
         input::check(py, budget)?;
-        attempt.started = true;
         if let Err(failure) = self.drive(py, lease, job, budget, CommandRole::InternalControl) {
+            attempt.started = !matches!(failure.outcome, FailureOutcome::NotSent);
             attempt.confirmed = failure.confirmed.is_some();
+            if failure.outcome.unknown() {
+                // These are this library's fixed controls, not a parser or
+                // inference over arbitrary user SQL.
+                let action = match sql {
+                    b"COMMIT AND NO CHAIN NO RELEASE" => Some("COMMIT"),
+                    b"ROLLBACK AND NO CHAIN NO RELEASE" => Some("ROLLBACK"),
+                    b"START TRANSACTION" => Some("BEGIN"),
+                    _ => None,
+                };
+                if let Some(action) = action {
+                    errors::note(
+                        py,
+                        &failure.error,
+                        format!(
+                            "{action} outcome is unknown; no complete confirmation was received. The action was not replayed and must not be assumed unexecuted."
+                        ),
+                    );
+                }
+            }
             return Err(failure.error);
         }
+        attempt.started = true;
         attempt.confirmed = true;
         input::check(py, budget)?;
         Ok(())
@@ -441,31 +594,36 @@ impl Connection {
         value: &Bound<'_, PyAny>,
         index: usize,
         name: &str,
+        stage: &'static str,
     ) -> PyResult<()> {
-        let mut budget = self.runtime(py)?.timeouts.operation();
-        let value = config::positive(value, name)?;
-        let mut lease = self
-            .native
-            .try_command()
-            .map_err(|error| errors::access(py, error))?;
-        if self
-            .server_timeout(py, index, name)
-            .ok()
-            .map(BigUint::from)
-            .as_ref()
-            == Some(&value)
-        {
-            return Ok(());
-        }
-        let mut sql = Vec::new();
-        writer::append(&mut sql, b"SET SESSION ", self.max_send)
-            .map_err(|error| errors::wire(py, error))?;
-        writer::append(&mut sql, name.as_bytes(), self.max_send)
-            .map_err(|error| errors::wire(py, error))?;
-        writer::append(&mut sql, b"=", self.max_send).map_err(|error| errors::wire(py, error))?;
-        writer::append(&mut sql, value.to_str_radix(10).as_bytes(), self.max_send)
-            .map_err(|error| errors::wire(py, error))?;
-        self.control_with(py, &mut lease, &sql, &mut budget)
+        (|| {
+            let mut budget = self.runtime(py)?.timeouts.operation();
+            let value = config::positive(value, name)?;
+            let mut lease = self
+                .native
+                .try_command()
+                .map_err(|error| errors::access(py, error))?;
+            if self
+                .server_timeout(py, index, name)
+                .ok()
+                .map(BigUint::from)
+                .as_ref()
+                == Some(&value)
+            {
+                return Ok(());
+            }
+            let mut sql = Vec::new();
+            writer::append(&mut sql, b"SET SESSION ", self.max_send)
+                .map_err(|error| errors::wire(py, error))?;
+            writer::append(&mut sql, name.as_bytes(), self.max_send)
+                .map_err(|error| errors::wire(py, error))?;
+            writer::append(&mut sql, b"=", self.max_send)
+                .map_err(|error| errors::wire(py, error))?;
+            writer::append(&mut sql, value.to_str_radix(10).as_bytes(), self.max_send)
+                .map_err(|error| errors::wire(py, error))?;
+            self.control_with(py, &mut lease, &sql, &mut budget)
+        })()
+        .map_err(|error| errors::at(py, error, stage))
     }
     pub(crate) fn selector(py: Python<'_>, selector: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
         if selector.is_some_and(|value| {
@@ -509,9 +667,12 @@ macro_rules! connection_api {
                 let scope=Arc::clone(&slf.transaction_scope);
                 Ok(crate::transaction::Transaction::new(slf.into(),scope))
             }
-            /// Permanently retire this connection. COM_QUIT is sent without a
-            /// response using the existing write/operation deadline. Repeated
-            /// completed close is None; true overlapping operations are busy.
+            /// Permanently retire this connection. COM_QUIT is sent without a response.
+            /// Only write_timeout and operation_timeout apply; read_timeout is not used.
+            /// If both applicable limits are None, there is no library-imposed deadline.
+            /// Sending failure still performs local transport cleanup and keeps the connection retired.
+            /// Timeout or interruption grants no fresh network budget or cleanup grace.
+            /// Repeated completed close returns None; overlapping operations raise InterfaceBusyError.
             fn close(&self, py:Python<'_>) -> PyResult<()> {
                 let mut lease=match self.native.try_command() {
                     Ok(lease)=>lease,
@@ -615,11 +776,13 @@ macro_rules! connection_api {
             /// Change server SESSION autocommit after acquiring command ownership.
             /// A reliably confirmed same value sends no request and is not a ping.
             fn set_autocommit(&self,py:Python<'_>,enabled:&Bound<'_,PyAny>)->PyResult<()> {
-                let mut budget=self.runtime(py)?.timeouts.operation();
-                let enabled=config::boolean(enabled,"enabled")?;
-                let mut lease=self.native.try_command().map_err(|error|errors::access(py,error))?;
-                if self.autocommit(py).ok()==Some(enabled) {return Ok(())}
-                self.control_with(py,&mut lease,if enabled {b"SET SESSION autocommit=1"}else{b"SET SESSION autocommit=0"},&mut budget)
+                (|| {
+                    let mut budget=self.runtime(py)?.timeouts.operation();
+                    let enabled=config::boolean(enabled,"enabled")?;
+                    let mut lease=self.native.try_command().map_err(|error|errors::access(py,error))?;
+                    if self.autocommit(py).ok()==Some(enabled) {return Ok(())}
+                    self.control_with(py,&mut lease,if enabled {b"SET SESSION autocommit=1"}else{b"SET SESSION autocommit=0"},&mut budget)
+                })().map_err(|error|errors::at(py,error,"connection.set_autocommit"))
             }
             /// MySQL server-side session seconds for waiting for more uploaded
             /// client data. The initial actual value is read even when omitted
@@ -636,7 +799,7 @@ macro_rules! connection_api {
             /// Server-specific upper bounds/normalization are decided by MySQL.
             /// Reliable same-value updates send no SQL after lifecycle/ownership
             /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
-            fn set_net_read_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,0,"net_read_timeout")}
+            fn set_net_read_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,0,"net_read_timeout","connection.set_net_read_timeout")}
             /// MySQL server-side session seconds for writing to this client;
             /// distinct from client-side write_timeout. Reliable cached reads
             /// remain available after close and never send SQL. Unknown raises InterfaceError.
@@ -650,7 +813,7 @@ macro_rules! connection_api {
             /// Server-specific upper bounds/normalization are decided by MySQL.
             /// Reliable same-value updates send no SQL after lifecycle/ownership
             /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
-            fn set_net_write_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,1,"net_write_timeout")}
+            fn set_net_write_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,1,"net_write_timeout","connection.set_net_write_timeout")}
             /// MySQL server-side session idle timeout in whole seconds. This
             /// cached fact is not a client operation timer or a live health check.
             /// Reliable values remain readable after close; unknown raises InterfaceError.
@@ -664,7 +827,7 @@ macro_rules! connection_api {
             /// Server-specific upper bounds/normalization are decided by MySQL.
             /// Reliable same-value updates send no SQL after lifecycle/ownership
             /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
-            fn set_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,2,"wait_timeout")}
+            fn set_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,2,"wait_timeout","connection.set_wait_timeout")}
             /// MySQL server-side InnoDB row-lock wait timeout in whole seconds;
             /// it does not control metadata locks or guarantee transaction rollback.
             /// Reliable cached values remain readable after close; unknown raises InterfaceError.
@@ -678,7 +841,7 @@ macro_rules! connection_api {
             /// Server-specific upper bounds/normalization are decided by MySQL.
             /// Reliable same-value updates send no SQL after lifecycle/ownership
             /// checks. Closed/busy calls raise InterfaceError/InterfaceBusyError.
-            fn set_innodb_lock_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,3,"innodb_lock_wait_timeout")}
+            fn set_innodb_lock_wait_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()>{self.set_server_timeout(py,value,3,"innodb_lock_wait_timeout","connection.set_innodb_lock_wait_timeout")}
             /// Send START TRANSACTION. Repeating this follows MySQL semantics,
             /// which may commit an existing transaction before opening another.
             fn begin(&self,py:Python<'_>)->PyResult<()> { self.control(py,b"START TRANSACTION").map_err(|error|errors::at(py,error,"connection.begin")) }
@@ -712,13 +875,13 @@ macro_rules! connection_api {
     }
 }
 connection_api! {
-    (decode_json,set_decode_json,"Decode JSON using the native parser. Default False. This local bool supplies defaults only to subsequently created Cursors; changing it sends no SQL, never changes existing results, and fails after this connection is retired. Saved values remain readable."),
-    (decode_set,set_decode_set,"Decode MySQL SET as an ordered tuple of str rather than its original text. Default False. Local defaults apply only to new Cursors; assignment sends no SQL and fails after retirement. Saved values remain readable."),
-    (decode_bit,set_decode_bit,"Decode MySQL BIT as an unsigned int instead of bytes. Default False. Local defaults apply only to new Cursors; assignment sends no SQL and fails after retirement. Saved values remain readable."),
-    (use_decimal,set_use_decimal,"Decode DECIMAL as exact decimal.Decimal when True, binary64 float when False. Default True. Local defaults affect only new Cursors, send no SQL, and cannot be changed after retirement. Saved values remain readable."),
-    (use_timedelta,set_use_timedelta,"Decode MySQL TIME as timedelta when True, time when False. Default True. Clock-mode values outside one day are errors. Local defaults apply only to new Cursors; assignment sends no SQL and fails after retirement."),
-    (decode_text_strict,set_decode_text_strict,"Reject invalid text bytes when True; recover invalid bytes with surrogateescape when False. Default True. Local defaults affect only new Cursors and send no SQL; modification fails after retirement. Saved values remain readable."),
-    (decode_date_strict,set_decode_date_strict,"Reject invalid MySQL calendar dates when True; return the complete original text when False. Default True. Local defaults affect only new Cursors, send no SQL, and cannot be changed after retirement. Saved values remain readable."),
+    (decode_json,set_decode_json,"Default False. False returns the original JSON text as str. True parses the complete JSON into Python values; malformed, incomplete or out-of-range content raises DataError without text fallback. This applies to JSON fields, not JSON-looking TEXT. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_set,set_decode_set,"Default False. False returns SET text as str. True returns an ordered tuple[str, ...]; the empty SET is (), and an empty member is preserved. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_bit,set_decode_bit,"Default False. False returns the exact BIT bytes, including leading zero bytes. True returns an unsigned big-endian int, never a bool. Invalid BIT contents raise DataError. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (use_decimal,set_use_decimal,"Default True. True returns exact decimal.Decimal values for DECIMAL. False uses the native correctly rounded binary64 parser and returns float, potentially losing decimal precision; invalid or non-finite results raise DataError. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (use_timedelta,set_use_timedelta,"Default True. True returns datetime.timedelta for MySQL TIME, including negative and multi-day durations. False returns datetime.time and raises DataError for negative values or durations at least 24 hours. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_text_strict,set_decode_text_strict,"Default True. True raises UnicodeDecodeError for invalid text bytes. False preserves undecodable bytes through surrogateescape, without replacement characters. Binary fields remain bytes and input encoding is unaffected. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_date_strict,set_decode_date_strict,"Default True. True raises DataError for zero or otherwise unrepresentable DATE/DATETIME values. False returns their original calendar text as str. Valid values retain date/datetime output in both modes. SQL NULL remains None.\n\nThis local default is copied only to new Cursors; existing Cursors and results do not change. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
 }
 
 fn configured_bool(value: &Argument<'_>, name: &str, default: bool) -> PyResult<bool> {
@@ -878,13 +1041,13 @@ pub(crate) fn connect(
         &result_memory_limit,
         "result_memory_limit",
         256 * 1024 * 1024,
-        usize::MAX,
+        isize::MAX as usize,
     )?;
     let total_limit = configured_size(
         &total_result_memory_limit,
         "total_result_memory_limit",
         512 * 1024 * 1024,
-        usize::MAX,
+        isize::MAX as usize,
     )?;
     let server_public_key =
         config::optional_path(server_public_key_path, "server_public_key_path")?;
@@ -928,7 +1091,7 @@ pub(crate) fn connect(
     let selected = ssl.as_deref().unwrap_or(&default_ssl);
     let ssl_mode = selected.mode_name(unix);
     let tls = selected.prepare(unix, &host)?;
-    input::check(py, &budget)?;
+    input::check(py, &budget).map_err(|error| errors::at(py, error, "connect"))?;
     let params = ConnectParams {
         endpoint: match socket {
             Some(socket) => Endpoint::Unix(socket),
@@ -947,7 +1110,7 @@ pub(crate) fn connect(
     };
     let establish = py
         .detach(|| Establish::with_budget(params, budget))
-        .map_err(|error| errors::establish(py, error))?;
+        .map_err(|error| errors::at(py, errors::establish(py, error), "connect"))?;
     let mut initialize = Initialize::new(
         establish,
         InitOptions {

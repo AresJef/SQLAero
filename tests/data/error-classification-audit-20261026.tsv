@@ -1,0 +1,2068 @@
+# Independent semantic expectations frozen once from the completed audit, not generated from the production registry.
+# audit_sha256=d1f6b7be17edb6b959cf70aba421bcfc793fad1751e5d96944de223d06446768
+# origin	code	exact_class	official_evidence	reviewed_rationale
+client	65536	DataError	D11; audit9.5	NUMERIC_RANGE: 保留，对应已定D11语义
+client	65537	InterfaceError	D11; audit9.5	SESSION_STATE: 保留，对应已定D11语义
+client	65538	OperationalError	D11; audit9.5	RESOURCE_LIMIT: 保留，对应已定D11语义
+client	65539	OperationalError	D11; audit9.5	PROTOCOL: 保留，对应已定D11语义
+client	65540	NotSupportedError	D11; audit9.5	UNSUPPORTED_CHARSET: 保留，对应已定D11语义
+client	65541	ProgrammingError	D11; audit9.5	TEMPLATE_BINDING: 保留，对应已定D11语义
+client	65542	ProgrammingError	D11; audit9.5	PARAMETER_COUNT: 保留，对应已定D11语义
+client	65543	DataError	D11; audit9.5	CONTAINER_NESTING: 保留，对应已定D11语义
+client	65544	OperationalTimeoutError	D11; audit9.5	OPERATION_DEADLINE: 保留，对应已定D11语义
+client	65545	DataError	D11; audit9.5	DECODE_CONTENT: 保留，对应已定D11语义
+client	65546	InterfaceBusyError	D11; audit9.5	INTERFACE_BUSY: 保留，对应已定D11语义
+client	65547	InternalError	D11; audit9.5	INTERNAL_STATE: 保留，对应已定D11语义
+client	65548	OperationalError	D11; audit9.5	TRANSPORT: 保留，对应已定D11语义
+client	65549	OperationalError	D11; audit9.5	TLS: 保留，对应已定D11语义
+client	65550	OperationalError	D11; audit9.5	AUTHENTICATION: 保留，对应已定D11语义
+client	65551	NotSupportedError	D11; audit9.5	UNSUPPORTED_CAPABILITY: 保留，对应已定D11语义
+client	65552	OperationalTimeoutError	D11; audit9.5	CONNECT_DEADLINE: 保留，对应已定D11语义
+client	65553	OperationalTimeoutError	D11; audit9.5	READ_DEADLINE: 保留，对应已定D11语义
+client	65554	OperationalTimeoutError	D11; audit9.5	WRITE_DEADLINE: 保留，对应已定D11语义
+server	1	OperationalError	G84:1; G97:1	文件创建/写入系统操作失败
+server	2	OperationalError	G84:2; G97:2	文件读取系统操作失败
+server	3	OperationalError	G84:3; G97:3	文件写入系统操作失败
+server	4	OperationalError	G84:4; G97:4	文件关闭系统操作失败
+server	5	OperationalError	G84:5; G97:5	原生内存不足
+server	6	OperationalError	G84:6; G97:6	文件删除系统操作失败
+server	7	OperationalError	G84:7; G97:7	文件重命名系统操作失败
+server	9	OperationalError	G84:9; G97:9	读文件遇到非预期EOF并带系统原因
+server	10	OperationalError	G84:10; G97:10	文件锁获取失败
+server	11	OperationalError	G84:11; G97:11	文件锁释放失败
+server	12	OperationalError	G84:12; G97:12	目录读取失败
+server	13	OperationalError	G84:13; G97:13	文件状态查询失败
+server	14	OperationalError	G84:14; G97:14	文件尺寸调整失败
+server	15	OperationalError	G84:15; G97:15	从句柄建立文件流失败
+server	16	OperationalError	G84:16; G97:16	工作目录查询失败
+server	17	OperationalError	G84:17; G97:17	工作目录切换失败
+server	18	DatabaseError	G84:18; G97:18	仅文件链接数警告，不描述具体运行失败
+server	19	DatabaseError	G84:19; G97:19	仅剩余开放文件/流计数通知
+server	20	OperationalError	G84:20; G97:20	磁盘空间耗尽而阻塞写入
+server	21	OperationalError	G84:21; G97:21	目录创建系统操作失败
+server	22	NotSupportedError	G84:22; G97:22	字符集既未编入也不在所选定义文件中，能力不可用
+server	23	OperationalError	G84:23; G97:23	打开文件时系统资源耗尽
+server	24	OperationalError	G84:24; G97:24	符号链接目标读取失败
+server	25	OperationalError	G84:25; G97:25	符号链接创建失败
+server	26	OperationalError	G84:26; G97:26	系统realpath操作失败
+server	27	OperationalError	G84:27; G97:27	文件向磁盘同步失败
+server	28	NotSupportedError	G84:28; G97:28	排序规则既未编入也不在所选定义文件中，能力不可用
+server	29	OperationalError	G84:29; G97:29	所需物理文件不存在
+server	30	DatabaseError	G84:30; G97:30	仅文件未关闭的诊断通知，未限定失败根因
+server	31	OperationalError	G84:31; G97:31	文件拥有者修改失败
+server	32	OperationalError	G84:32; G97:32	文件权限修改失败
+server	33	OperationalError	G84:33; G97:33	文件定位系统操作失败
+server	34	OperationalError	G84:34; G97:34	原生内存容量上限耗尽
+server	35	OperationalError	G84:35; G97:35	磁盘已满且等待释放空间，属于资源运行失败
+server	36	OperationalError	G84:36; G97:36	系统计时器创建失败
+server	37	OperationalError	G84:37; G97:37	系统计时器删除失败
+server	38	OperationalError	G84:38; G97:38	系统计时器队列创建失败
+server	39	OperationalError	G84:39; G97:39	系统计时器通知线程启动失败
+server	40	OperationalError	G84:40; G97:40	系统线程通知事件创建失败
+server	41	OperationalError	G84:41; G97:41	系统计时事件注册失败
+server	42	OperationalError	G84:42; G97:42	操作系统库装载失败
+server	43	DatabaseError	G84:43; G97:43	Windows runtime-check的任意消息不固定细因
+server	44	OperationalError	G84:44; G97:44	操作系统大页尺寸查询失败
+server	45	OperationalError	G84:45; G97:45	线程退出/系统收尾未完成
+server	46	OperationalError	G84:46; G97:46	I/O completion port系统资源创建失败
+server	47	OperationalError	G84:47; G97:47	必须的配置文件无法打开
+server	48	OperationalError	G84:48; G97:48	启动配置处理失败导致程序不能运行
+server	49	ProgrammingError	G84:49; G97:49	配置文件使用非法指令
+server	50	OperationalError	G84:50; G97:50	配置文件include递归深度资源超限
+server	51	ProgrammingError	G84:51; G97:51	配置文件分组声明格式错误
+server	52	ProgrammingError	G84:52; G97:52	配置选项缺少要求的前置分组
+server	53	OperationalError	G84:53; G97:53	配置文件权限不满足服务器安全要求
+server	54	OperationalError	G84:54; G97:54	全局可写配置文件被安全策略拒绝读取
+server	55	NotSupportedError	G84:55; G97:55	指定的长选项能力被禁用
+server	56	NotSupportedError	G84:56; G97:56	指定的短选项能力被禁用
+server	57	DatabaseError	G84:57; G97:57	仅命令行密码泄漏风险提醒，不描述操作失败
+server	58	DataError	G84:58; G97:58	配置值采用无法识别的单位后缀
+server	59	OperationalError	G84:59; G97:59	SSL材料文件处理失败
+server	60	OperationalError	G84:60; G97:60	SSL初始化/通信运行失败
+server	61	OperationalError	G84:61; G97:61	bootstrap网络发送失败
+server	62	OperationalError	G84:62; G97:62	通信包序号不符合当前协议状态
+server	63	ProgrammingError	G84:63; G97:63	传入协议配置不认识的选项
+server	64	OperationalError	G84:64; G97:64	配置的服务器公钥文件无法定位
+server	65	OperationalError	G84:65; G97:65	安全材料文件不是要求的PEM格式
+server	66	DatabaseError	G84:66; G97:66	任意debug消息没有固定错误类别
+server	67	ProgrammingError	G84:67; G97:67	配置引用未知变量名称
+server	68	ProgrammingError	G84:68; G97:68	配置指定未知长选项
+server	69	ProgrammingError	G84:69; G97:69	配置指定未知短选项
+server	70	ProgrammingError	G84:70; G97:70	不接受参数的flag被附加参数
+server	71	ProgrammingError	G84:71; G97:71	长选项遗漏必需参数
+server	72	ProgrammingError	G84:72; G97:72	短选项遗漏必需参数
+server	73	DataError	G84:73; G97:73	配置值无效而被忽略
+server	74	DataError	G84:74; G97:74	必须非空的配置值被设为空
+server	75	ProgrammingError	G84:75; G97:75	该选项不允许设置maximum值的用法
+server	76	DataError	G84:76; G97:76	配置布尔文本值不被识别并被改为OFF
+server	77	DatabaseError	G84:77; G97:77	设置值的通用回调失败，固定码未说明具体原因
+server	78	DataError	G84:78; G97:78	配置整数文本值无效
+server	79	DataError	G84:79; G97:79	配置无符号整数文本值无效
+server	80	DataError	G84:80; G97:80	有符号配置数值超界后被调整
+server	81	DataError	G84:81; G97:81	无符号配置数值超界后被调整
+server	82	DataError	G84:82; G97:82	大无符号配置数值超界后被调整
+server	83	DataError	G84:83; G97:83	浮点配置数值超界后被调整
+server	84	DataError	G84:84; G97:84	配置Decimal文本值无效
+server	85	DataError	G84:85; G97:85	排序规则定义解析失败
+server	86	DataError	G84:86; G97:86	排序规则重置位置指向不允许的primary-ignorable字符
+server	87	DataError	G84:87; G97:87	排序规则重置位置指向不允许的tertiary-ignorable字符
+server	88	DataError	G84:88; G97:88	排序规则shift字符超允许范围
+server	89	DataError	G84:89; G97:89	排序规则reset字符超允许范围
+server	90	DataError	G84:90; G97:90	排序规则定义含未知LDML标签
+server	91	DataError	G84:91; G97:91	排序规则重置位置指向不允许的secondary-ignorable字符
+server	92	DatabaseError	G84:92; G97:92	停止处理配置指令的通用出口未限定根因
+server	93	OperationalError	G84:93; G97:93	操作系统线程信号发送失败
+server	94	ProgrammingError	G97:94	该排序规则别名无法按当前utf8含义解析，必须显式写出具体名称；9.7.4官方charset.cc调用点确认这是名称用法错误
+server	1004	OperationalError	M84:L121; M97:L121	服务器文件创建失败并携带系统errno
+server	1005	DatabaseError	M84:L145; M97:L145	官方说明含文件创建失败、外键定义不正确及列名与内部InnoDB表名冲突，固定码不能唯一细分
+server	1006	OperationalError	M84:L169; M97:L169	数据库目录创建系统操作失败
+server	1007	ProgrammingError	M84:L193; M97:L193	CREATE目标数据库已存在，属于对象/DDL用法冲突
+server	1008	ProgrammingError	M84:L217; M97:L217	DROP目标数据库不存在，属于对象/DDL用法冲突
+server	1010	OperationalError	M84:L265; M97:L265	删除数据库目录的文件系统操作失败
+server	1012	OperationalError	M84:L313; M97:L313	系统表记录不可读取，官方说明含InnoDB不可用
+server	1013	OperationalError	M84:L337; M97:L337	文件状态查询系统操作失败
+server	1015	OperationalError	M84:L385; M97:L385	文件锁系统操作失败
+server	1016	OperationalError	M84:L409; M97:L409	文件打开失败并带errno
+server	1017	OperationalError	M84:L433; M97:L433	物理文件不存在，不是SQL对象查找失败
+server	1018	OperationalError	M84:L457; M97:L457	服务器目录读取失败
+server	1020	OperationalError	M84:L505; M97:L505	读取后的记录被并发修改，属于执行时冲突
+server	1022	IntegrityError	M84:L553; M97:L553	写入违反唯一键约束
+server	1024	OperationalError	M84:L601; M97:L601	实际文件读取失败
+server	1025	OperationalError	M84:L625; M97:L625	文件重命名的系统操作失败并带errno
+server	1026	OperationalError	M84:L649; M97:L649	实际文件写入失败
+server	1027	OperationalError	M84:L673; M97:L673	文件正被锁定，运行期资源不能修改
+server	1030	DatabaseError	M84:L745; M97:L745	动态存储引擎子错误可指不同原因，固定码不足以可靠细分
+server	1031	NotSupportedError	M84:L769; M97:L769	当前存储引擎明确不具备请求选项
+server	1032	DatabaseError	M84:L793; M97:L793	记录找不到的统一引擎出口未限定根因
+server	1033	InternalError	M84:L817; M97:L817	数据库内部表文件元信息不正确
+server	1034	InternalError	M84:L841; M97:L841	索引文件错误且要求维修，属于内部存储损坏
+server	1035	OperationalError	M84:L865; M97:L865	旧索引文件须维修/升级，属于存储维护状态
+server	1036	OperationalError	M84:L889; M97:L889	目标表当前只读，执行时写入条件不满足
+server	1037	OperationalError	M84:L913; M97:L913	服务器原生内存分配不足
+server	1038	OperationalError	M84:L937; M97:L937	排序内存不足，服务器资源限制
+server	1040	OperationalError	M84:L985; M97:L985	服务端连接容量达到上限
+server	1041	OperationalError	M84:L1009; M97:L1009	服务器内存/操作系统资源不足
+server	1042	OperationalError	M84:L1033; M97:L1033	服务端无法解析客户端地址的主机名
+server	1043	OperationalError	M84:L1057; M97:L1057	服务端通信握手失败
+server	1044	OperationalError	M84:L1080; M97:L1080	数据库访问授权被拒绝
+server	1045	OperationalError	M84:L1103; M97:L1103	账号认证/登录授权被拒绝
+server	1046	ProgrammingError	M84:L1126; M97:L1126	语句未选择所需数据库
+server	1047	NotSupportedError	M84:L1150; M97:L1150	服务器不识别所请求协议命令，缺少该命令能力
+server	1048	IntegrityError	M84:L1174; M97:L1174	实际列值违反NOT NULL约束
+server	1049	ProgrammingError	M84:L1198; M97:L1198	语句/建连参数引用不存在的数据库对象
+server	1050	ProgrammingError	M84:L1222; M97:L1222	CREATE TABLE目标对象已经存在
+server	1051	ProgrammingError	M84:L1246; M97:L1246	SQL引用不存在的表对象
+server	1052	ProgrammingError	M84:L1270; M97:L1270	SQL列引用存在歧义，不是唯一键或关系完整性违例
+server	1053	OperationalError	M84:L1294; M97:L1294	服务器正在关闭
+server	1054	ProgrammingError	M84:L1318; M97:L1318	SQL引用未知列
+server	1055	ProgrammingError	M84:L1345; M97:L1345	查询列没有满足GROUP BY定义
+server	1056	ProgrammingError	M84:L1369; M97:L1369	GROUP BY选择不允许的列表达式
+server	1057	ProgrammingError	M84:L1393; M97:L1393	查询聚合函数与普通列组合非法
+server	1058	ProgrammingError	M84:L1416; M97:L1416	语句的目标列数和值数不匹配
+server	1059	ProgrammingError	M84:L1439; M97:L1439	SQL标识符声明过长
+server	1060	ProgrammingError	M84:L1463; M97:L1463	表定义重复列名
+server	1061	ProgrammingError	M84:L1487; M97:L1487	DDL重复索引对象名称
+server	1062	IntegrityError	M84:L1513; M97:L1513	实际键值违反唯一性约束
+server	1063	ProgrammingError	M84:L1537; M97:L1537	列类型/属性定义不正确
+server	1064	ProgrammingError	M84:L1561; M97:L1561	SQL语句本身语法非法
+server	1065	ProgrammingError	M84:L1585; M97:L1585	SQL查询文本为空
+server	1066	ProgrammingError	M84:L1609; M97:L1609	SQL表名/别名重复导致引用不唯一
+server	1067	ProgrammingError	M84:L1633; M97:L1633	列默认值DDL定义不合法
+server	1068	ProgrammingError	M84:L1657; M97:L1657	表定义重复声明主键
+server	1069	ProgrammingError	M84:L1681; M97:L1681	表定义索引数量超结构上限
+server	1070	ProgrammingError	M84:L1705; M97:L1705	索引定义的键部件数量超上限
+server	1071	ProgrammingError	M84:L1729; M97:L1729	索引定义的键长度超上限
+server	1072	ProgrammingError	M84:L1753; M97:L1753	索引定义引用不存在的列
+server	1073	NotSupportedError	M84:L1777; M97:L1777	当前表引擎不具备所需BLOB索引能力
+server	1074	ProgrammingError	M84:L1801; M97:L1801	列DDL声明宽度超过该类型定义上限
+server	1075	ProgrammingError	M84:L1825; M97:L1825	自增列数量/索引关系的表定义非法
+server	1076	DatabaseError	M84:L1849; M97:L1849	仅就绪状态模板，无可细分的失败原因
+server	1079	DatabaseError	M84:L1921; M97:L1921	仅停机完成通知模板，无具体失败原因
+server	1080	OperationalError	M84:L1945; M97:L1945	服务端强制关闭线程/连接
+server	1081	OperationalError	M84:L1969; M97:L1969	服务端IP socket创建失败
+server	1082	ProgrammingError	M84:L1993; M97:L1993	索引DDL引用不存在的索引种类/定义
+server	1083	ProgrammingError	M84:L2017; M97:L2017	LOAD DATA分隔符接口参数定义不合法
+server	1084	ProgrammingError	M84:L2041; M97:L2041	固定行格式与BLOB列的导入选项组合不允许
+server	1085	OperationalError	M84:L2065; M97:L2065	服务端导入文件的位置/可读权限条件不满足
+server	1086	OperationalError	M84:L2089; M97:L2089	服务端输出文件已存在，文件操作被拒绝
+server	1087	DatabaseError	M84:L2113; M97:L2113	仅导入统计信息，不能从计数模板推断错误类
+server	1088	DatabaseError	M84:L2137; M97:L2137	仅ALTER统计信息，不描述失败条件
+server	1089	ProgrammingError	M84:L2161; M97:L2161	索引前缀定义的类型/长度/组合不合法
+server	1090	ProgrammingError	M84:L2185; M97:L2185	ALTER TABLE试图删去全部列
+server	1091	ProgrammingError	M84:L2209; M97:L2209	DROP引用不存在的列/索引对象
+server	1092	DatabaseError	M84:L2233; M97:L2233	仅INSERT统计模板，不描述失败条件
+server	1093	ProgrammingError	M84:L2257; M97:L2257	同语句FROM子查询使用被更新目标表，语句结构不允许
+server	1094	ProgrammingError	M84:L2264; M97:L2264	命令引用不存在的线程标识
+server	1095	OperationalError	M84:L2288; M97:L2288	无权终止其他会话线程，权限/会话操作被拒绝
+server	1096	ProgrammingError	M84:L2312; M97:L2312	语句缺少其所需的表引用
+server	1097	ProgrammingError	M84:L2336; M97:L2336	SET列的成员定义超出允许数量
+server	1098	OperationalError	M84:L2360; M97:L2360	无法分配唯一日志文件名，服务器文件操作失败
+server	1099	ProgrammingError	M84:L2384; M97:L2384	本会话只持READ表锁却请求写入
+server	1100	ProgrammingError	M84:L2408; M97:L2408	显式LOCK TABLES用法遗漏所访问表
+server	1101	ProgrammingError	M84:L2432; M97:L2432	目标列类型不允许所声明的默认值
+server	1102	ProgrammingError	M84:L2456; M97:L2456	数据库标识符格式非法
+server	1103	ProgrammingError	M84:L2480; M97:L2480	表标识符格式非法
+server	1104	OperationalError	M84:L2504; M97:L2504	合法查询的估算工作量超过服务端MAX_JOIN_SIZE运行限额
+server	1105	DatabaseError	M84:L2528; M97:L2528	官方统一未知错误，没有固定的更细根因
+server	1106	ProgrammingError	M84:L2551; M97:L2551	调用未知存储过程对象
+server	1107	ProgrammingError	M84:L2575; M97:L2575	存储过程调用实参数量不正确
+server	1108	ProgrammingError	M84:L2599; M97:L2599	存储过程调用参数不正确
+server	1109	ProgrammingError	M84:L2623; M97:L2623	SQL引用未知表
+server	1110	ProgrammingError	M84:L2647; M97:L2647	同一SQL定义中重复指定列
+server	1111	ProgrammingError	M84:L2671; M97:L2671	分组函数在当前语法位置使用不合法
+server	1112	NotSupportedError	M84:L2692; M97:L2692	当前服务器版本不支持表格式扩展
+server	1113	ProgrammingError	M84:L2716; M97:L2716	建表定义没有任何列
+server	1114	OperationalError	M84:L2737; M97:L2737	表的存储容量已满
+server	1115	ProgrammingError	M84:L2758; M97:L2758	SQL/配置引用未知字符集名称，区别于EE未装载已知能力
+server	1116	ProgrammingError	M84:L2779; M97:L2779	查询JOIN表数超出语句结构上限
+server	1117	ProgrammingError	M84:L2800; M97:L2800	表/查询列数超出定义上限
+server	1118	ProgrammingError	M84:L2821; M97:L2821	表/行格式定义的最大行宽超上限，官方要求改列类型
+server	1119	OperationalError	M84:L2842; M97:L2842	服务器线程栈资源耗尽
+server	1120	ProgrammingError	M84:L2863; M97:L2863	OUTER JOIN的ON依赖形成不允许的交叉关系
+server	1121	NotSupportedError	M84:L2883; M97:L2883	当前引擎索引不支持NULL能力
+server	1122	OperationalError	M84:L2886; M97:L2886	服务端无法装载所指定UDF实现
+server	1123	OperationalError	M84:L2907; M97:L2907	UDF初始化执行失败，具体子原因由消息提供
+server	1124	ProgrammingError	M84:L2928; M97:L2928	UDF共享库参数违规包含路径
+server	1125	ProgrammingError	M84:L2949; M97:L2949	创建的UDF对象已经存在
+server	1126	OperationalError	M84:L2970; M97:L2970	服务端动态库打开失败并带系统原因
+server	1127	OperationalError	M84:L2994; M97:L2994	动态库缺少装载所需符号，部署/链接失败
+server	1128	ProgrammingError	M84:L3015; M97:L3015	语句调用尚未定义的函数
+server	1129	OperationalError	M84:L3036; M97:L3036	服务器因连接错误累计而封锁主机
+server	1130	OperationalError	M84:L3056; M97:L3056	连接主机未获服务端访问许可
+server	1131	ProgrammingError	M84:L3076; M97:L3076	匿名账号使用不允许的密码修改命令
+server	1132	OperationalError	M84:L3096; M97:L3096	修改其他账号密码所需权限不足
+server	1133	ProgrammingError	M84:L3116; M97:L3116	账号DDL找不到目标用户记录
+server	1134	DatabaseError	M84:L3136; M97:L3136	仅UPDATE匹配/修改/警告统计模板
+server	1135	OperationalError	M84:L3155; M97:L3155	服务器线程创建失败，资源/系统问题
+server	1136	ProgrammingError	M84:L3177; M97:L3177	INSERT指定行的列数和值数不匹配
+server	1137	OperationalError	M84:L3195; M97:L3195	服务器不能重新打开当前使用的表
+server	1138	DataError	M84:L3218; M97:L3218	NULL用于该值/转换不允许的上下文，固定码不局限关系约束
+server	1139	DatabaseError	M84:L3237; M97:L3237	正则库通用错误可为模式或资源问题，不能一律Programming
+server	1140	ProgrammingError	M84:L3259; M97:L3259	无GROUP BY查询非法混合聚合列与普通列
+server	1141	ProgrammingError	M84:L3278; M97:L3278	REVOKE等引用不存在的账号授权对象
+server	1142	OperationalError	M84:L3297; M97:L3297	表级命令权限被服务端拒绝
+server	1143	OperationalError	M84:L3316; M97:L3316	列级命令权限被服务端拒绝
+server	1144	ProgrammingError	M84:L3335; M97:L3335	GRANT/REVOKE的权限种类/作用域用法非法
+server	1145	ProgrammingError	M84:L3359; M97:L3359	GRANT账号标识参数过长
+server	1146	ProgrammingError	M84:L3378; M97:L3378	SQL引用不存在的表对象
+server	1147	ProgrammingError	M84:L3401; M97:L3401	语句引用不存在的表级授权对象
+server	1148	NotSupportedError	M84:L3420; M97:L3420	当前MySQL版本不支持所请求命令
+server	1149	ProgrammingError	M84:L3439; M97:L3439	SQL语句本身语法错误
+server	1152	OperationalError	M84:L3467; M97:L3467	服务端主动中止连接
+server	1153	OperationalError	M84:L3490; M97:L3490	通信包超过服务器传输限额
+server	1154	OperationalError	M84:L3509; M97:L3509	连接管道读取失败
+server	1155	OperationalError	M84:L3528; M97:L3528	socket相关fcntl系统调用失败
+server	1156	OperationalError	M84:L3547; M97:L3547	服务端收到序号错误的通信包
+server	1157	OperationalError	M84:L3566; M97:L3566	协议通信包解压失败
+server	1158	OperationalError	M84:L3585; M97:L3585	协议通信包读取失败
+server	1159	OperationalError	M84:L3604; M97:L3604	服务端网络读取超时，不是本库截止
+server	1160	OperationalError	M84:L3623; M97:L3623	协议通信包写入失败
+server	1161	OperationalError	M84:L3642; M97:L3642	服务端网络写入超时，不是本库截止
+server	1162	DataError	M84:L3661; M97:L3661	计算结果字符串超出可表示/返回的包长边界
+server	1163	NotSupportedError	M84:L3679; M97:L3679	当前表引擎不支持BLOB/TEXT列
+server	1164	NotSupportedError	M84:L3697; M97:L3697	当前表引擎不支持AUTO_INCREMENT列
+server	1166	ProgrammingError	M84:L3717; M97:L3717	SQL列标识符格式非法
+server	1167	NotSupportedError	M84:L3735; M97:L3735	当前存储引擎不支持对该列建立索引
+server	1168	ProgrammingError	M84:L3759; M97:L3759	MERGE底层表缺失或定义/引擎不满足组合要求
+server	1169	IntegrityError	M84:L3782; M97:L3782	写入被唯一约束拒绝
+server	1170	ProgrammingError	M84:L3800; M97:L3800	BLOB/TEXT索引DDL遗漏必须的键长度
+server	1171	ProgrammingError	M84:L3824; M97:L3824	主键列定义没有满足NOT NULL声明要求
+server	1172	ProgrammingError	M84:L3842; M97:L3842	语句使用单行结果语境但查询返回多行
+server	1173	ProgrammingError	M84:L3860; M97:L3860	表DDL遗漏当前引擎要求的主键
+server	1175	ProgrammingError	M84:L3896; M97:L3896	UPDATE/DELETE不满足显式safe-updates语句要求
+server	1176	ProgrammingError	M84:L3913; M97:L3913	语句引用不存在的索引对象
+server	1177	DatabaseError	M84:L3930; M97:L3930	CHECK无法打开表的统一模板不说明不存在/文件/损坏根因
+server	1178	NotSupportedError	M84:L3947; M97:L3947	存储引擎没有实现所请求管理操作
+server	1179	ProgrammingError	M84:L3971; M97:L3971	事务作用域中使用禁止的命令
+server	1180	OperationalError	M84:L3988; M97:L3988	提交处理失败，具体底层原因需保留
+server	1181	OperationalError	M84:L4005; M97:L4005	回滚处理失败，不据此判断原事务最终结果
+server	1182	OperationalError	M84:L4022; M97:L4022	日志刷新执行失败
+server	1184	OperationalError	M84:L4056; M97:L4056	服务端主动中止已有连接
+server	1188	OperationalError	M84:L4112; M97:L4112	复制源返回运行错误，根因保留在原消息
+server	1189	OperationalError	M84:L4127; M97:L4127	从复制源读取网络数据失败
+server	1190	OperationalError	M84:L4142; M97:L4142	向复制源写入网络数据失败
+server	1191	ProgrammingError	M84:L4157; M97:L4157	MATCH列列表没有匹配的FULLTEXT索引
+server	1192	ProgrammingError	M84:L4173; M97:L4173	当前会话持表锁/事务时使用了禁止的命令
+server	1193	ProgrammingError	M84:L4189; M97:L4189	语句引用不存在的系统变量
+server	1194	InternalError	M84:L4205; M97:L4205	表已被标记为crashed，内部存储损坏
+server	1195	InternalError	M84:L4221; M97:L4221	表损坏且自动维修也失败
+server	1196	OperationalError	M84:L4237; M97:L4237	非事务表更改无法完整回滚，事务处理事实
+server	1197	OperationalError	M84:L4252; M97:L4252	事务binlog缓存容量耗尽
+server	1199	OperationalError	M84:L4280; M97:L4280	复制运行状态不满足当前操作要求
+server	1200	OperationalError	M84:L4294; M97:L4294	服务器尚未配置为副本，操作前置状态不满足
+server	1201	OperationalError	M84:L4308; M97:L4308	复制连接元数据初始化失败
+server	1202	OperationalError	M84:L4315; M97:L4315	复制线程创建失败，服务器资源问题
+server	1203	OperationalError	M84:L4329; M97:L4329	账号活跃连接数达到服务器限额
+server	1204	ProgrammingError	M84:L4344; M97:L4344	SET使用了只允许常量的位置上的非常量表达式
+server	1205	OperationalError	M84:L4359; M97:L4359	服务端锁等待超时，保留服务器码而非本库timeout类
+server	1206	OperationalError	M84:L4374; M97:L4374	锁表资源容量耗尽
+server	1207	ProgrammingError	M84:L4389; M97:L4389	当前事务隔离用法不允许获取更新锁
+server	1210	ProgrammingError	M84:L4434; M97:L4434	函数/命令实参不正确
+server	1211	OperationalError	M84:L4448; M97:L4448	当前账号无权创建用户
+server	1213	OperationalError	M84:L4475; M97:L4475	服务端锁获取发生死锁
+server	1214	NotSupportedError	M84:L4488; M97:L4488	当前表引擎明确不支持FULLTEXT
+server	1215	DatabaseError	M84:L4502; M97:L4502	添加外键的通用失败可含DDL定义不合法或已有数据违反约束，固定码不能唯一选Programming或Integrity
+server	1216	IntegrityError	M84:L4514; M97:L4514	实际子行写入违反外键引用约束
+server	1217	IntegrityError	M84:L4528; M97:L4528	实际父行删除/更新违反外键引用约束
+server	1218	OperationalError	M84:L4541; M97:L4541	副本无法连接复制源
+server	1220	DatabaseError	M84:L4561; M97:L4561	命令执行的通用包装错误，动态子消息才给出根因
+server	1221	ProgrammingError	M84:L4573; M97:L4573	语句关键字/选项组合使用不正确
+server	1222	ProgrammingError	M84:L4586; M97:L4586	集合运算各SELECT定义的列数不匹配
+server	1223	ProgrammingError	M84:L4598; M97:L4598	本会话持冲突读锁时执行不允许的更新
+server	1224	NotSupportedError	M84:L4610; M97:L4610	当前明确禁用事务与非事务表混合能力
+server	1225	ProgrammingError	M84:L4622; M97:L4622	同一语句重复给出同一选项
+server	1226	OperationalError	M84:L4633; M97:L4633	账号资源额度达到服务端限制
+server	1227	OperationalError	M84:L4643; M97:L4643	操作所需服务端权限不足
+server	1228	ProgrammingError	M84:L4654; M97:L4654	把SESSION变量误用于SET GLOBAL
+server	1229	ProgrammingError	M84:L4664; M97:L4664	GLOBAL变量未通过GLOBAL作用域设置
+server	1230	ProgrammingError	M84:L4674; M97:L4674	SET DEFAULT等引用没有默认值的变量
+server	1231	DataError	M84:L4684; M97:L4684	系统变量被设置为不允许的实际值
+server	1232	DataError	M84:L4694; M97:L4694	系统变量实参值的类型不符合要求
+server	1233	ProgrammingError	M84:L4704; M97:L4704	对只可设置的变量执行读取
+server	1234	ProgrammingError	M84:L4714; M97:L4714	SQL选项的使用位置/方式非法
+server	1235	NotSupportedError	M84:L4724; M97:L4724	当前MySQL版本尚不支持所请求功能
+server	1236	OperationalError	M84:L4734; M97:L4734	读取复制源binlog时发生致命运行错误
+server	1237	DatabaseError	M84:L4745; M97:L4745	复制过滤规则跳过表的通知，不描述独立错误根因
+server	1238	ProgrammingError	M84:L4753; M97:L4753	变量访问/设置作用域不正确
+server	1239	ProgrammingError	M84:L4761; M97:L4761	外键约束的DDL定义格式不正确
+server	1240	InternalError	M84:L4769; M97:L4769	引擎键引用与表引用不一致，内部引用状态错误
+server	1241	ProgrammingError	M84:L4777; M97:L4777	SQL运算符/子查询的列数不满足结构要求
+server	1242	ProgrammingError	M84:L4785; M97:L4785	标量子查询使用了多行结果
+server	1243	ProgrammingError	M84:L4795; M97:L4795	引用未知/已不存在的预处理语句句柄
+server	1244	OperationalError	M84:L4805; M97:L4805	帮助系统表损坏或缺失，固定码同时覆盖两种环境问题
+server	1246	DatabaseError	M84:L4823; M97:L4823	只说明列自动转换，不证明数据失败或语句错误
+server	1247	ProgrammingError	M84:L4833; M97:L4833	SQL列/别名引用在该上下文中不允许
+server	1248	ProgrammingError	M84:L4843; M97:L4843	派生表定义缺少必须的别名
+server	1249	DatabaseError	M84:L4851; M97:L4851	仅查询优化简化通知，无明确失败条件
+server	1250	ProgrammingError	M84:L4861; M97:L4861	集合运算后子句引用了禁止的分支表名
+server	1251	NotSupportedError	M84:L4869; M97:L4869	客户端缺少服务器要求的认证协议支持
+server	1252	ProgrammingError	M84:L4877; M97:L4877	空间索引列定义没有满足NOT NULL声明要求
+server	1253	ProgrammingError	M84:L4885; M97:L4885	声明的排序规则与字符集归属不一致
+server	1256	DataError	M84:L4909; M97:L4909	压缩数据声明的解压大小异常或过大
+server	1257	OperationalError	M84:L4916; M97:L4916	zlib分配内存不足
+server	1258	DataError	M84:L4923; M97:L4923	解压数据长度/输出大小不一致，官方提示输入长度可能损坏
+server	1259	DataError	M84:L4930; M97:L4930	解压输入数据损坏
+server	1260	DataError	M84:L4937; M97:L4937	GROUP_CONCAT结果发生截断
+server	1261	DataError	M84:L4939; M97:L4939	导入记录所含字段不足
+server	1262	DataError	M84:L4946; M97:L4946	导入记录字段过多而截断
+server	1263	IntegrityError	M84:L4953; M97:L4953	实际NULL输入不满足NOT NULL列约束
+server	1264	DataError	M84:L4959; M97:L4959	实际列数据超表示范围
+server	1265	DataError	M84:L4961; M97:L4961	实际列数据被截断
+server	1266	DatabaseError	M84:L4967; M97:L4967	只说明替代存储引擎被选用，未限定失败根因
+server	1267	ProgrammingError	M84:L4974; M97:L4974	表达式混合排序规则不合法
+server	1269	OperationalError	M84:L4983; M97:L4983	撤销账号授权的权限/账号操作失败
+server	1270	ProgrammingError	M84:L4989; M97:L4989	表达式的三种排序规则组合不合法
+server	1271	ProgrammingError	M84:L4995; M97:L4995	表达式的排序规则集合不兼容
+server	1272	ProgrammingError	M84:L5001; M97:L5001	以结构体成员形式访问非结构变量
+server	1273	ProgrammingError	M84:L5007; M97:L5007	SQL指定的排序规则名称不存在；与未知字符集/数据库等名称解析错误同属用法错误
+server	1274	DatabaseError	M84:L5013; M97:L5013	仅SSL选项被忽略的兼容提示，不等同认证失败
+server	1276	DatabaseError	M84:L5026; M97:L5026	仅字段解析到外层SELECT的通知
+server	1277	ProgrammingError	M84:L5034; M97:L5034	START REPLICA UNTIL参数或组合无效
+server	1278	DatabaseError	M84:L5040; M97:L5040	仅副本启动配置建议，没有确定失败条件
+server	1279	DatabaseError	M84:L5046; M97:L5046	仅UNTIL选项被忽略的状态提示
+server	1280	ProgrammingError	M84:L5052; M97:L5052	索引标识符定义格式不正确
+server	1281	ProgrammingError	M84:L5059; M97:L5059	catalog标识符定义格式不正确
+server	1283	ProgrammingError	M84:L5075; M97:L5075	FULLTEXT索引列的声明类型不符合要求
+server	1284	ProgrammingError	M84:L5082; M97:L5082	语句引用未知键缓存对象
+server	1285	OperationalError	M84:L5089; M97:L5089	服务端禁用名称解析，现有授权配置无法生效
+server	1286	NotSupportedError	M84:L5095; M97:L5095	服务器没有所请求存储引擎能力
+server	1287	DatabaseError	M84:L5101; M97:L5101	仅弃用提示，当前语句不因此必然错误
+server	1288	ProgrammingError	M84:L5107; M97:L5107	对不可更新目标使用更新语句
+server	1289	NotSupportedError	M84:L5116; M97:L5116	当前服务器构建禁用了所请求功能
+server	1290	OperationalError	M84:L5123; M97:L5123	服务端运行选项阻止当前操作
+server	1291	ProgrammingError	M84:L5130; M97:L5130	ENUM/SET类型定义包含重复成员
+server	1292	DataError	M84:L5136; M97:L5136	实际数据值类型转换错误/截断
+server	1294	ProgrammingError	M84:L5148; M97:L5148	列的ON UPDATE定义不合法
+server	1295	NotSupportedError	M84:L5154; M97:L5154	该命令尚不受预处理协议支持
+server	1296	DatabaseError	M84:L5157; M97:L5157	动态组件统一返回子错误，固定码无法可靠细分
+server	1297	OperationalError	M84:L5164; M97:L5164	组件明确报告临时运行错误，不承诺可安全重试
+server	1298	ProgrammingError	M84:L5171; M97:L5171	语句指定未知/无效时区名称
+server	1299	DataError	M84:L5174; M97:L5174	输入TIMESTAMP列值无效
+server	1300	DataError	M84:L5177; M97:L5177	实际字符数据在声明编码下无效
+server	1301	DataError	M84:L5180; M97:L5180	函数结果超包长后发生截断
+server	1302	ProgrammingError	M84:L5183; M97:L5183	程序对象声明彼此冲突
+server	1303	ProgrammingError	M84:L5186; M97:L5186	存储例程内递归创建例程的用法不允许
+server	1304	ProgrammingError	M84:L5189; M97:L5189	创建的存储程序对象已经存在
+server	1305	ProgrammingError	M84:L5192; M97:L5192	引用不存在的存储程序对象
+server	1306	DatabaseError	M84:L5195; M97:L5195	存储对象DROP的统一失败出口，子原因未固定
+server	1307	DatabaseError	M84:L5198; M97:L5198	存储对象CREATE的统一失败出口，子原因未固定
+server	1308	ProgrammingError	M84:L5201; M97:L5201	控制流引用没有匹配定义的标签
+server	1309	ProgrammingError	M84:L5204; M97:L5204	存储程序重复声明标签
+server	1310	ProgrammingError	M84:L5207; M97:L5207	存储程序结束标签没有匹配起始标签
+server	1311	ProgrammingError	M84:L5210; M97:L5210	存储程序引用未初始化变量
+server	1312	NotSupportedError	M84:L5213; M97:L5213	当前调用上下文不支持例程返回结果集
+server	1313	ProgrammingError	M84:L5216; M97:L5216	RETURN语句用于非FUNCTION定义
+server	1314	NotSupportedError	M84:L5219; M97:L5219	存储过程不支持所请求语句种类
+server	1315	DatabaseError	M84:L5222; M97:L5222	仅旧更新日志设置被忽略的弃用通知
+server	1316	DatabaseError	M84:L5225; M97:L5225	仅旧更新日志设置被转换的弃用通知
+server	1317	OperationalError	M84:L5228; M97:L5228	服务端查询执行被中断
+server	1318	ProgrammingError	M84:L5231; M97:L5231	存储程序调用实参数量不匹配
+server	1319	ProgrammingError	M84:L5234; M97:L5234	存储程序引用未定义CONDITION
+server	1320	ProgrammingError	M84:L5237; M97:L5237	函数定义遗漏RETURN
+server	1321	ProgrammingError	M84:L5240; M97:L5240	存储函数结束而未执行RETURN
+server	1322	ProgrammingError	M84:L5243; M97:L5243	存储程序游标声明没有使用要求的SELECT
+server	1323	ProgrammingError	M84:L5246; M97:L5246	游标SELECT声明包含禁止的INTO
+server	1324	ProgrammingError	M84:L5249; M97:L5249	引用未定义存储程序游标
+server	1325	ProgrammingError	M84:L5252; M97:L5252	存储程序重复OPEN已打开游标
+server	1326	ProgrammingError	M84:L5255; M97:L5255	FETCH/CLOSE使用未打开的存储程序游标
+server	1327	ProgrammingError	M84:L5258; M97:L5258	存储程序引用未声明变量
+server	1328	ProgrammingError	M84:L5261; M97:L5261	FETCH接收变量数与结果列数不匹配
+server	1329	DatabaseError	M84:L5264; M97:L5264	NO DATA条件本身不区分正常耗尽与应用错误
+server	1330	ProgrammingError	M84:L5267; M97:L5267	存储程序重复声明形参
+server	1331	ProgrammingError	M84:L5270; M97:L5270	存储程序重复声明变量
+server	1332	ProgrammingError	M84:L5273; M97:L5273	存储程序重复声明CONDITION
+server	1333	ProgrammingError	M84:L5276; M97:L5276	存储程序重复声明游标
+server	1334	DatabaseError	M84:L5279; M97:L5279	存储对象ALTER的统一失败出口
+server	1335	NotSupportedError	M84:L5282; M97:L5282	当前例程上下文不支持子查询值能力
+server	1336	NotSupportedError	M84:L5285; M97:L5285	函数/触发器不支持所请求语句种类
+server	1337	ProgrammingError	M84:L5288; M97:L5288	变量/CONDITION声明次序不合法
+server	1338	ProgrammingError	M84:L5291; M97:L5291	游标声明出现在禁止的handler之后
+server	1339	ProgrammingError	M84:L5294; M97:L5294	程序CASE未找到分支且无可用默认分支
+server	1340	OperationalError	M84:L5297; M97:L5297	服务器配置文件尺寸超装载限制
+server	1341	OperationalError	M84:L5302; M97:L5302	服务器配置文件类型头损坏
+server	1342	OperationalError	M84:L5307; M97:L5307	服务器配置文件注释截断
+server	1343	OperationalError	M84:L5312; M97:L5312	服务器配置文件参数解析失败
+server	1344	OperationalError	M84:L5317; M97:L5317	服务器配置文件未知参数内容截断
+server	1345	OperationalError	M84:L5322; M97:L5322	因底层对象授权不足而不能EXPLAIN/SHOW
+server	1347	ProgrammingError	M84:L5332; M97:L5332	命名对象的实际种类与语句所需种类不符
+server	1348	ProgrammingError	M84:L5337; M97:L5337	更新目标列不具备可更新性
+server	1350	ProgrammingError	M84:L5348; M97:L5348	视图定义含禁止的SELECT子句
+server	1351	ProgrammingError	M84:L5353; M97:L5353	视图定义不允许引用该变量/参数
+server	1352	ProgrammingError	M84:L5358; M97:L5358	视图定义不允许引用临时表
+server	1353	ProgrammingError	M84:L5363; M97:L5363	视图/派生表/CTE声明列数与SELECT列数不匹配
+server	1354	DatabaseError	M84:L5368; M97:L5368	视图MERGE算法被回退的通知，未给定失败类别
+server	1355	DatabaseError	M84:L5373; M97:L5373	只说明视图未含完整键，不能推断当前ERR更细根因
+server	1356	DatabaseError	M84:L5378; M97:L5378	同码可指对象引用无效或权限不足，不能唯一细分
+server	1357	ProgrammingError	M84:L5380; M97:L5380	存储例程内DROP/ALTER例程的用法不允许
+server	1359	ProgrammingError	M84:L5386; M97:L5386	CREATE触发器时对象已经存在
+server	1360	ProgrammingError	M84:L5389; M97:L5389	引用不存在的触发器
+server	1361	ProgrammingError	M84:L5392; M97:L5392	触发器目标不能是视图或临时表
+server	1362	ProgrammingError	M84:L5395; M97:L5395	当前触发器种类中禁止修改相应NEW/OLD行
+server	1363	ProgrammingError	M84:L5398; M97:L5398	当前触发器事件中不存在所引用NEW/OLD行
+server	1364	IntegrityError	M84:L5401; M97:L5401	写入缺少必需列值且没有默认值
+server	1365	DataError	M84:L5404; M97:L5404	数值计算除以零
+server	1366	DataError	M84:L5407; M97:L5407	实际列值不符合所需数据类型
+server	1367	DataError	M84:L5410; M97:L5410	实际输入值不属于目标类型值域
+server	1368	ProgrammingError	M84:L5413; M97:L5413	不可更新视图声明了CHECK OPTION
+server	1369	IntegrityError	M84:L5418; M97:L5418	写入违反视图CHECK OPTION约束
+server	1370	OperationalError	M84:L5423; M97:L5423	调用例程所需权限被拒绝
+server	1371	OperationalError	M84:L5426; M97:L5426	复制relay日志清理失败
+server	1373	ProgrammingError	M84:L5432; M97:L5432	日志清理命令指定的目标日志不在索引中
+server	1374	OperationalError	M84:L5435; M97:L5435	读取binlog索引发生I/O失败
+server	1375	OperationalError	M84:L5438; M97:L5438	服务端配置禁止binlog清理
+server	1376	OperationalError	M84:L5441; M97:L5441	文件定位系统调用失败
+server	1377	OperationalError	M84:L5444; M97:L5444	日志清理过程中发生致命运行错误
+server	1378	OperationalError	M84:L5447; M97:L5447	日志仍在使用，不能清理
+server	1379	OperationalError	M84:L5450; M97:L5450	日志清理遇未知运行失败，范围已限定日志操作
+server	1380	OperationalError	M84:L5453; M97:L5453	复制relay日志位置初始化失败
+server	1381	OperationalError	M84:L5456; M97:L5456	服务端未启用二进制日志
+server	1382	ProgrammingError	M84:L5459; M97:L5459	用户语句使用服务器内部保留的语法
+server	1390	ProgrammingError	M84:L5483; M97:L5483	预处理语句占位符数超过允许数量
+server	1391	ProgrammingError	M84:L5486; M97:L5486	索引键前缀长度定义为非法的0
+server	1392	InternalError	M84:L5489; M97:L5489	存储视图文本校验和不匹配，内部元数据损坏
+server	1393	ProgrammingError	M84:L5494; M97:L5494	通过JOIN视图同时修改多个基表的语句不允许
+server	1394	ProgrammingError	M84:L5499; M97:L5499	向JOIN视图插入时缺少要求的字段列表
+server	1395	ProgrammingError	M84:L5504; M97:L5504	目标JOIN视图不具备可删除性
+server	1396	DatabaseError	M84:L5509; M97:L5509	账号操作的通用失败模板，细因可为多种条件
+server	1397	ProgrammingError	M84:L5513; M97:L5513	XA命令引用未知事务标识
+server	1398	ProgrammingError	M84:L5516; M97:L5516	XA实参/命令使用不合法
+server	1399	OperationalError	M84:L5519; M97:L5519	分布式事务当前状态不能处理该命令
+server	1400	ProgrammingError	M84:L5523; M97:L5523	XA工作被放在要求的全局事务之外
+server	1401	OperationalError	M84:L5526; M97:L5526	XA事务分支处理致命失败，需核对实际事务事实
+server	1402	OperationalError	M84:L5529; M97:L5529	XA事务分支已回滚，属于事务处理结果
+server	1403	ProgrammingError	M84:L5532; M97:L5532	语句引用不存在的例程授权对象
+server	1404	OperationalError	M84:L5535; M97:L5535	自动授予例程权限失败
+server	1405	OperationalError	M84:L5538; M97:L5538	自动撤销例程权限失败
+server	1406	DataError	M84:L5541; M97:L5541	实际列数据长度超过上限
+server	1407	ProgrammingError	M84:L5544; M97:L5544	SIGNAL/处理器声明的SQLSTATE格式非法
+server	1408	DatabaseError	M84:L5547; M97:L5547	仅服务器启动就绪模板，未给出失败根因
+server	1409	ProgrammingError	M84:L5550; M97:L5550	固定长度导入格式不能直接装入用户变量
+server	1410	ProgrammingError	M84:L5553; M97:L5553	GRANT不能代替CREATE USER创建账号
+server	1411	DataError	M84:L5556; M97:L5556	函数收到不符合数据类型的值
+server	1412	OperationalError	M84:L5559; M97:L5559	执行期间表定义变化，需重新处理事务上下文
+server	1413	ProgrammingError	M84:L5562; M97:L5562	同一存储程序块重复声明handler
+server	1414	ProgrammingError	M84:L5565; M97:L5565	OUT/INOUT实参没有提供可赋值变量
+server	1415	NotSupportedError	M84:L5568; M97:L5568	所选例程/上下文不支持返回结果集
+server	1416	DataError	M84:L5571; M97:L5571	实际二进制/文本数据不能形成合法几何值
+server	1418	ProgrammingError	M84:L5577; M97:L5577	启用binlog时例程缺少要求的特性声明
+server	1419	OperationalError	M84:L5580; M97:L5580	创建例程时缺少服务端要求的SUPER权限
+server	1421	ProgrammingError	M84:L5586; M97:L5586	FETCH等语句未先打开对应游标
+server	1422	NotSupportedError	M84:L5589; M97:L5589	存储函数/触发器执行上下文不支持显式或隐式COMMIT；与已知1314/1336的能力限制一致
+server	1423	IntegrityError	M84:L5592; M97:L5592	视图写入所需基表字段没有默认值，缺失必需列值
+server	1424	NotSupportedError	M84:L5595; M97:L5595	明确不支持存储函数/触发器递归能力
+server	1425	ProgrammingError	M84:L5598; M97:L5598	列DDL声明scale超过类型上限
+server	1426	ProgrammingError	M84:L5601; M97:L5601	列DDL声明precision超过类型上限
+server	1427	ProgrammingError	M84:L5604; M97:L5604	DDL精度/小数位组合不满足M大于等于D
+server	1428	ProgrammingError	M84:L5607; M97:L5607	LOCK TABLES对系统表的锁种类/组合不允许
+server	1429	OperationalError	M84:L5610; M97:L5610	远端数据源连接失败
+server	1430	DatabaseError	M84:L5613; M97:L5613	远端查询的通用子错误出口，根因可跨类别
+server	1431	ProgrammingError	M84:L5616; M97:L5616	语句引用不存在的外部数据源
+server	1432	ProgrammingError	M84:L5619; M97:L5619	FEDERATED建表连接串格式不合法
+server	1433	ProgrammingError	M84:L5622; M97:L5622	数据源连接串格式不合法
+server	1435	ProgrammingError	M84:L5628; M97:L5628	触发器声明所在schema不正确
+server	1436	OperationalError	M84:L5631; M97:L5631	服务器线程栈资源不足
+server	1437	ProgrammingError	M84:L5635; M97:L5635	存储程序定义体超过结构长度上限
+server	1438	ProgrammingError	M84:L5638; M97:L5638	DROP命令不能删除默认键缓存
+server	1439	ProgrammingError	M84:L5641; M97:L5641	列DDL声明显示宽度超过上限
+server	1440	ProgrammingError	M84:L5644; M97:L5644	XA START等命令重复使用已存在的XID
+server	1441	DataError	M84:L5647; M97:L5647	日期时间函数计算结果溢出
+server	1442	ProgrammingError	M84:L5650; M97:L5650	函数/触发器修改了调用语句正在使用的表
+server	1443	ProgrammingError	M84:L5653; M97:L5653	视图/表依赖结构禁止该更新操作
+server	1444	ProgrammingError	M84:L5656; M97:L5656	预处理语句通过例程递归引用其自身
+server	1445	ProgrammingError	M84:L5659; M97:L5659	存储函数/触发器中禁止设置autocommit
+server	1447	DatabaseError	M84:L5665; M97:L5665	旧视图缺definer并改用当前用户的兼容提示，未固定失败根因
+server	1448	OperationalError	M84:L5668; M97:L5668	指定其他definer创建视图所需权限不足
+server	1449	OperationalError	M84:L5671; M97:L5671	执行所需definer账号不存在，安全上下文不可用
+server	1450	ProgrammingError	M84:L5674; M97:L5674	当前存储程序上下文中不允许切换schema
+server	1451	IntegrityError	M84:L5677; M97:L5677	父行删除/更新违反外键约束
+server	1452	IntegrityError	M84:L5680; M97:L5680	子行插入/更新违反外键约束
+server	1453	ProgrammingError	M84:L5683; M97:L5683	存储程序变量名与保留解释冲突，需引用/改名
+server	1454	ProgrammingError	M84:L5686; M97:L5686	触发器定义缺少必须的definer属性
+server	1455	OperationalError	M84:L5688; M97:L5688	持久对象使用旧文件格式，需要管理员重建
+server	1456	OperationalError	M84:L5691; M97:L5691	服务器配置的例程递归深度限额耗尽
+server	1458	ProgrammingError	M84:L5697; M97:L5697	存储程序标识符格式不合法
+server	1459	OperationalError	M84:L5700; M97:L5700	表格式需要升级/重建，当前存储状态不适用
+server	1460	NotSupportedError	M84:L5703; M97:L5703	存储函数不支持AGGREGATE能力
+server	1461	OperationalError	M84:L5706; M97:L5706	服务器预处理语句句柄数量资源达到上限
+server	1462	ProgrammingError	M84:L5709; M97:L5709	视图定义构成递归依赖
+server	1463	ProgrammingError	M84:L5714; M97:L5714	查询子句使用不属于GROUP BY的普通列
+server	1464	NotSupportedError	M84:L5717; M97:L5717	当前表引擎不支持SPATIAL索引
+server	1465	ProgrammingError	M84:L5720; M97:L5720	在系统表上定义触发器的DDL不允许
+server	1466	DatabaseError	M84:L5723; M97:L5723	仅名称前导空白被移除的通知
+server	1467	OperationalError	M84:L5726; M97:L5726	存储引擎读取自增计数失败
+server	1468	DatabaseError	M84:L5729; M97:L5729	仅用户名消息片段，不包含失败语义
+server	1469	DatabaseError	M84:L5732; M97:L5732	仅主机名消息片段，不包含失败语义
+server	1470	DataError	M84:L5735; M97:L5735	实际字符串超过指定参数/名称的允许长度
+server	1471	ProgrammingError	M84:L5738; M97:L5738	INSERT目标不可插入
+server	1472	ProgrammingError	M84:L5742; M97:L5742	MERGE表引用的底层表定义/引擎/存在性不符合要求
+server	1473	ProgrammingError	M84:L5745; M97:L5745	SELECT结构的嵌套层级过深
+server	1474	ProgrammingError	M84:L5748; M97:L5748	规范化后的对象名称为空
+server	1475	ProgrammingError	M84:L5751; M97:L5751	LOAD DATA分隔/包围参数组合有歧义
+server	1476	ProgrammingError	M84:L5754; M97:L5754	CREATE SERVER对象已经存在
+server	1477	ProgrammingError	M84:L5757; M97:L5757	引用不存在的SERVER对象
+server	1478	NotSupportedError	M84:L5760; M97:L5760	当前存储引擎不支持请求的建表选项
+server	1479	ProgrammingError	M84:L5763; M97:L5763	分区定义遗漏必须的VALUES子句
+server	1480	ProgrammingError	M84:L5767; M97:L5767	VALUES种类与分区方式不匹配
+server	1481	ProgrammingError	M84:L5771; M97:L5771	MAXVALUE所在分区位置不合法
+server	1484	ProgrammingError	M84:L5783; M97:L5783	声明分区数量与实际定义不匹配
+server	1485	ProgrammingError	M84:L5787; M97:L5787	声明子分区数量与实际定义不匹配
+server	1486	ProgrammingError	M84:L5791; M97:L5791	分区表达式使用不允许的非常量/随机/时区相关计算
+server	1488	ProgrammingError	M84:L5799; M97:L5799	分区表达式引用的列不存在
+server	1490	InternalError	M84:L5807; M97:L5807	持久分区元信息内部不一致
+server	1491	ProgrammingError	M84:L5811; M97:L5811	分区函数返回的声明类型不符合要求
+server	1492	ProgrammingError	M84:L5815; M97:L5815	分区DDL未完整定义要求的分区
+server	1493	ProgrammingError	M84:L5819; M97:L5819	RANGE分区边界定义没有严格递增
+server	1494	ProgrammingError	M84:L5823; M97:L5823	分区边界常量类型与分区函数类型不一致
+server	1495	ProgrammingError	M84:L5827; M97:L5827	LIST分区重复定义同一常量
+server	1496	ProgrammingError	M84:L5831; M97:L5831	查询中非法独立使用PARTITION语法
+server	1497	NotSupportedError	M84:L5835; M97:L5835	当前版本不支持分区间混用引擎
+server	1498	ProgrammingError	M84:L5839; M97:L5839	分区表缺少要求的完整定义
+server	1499	ProgrammingError	M84:L5843; M97:L5843	分区DDL定义数量超过结构上限
+server	1500	ProgrammingError	M84:L5847; M97:L5847	子分区方式组合不在允许范围
+server	1501	OperationalError	M84:L5851; M97:L5851	创建存储引擎处理文件失败
+server	1502	ProgrammingError	M84:L5855; M97:L5855	分区函数不允许使用BLOB列
+server	1503	ProgrammingError	M84:L5859; M97:L5859	唯一键/分区定义组合不合法，属于DDL定义错误；尚非实际写入违反唯一约束
+server	1504	ProgrammingError	M84:L5861; M97:L5861	分区数量参数不能为0
+server	1505	ProgrammingError	M84:L5865; M97:L5865	对非分区表执行分区管理DDL
+server	1506	NotSupportedError	M84:L5869; M97:L5869	明确不支持分区与外键结合
+server	1507	ProgrammingError	M84:L5873; M97:L5873	分区操作指定的分区列表无效
+server	1508	ProgrammingError	M84:L5877; M97:L5877	DROP PARTITION试图删除全部分区
+server	1509	ProgrammingError	M84:L5881; M97:L5881	COALESCE用于错误分区种类
+server	1510	ProgrammingError	M84:L5885; M97:L5885	REORGANIZE试图非法改变HASH分区数量
+server	1511	ProgrammingError	M84:L5889; M97:L5889	无参REORGANIZE用于非自动HASH分区
+server	1512	ProgrammingError	M84:L5893; M97:L5893	分区命令用于非RANGE/LIST目标
+server	1513	ProgrammingError	M84:L5897; M97:L5897	ADD PARTITION的子分区数量不匹配
+server	1514	ProgrammingError	M84:L5901; M97:L5901	ADD PARTITION未给出新增分区
+server	1515	ProgrammingError	M84:L5905; M97:L5905	COALESCE未指定至少一个合并分区
+server	1516	ProgrammingError	M84:L5909; M97:L5909	REORGANIZE指定数量超过现有分区
+server	1517	ProgrammingError	M84:L5913; M97:L5913	分区对象名称重复
+server	1518	ProgrammingError	M84:L5917; M97:L5917	当前命令不允许关闭binlog
+server	1519	ProgrammingError	M84:L5921; M97:L5921	REORGANIZE指定分区不是连续集合
+server	1520	ProgrammingError	M84:L5925; M97:L5925	REORGANIZE非法改变总范围
+server	1521	NotSupportedError	M84:L5929; M97:L5929	该版本/引擎不支持此分区函数
+server	1523	NotSupportedError	M84:L5936; M97:L5936	引擎仅支持32位VALUES范围，所请求能力超界
+server	1524	NotSupportedError	M84:L5940; M97:L5940	服务器缺少/未装载所需插件能力
+server	1525	DataError	M84:L5943; M97:L5943	实际数据值不符合目标类型
+server	1526	DataError	M84:L5946; M97:L5946	实际行值落不到任何已定义分区
+server	1527	ProgrammingError	M84:L5949; M97:L5949	文件组选项在同一语句中重复指定
+server	1528	OperationalError	M84:L5952; M97:L5952	存储文件组创建操作失败
+server	1529	OperationalError	M84:L5955; M97:L5955	存储文件组删除操作失败
+server	1530	NotSupportedError	M84:L5958; M97:L5958	引擎不支持表空间自动扩展
+server	1531	DataError	M84:L5961; M97:L5961	大小参数值不能按要求解析为数字或带单位格式
+server	1532	DataError	M84:L5964; M97:L5964	大小参数已可解析但数值超过允许上界
+server	1533	OperationalError	M84:L5967; M97:L5967	文件组ALTER执行失败，范围限定为存储操作
+server	1534	OperationalError	M84:L5970; M97:L5970	向row-based binlog写入行失败
+server	1537	ProgrammingError	M84:L5979; M97:L5979	创建的事件对象已经存在
+server	1539	ProgrammingError	M84:L5985; M97:L5985	命令引用不存在的事件
+server	1542	DataError	M84:L5994; M97:L5994	事件调度的INTERVAL值非正或超过允许范围
+server	1543	ProgrammingError	M84:L5997; M97:L5997	事件ENDS配置无效或早于STARTS
+server	1544	DatabaseError	M84:L6000; M97:L6000	事件时间已过且被禁用的状态通知，未限定失败根因
+server	1551	ProgrammingError	M84:L6026; M97:L6026	事件RENAME的新旧名称相同
+server	1553	IntegrityError	M84:L6032; M97:L6032	删除支撑外键的索引会破坏关系约束
+server	1554	DatabaseError	M84:L6037; M97:L6037	仅带版本的弃用通知，不证明当前SQL本身非法
+server	1556	ProgrammingError	M84:L6043; M97:L6043	日志表不允许显式表锁用法
+server	1557	IntegrityError	M84:L6046; M97:L6046	维持外键关系会产生子表唯一键冲突
+server	1558	OperationalError	M84:L6049; M97:L6049	系统表结构与当前服务器版本不匹配，需要升级
+server	1560	ProgrammingError	M84:L6055; M97:L6055	函数/触发器中不允许切换binlog格式
+server	1562	NotSupportedError	M84:L6061; M97:L6061	明确不支持带分区的临时表
+server	1563	ProgrammingError	M84:L6064; M97:L6064	分区定义常量不在函数的允许定义域
+server	1564	ProgrammingError	M84:L6068; M97:L6068	使用不允许的分区函数
+server	1566	ProgrammingError	M84:L6075; M97:L6075	VALUES LESS THAN不允许NULL边界
+server	1567	ProgrammingError	M84:L6079; M97:L6079	分区名称格式不合法
+server	1568	ProgrammingError	M84:L6083; M97:L6083	事务进行中使用不允许的事务特征变更
+server	1569	IntegrityError	M84:L6085; M97:L6085	ALTER自增重排产生重复键值
+server	1571	OperationalError	M84:L6091; M97:L6091	事件调度器启动/停止操作失败
+server	1572	NotSupportedError	M84:L6094; M97:L6094	当前引擎不支持用于分区表
+server	1575	DataError	M84:L6104; M97:L6104	输入base64数据不能解码
+server	1576	ProgrammingError	M84:L6108; M97:L6108	事件体中递归执行事件DDL不允许
+server	1578	ProgrammingError	M84:L6114; M97:L6114	要求整数的语法/选项位置使用了其他类型
+server	1579	NotSupportedError	M84:L6117; M97:L6117	请求的引擎不能实现日志表
+server	1580	ProgrammingError	M84:L6120; M97:L6120	日志开启时对日志表执行禁止的语句
+server	1581	ProgrammingError	M84:L6123; M97:L6123	日志表RENAME缺少要求的原子替换组合
+server	1582	ProgrammingError	M84:L6126; M97:L6126	原生函数调用实参数量不正确
+server	1583	ProgrammingError	M84:L6129; M97:L6129	原生函数调用的参数组合/用法不正确
+server	1584	ProgrammingError	M84:L6132; M97:L6132	存储函数调用的参数组合/用法不正确
+server	1585	ProgrammingError	M84:L6135; M97:L6135	自定义函数名称与原生函数冲突
+server	1586	IntegrityError	M84:L6140; M97:L6140	实际值违反所命名唯一键
+server	1587	OperationalError	M84:L6164; M97:L6164	服务器打开文件数量耗尽
+server	1588	DatabaseError	M84:L6167; M97:L6167	事件已过期而创建后即删除的通知
+server	1589	ProgrammingError	M84:L6170; M97:L6170	ALTER事件给出的过期时间不满足保留策略
+server	1591	DataError	M84:L6176; M97:L6176	现有行值没有匹配分区
+server	1592	DatabaseError	M84:L6179; M97:L6179	仅不安全binlog语句已被写入的警告，不能推断新的错误根因
+server	1593	OperationalError	M84:L6183; M97:L6183	binlog处理遇到致命运行错误
+server	1598	OperationalError	M84:L6198; M97:L6198	当前条件下无法完成binlog记录
+server	1599	OperationalError	M84:L6201; M97:L6201	持久视图缺少创建上下文，部署/元数据条件不满足
+server	1600	OperationalError	M84:L6204; M97:L6204	视图创建上下文无效，未单独证明内核不变量崩坏
+server	1602	InternalError	M84:L6210; M97:L6210	持久触发器文件已明确损坏
+server	1603	OperationalError	M84:L6213; M97:L6213	持久触发器缺少创建上下文
+server	1604	OperationalError	M84:L6216; M97:L6216	触发器创建上下文不可用
+server	1605	OperationalError	M84:L6219; M97:L6219	事件创建上下文不可用
+server	1606	OperationalError	M84:L6222; M97:L6222	触发器依赖表无法打开
+server	1609	ProgrammingError	M84:L6231; M97:L6231	BINLOG语句顺序遗漏必须的format-description事件
+server	1610	InternalError	M84:L6234; M97:L6234	复制事件内部结构已明确损坏
+server	1612	OperationalError	M84:L6240; M97:L6240	日志清理时所需文件已不在文件系统
+server	1613	OperationalError	M84:L6243; M97:L6243	服务器XA事务因超时而回滚，不是客户端截止类
+server	1614	OperationalError	M84:L6246; M97:L6246	服务器XA事务因死锁而回滚
+server	1615	OperationalError	M84:L6249; M97:L6249	执行时预处理元数据失效，服务器要求重新prepare
+server	1617	DatabaseError	M84:L6255; M97:L6255	连接元数据不存在的通知，未限定调用失败根因
+server	1618	DatabaseError	M84:L6258; M97:L6258	选项被忽略的通用提示，不能仅据此细分
+server	1619	ProgrammingError	M84:L6261; M97:L6261	UNINSTALL试图删除不可删除的内建插件
+server	1620	DatabaseError	M84:L6264; M97:L6264	插件忙且安排停机卸载的通知，未必是操作失败
+server	1621	ProgrammingError	M84:L6267; M97:L6267	用错误方式/作用域给只读变量赋值
+server	1622	OperationalError	M84:L6270; M97:L6270	引擎不能完成当前语句回滚，事务已回滚需新事务
+server	1624	DataError	M84:L6276; M97:L6276	复制heartbeat参数值为负或超过允许数值上界
+server	1625	OperationalError	M84:L6278; M97:L6278	复制所需系统表schema不满足服务器要求
+server	1626	ProgrammingError	M84:L6281; M97:L6281	复制冲突函数配置表达式解析失败
+server	1627	OperationalError	M84:L6284; M97:L6284	复制异常表写入操作失败
+server	1628	ProgrammingError	M84:L6287; M97:L6287	表注释定义超过允许长度
+server	1629	ProgrammingError	M84:L6291; M97:L6291	列注释定义超过允许字符上限
+server	1630	ProgrammingError	M84:L6295; M97:L6295	函数名称解析未找到目标函数
+server	1631	DatabaseError	M84:L6298; M97:L6298	仅数据库消息片段，不包含失败语义
+server	1632	DatabaseError	M84:L6302; M97:L6302	仅表名消息片段，不包含失败语义
+server	1633	DatabaseError	M84:L6306; M97:L6306	仅分区名消息片段，不包含失败语义
+server	1634	DatabaseError	M84:L6310; M97:L6310	仅子分区名消息片段，不包含失败语义
+server	1635	DatabaseError	M84:L6314; M97:L6314	仅临时对象消息片段，不包含失败语义
+server	1636	DatabaseError	M84:L6318; M97:L6318	仅重命名消息片段，不包含失败语义
+server	1637	OperationalError	M84:L6322; M97:L6322	服务器并发事务容量耗尽
+server	1638	NotSupportedError	M84:L6325; M97:L6325	非ASCII分隔符能力尚未完整实现
+server	1639	OperationalError	M84:L6328; M97:L6328	服务端debug同步等待超时，不是客户端计时错误
+server	1640	OperationalError	M84:L6331; M97:L6331	服务端debug同步点命中次数超限
+server	1641	ProgrammingError	M84:L6334; M97:L6334	SIGNAL SET重复指定条件信息项
+server	1642	DatabaseError	M84:L6338; M97:L6338	未处理的用户警告条件没有固定更细语义
+server	1643	DatabaseError	M84:L6342; M97:L6342	未处理的用户NO DATA条件没有固定更细语义
+server	1644	DatabaseError	M84:L6346; M97:L6346	用户SIGNAL通用异常，不能从45000推断更细类别
+server	1645	ProgrammingError	M84:L6349; M97:L6349	没有活动handler时执行RESIGNAL
+server	1646	ProgrammingError	M84:L6352; M97:L6352	SIGNAL引用的CONDITION未按要求定义SQLSTATE
+server	1647	DataError	M84:L6355; M97:L6355	错误条件诊断项的数据被截断
+server	1648	DataError	M84:L6358; M97:L6358	错误条件诊断项的数据长度超限
+server	1649	ProgrammingError	M84:L6361; M97:L6361	语句指定未知locale名称
+server	1650	ProgrammingError	M84:L6364; M97:L6364	复制server-id配置与启动选项冲突
+server	1652	ProgrammingError	M84:L6370; M97:L6370	分区列列表重复列名
+server	1653	ProgrammingError	M84:L6373; M97:L6373	分区列列表用法前后不一致
+server	1654	ProgrammingError	M84:L6376; M97:L6376	分区定义的列值常量类型不合法
+server	1655	ProgrammingError	M84:L6379; M97:L6379	分区函数定义列数超过允许上限
+server	1656	ProgrammingError	M84:L6382; M97:L6382	VALUES IN不允许MAXVALUE
+server	1657	ProgrammingError	M84:L6385; M97:L6385	分区定义给出的值数量过多
+server	1658	ProgrammingError	M84:L6388; M97:L6388	单列分区不允许行表达式VALUES IN
+server	1659	ProgrammingError	M84:L6391; M97:L6391	分区列的声明类型不适用于所选分区方式
+server	1660	ProgrammingError	M84:L6394; M97:L6394	分区列组合定义长度超过上限
+server	1661	NotSupportedError	M84:L6397; M97:L6397	涉及引擎无共同可用binlog记录方式
+server	1662	NotSupportedError	M84:L6399; M97:L6399	ROW记录模式与仅支持statement记录的引擎不兼容
+server	1663	NotSupportedError	M84:L6401; M97:L6401	现有引擎能力与MIXED安全记录要求不兼容
+server	1664	NotSupportedError	M84:L6403; M97:L6403	行格式注入与statement-only引擎不兼容
+server	1665	NotSupportedError	M84:L6405; M97:L6405	STATEMENT模式与row-only引擎不兼容
+server	1666	NotSupportedError	M84:L6407; M97:L6407	行格式语句不能由STATEMENT模式记录
+server	1667	NotSupportedError	M84:L6409; M97:L6409	多引擎与self-logging组合没有受支持的记录方式
+server	1668	DatabaseError	M84:L6412; M97:L6412	仅说明LIMIT使statement复制不确定，不单独给出失败类型
+server	1670	DatabaseError	M84:L6416; M97:L6416	仅说明系统表使复制不安全，未固定错误根因
+server	1671	DatabaseError	M84:L6418; M97:L6418	仅说明触发器自增写入的binlog安全风险
+server	1672	DatabaseError	M84:L6420; M97:L6420	仅说明UDF在副本可能不确定的复制风险
+server	1673	DatabaseError	M84:L6422; M97:L6422	仅说明系统变量在副本可能不同的复制风险
+server	1674	DatabaseError	M84:L6424; M97:L6424	仅说明系统函数结果可能不同的复制风险
+server	1675	DatabaseError	M84:L6426; M97:L6426	仅说明事务/非事务访问顺序的复制安全风险
+server	1676	DatabaseError	M84:L6429; M97:L6429	动态原消息加语句的包装模板，不能由包装细分
+server	1678	OperationalError	M84:L6434; M97:L6434	复制执行时无法创建列转换表
+server	1679	ProgrammingError	M84:L6436; M97:L6436	活动事务中不允许切换binlog_format
+server	1680	ProgrammingError	M84:L6438; M97:L6438	显式路径选项超过允许长度
+server	1681	DatabaseError	M84:L6440; M97:L6440	仅弃用通知，没有确定失败条件
+server	1682	OperationalError	M84:L6444; M97:L6444	服务端原生系统表结构与预期不符
+server	1683	ProgrammingError	M84:L6447; M97:L6447	performance_schema的使用方式非法
+server	1684	OperationalError	M84:L6449; M97:L6449	并发DDL使当前元信息表被跳过
+server	1685	ProgrammingError	M84:L6452; M97:L6452	事务中禁止修改binlog_direct_non_transactional_updates
+server	1686	ProgrammingError	M84:L6454; M97:L6454	函数/触发器内禁止修改binlog direct设置
+server	1687	ProgrammingError	M84:L6456; M97:L6456	空间索引DDL引用非几何类型列
+server	1688	ProgrammingError	M84:L6459; M97:L6459	索引注释定义长度超过上限
+server	1689	OperationalError	M84:L6462; M97:L6462	等待锁因排他锁请求而被中止
+server	1690	DataError	M84:L6465; M97:L6465	实际数值超目标表示范围
+server	1692	DatabaseError	M84:L6471; M97:L6471	仅混合引擎复制安全提示，没有独立失败原因
+server	1693	DatabaseError	M84:L6474; M97:L6474	仅跨事务种类写入的复制安全提示
+server	1694	ProgrammingError	M84:L6477; M97:L6477	事务中禁止修改sql_log_bin
+server	1695	ProgrammingError	M84:L6480; M97:L6480	函数/触发器中禁止修改sql_log_bin
+server	1696	OperationalError	M84:L6483; M97:L6483	读取服务端分区描述文件失败
+server	1697	ProgrammingError	M84:L6487; M97:L6487	分区VALUES定义必须为INT
+server	1698	OperationalError	M84:L6491; M97:L6491	账号认证/访问授权被拒绝
+server	1701	IntegrityError	M84:L6521; M97:L6521	TRUNCATE会破坏其他表持有的既有外键关系
+server	1702	OperationalError	M84:L6524; M97:L6524	插件按服务器永久装载策略运行，不能在线卸载
+server	1703	DataError	M84:L6527; M97:L6527	heartbeat参数值小于允许粒度；若实际作为ERR返回，按参数值域分类
+server	1704	DataError	M84:L6530; M97:L6530	heartbeat参数值超过replica_net_timeout要求的数值范围
+server	1705	OperationalError	M84:L6533; M97:L6533	语句binlog缓存容量耗尽
+server	1706	ProgrammingError	M84:L6536; M97:L6536	同一表被多别名更新时的主键/分区键写法不允许
+server	1707	OperationalError	M84:L6541; M97:L6541	表存储格式需要重建，当前不能正常操作
+server	1708	DataError	M84:L6544; M97:L6544	配置参数之间不满足规定的数值下界关系
+server	1709	ProgrammingError	M84:L6547; M97:L6547	索引列定义字节宽度超过上限
+server	1710	DatabaseError	M84:L6550; M97:L6550	触发器体包含的动态子错误可跨类别
+server	1711	DatabaseError	M84:L6553; M97:L6553	未知触发器体中的动态子错误不能可靠细分
+server	1712	InternalError	M84:L6556; M97:L6556	索引已明确损坏
+server	1713	DataError	M84:L6559; M97:L6559	更新产生的undo记录超过其表示容量
+server	1714	DatabaseError	M84:L6562; M97:L6562	仅INSERT IGNORE SELECT不确定顺序的复制风险说明
+server	1715	DatabaseError	M84:L6565; M97:L6565	仅INSERT SELECT更新顺序的复制风险说明
+server	1716	DatabaseError	M84:L6568; M97:L6568	仅REPLACE SELECT顺序的复制风险说明
+server	1717	DatabaseError	M84:L6571; M97:L6571	仅CREATE IGNORE SELECT顺序的复制风险说明
+server	1718	DatabaseError	M84:L6574; M97:L6574	仅CREATE REPLACE SELECT顺序的复制风险说明
+server	1719	DatabaseError	M84:L6577; M97:L6577	仅UPDATE IGNORE顺序的复制风险说明
+server	1720	NotSupportedError	M84:L6580; M97:L6580	插件明确不支持动态卸载，须停机卸载
+server	1721	NotSupportedError	M84:L6583; M97:L6583	插件明确不支持动态安装，须停机安装
+server	1722	DatabaseError	M84:L6586; M97:L6586	仅自增写入SELECT顺序的复制风险说明
+server	1723	DatabaseError	M84:L6589; M97:L6589	仅CREATE SELECT自增顺序的复制风险说明
+server	1724	DatabaseError	M84:L6592; M97:L6592	仅多唯一键upsert的statement复制风险说明
+server	1725	OperationalError	M84:L6595; M97:L6595	表正被并发外键检查使用，当前不能执行操作
+server	1726	NotSupportedError	M84:L6598; M97:L6598	所选引擎不支持系统表
+server	1727	DatabaseError	M84:L6601; M97:L6601	仅复合主键自增字段顺序的复制风险说明
+server	1728	OperationalError	M84:L6607; M97:L6607	系统表无法装载，损坏只是可能原因而非固定断言
+server	1729	DataError	M84:L6612; M97:L6612	source_delay参数值超过允许上界
+server	1730	ProgrammingError	M84:L6614; M97:L6614	BINLOG语句使用不允许的事件种类
+server	1731	ProgrammingError	M84:L6617; M97:L6617	EXCHANGE的表和分区属性定义不匹配
+server	1732	ProgrammingError	M84:L6620; M97:L6620	EXCHANGE的对方表不能已分区
+server	1733	ProgrammingError	M84:L6623; M97:L6623	EXCHANGE的对方表不能是临时表
+server	1734	ProgrammingError	M84:L6626; M97:L6626	对子分区表错误使用了父分区目标
+server	1735	ProgrammingError	M84:L6629; M97:L6629	引用不存在的分区名称
+server	1736	ProgrammingError	M84:L6632; M97:L6632	要求相同定义的表具有不同结构
+server	1737	DataError	M84:L6635; M97:L6635	实际行值不满足目标分区域
+server	1738	DatabaseError	M84:L6638; M97:L6638	仅服务器将binlog缓存参数归一化的通知
+server	1739	DatabaseError	M84:L6640; M97:L6640	索引因转换不可用的优化提示，不等于SQL/数据非法
+server	1740	ProgrammingError	M84:L6643; M97:L6643	EXCHANGE的表具有不允许的外键引用
+server	1742	DataError	M84:L6648; M97:L6648	复制元数据字段内容超过列长度
+server	1745	DatabaseError	M84:L6655; M97:L6655	仅语句binlog缓存参数归一化通知
+server	1746	ProgrammingError	M84:L6657; M97:L6657	CREATE SELECT过程中更新正在创建的目标表
+server	1747	ProgrammingError	M84:L6660; M97:L6660	对非分区表使用PARTITION子句
+server	1748	DataError	M84:L6663; M97:L6663	实际行不属于语句明确指定的分区集合
+server	1750	OperationalError	M84:L6690; M97:L6690	复制元数据存储类型切换失败
+server	1751	OperationalError	M84:L6693; M97:L6693	临时表创建不支持回滚，事务未能完全撤销
+server	1752	OperationalError	M84:L6695; M97:L6695	临时表删除不支持回滚，事务未能完全撤销
+server	1753	NotSupportedError	M84:L6698; M97:L6698	多线程副本模式不支持该功能
+server	1754	DatabaseError	M84:L6700; M97:L6700	仅复制事件库名元信息省略提示，没有独立错误类别
+server	1755	DatabaseError	M84:L6702; M97:L6702	并行复制事件组的通用失败携带动态Reason，固定码不足以确认缺能力或其他执行根因
+server	1756	DatabaseError	M84:L6704; M97:L6704	复制数据不一致的动态消息未固定具体原因
+server	1757	NotSupportedError	M84:L6707; M97:L6707	分区表不支持FULLTEXT索引
+server	1758	ProgrammingError	M84:L6711; M97:L6711	GET DIAGNOSTICS等使用非法条件序号
+server	1759	DatabaseError	M84:L6715; M97:L6715	仅明文密码风险提醒，不证明认证或连接失败
+server	1760	DatabaseError	M84:L6718; M97:L6718	仅复制凭据存储安全建议，没有确定失败类型
+server	1761	IntegrityError	M84:L6721; M97:L6721	外键关联更新将造成子表唯一键冲突
+server	1762	IntegrityError	M84:L6726; M97:L6726	外键关联更新将造成子表唯一键冲突
+server	1763	ProgrammingError	M84:L6731; M97:L6731	仅启动SQL线程时传入了不允许的认证选项
+server	1764	ProgrammingError	M84:L6734; M97:L6734	查询所需FULLTEXT索引不存在
+server	1765	ProgrammingError	M84:L6737; M97:L6737	函数/触发器中设置禁止的系统变量
+server	1766	ProgrammingError	M84:L6740; M97:L6740	事务中设置禁止的系统变量
+server	1769	ProgrammingError	M84:L6749; M97:L6749	指定SET语句不允许调用存储函数
+server	1770	ProgrammingError	M84:L6752; M97:L6752	GTID_NEXT与GTID_NEXT_LIST设置组合不合法
+server	1772	DataError	M84:L6758; M97:L6758	传入GTID集合文本值不符合规定编码格式
+server	1773	DataError	M84:L6761; M97:L6761	GTID集合的编码数据损坏
+server	1774	DataError	M84:L6764; M97:L6764	传入GTID标识文本值不符合规定编码格式
+server	1775	OperationalError	M84:L6767; M97:L6767	服务器GTID序号空间耗尽，需要更换server_uuid
+server	1776	ProgrammingError	M84:L6770; M97:L6770	自动定位与显式日志文件/位置参数互斥
+server	1777	OperationalError	M84:L6773; M97:L6773	服务端关闭GTID模式，自动定位前置状态不满足
+server	1778	ProgrammingError	M84:L6776; M97:L6776	指定GTID事务中使用隐式提交语句
+server	1779	ProgrammingError	M84:L6779; M97:L6779	GTID模式配置缺少一致性配套选项
+server	1781	ProgrammingError	M84:L6785; M97:L6785	GTID_MODE关闭时设置了不允许的GTID_NEXT
+server	1782	ProgrammingError	M84:L6788; M97:L6788	GTID_MODE开启时设置ANONYMOUS
+server	1783	ProgrammingError	M84:L6791; M97:L6791	GTID_MODE关闭时给GTID_NEXT_LIST非空值
+server	1785	ProgrammingError	M84:L6797; M97:L6797	非事务表更新语句/事务组合违反GTID一致性规则
+server	1786	NotSupportedError	M84:L6800; M97:L6800	当前GTID一致性模式不支持该CREATE SELECT形式
+server	1788	ProgrammingError	M84:L6806; M97:L6806	GTID模式切换跳过了允许的相邻步骤
+server	1789	OperationalError	M84:L6809; M97:L6809	复制源已清除所需binlog，数据源状态不能满足复制
+server	1790	ProgrammingError	M84:L6812; M97:L6812	会话持有GTID时试图修改GTID_NEXT
+server	1791	ProgrammingError	M84:L6815; M97:L6815	EXPLAIN格式名称无效
+server	1792	ProgrammingError	M84:L6819; M97:L6819	用户选择READ ONLY事务后使用禁止的语句
+server	1793	ProgrammingError	M84:L6822; M97:L6822	分区注释定义超过长度上限
+server	1794	OperationalError	M84:L6825; M97:L6825	副本配置缺失或初始化失败
+server	1795	NotSupportedError	M84:L6828; M97:L6828	当前InnoDB能力仅允许一次创建一个FULLTEXT索引
+server	1796	NotSupportedError	M84:L6831; M97:L6831	临时InnoDB表不支持FULLTEXT索引
+server	1797	ProgrammingError	M84:L6834; M97:L6834	FULLTEXT专用DOC_ID列定义类型不正确
+server	1798	ProgrammingError	M84:L6837; M97:L6837	FULLTEXT专用DOC_ID索引定义不正确
+server	1799	OperationalError	M84:L6840; M97:L6840	在线ALTER日志资源超过服务器配置限额
+server	1800	ProgrammingError	M84:L6843; M97:L6843	ALTER指定未知算法名称
+server	1801	ProgrammingError	M84:L6846; M97:L6846	ALTER指定未知LOCK种类
+server	1802	OperationalError	M84:L6849; M97:L6849	副本多线程应用存在间隙，当前状态不能CHANGE SOURCE
+server	1803	OperationalError	M84:L6852; M97:L6852	副本并行执行后无法恢复
+server	1804	OperationalError	M84:L6855; M97:L6855	副本worker信息清理失败
+server	1805	OperationalError	M84:L6858; M97:L6858	系统表实际列数不符合服务器所需结构且可能损坏；官方仅称probably，不能断言内部损坏
+server	1806	OperationalError	M84:L6862; M97:L6862	副本事务处理要求内部重试，不代表客户端可重放
+server	1807	OperationalError	M84:L6865; M97:L6865	并发外键检查占用表，暂不能DISCARD
+server	1808	ProgrammingError	M84:L6868; M97:L6868	表空间导入/交换要求的schema不匹配
+server	1809	NotSupportedError	M84:L6871; M97:L6871	所请求表空间操作不适用于系统表空间中的表
+server	1810	OperationalError	M84:L6874; M97:L6874	实际磁盘/系统I/O读取失败
+server	1811	OperationalError	M84:L6877; M97:L6877	实际磁盘/系统I/O写入失败
+server	1812	OperationalError	M84:L6880; M97:L6880	运行所需表空间文件缺失
+server	1813	ProgrammingError	M84:L6883; M97:L6883	创建/导入使用已存在的表空间目标
+server	1814	OperationalError	M84:L6886; M97:L6886	表空间已DISCARD，当前不能访问
+server	1815	InternalError	M84:L6889; M97:L6889	服务器明确报告内部错误
+server	1816	OperationalError	M84:L6892; M97:L6892	表空间导入执行失败，动态引擎子因保留
+server	1817	InternalError	M84:L6895; M97:L6895	InnoDB索引已明确损坏
+server	1818	ProgrammingError	M84:L6898; M97:L6898	YEAR显示宽度声明不合法
+server	1819	DataError	M84:L6901; M97:L6901	提供的密码值不满足内容策略；区别于没有改密码权限
+server	1820	OperationalError	M84:L6904; M97:L6904	账号密码必须先重置，当前会话受服务端安全状态限制
+server	1821	ProgrammingError	M84:L6908; M97:L6908	外键DDL缺少子表支撑索引，属于约束定义错误；尚非实际行值违反外键
+server	1822	ProgrammingError	M84:L6911; M97:L6911	外键DDL缺少父表支撑索引，属于约束定义错误；与6125一致
+server	1823	NotSupportedError	M84:L6914; M97:L6914	系统表不支持添加该外键
+server	1824	DatabaseError	M84:L6917; M97:L6917	外键所引用父表无法打开，固定码未区分对象不存在、访问或存储打开失败
+server	1825	ProgrammingError	M84:L6920; M97:L6920	外键约束声明选项不正确
+server	1826	ProgrammingError	M84:L6923; M97:L6923	外键约束对象名称重复
+server	1827	DataError	M84:L6926; M97:L6926	提供的密码hash值不符合规定格式
+server	1828	IntegrityError	M84:L6929; M97:L6929	删除被外键依赖的列会破坏约束
+server	1829	IntegrityError	M84:L6933; M97:L6933	删除被其他表外键依赖的列会破坏约束
+server	1830	ProgrammingError	M84:L6937; M97:L6937	新外键的SET NULL与列NOT NULL定义矛盾，属于DDL定义冲突
+server	1831	DatabaseError	M84:L6941; M97:L6941	仅重复索引的弃用提示，未说明当前操作失败
+server	1832	IntegrityError	M84:L6944; M97:L6944	修改外键依赖列会破坏约束
+server	1833	IntegrityError	M84:L6947; M97:L6947	修改其他表外键依赖列会破坏约束
+server	1835	OperationalError	M84:L6954; M97:L6954	服务端拒绝格式损坏的通信包，保留服务端来源
+server	1836	OperationalError	M84:L6957; M97:L6957	服务器当前处于只读模式
+server	1837	ProgrammingError	M84:L6960; M97:L6960	提交后未按GTID_NEXT协议显式选择下一GTID
+server	1838	ProgrammingError	M84:L6963; M97:L6963	存储过程中设置了禁止的系统变量
+server	1840	ProgrammingError	M84:L6969; M97:L6969	GTID_EXECUTED非空时非法修改GTID_PURGED
+server	1841	OperationalError	M84:L6972; M97:L6972	仍有活动事务持GTID，不能修改GTID_PURGED
+server	1842	DatabaseError	M84:L6975; M97:L6975	仅GTID_PURGED实际变化通知
+server	1843	DatabaseError	M84:L6978; M97:L6978	仅GTID_EXECUTED实际变化通知
+server	1844	NotSupportedError	M84:L6981; M97:L6981	STATEMENT复制模式不支持当前跨复制/非复制表写入组合
+server	1845	NotSupportedError	M84:L6984; M97:L6984	所请求ALTER方式能力不受支持
+server	1846	NotSupportedError	M84:L6987; M97:L6987	所请求ALTER方式能力不受支持，原因文字另保留
+server	1847	NotSupportedError	M84:L6990; M97:L6990	指定在线ALTER算法/锁组合不支持COPY所需锁
+server	1848	NotSupportedError	M84:L6993; M97:L6993	分区操作尚不支持指定LOCK/ALGORITHM
+server	1849	NotSupportedError	M84:L6996; M97:L6996	指定在线ALTER算法不支持重命名外键列
+server	1850	NotSupportedError	M84:L6999; M97:L6999	INPLACE算法不支持该列类型变更
+server	1851	NotSupportedError	M84:L7002; M97:L7002	所选ALTER方式不能在当前外键检查条件下加外键
+server	1853	ProgrammingError	M84:L7009; M97:L7009	DROP主键DDL没有同时给出要求的新主键
+server	1854	NotSupportedError	M84:L7012; M97:L7012	所选无锁ALTER方式不能添加自增列
+server	1855	NotSupportedError	M84:L7015; M97:L7015	不支持替换隐式FTS_DOC_ID的操作
+server	1856	NotSupportedError	M84:L7018; M97:L7018	不支持删除或重命名FTS_DOC_ID
+server	1857	NotSupportedError	M84:L7021; M97:L7021	所选无锁ALTER方式不支持FULLTEXT创建
+server	1859	IntegrityError	M84:L7027; M97:L7027	实际写入发生唯一索引冲突
+server	1860	ProgrammingError	M84:L7052; M97:L7052	数据库/对象标识符组合导致路径超限
+server	1861	DataError	M84:L7055; M97:L7055	现有NULL数据不能按SQL_MODE要求转换为NOT NULL
+server	1862	OperationalError	M84:L7058; M97:L7058	登录账号密码已过期，需要专门重置流程
+server	1863	InternalError	M84:L7062; M97:L7062	已存储行处于错误物理分区，内部存储一致性异常
+server	1864	OperationalError	M84:L7066; M97:L7066	副本待处理任务队列内存上限不足以容纳事件
+server	1866	InternalError	M84:L7072; M97:L7072	持久二进制日志发生逻辑损坏
+server	1867	OperationalError	M84:L7075; M97:L7075	日志仍有读者而未完整清理，明确运行期占用
+server	1868	OperationalError	M84:L7078; M97:L7078	活动日志不能被当前清理操作删除
+server	1869	IntegrityError	M84:L7081; M97:L7081	UPDATE自增值与内部生成值发生唯一性冲突
+server	1870	DatabaseError	M84:L7084; M97:L7084	仅BLACKHOLE表事件未记录的复制提示
+server	1871	OperationalError	M84:L7087; M97:L7087	副本连接元数据存储初始化失败
+server	1872	OperationalError	M84:L7090; M97:L7090	副本applier元数据存储初始化失败
+server	1873	OperationalError	M84:L7093; M97:L7093	CHANGE USER认证被拒绝并断开连接
+server	1874	OperationalError	M84:L7097; M97:L7097	InnoDB当前只读
+server	1875	OperationalError	M84:L7100; M97:L7100	副本SQL线程尚忙，STOP命令未完成
+server	1876	OperationalError	M84:L7103; M97:L7103	副本I/O线程尚忙，STOP命令未完成
+server	1877	DatabaseError	M84:L7106; M97:L7106	同码覆盖表缺失/损坏/坏数据，无法唯一细分
+server	1878	OperationalError	M84:L7109; M97:L7109	服务器临时文件写入失败
+server	1879	OperationalError	M84:L7112; M97:L7112	旧FULLTEXT辅助索引名称升级失败，需重建
+server	1880	DatabaseError	M84:L7115; M97:L7115	仅旧时间列格式已升级的成功通知
+server	1881	OperationalError	M84:L7118; M97:L7118	InnoDB强制恢复运行模式阻止操作
+server	1882	DataError	M84:L7121; M97:L7121	提供的AES初始化向量字节长度不足
+server	1883	OperationalError	M84:L7125; M97:L7125	插件当前运行状态不允许卸载
+server	1884	ProgrammingError	M84:L7128; M97:L7128	指定GTID要求与语句必须拆成多条binlog的用法冲突
+server	1885	OperationalError	M84:L7131; M97:L7131	源与副本GTID历史不一致，复制运行条件异常
+server	1886	ProgrammingError	M84:L7134; M97:L7134	表定义缺少所请求操作要求的索引
+server	1887	DatabaseError	M84:L7137; M97:L7137	仅Windows命名管道授权范围的安全建议
+server	3000	DatabaseError	M84:L7160; M97:L7160	仅说明所处理文件损坏，未限定外部输入文件或数据库内部持久文件，不能唯一选Data或Internal
+server	3001	OperationalError	M84:L7163; M97:L7163	源端查询部分完成后中止，复制处理失败且副作用须保留
+server	3003	NotSupportedError	M84:L7169; M97:L7169	表依赖的存储引擎当前未装载
+server	3004	ProgrammingError	M84:L7172; M97:L7172	没有活动handler却读取STACKED诊断区
+server	3005	DatabaseError	M84:L7175; M97:L7175	仅旧语法被自动转换的提示
+server	3006	DatabaseError	M84:L7178; M97:L7178	仅全文插件导致复制不确定性的提示
+server	3007	NotSupportedError	M84:L7181; M97:L7181	临时表不支持DISCARD/IMPORT表空间
+server	3008	IntegrityError	M84:L7184; M97:L7184	外键级联超过关系约束处理的最大深度
+server	3009	OperationalError	M84:L7187; M97:L7187	系统表结构与服务器版本不匹配，需要升级
+server	3010	DatabaseError	M84:L7191; M97:L7191	仅旧触发器缺CREATED属性的兼容通知
+server	3011	ProgrammingError	M84:L7194; M97:L7194	触发器顺序声明引用不存在的触发器
+server	3012	NotSupportedError	M84:L7197; M97:L7197	EXPLAIN FOR CONNECTION不支持该语句种类
+server	3013	ProgrammingError	M84:L7199; M97:L7199	列DDL声明尺寸不合法
+server	3014	ProgrammingError	M84:L7202; M97:L7202	建表语句遗漏引擎要求的选项
+server	3015	OperationalError	M84:L7205; M97:L7205	存储引擎内存耗尽
+server	3016	ProgrammingError	M84:L7208; M97:L7208	对匿名账号执行不允许的密码过期设置
+server	3017	OperationalError	M84:L7211; M97:L7211	副本SQL线程仍运行，操作前置状态不满足
+server	3018	NotSupportedError	M84:L7214; M97:L7214	物化子查询结果不支持创建FULLTEXT索引
+server	3019	OperationalError	M84:L7217; M97:L7217	undo日志处理失败，具体子因由原消息说明
+server	3020	DataError	M84:L7220; M97:L7220	对数函数输入超数学定义域
+server	3021	OperationalError	M84:L7223; M97:L7223	指定副本通道I/O线程仍运行，不能执行操作
+server	3022	DatabaseError	M84:L7226; M97:L7226	仅副本临时表仍开放的安全操作建议
+server	3023	DatabaseError	M84:L7229; M97:L7229	仅指定binlog文件未指定位置的安全提示
+server	3024	OperationalError	M84:L7232; M97:L7232	服务端语句执行时限超出，不是客户端OperationalTimeoutError
+server	3025	DatabaseError	M84:L7235; M97:L7235	非只读SELECT的计时器被关闭通知
+server	3026	ProgrammingError	M84:L7238; M97:L7238	语句/选项列表含不允许的重复项
+server	3028	ProgrammingError	M84:L7244; M97:L7244	集合运算ORDER BY的聚合表达式用法不允许
+server	3029	ProgrammingError	M84:L7247; M97:L7247	非聚合查询ORDER BY非法使用聚合函数
+server	3030	OperationalError	M84:L7250; M97:L7250	副本worker因先前错误停止并保留未提交状态
+server	3031	NotSupportedError	M84:L7253	当前模式不支持preserve-commit-order
+server	3032	OperationalError	M84:L7256; M97:L7256	服务器当前离线模式拒绝访问
+server	3033	DataError	M84:L7259; M97:L7259	输入几何数据的SRID彼此不匹配
+server	3034	NotSupportedError	M84:L7262; M97:L7262	几何函数不支持所给几何种类组合
+server	3035	DatabaseError	M84:L7265; M97:L7265	GIS统一未知错误，没有确定细因
+server	3036	DatabaseError	M84:L7268; M97:L7268	GIS捕获未知异常，不能推断数据错误或内核错误
+server	3037	DataError	M84:L7271; M97:L7271	实际GIS输入数据无效
+server	3038	DataError	M84:L7274; M97:L7274	几何输入为空，无法完成所请求计算
+server	3039	DataError	M84:L7277; M97:L7277	空几何数据没有可计算的重心
+server	3040	DataError	M84:L7280; M97:L7280	几何叠加计算的输入数据无效
+server	3041	DataError	M84:L7283; M97:L7283	几何转向信息计算的输入数据无效
+server	3042	DatabaseError	M84:L7286; M97:L7286	相交分析意外中断，未说明输入/资源/算法根因
+server	3043	DatabaseError	M84:L7289; M97:L7289	Boost几何捕获未知异常，缺少确定细因
+server	3044	OperationalError	M84:L7292; M97:L7292	服务器原生内存分配失败
+server	3045	DataError	M84:L7295; M97:L7295	函数输入或计算超出数学定义域
+server	3046	DatabaseError	M84:L7298; M97:L7298	原生length_error包装未固定数据长度或内部容量根因
+server	3047	DataError	M84:L7301; M97:L7301	函数处理的参数值被底层报告为无效
+server	3048	DataError	M84:L7304; M97:L7304	函数处理的数值/索引超范围
+server	3049	DataError	M84:L7307; M97:L7307	函数数值计算上溢
+server	3050	DataError	M84:L7310; M97:L7310	函数数值计算超表示范围
+server	3051	DataError	M84:L7313; M97:L7313	函数数值计算下溢
+server	3052	DatabaseError	M84:L7316; M97:L7316	原生logic_error包装本身未证明SQL用法错误或内核损坏
+server	3053	DatabaseError	M84:L7319; M97:L7319	原生runtime_error包装的动态子因可跨类别
+server	3054	DatabaseError	M84:L7322; M97:L7322	未知原生异常包装没有固定更细含义
+server	3055	DataError	M84:L7325; M97:L7325	几何二进制值的字节序不符合所需数据格式
+server	3056	DataError	M84:L7328; M97:L7328	传入复制账号密码的实际长度超过32字符上限
+server	3057	ProgrammingError	M84:L7331; M97:L7331	用户锁对象名称不满足该接口命名契约
+server	3058	OperationalError	M84:L7336; M97:L7336	用户级锁获取发生死锁
+server	3059	ProgrammingError	M84:L7339; M97:L7339	REPLACE需要删除视图不可见行，语句目标不允许
+server	3060	NotSupportedError	M84:L7342; M97:L7342	有GIS索引的表不支持所选在线ALTER
+server	3061	ProgrammingError	M84:L7345; M97:L7345	用户变量标识符非法
+server	3062	OperationalError	M84:L7348; M97:L7348	服务器GTID模式关闭，当前操作不能运行
+server	3064	ProgrammingError	M84:L7354; M97:L7354	函数调用的实参类型不符合接口
+server	3065	ProgrammingError	M84:L7357; M97:L7357	DISTINCT等模式下ORDER BY引用未选出的列
+server	3066	ProgrammingError	M84:L7360; M97:L7360	ORDER BY含未选出的聚合表达式且不符合查询模式
+server	3067	ProgrammingError	M84:L7363; M97:L7363	复制过滤配置字符串格式不正确
+server	3068	OperationalError	M84:L7366; M97:L7366	协议OK包超过通信限制
+server	3069	DataError	M84:L7369; M97:L7369	函数接收的JSON数据无效
+server	3070	DataError	M84:L7372; M97:L7372	GeoJSON数据缺少必须成员
+server	3071	DataError	M84:L7375; M97:L7375	GeoJSON成员数据类型不正确
+server	3072	DataError	M84:L7378; M97:L7378	GeoJSON数据无效
+server	3073	DataError	M84:L7381; M97:L7381	几何输入的坐标维数不满足该函数要求
+server	3074	ProgrammingError	M84:L7384; M97:L7384	命令引用不存在的复制通道
+server	3076	ProgrammingError	M84:L7390; M97:L7390	复制通道名称不合法或过长
+server	3077	OperationalError	M84:L7393; M97:L7393	当前元数据存储配置不能支持多通道
+server	3079	ProgrammingError	M84:L7399; M97:L7399	多通道环境中命令缺少必须的通道名
+server	3080	OperationalError	M84:L7402; M97:L7402	服务器复制通道容量已达上限
+server	3081	OperationalError	M84:L7405; M97:L7405	复制通道仍运行，当前操作要求先停止
+server	3082	OperationalError	M84:L7408; M97:L7408	复制线程未运行，当前操作要求先启动
+server	3083	OperationalError	M84:L7411; M97:L7411	指定复制通道线程已经处于运行状态
+server	3084	OperationalError	M84:L7414; M97:L7414	指定复制通道线程已经停止
+server	3085	OperationalError	M84:L7417; M97:L7417	指定通道SQL线程未停止，前置状态不满足
+server	3086	ProgrammingError	M84:L7420; M97:L7420	skip-counter与多个SQL线程的命令组合不合法
+server	3087	ProgrammingError	M84:L7424; M97:L7424	查询违反ONLY_FULL_GROUP_BY列依赖规则
+server	3088	ProgrammingError	M84:L7428; M97:L7428	无GROUP BY聚合查询混入不允许的非聚合列
+server	3089	DatabaseError	M84:L7432; M97:L7432	仅系统变量更新行为的弃用通知
+server	3090	DatabaseError	M84:L7436; M97:L7436	仅SQL_MODE变更的弃用通知
+server	3091	OperationalError	M84:L7439; M97:L7439	DROP DATABASE部分完成而未完整记录GTID，需要恢复处理
+server	3092	OperationalError	M84:L7442; M97:L7442	组复制成员配置不满足加入要求
+server	3093	OperationalError	M84:L7445; M97:L7445	组复制已运行，不能再次启动
+server	3094	OperationalError	M84:L7448; M97:L7448	组复制applier模块启动失败
+server	3095	OperationalError	M84:L7451; M97:L7451	组复制applier停止超时且任务仍在进行
+server	3096	OperationalError	M84:L7454; M97:L7454	组复制通信层初始化失败
+server	3097	OperationalError	M84:L7457; M97:L7457	加入复制通信组失败
+server	3098	ProgrammingError	M84:L7460; M97:L7460	表结构不满足外部复制插件要求
+server	3099	ProgrammingError	M84:L7463; M97:L7463	修改指定变量时缺少必须的ROW记录模式
+server	3100	OperationalError	M84:L7466; M97:L7466	复制observer钩子执行失败
+server	3101	OperationalError	M84:L7469; M97:L7469	插件要求回滚当前事务，属于服务端事务处理结果
+server	3102	ProgrammingError	M84:L7472; M97:L7472	生成列表达式使用不允许的函数
+server	3103	NotSupportedError	M84:L7475; M97:L7475	INPLACE虚拟列变更不支持与其他ALTER动作组合
+server	3104	ProgrammingError	M84:L7478; M97:L7478	生成列上的外键子句定义不允许
+server	3105	ProgrammingError	M84:L7481; M97:L7481	写入语句为生成列显式提供了不允许的值
+server	3106	NotSupportedError	M84:L7484; M97:L7484	生成列明确不支持所请求动作
+server	3107	ProgrammingError	M84:L7487; M97:L7487	生成列引用顺序违反前置定义要求
+server	3108	ProgrammingError	M84:L7490; M97:L7490	列存在生成列依赖，DDL动作不允许
+server	3109	ProgrammingError	M84:L7493; M97:L7493	生成列不允许引用自增列
+server	3110	NotSupportedError	M84:L7496; M97:L7496	服务器构建未提供所请求功能
+server	3111	OperationalError	M84:L7499; M97:L7499	服务器当前条件不允许切换GTID_MODE
+server	3112	OperationalError	M84:L7502; M97:L7502	服务器GTID_MODE关闭，不能启动自动定位复制
+server	3116	OperationalError	M84:L7514; M97:L7514	仍有违反GTID一致性的活动事务，不能启用强制一致性
+server	3117	OperationalError	M84:L7517; M97:L7517	当前仍存在不满足GTID一致性的事务
+server	3118	OperationalError	M84:L7520; M97:L7520	账号被服务端锁定
+server	3119	ProgrammingError	M84:L7524; M97:L7524	表空间标识符定义非法
+server	3120	OperationalError	M84:L7527; M97:L7527	表空间当前非空，操作前置状态不满足
+server	3121	ProgrammingError	M84:L7530; M97:L7530	命令提供非法文件名
+server	3122	DatabaseError	M84:L7533; M97:L7533	几何相交中间点不一致，未限定为坏输入或内核故障
+server	3123	ProgrammingError	M84:L7536; M97:L7536	优化器hint语法不合法
+server	3124	DatabaseError	M84:L7539; M97:L7539	官方仅称Unsupported MAX_EXECUTION_TIME，未固定为数值错误、使用位置或具体能力缺失
+server	3125	ProgrammingError	M84:L7542; M97:L7542	MAX_EXECUTION_TIME出现在禁止的语句位置
+server	3126	ProgrammingError	M84:L7545; M97:L7545	hint相互冲突或重复
+server	3127	ProgrammingError	M84:L7548; M97:L7548	hint引用不存在的查询块
+server	3128	ProgrammingError	M84:L7551; M97:L7551	hint引用名称无法解析
+server	3129	DatabaseError	M84:L7554; M97:L7554	仅直接修改内部GTID表的风险告知
+server	3130	NotSupportedError	M84:L7557; M97:L7557	当前可插拔协议不支持该命令
+server	3131	ProgrammingError	M84:L7560; M97:L7560	locking-service锁对象名称不合法
+server	3132	OperationalError	M84:L7565; M97:L7565	locking service锁获取发生死锁
+server	3133	OperationalError	M84:L7568; M97:L7568	服务端locking service等待超时
+server	3134	DataError	M84:L7571; M97:L7571	几何输入点数量超过表示/函数上限
+server	3135	DatabaseError	M84:L7574; M97:L7574	仅SQL_MODE组合和未来合并的兼容提示
+server	3136	OperationalError	M84:L7577	版本令牌与当前服务端令牌不一致
+server	3137	OperationalError	M84:L7581	所需版本令牌当前不存在
+server	3138	ProgrammingError	M84:L7585; M97:L7585	会话持有GTID时修改禁止的变量
+server	3139	NotSupportedError	M84:L7588; M97:L7588	所选通道不支持所请求操作
+server	3140	DataError	M84:L7591; M97:L7591	输入JSON列文本格式无效
+server	3141	DataError	M84:L7595; M97:L7595	函数实参中的JSON文本格式无效
+server	3142	DataError	M84:L7598; M97:L7598	JSON二进制数据内容不合法
+server	3143	DataError	M84:L7601; M97:L7601	JSON path是被处理的输入文本，其语法错误不是SQL语法错误
+server	3144	DataError	M84:L7604; M97:L7604	输入字符串编码不能用于构造JSON值
+server	3145	DataError	M84:L7607; M97:L7607	函数收到非要求UTF8的JSON字符数据
+server	3146	DataError	M84:L7610; M97:L7610	实际JSON输入值不是所需JSON字符串/类型
+server	3147	DataError	M84:L7613; M97:L7613	实际值不能转换为JSON数据
+server	3148	DataError	M84:L7616; M97:L7616	输入JSON path文本的编码不符合UTF8要求
+server	3149	DataError	M84:L7619; M97:L7619	输入JSON path含该值处理位置不允许的通配/范围
+server	3150	DataError	M84:L7622; M97:L7622	实际JSON值超过存储表示上限
+server	3151	DataError	M84:L7625; M97:L7625	实际JSON对象键字符串过长
+server	3152	ProgrammingError	M84:L7628; M97:L7628	DDL直接对JSON列建键，未使用要求的标量投影/生成列
+server	3153	DataError	M84:L7631; M97:L7631	输入JSON path值为当前接口不接受的根路径
+server	3154	DataError	M84:L7634; M97:L7634	oneOrAll实参值不是允许的one/all
+server	3155	DataError	M84:L7638; M97:L7638	JSON数值CAST结果超目标范围
+server	3156	DataError	M84:L7642; M97:L7642	JSON实际值不能CAST为目标类型
+server	3157	DataError	M84:L7645; M97:L7645	实际JSON文档嵌套超过解析上限
+server	3158	DataError	M84:L7648; M97:L7648	实际JSON对象包含禁止的NULL成员名
+server	3159	OperationalError	M84:L7651; M97:L7651	服务器require_secure_transport政策拒绝不安全连接
+server	3160	OperationalError	M84:L7654; M97:L7654	没有已配置安全传输，无法启用安全传输要求
+server	3161	NotSupportedError	M84:L7657; M97:L7657	服务器已禁用所选存储引擎
+server	3162	ProgrammingError	M84:L7660; M97:L7660	账号DDL引用不存在的授权标识
+server	3163	ProgrammingError	M84:L7663; M97:L7663	账号DDL要创建的授权标识已存在
+server	3164	OperationalError	M84:L7666; M97:L7666	服务端审计插件主动中止操作
+server	3165	DataError	M84:L7669; M97:L7669	输入JSON path不能定位所要求的数组单元
+server	3166	OperationalError	M84:L7672; M97:L7672	缓冲池已有resize正在执行
+server	3167	NotSupportedError	M84:L7675; M97:L7675	所需功能被服务器禁用
+server	3168	OperationalError	M84:L7678; M97:L7678	服务器当前不可用
+server	3169	OperationalError	M84:L7681; M97:L7681	服务端会话被终止
+server	3170	OperationalError	M84:L7684; M97:L7684	服务器内存容量限额超出
+server	3171	DatabaseError	M84:L7687; M97:L7687	仅范围优化未执行的退化通知，不代表语句失败
+server	3173	ProgrammingError	M84:L7694; M97:L7694	会话试图等待其自身持有的GTID
+server	3174	NotSupportedError	M84:L7697; M97:L7697	索引虚拟列的基列不支持该外键组合
+server	3175	NotSupportedError	M84:L7700; M97:L7700	有外键基列的虚拟列不支持该索引组合
+server	3176	ProgrammingError	M84:L7703; M97:L7703	XA事务中执行禁止的GTID内部表修改
+server	3177	OperationalError	M84:L7706; M97:L7706	存储引擎拒绝当前锁获取
+server	3178	NotSupportedError	M84:L7709; M97:L7709	所请求虚拟列在线ALTER组合不支持
+server	3179	NotSupportedError	M84:L7712; M97:L7712	存储引擎不支持主密钥轮换
+server	3181	OperationalError	M84:L7718; M97:L7718	主密钥轮换已完成但后续binlog写入失败
+server	3182	OperationalError	M84:L7721; M97:L7721	密钥轮换所需存储引擎不可用
+server	3183	NotSupportedError	M84:L7724; M97:L7724	目标表空间不具备所请求加密能力
+server	3184	ProgrammingError	M84:L7727; M97:L7727	DDL加密选项不合法
+server	3185	OperationalError	M84:L7730; M97:L7730	keyring当前缺少所需主密钥或服务
+server	3186	OperationalError	M84:L7733; M97:L7733	解析器因容量限制终止当前查询处理
+server	3187	NotSupportedError	M84:L7736; M97:L7736	INPLACE算法不支持变更加密属性
+server	3188	DatabaseError	M84:L7739; M97:L7739	keyring服务与用户实参两类原因共用出口，不能唯一细分
+server	3189	OperationalError	M84:L7742; M97:L7742	系统账号表结构过旧，需要升级
+server	3190	OperationalError	M84:L7745; M97:L7745	服务器当前条件不允许重置binlog/GTID
+server	3191	OperationalError	M84:L7748; M97:L7748	组复制成员容量已达上限
+server	3192	NotSupportedError	M84:L7751; M97:L7751	存储生成列基列不支持该外键组合
+server	3193	OperationalError	M84:L7754; M97:L7754	另一连接正在引用表，操作受运行期占用阻止
+server	3197	OperationalError	M84:L7766; M97:L7766	XA资源管理器暂不能提交分支，不代表可自动重放
+server	3198	OperationalError	M84:L7769; M97:L7769	远端AWS KMS服务调用失败
+server	3199	DatabaseError	M84:L7772; M97:L7772	仅XA statement复制不安全的警告
+server	3200	DatabaseError	M84:L7775; M97:L7775	UDF的用户定义动态错误含义不确定
+server	3201	OperationalError	M84:L7778; M97:L7778	keyring迁移执行失败
+server	3202	OperationalError	M84:L7781; M97:L7781	keyring操作所需权限不足，不是SQL语法问题
+server	3203	DatabaseError	M84:L7784; M97:L7784	仅keyring迁移状态模板
+server	3218	DataError	M84:L7829; M97:L7829	函数参数max_array_length的实际值无效
+server	3231	OperationalError	M84:L7868; M97:L7868	外部组件的事务writeset容量限额超出
+server	3235	DataError	M84:L7896; M97:L7896	AES函数KDF选项值不在允许方法集合内
+server	3236	DataError	M84:L7899; M97:L7899	KDF迭代次数参数超出允许范围
+server	3237	DatabaseError	M84:L7902; M97:L7902	仅AES密钥/KDF强度建议，没有固定拒绝原因
+server	3238	DataError	M84:L7905; M97:L7905	KDF选项的实际长度或NULL值不符合输入要求
+server	3500	NotSupportedError	M84:L7924; M97:L7924	临时表不支持COMPRESSED/KEY_BLOCK_SIZE组合
+server	3501	DatabaseError	M84:L7927; M97:L7927	ACL操作的存储引擎子错误没有固定细因
+server	3502	NotSupportedError	M84:L7930; M97:L7930	当前引擎不支持请求的索引算法，即使普通警告时会回退
+server	3503	ProgrammingError	M84:L7933; M97:L7933	SQL引用不存在的数据库对象
+server	3504	ProgrammingError	M84:L7936; M97:L7936	ENUM列声明成员数量超过上限
+server	3505	ProgrammingError	M84:L7939; M97:L7939	ENUM/SET列定义中的成员长度超限
+server	3506	InternalError	M84:L7942; M97:L7942	服务器数据字典对象被判为无效
+server	3507	OperationalError	M84:L7945; M97:L7945	持久数据字典对象更新操作失败
+server	3508	InternalError	M84:L7948; M97:L7948	内部数据字典对象ID引用不存在
+server	3509	DatabaseError	M84:L7951; M97:L7951	字典对象名称无效的通用出口；官方调用点为名称键构造失败，不足以独断内部损坏或用户定义错误
+server	3510	ProgrammingError	M84:L7954; M97:L7954	DDL引用不存在的表空间对象
+server	3511	ProgrammingError	M84:L7957; M97:L7957	例程注释声明长度超限
+server	3512	OperationalError	M84:L7960; M97:L7960	持久存储例程无法装载
+server	3513	DataError	M84:L7963; M97:L7963	位运算输入二进制值长度不一致
+server	3514	DataError	M84:L7966; M97:L7966	位聚合输入二进制值超过511字节上限
+server	3515	NotSupportedError	M84:L7969; M97:L7969	当前语句种类不支持hint
+server	3516	DataError	M84:L7972; M97:L7972	实际几何值种类不符合函数数据域
+server	3517	DataError	M84:L7975; M97:L7975	空间参考系定义文本不能解析
+server	3518	DataError	M84:L7978; M97:L7978	空间参考系定义数据缺少强制投影参数
+server	3519	ProgrammingError	M84:L7981; M97:L7981	引用的SRID参考系对象尚未定义
+server	3520	DataError	M84:L7984; M97:L7984	实际几何SRS不属于函数要求的笛卡尔域
+server	3521	ProgrammingError	M84:L7987; M97:L7987	笛卡尔函数引用的SRID没有对应定义
+server	3522	ProgrammingError	M84:L7990; M97:L7990	DDL试图把主键索引设为不可见
+server	3523	ProgrammingError	M84:L7993; M97:L7993	语句引用未知授权标识
+server	3524	OperationalError	M84:L7996; M97:L7996	账号角色授权操作失败
+server	3525	OperationalError	M84:L7999; M97:L7999	安全系统表无法打开
+server	3526	OperationalError	M84:L8002; M97:L8002	默认角色设置操作失败
+server	3527	ProgrammingError	M84:L8005; M97:L8005	组件URN缺少要求的scheme
+server	3528	OperationalError	M84:L8009; M97:L8009	组件scheme装载服务不可取得
+server	3529	OperationalError	M84:L8013; M97:L8013	指定组件装载失败
+server	3530	OperationalError	M84:L8017; M97:L8017	账号未获所请求角色的授权
+server	3531	OperationalError	M84:L8020; M97:L8020	角色撤销操作失败
+server	3532	ProgrammingError	M84:L8023; M97:L8023	RENAME试图重命名禁止变更的角色标识
+server	3533	OperationalError	M84:L8026; M97:L8026	所需组件服务实现不可取得
+server	3534	OperationalError	M84:L8030; M97:L8030	组件装载依赖不能满足
+server	3535	OperationalError	M84:L8034; M97:L8034	组件服务实现注册失败
+server	3536	OperationalError	M84:L8038; M97:L8038	组件初始化执行失败
+server	3537	ProgrammingError	M84:L8042; M97:L8042	UNLOAD目标组件尚未装载
+server	3538	OperationalError	M84:L8046; M97:L8046	组件反初始化执行失败
+server	3539	OperationalError	M84:L8050; M97:L8050	已取得组件服务的释放失败
+server	3540	OperationalError	M84:L8054; M97:L8054	卸载时服务注销失败
+server	3541	OperationalError	M84:L8058; M97:L8058	组件卸载执行失败
+server	3542	DatabaseError	M84:L8062; M97:L8062	仅说明组件不是由该持久装载器加载的提示
+server	3543	OperationalError	M84:L8066; M97:L8066	系统组件表缺失或结构不正确
+server	3544	OperationalError	M84:L8070; M97:L8070	组件持久元数据的存储引擎操作失败
+server	3545	ProgrammingError	M84:L8073; M97:L8073	卸载组的URN参数重复
+server	3546	ProgrammingError	M84:L8077; M97:L8077	GTID_PURGED设置违反其集合关系限制
+server	3547	OperationalError	M84:L8080; M97:L8080	用户管理缓存锁获取失败
+server	3548	ProgrammingError	M84:L8083; M97:L8083	引用不存在的空间参考系对象
+server	3549	OperationalError	M84:L8086; M97:L8086	系统变量持久化存储操作失败
+server	3550	ProgrammingError	M84:L8089; M97:L8089	INFORMATION_SCHEMA查询使用不支持的子句位置
+server	3551	OperationalError	M84:L8092; M97:L8092	动态统计信息写入数据字典失败
+server	3552	OperationalError	M84:L8095; M97:L8095	服务端安全政策拒绝系统schema访问
+server	3553	OperationalError	M84:L8098; M97:L8098	服务端安全政策拒绝系统表空间访问
+server	3554	OperationalError	M84:L8101; M97:L8101	服务端安全政策拒绝内部表访问
+server	3555	DatabaseError	M84:L8104; M97:L8104	仅数据字典表消息片段，不含独立失败原因
+server	3556	DatabaseError	M84:L8107; M97:L8107	仅系统表消息片段，不含独立失败原因
+server	3557	DatabaseError	M84:L8110; M97:L8110	仅表类别消息片段，不含独立失败原因
+server	3558	DataError	M84:L8113; M97:L8113	函数选项字符串包含无效键
+server	3559	DataError	M84:L8116; M97:L8116	函数选项中的实际值非法
+server	3560	DataError	M84:L8119; M97:L8119	函数选项字符串不是合法键值对
+server	3561	DataError	M84:L8122; M97:L8122	函数选项字符串起始字符非法
+server	3562	DataError	M84:L8124; M97:L8124	函数选项字符串结束字符非法
+server	3563	DataError	M84:L8127; M97:L8127	函数选项字符串包含非法字符序列
+server	3564	DataError	M84:L8130; M97:L8130	函数选项数据中重复键
+server	3565	DatabaseError	M84:L8133; M97:L8133	未定义SRID使轴顺序未知的通知，不单独限定错误类
+server	3566	OperationalError	M84:L8136; M97:L8136	服务端拒绝内部函数访问
+server	3567	DataError	M84:L8139; M97:L8139	binlog重置的目标索引参数值超出允许范围
+server	3568	ProgrammingError	M84:L8142; M97:L8142	锁定子句中的表名无法解析
+server	3569	ProgrammingError	M84:L8145; M97:L8145	同一表被多个锁定子句重复指定
+server	3570	DatabaseError	M84:L8148; M97:L8148	仅SKIP LOCKED复制不确定性提示
+server	3571	DatabaseError	M84:L8150; M97:L8150	仅NOWAIT复制不确定性提示
+server	3572	OperationalError	M84:L8153; M97:L8153	NOWAIT锁无法立即取得，执行被中止
+server	3573	ProgrammingError	M84:L8156; M97:L8156	递归CTE定义缺少UNION
+server	3574	ProgrammingError	M84:L8159; M97:L8159	递归CTE查询块顺序不合法
+server	3575	ProgrammingError	M84:L8162; M97:L8162	递归CTE的递归部分含禁止的聚合/窗口函数
+server	3576	ProgrammingError	M84:L8165; M97:L8165	递归CTE的JOIN顺序不合法
+server	3577	ProgrammingError	M84:L8168; M97:L8168	递归CTE引用次数或位置不合法
+server	3578	OperationalError	M84:L8171; M97:L8171	服务器临时存储引擎配置不满足执行要求
+server	3579	ProgrammingError	M84:L8174; M97:L8174	窗口名称未定义
+server	3580	ProgrammingError	M84:L8177; M97:L8177	窗口定义依赖构成循环
+server	3581	ProgrammingError	M84:L8180; M97:L8180	派生窗口非法重复定义分区规则
+server	3582	ProgrammingError	M84:L8183; M97:L8183	引用带frame的窗口不符合继承规则
+server	3583	ProgrammingError	M84:L8186; M97:L8186	窗口继承重复定义ORDER BY
+server	3584	ProgrammingError	M84:L8189; M97:L8189	窗口frame起点为禁止的UNBOUNDED FOLLOWING
+server	3585	ProgrammingError	M84:L8192; M97:L8192	窗口frame终点为禁止的UNBOUNDED PRECEDING
+server	3586	ProgrammingError	M84:L8195; M97:L8195	窗口frame边界表达式的值/类型定义不合法
+server	3587	ProgrammingError	M84:L8198; M97:L8198	RANGE frame缺少要求的单一确定性数值/时间排序表达式
+server	3588	ProgrammingError	M84:L8201; M97:L8201	时间RANGE frame未使用要求的INTERVAL边界
+server	3589	ProgrammingError	M84:L8204; M97:L8204	数值RANGE frame错误使用INTERVAL边界
+server	3590	ProgrammingError	M84:L8207; M97:L8207	窗口frame边界不是要求的常量
+server	3591	ProgrammingError	M84:L8210; M97:L8210	窗口对象名称重复
+server	3592	ProgrammingError	M84:L8213; M97:L8213	窗口排序使用不支持的位置序号写法
+server	3593	ProgrammingError	M84:L8216; M97:L8216	当前SQL上下文不允许该窗口函数
+server	3594	ProgrammingError	M84:L8219; M97:L8219	当前SQL上下文不允许该窗口函数别名
+server	3595	ProgrammingError	M84:L8222; M97:L8222	窗口规范中非法嵌套窗口函数
+server	3596	ProgrammingError	M84:L8225; M97:L8225	INTERVAL被用于非RANGE frame
+server	3597	ProgrammingError	M84:L8228; M97:L8228	窗口查询的GROUP BY排序语法不允许
+server	3598	ProgrammingError	M84:L8231; M97:L8231	要求的窗口说明需使用指定EXPLAIN格式
+server	3599	DatabaseError	M84:L8234; M97:L8234	仅窗口函数忽略frame并对全分区聚合的行为提示
+server	3600	OperationalError	M84:L8237; M97:L8237	窗口执行所需临时内存引擎配置不满足
+server	3601	ProgrammingError	M84:L8240; M97:L8240	函数调用实参数量超过上限
+server	3602	ProgrammingError	M84:L8243; M97:L8243	GROUPING参数列不属于GROUP BY
+server	3603	ProgrammingError	M84:L8246; M97:L8246	表空间注释声明长度超限
+server	3604	OperationalError	M84:L8249; M97:L8249	存储引擎删除表失败
+server	3605	OperationalError	M84:L8252; M97:L8252	字典与引擎表存在性不一致，需受控清理
+server	3606	ProgrammingError	M84:L8255; M97:L8255	表空间DDL重复指定同一文件名
+server	3607	OperationalError	M84:L8258; M97:L8258	删除数据库目录的文件系统操作失败
+server	3608	ProgrammingError	M84:L8261; M97:L8261	IMPORT指定文件模式未匹配任何SDI
+server	3609	ProgrammingError	M84:L8264; M97:L8264	SDI导入引用不存在的schema
+server	3610	ProgrammingError	M84:L8267; M97:L8267	SDI导入试图创建已存在的表
+server	3611	NotSupportedError	M84:L8270; M97:L8270	导入对象的mysqld格式版本不兼容
+server	3612	NotSupportedError	M84:L8273; M97:L8273	导入数据字典格式版本不兼容
+server	3613	NotSupportedError	M84:L8276; M97:L8276	导入SDI格式版本不兼容
+server	3614	ProgrammingError	M84:L8279; M97:L8279	hint参数数量不正确
+server	3615	ProgrammingError	M84:L8282; M97:L8282	RESET PERSIST等引用配置文件中不存在的变量
+server	3616	DataError	M84:L8285; M97:L8285	输入经度值超合法范围
+server	3617	DataError	M84:L8288; M97:L8288	输入纬度值超合法范围
+server	3618	NotSupportedError	M84:L8291; M97:L8291	算法未实现地理SRS支持，不能把缺功能当成坏数据
+server	3619	ProgrammingError	M84:L8294; M97:L8294	GRANT指定的权限层级非法
+server	3620	OperationalError	M84:L8297; M97:L8297	系统视图访问被服务端政策拒绝
+server	3621	DatabaseError	M84:L8300; M97:L8300	日志过滤组件的通用混淆诊断没有确定根因
+server	3622	ProgrammingError	M84:L8304; M97:L8304	分区定义表达式长度超过上限
+server	3623	ProgrammingError	M84:L8307; M97:L8307	DROP FUNCTION不能删除动态注册的UDF
+server	3624	OperationalError	M84:L8310; M97:L8310	列统计信息持久化失败
+server	3625	OperationalError	M84:L8313; M97:L8313	列统计信息更新失败
+server	3626	OperationalError	M84:L8316; M97:L8316	列统计信息删除失败
+server	3627	OperationalError	M84:L8319; M97:L8319	服务器构建列直方图失败
+server	3628	OperationalError	M84:L8322; M97:L8322	角色被服务端强制角色配置保护，不能撤销/删除
+server	3629	ProgrammingError	M84:L8325; M97:L8325	DDL指向表空间中不存在的指定文件
+server	3630	OperationalError	M84:L8328; M97:L8328	PERSIST_ONLY操作所需权限不足
+server	3631	OperationalError	M84:L8331	执行该命令缺少SUPER权限
+server	3632	ProgrammingError	M84:L8334; M97:L8334	显式文件路径位于不允许的数据目录范围
+server	3633	OperationalError	M84:L8337; M97:L8337	并发DDL与clone操作冲突
+server	3634	OperationalError	M84:L8340; M97:L8340	并发clone任务数量达到服务器上限
+server	3635	ProgrammingError	M84:L8343; M97:L8343	事务内表定义不满足插件要求
+server	3636	OperationalError	M84:L8346; M97:L8346	递归CTE耗尽服务器配置的迭代限额
+server	3637	ProgrammingError	M84:L8349; M97:L8349	SET_VAR hint试图设置不可用变量
+server	3638	DataError	M84:L8352; M97:L8352	新凭据违反服务器密码历史规则
+server	3639	NotSupportedError	M84:L8355; M97:L8355	所选认证插件不支持密码历史能力
+server	3640	NotSupportedError	M84:L8358; M97:L8358	客户端缺少所需协议/功能支持
+server	3641	OperationalError	M84:L8361; M97:L8361	并发DDL导致表空间元信息被跳过
+server	3642	ProgrammingError	M84:L8364; M97:L8364	表空间声明引擎与既存引擎不一致
+server	3643	DataError	M84:L8367; M97:L8367	输入几何SRID与列要求不一致
+server	3644	ProgrammingError	M84:L8370; M97:L8370	存在空间索引时修改列SRID的DDL顺序不允许
+server	3645	DatabaseError	M84:L8373; M97:L8373	仅binlog局部更新选项被忽略的提示
+server	3647	DatabaseError	M84:L8379; M97:L8379	仅binlog局部镜像节省范围的说明
+server	3648	OperationalError	M84:L8382; M97:L8382	复制/行更新的JSON差量应用失败
+server	3649	InternalError	M84:L8385; M97:L8385	内部JSON差量记录已明确损坏
+server	3650	ProgrammingError	M84:L8388; M97:L8388	创建的资源组对象已经存在
+server	3651	ProgrammingError	M84:L8391; M97:L8391	引用的资源组对象不存在
+server	3652	DataError	M84:L8394; M97:L8394	CPU标识参数值不在服务器允许集合内
+server	3653	DataError	M84:L8397; M97:L8397	VCPU范围参数值无效
+server	3654	DataError	M84:L8400; M97:L8400	线程优先级参数值超出当前资源组允许范围
+server	3655	DatabaseError	M84:L8403; M97:L8403	通用操作被禁止模板未限定权限/用法/能力根因
+server	3656	OperationalError	M84:L8406; M97:L8406	资源组当前被占用
+server	3657	OperationalError	M84:L8409; M97:L8409	资源组当前被禁用
+server	3658	NotSupportedError	M84:L8412; M97:L8412	所请求功能明确不受支持
+server	3659	DatabaseError	M84:L8415; M97:L8415	仅属性被忽略的通用提示
+server	3660	ProgrammingError	M84:L8418; M97:L8418	命令给出的线程标识无效
+server	3661	OperationalError	M84:L8421; M97:L8421	资源组与线程绑定执行失败
+server	3662	ProgrammingError	M84:L8424; M97:L8424	FORCE选项缺少其依赖的DISABLE
+server	3663	OperationalError	M84:L8427; M97:L8427	组复制命令处理失败
+server	3664	OperationalError	M84:L8430; M97:L8430	表空间SDI存储操作失败
+server	3665	DataError	M84:L8433; M97:L8433	JSON_TABLE所需路径没有实际值
+server	3666	DataError	M84:L8436; M97:L8436	JSON_TABLE标量列收到数组/对象
+server	3667	ProgrammingError	M84:L8439; M97:L8439	SQL表函数引用缺少必须的别名
+server	3668	ProgrammingError	M84:L8442; M97:L8442	LATERAL引用所使用JOIN种类不允许
+server	3669	DataError	M84:L8445; M97:L8445	JSON_TABLE实际值超目标列范围
+server	3670	ProgrammingError	M84:L8448; M97:L8448	JSON_TABLE的NESTED PATH声明数量超过结构上限
+server	3671	NotSupportedError	M84:L8451; M97:L8451	所选认证方式不支持密码过期
+server	3672	DataError	M84:L8455; M97:L8455	GeoJSON的crs成员放在错误层级
+server	3673	IntegrityError	M84:L8458; M97:L8458	实际列NULL违反NOT NULL约束
+server	3674	DatabaseError	M84:L8461; M97:L8461	仅SRID声明不足导致索引不被采用的优化提示
+server	3675	OperationalError	M84:L8464; M97:L8464	磁盘已满，无法创建表/表空间
+server	3676	DataError	M84:L8467; M97:L8467	digest函数收到的SQL文本值不能解析
+server	3677	DataError	M84:L8470; M97:L8470	digest函数输入文本无法解析且隐藏具体原文
+server	3678	OperationalError	M84:L8473; M97:L8473	残留schema目录阻止操作，需要文件系统整理
+server	3679	OperationalError	M84:L8476; M97:L8476	schema对应目录缺失
+server	3680	OperationalError	M84:L8479; M97:L8479	创建schema目录的系统操作失败
+server	3681	OperationalError	M84:L8482; M97:L8482	目录存在但数据字典没有schema，环境需修复
+server	3682	NotSupportedError	M84:L8485; M97:L8485	算法仅实现SRID 0/4326，其他有效SRS未支持
+server	3684	DataError	M84:L8497; M97:L8497	正则结果字符串超过输出表示缓冲
+server	3685	DataError	M84:L8500; M97:L8500	提供给正则处理的参数值不合法
+server	3686	DataError	M84:L8503; M97:L8503	正则搜索位置值越过输入边界
+server	3687	InternalError	M84:L8506; M97:L8506	正则引擎明确报告内部错误
+server	3688	DataError	M84:L8509; M97:L8509	输入正则表达式文本语法非法
+server	3689	DataError	M84:L8512; M97:L8512	输入正则表达式包含无效转义
+server	3690	NotSupportedError	M84:L8515; M97:L8515	当前正则库未实现所请求特性
+server	3691	DataError	M84:L8518; M97:L8518	输入正则表达式括号不匹配
+server	3692	DataError	M84:L8521; M97:L8521	输入正则表达式重复区间格式非法
+server	3693	DataError	M84:L8524; M97:L8524	输入正则表达式区间最大值小于最小值
+server	3694	DataError	M84:L8527; M97:L8527	输入正则表达式反向引用无效
+server	3695	DataError	M84:L8530; M97:L8530	输入正则表达式look-behind长度超过允许值
+server	3696	DataError	M84:L8533; M97:L8533	输入正则表达式字符类括号未闭合
+server	3697	DataError	M84:L8536; M97:L8536	输入正则字符区间起止顺序错误
+server	3698	OperationalError	M84:L8539; M97:L8539	正则回溯栈资源耗尽
+server	3699	OperationalError	M84:L8542; M97:L8542	服务端正则计算超过运行时限额
+server	3700	DataError	M84:L8545; M97:L8545	正则模式输入尺寸/复杂度超过支持上限
+server	3701	DatabaseError	M84:L8548; M97:L8548	同码可为配置语法/缺组件/实例重复，无法唯一细分
+server	3702	DatabaseError	M84:L8551; M97:L8551	仅空日志pipeline将禁用日志的告知
+server	3703	DatabaseError	M84:L8555; M97:L8555	日志过滤器动态诊断包装未限定具体根因
+server	3704	NotSupportedError	M84:L8558; M97:L8558	算法未实现笛卡尔SRS支持
+server	3705	NotSupportedError	M84:L8561; M97:L8561	算法未实现投影SRS支持
+server	3706	DataError	M84:L8564; M97:L8564	球面计算的实际半径值非正
+server	3707	OperationalError	M84:L8567; M97:L8567	服务器重启执行失败
+server	3708	DataError	M84:L8570; M97:L8570	空间参考系定义数据缺少必需属性
+server	3709	ProgrammingError	M84:L8573; M97:L8573	空间参考系DDL重复定义属性
+server	3710	ProgrammingError	M84:L8576; M97:L8576	空间参考系名称定义为空或含禁止边缘空白
+server	3711	ProgrammingError	M84:L8579; M97:L8579	空间参考系组织名称定义不合法
+server	3712	ProgrammingError	M84:L8582; M97:L8582	创建的SRID对象已经存在
+server	3713	ProgrammingError	M84:L8585; M97:L8585	实际ERR中的已存在SRID仍是对象定义冲突，不因WARN符号改语义
+server	3714	ProgrammingError	M84:L8588; M97:L8588	DDL试图修改保留的SRID 0
+server	3715	DatabaseError	M84:L8591; M97:L8591	仅系统保留SRID范围的升级风险提示
+server	3716	ProgrammingError	M84:L8594; M97:L8594	修改的SRS对象仍被列定义引用
+server	3717	DataError	M84:L8597; M97:L8597	SRS属性值包含不允许字符
+server	3718	DataError	M84:L8600; M97:L8600	SRS属性字符串值超过长度上限
+server	3719	DatabaseError	M84:L8603; M97:L8603	仅utf8别名未来变化的弃用说明
+server	3720	DatabaseError	M84:L8606; M97:L8606	仅NATIONAL字符集未来变化的弃用说明
+server	3721	ProgrammingError	M84:L8609; M97:L8609	默认utf8mb4排序规则配置选项不合法
+server	3722	OperationalError	M84:L8612; M97:L8612	服务器收集日志状态信息失败
+server	3723	ProgrammingError	M84:L8615; M97:L8615	建表DDL使用了保留表空间
+server	3724	ProgrammingError	M84:L8618; M97:L8618	选项不允许在指定方式/位置设置
+server	3725	OperationalError	M84:L8621; M97:L8621	源和副本的原子DDL提交失败，可能已产生状态分歧
+server	3726	DataError	M84:L8624; M97:L8624	实际SRS不属于函数数学定义要求的地理域
+server	3727	DataError	M84:L8627; M97:L8627	实际多边形覆盖范围超过函数允许域
+server	3728	ProgrammingError	M84:L8630; M97:L8630	空间索引声明为PRIMARY/UNIQUE的DDL不合法
+server	3729	NotSupportedError	M84:L8633; M97:L8633	空间索引不支持指定索引种类
+server	3730	IntegrityError	M84:L8636; M97:L8636	DROP父表会破坏已有外键依赖
+server	3731	DataError	M84:L8639; M97:L8639	几何参数内实际经度超范围
+server	3732	DataError	M84:L8642; M97:L8642	几何参数内实际纬度超范围
+server	3733	NotSupportedError	M84:L8645; M97:L8645	外键不支持使用虚拟列
+server	3734	ProgrammingError	M84:L8648; M97:L8648	外键DDL引用不存在的父表列
+server	3735	DatabaseError	M84:L8651; M97:L8651	日志规则容量满和错误编号无效共用出口，不能唯一细分
+server	3736	DataError	M84:L8654; M97:L8654	SRS定义的地理轴方向值不合法
+server	3737	DataError	M84:L8657; M97:L8657	SRS椭球长半轴数值非正
+server	3738	DataError	M84:L8660; M97:L8660	SRS椭球反扁率数值不在允许域
+server	3739	DataError	M84:L8663; M97:L8663	SRS角单位换算因子非正
+server	3740	DataError	M84:L8666; M97:L8666	SRS本初子午线数值超合法经度域
+server	3741	NotSupportedError	M84:L8669; M97:L8669	未实现所请求源SRS的转换能力
+server	3742	NotSupportedError	M84:L8672; M97:L8672	未实现所请求目标SRS的转换能力
+server	3743	DataError	M84:L8675; M97:L8675	输入源SRS定义缺少转换所需TOWGS84数据
+server	3744	DataError	M84:L8678; M97:L8678	输入目标SRS定义缺少转换所需TOWGS84数据
+server	3745	OperationalError	M84:L8681; M97:L8681	会话仍有临时表，当前状态不能切换binlog格式
+server	3746	OperationalError	M84:L8684; M97:L8684	复制通道仍有临时表，当前状态不能切换全局binlog格式
+server	3747	OperationalError	M84:L8687; M97:L8687	复制applier仍运行，当前不能切换全局binlog格式
+server	3748	ProgrammingError	M84:L8690; M97:L8690	指定GTID/事务/statement模式下使用禁止的临时表DDL
+server	3750	ProgrammingError	M84:L8696; M97:L8696	建表/改表DDL缺少服务器明确要求的主键
+server	3751	DataError	M84:L8699; M97:L8699	函数索引计算数据在指定行发生截断
+server	3752	DataError	M84:L8702; M97:L8702	函数索引计算实际值超目标域
+server	3753	ProgrammingError	M84:L8705; M97:L8705	函数索引定义的表达式返回不允许的JSON/GEOMETRY类型；与3152/3757一样属于DDL定义，保留Programming
+server	3754	ProgrammingError	M84:L8708; M97:L8708	函数索引表达式引用了禁止的自增列
+server	3755	ProgrammingError	M84:L8711; M97:L8711	删除列前未解除函数索引依赖
+server	3756	ProgrammingError	M84:L8714; M97:L8714	主键不能按函数索引形式定义
+server	3757	ProgrammingError	M84:L8717; M97:L8717	函数索引表达式的声明结果为禁止的LOB类型
+server	3758	ProgrammingError	M84:L8720; M97:L8720	函数索引表达式包含禁止函数
+server	3759	NotSupportedError	M84:L8723; M97:L8723	不支持函数索引与FULLTEXT组合
+server	3760	NotSupportedError	M84:L8726; M97:L8726	不支持函数索引与SPATIAL组合
+server	3761	NotSupportedError	M84:L8729; M97:L8729	当前存储引擎不支持索引该表达式
+server	3762	ProgrammingError	M84:L8732; M97:L8732	应使用普通索引却使用仅字段的函数索引写法
+server	3763	ProgrammingError	M84:L8735; M97:L8735	生成列声明表达式调用禁止函数
+server	3764	ProgrammingError	M84:L8738; M97:L8738	生成列声明表达式非法引用行值
+server	3765	ProgrammingError	M84:L8741; M97:L8741	生成列声明表达式非法引用变量
+server	3766	ProgrammingError	M84:L8744; M97:L8744	列仍被默认表达式依赖，不能删除/改名
+server	3767	ProgrammingError	M84:L8747; M97:L8747	默认表达式的列引用次序不合法
+server	3768	ProgrammingError	M84:L8750; M97:L8750	默认表达式不允许引用自增列
+server	3769	ProgrammingError	M84:L8753; M97:L8753	默认表达式含禁止函数
+server	3770	ProgrammingError	M84:L8756; M97:L8756	默认表达式含指定的禁止命名函数
+server	3771	ProgrammingError	M84:L8759; M97:L8759	默认表达式非法引用行值
+server	3772	ProgrammingError	M84:L8762; M97:L8762	默认表达式非法引用变量
+server	3773	ProgrammingError	M84:L8765; M97:L8765	DEFAULT函数与表达式默认值的组合不允许
+server	3774	NotSupportedError	M84:L8768; M97:L8768	表达式默认值不支持所请求动作
+server	3775	ProgrammingError	M84:L8771; M97:L8771	GTID一致性模式下所用ALTER默认表达式写法不允许
+server	3776	IntegrityError	M84:L8774; M97:L8774	更换引擎会破坏表参与的已有外键
+server	3777	DatabaseError	M84:L8779; M97:L8779	仅表达式赋用户变量的弃用通知
+server	3778	DatabaseError	M84:L8782; M97:L8782	仅UTF8MB3排序规则弃用通知
+server	3779	DatabaseError	M84:L8786; M97:L8786	仅嵌套注释语法弃用通知
+server	3780	ProgrammingError	M84:L8789; M97:L8789	外键声明的引用列与被引用列类型不兼容
+server	3781	OperationalError	M84:L8792; M97:L8792	组复制选主期间语句等待超时
+server	3782	OperationalError	M84:L8795; M97:L8795	组复制停机/线程终止导致等待语句中止
+server	3783	OperationalError	M84:L8798; M97:L8798	组成员进入错误状态导致等待语句中止
+server	3784	OperationalError	M84:L8801; M97:L8801	复制日志加密所需keyring取钥失败
+server	3785	OperationalError	M84:L8804; M97:L8804	keyring中没有所需复制日志密钥
+server	3786	OperationalError	M84:L8807; M97:L8807	keyring返回的密钥材料无效
+server	3787	OperationalError	M84:L8810; M97:L8810	复制日志加密头读取失败
+server	3788	OperationalError	M84:L8813; M97:L8813	加密配置变更后的日志轮换失败
+server	3789	InternalError	M84:L8816; M97:L8816	内部密钥标识意外已存在，密钥管理状态冲突
+server	3790	OperationalError	M84:L8819; M97:L8819	复制日志密钥生成失败
+server	3791	OperationalError	M84:L8822; M97:L8822	复制日志密钥持久化失败
+server	3792	OperationalError	M84:L8825; M97:L8825	复制日志密钥删除失败
+server	3793	OperationalError	M84:L8828; M97:L8828	binlog加密配置切换执行失败
+server	3794	OperationalError	M84:L8831; M97:L8831	binlog加密主密钥恢复失败
+server	3795	DatabaseError	M84:L8834; M97:L8834	仅slow log非文件输出使格式选项无效的通知
+server	3796	OperationalError	M84:L8837; M97:L8837	当前组成员状态不允许所选一致性策略
+server	3797	OperationalError	M84:L8840; M97:L8840	组事务BEFORE一致性等待失败
+server	3798	OperationalError	M84:L8843; M97:L8843	组事务AFTER一致性等待失败
+server	3799	OperationalError	M84:L8846; M97:L8846	组复制正在停止，不能开始新事务
+server	3800	ProgrammingError	M84:L8849; M97:L8849	函数索引表达式非法引用行值
+server	3801	OperationalError	M84:L8852; M97:L8852	binlog内容加密执行失败
+server	3802	OperationalError	M84:L8855; M97:L8855	页跟踪尚未启动，操作状态不满足
+server	3803	OperationalError	M84:L8858; M97:L8858	指定LSN范围没有相应跟踪记录
+server	3804	OperationalError	M84:L8861; M97:L8861	并发clone占用数据，不能清理页跟踪
+server	3805	OperationalError	M84:L8864; M97:L8864	binlog加密关闭，当前不能轮换主密钥
+server	3806	InternalError	M84:L8867; M97:L8867	内部主密钥序号组合不符合恢复不变量
+server	3807	OperationalError	M84:L8870; M97:L8870	keyring主密钥操作失败且服务端确认仍使用旧钥
+server	3808	OperationalError	M84:L8873; M97:L8873	新主密钥已生成但部分日志轮换失败
+server	3809	OperationalError	M84:L8876; M97:L8876	部分日志重加密失败且新旧密钥状态并存
+server	3810	OperationalError	M84:L8879; M97:L8879	无用密钥清理失败，主操作与清理事实须分别保留
+server	3811	OperationalError	M84:L8882; M97:L8882	辅助密钥清理未完成
+server	3812	ProgrammingError	M84:L8885; M97:L8885	CHECK约束表达式声明为非布尔类型
+server	3813	ProgrammingError	M84:L8888; M97:L8888	列级CHECK表达式引用了其他列
+server	3814	ProgrammingError	M84:L8891; M97:L8891	CHECK表达式包含禁止的命名函数
+server	3815	ProgrammingError	M84:L8894; M97:L8894	CHECK表达式包含禁止函数
+server	3816	ProgrammingError	M84:L8897; M97:L8897	CHECK表达式非法引用变量
+server	3817	ProgrammingError	M84:L8900; M97:L8900	CHECK表达式非法引用行值
+server	3818	ProgrammingError	M84:L8903; M97:L8903	CHECK表达式非法引用自增列
+server	3819	IntegrityError	M84:L8906; M97:L8906	实际写入违反CHECK约束
+server	3820	ProgrammingError	M84:L8909; M97:L8909	CHECK定义引用不存在的列
+server	3821	ProgrammingError	M84:L8912; M97:L8912	ALTER/DROP引用不存在的CHECK对象
+server	3822	ProgrammingError	M84:L8915; M97:L8915	CHECK约束对象名称重复
+server	3823	ProgrammingError	M84:L8918; M97:L8918	CHECK声明与外键引用动作列的定义规则冲突
+server	3824	DatabaseError	M84:L8921; M97:L8921	仅加密数据库中创建未加密表的状态/安全提示
+server	3825	ProgrammingError	M84:L8924; M97:L8924	建表DDL的表加密与表空间选项组合不合法
+server	3826	OperationalError	M84:L8927; M97:L8927	请求偏离库默认的表加密设置但权限不足
+server	3827	OperationalError	M84:L8930; M97:L8930	请求偏离全局默认的库加密设置但权限不足
+server	3828	OperationalError	M84:L8933; M97:L8933	请求偏离默认的表空间加密设置但权限不足
+server	3829	OperationalError	M84:L8936; M97:L8936	关闭加密schema依赖和权限不足阻止表空间加密
+server	3830	OperationalError	M84:L8939; M97:L8939	开启加密schema依赖和权限不足阻止表空间解密
+server	3831	DatabaseError	M84:L8942; M97:L8942	无法确定表空间类型，固定码未限定元数据/装载根因
+server	3832	ProgrammingError	M84:L8945; M97:L8945	表空间导入的源/目标加密属性不匹配
+server	3833	ProgrammingError	M84:L8948; M97:L8948	目标表空间种类不允许ENCRYPTION子句
+server	3834	ProgrammingError	M84:L8951; M97:L8951	同一语句重复声明互斥子句
+server	3835	NotSupportedError	M84:L8954; M97:L8954	GRANT AS尚只支持全局权限种类
+server	3836	DatabaseError	M84:L8957; M97:L8957	同码可为AS账号不存在或权限不足，不能唯一细分
+server	3837	ProgrammingError	M84:L8960; M97:L8960	列仍有函数索引依赖，不能删除/重命名
+server	3838	ProgrammingError	M84:L8963; M97:L8963	插件的装载方式不允许使用early-plugin入口
+server	3839	ProgrammingError	M84:L8967; M97:L8967	redo归档subdir参数不允许包含路径
+server	3840	OperationalError	M84:L8970; M97:L8970	服务端redo归档启动等待超时
+server	3841	OperationalError	M84:L8973; M97:L8973	服务端redo归档目录配置为空
+server	3842	ProgrammingError	M84:L8976; M97:L8976	归档命令引用未配置的目录标签
+server	3843	OperationalError	M84:L8979; M97:L8979	服务端归档目录配置标签的目录值为空
+server	3844	OperationalError	M84:L8982; M97:L8982	服务端归档目录不存在或不是目录
+server	3845	OperationalError	M84:L8985; M97:L8985	归档目录与受保护服务端目录布局冲突
+server	3846	OperationalError	M84:L8988; M97:L8988	归档目录权限不满足服务端安全要求
+server	3847	OperationalError	M84:L8991; M97:L8991	创建redo归档文件的系统操作失败
+server	3848	OperationalError	M84:L8994; M97:L8994	redo归档已经运行，当前不能重复启动
+server	3849	OperationalError	M84:L8997; M97:L8997	redo归档尚未运行
+server	3850	OperationalError	M84:L9000; M97:L9000	redo归档执行失败
+server	3851	ProgrammingError	M84:L9003; M97:L9003	当前会话没有开始它要停止的归档任务
+server	3852	DatabaseError	M84:L9006; M97:L9006	std::regex_error同时可含模式和资源错误，包装码不足以唯一细分
+server	3853	DataError	M84:L9009; M97:L9009	实际JSON值类型不符合函数要求
+server	3854	DataError	M84:L9012; M97:L9012	实际字符串不能在指定字符集之间无损转换
+server	3855	ProgrammingError	M84:L9015; M97:L9015	列仍被分区函数引用，不能删除/改名
+server	3856	DatabaseError	M84:L9018; M97:L9018	仅浮点自增属性弃用通知
+server	3857	OperationalError	M84:L9021; M97:L9021	备份实例锁阻止停止副本SQL线程
+server	3858	DatabaseError	M84:L9026; M97:L9026	仅浮点位宽声明弃用通知
+server	3859	DatabaseError	M84:L9031; M97:L9031	仅浮点/Decimal UNSIGNED弃用通知
+server	3860	DatabaseError	M84:L9036; M97:L9036	仅整数显示宽度弃用通知
+server	3861	DatabaseError	M84:L9041; M97:L9041	仅ZEROFILL属性弃用通知
+server	3862	OperationalError	M84:L9044; M97:L9044	clone供体操作返回错误
+server	3863	OperationalError	M84:L9047; M97:L9047	clone供体通信响应不符合所需协议
+server	3864	NotSupportedError	M84:L9050; M97:L9050	当前clone不支持该供体/接收方MySQL版本组合
+server	3865	NotSupportedError	M84:L9053; M97:L9053	当前clone不支持跨所给操作系统组合
+server	3866	NotSupportedError	M84:L9056; M97:L9056	当前clone不支持所给CPU/平台组合
+server	3867	NotSupportedError	M84:L9059; M97:L9059	接收端缺少clone所需供体排序规则能力
+server	3868	OperationalError	M84:L9062; M97:L9062	供体与接收端clone运行配置不匹配
+server	3869	OperationalError	M84:L9065; M97:L9065	clone系统环境配置不满足要求
+server	3870	OperationalError	M84:L9068; M97:L9068	接收端所需clone插件未启用
+server	3871	ProgrammingError	M84:L9071; M97:L9071	clone命令非法回环到当前数据目录
+server	3872	OperationalError	M84:L9074; M97:L9074	加密表clone要求的SSL安全连接未建立
+server	3873	OperationalError	M84:L9077; M97:L9077	clone接收端磁盘空间不足
+server	3874	OperationalError	M84:L9080; M97:L9080	已有clone任务占用实例
+server	3875	OperationalError	M84:L9083; M97:L9083	实例当前状态禁止clone
+server	3876	ProgrammingError	M84:L9086; M97:L9086	GRANT ROLE不能以匿名用户为目标
+server	3877	DatabaseError	M84:L9089; M97:L9089	secondary-engine插件的任意动态消息未固定错误类
+server	3878	ProgrammingError	M84:L9092; M97:L9092	RETAIN CURRENT PASSWORD组合不允许空的第二密码
+server	3879	OperationalError	M84:L9095; M97:L9095	数据库访问授权被拒绝
+server	3880	ProgrammingError	M84:L9098; M97:L9098	mandatory_roles配置包含禁止的特权账号
+server	3881	OperationalError	M84:L9101; M97:L9101	GTID系统表尚未就绪或无法打开
+server	3882	DataError	M84:L9104; M97:L9104	输入SRID 0几何没有可用于换算的长度单位
+server	3883	OperationalError	M84:L9107; M97:L9107	服务端插件安装失败
+server	3884	OperationalError	M84:L9110; M97:L9110	服务器不能为会话分配临时表空间
+server	3885	DatabaseError	M84:L9113; M97:L9113	服务器未知错误编号包装，没有更细固定语义
+server	3886	ProgrammingError	M84:L9116; M97:L9116	ALTER列定义会使索引键声明长度超过上限
+server	3887	DataError	M84:L9119; M97:L9119	输入正则表达式捕获组名称不合法
+server	3888	OperationalError	M84:L9122; M97:L9122	服务端SSL库初始化失败
+server	3889	DatabaseError	M84:L9125; M97:L9125	secondary-engine操作统一失败，动态子因可跨类别
+server	3890	NotSupportedError	M84:L9128; M97:L9128	定义了secondary engine的表不支持该DDL
+server	3891	OperationalError	M84:L9131; M97:L9131	账号安全操作验证当前密码失败
+server	3892	ProgrammingError	M84:L9134; M97:L9134	ALTER USER REPLACE用法缺少要求的当前密码
+server	3893	ProgrammingError	M84:L9137; M97:L9137	修改其他用户密码时非法提供当前密码
+server	3894	ProgrammingError	M84:L9140; M97:L9140	切换认证插件与保留旧密码的选项互斥
+server	3895	ProgrammingError	M84:L9143; M97:L9143	新密码为空时不能保留当前密码
+server	3896	OperationalError	M84:L9146; M97:L9146	已有partial revoke状态要求服务端启用配套选项
+server	3897	ProgrammingError	M84:L9149; M97:L9149	向强制角色授予禁止的系统权限
+server	3898	NotSupportedError	M84:L9152; M97:L9152	不支持复制过滤与XA事务组合
+server	3899	NotSupportedError	M84:L9155; M97:L9155	服务器不支持所请求SQL_MODE能力
+server	3900	DataError	M84:L9158; M97:L9158	正则匹配模式标志值不合法
+server	3901	InternalError	M84:L9161; M97:L9161	授权信息在两个内部存储处同时冲突，安全元数据不一致
+server	3902	ProgrammingError	M84:L9164; M97:L9164	函数/语句引用不存在的计量单位名称
+server	3903	DataError	M84:L9167; M97:L9167	函数索引JSON值不能转换为所需类型
+server	3904	DataError	M84:L9170; M97:L9170	函数索引JSON转换值超范围
+server	3905	DataError	M84:L9173; M97:L9173	单行多值索引的实际值数量超上限
+server	3906	DataError	M84:L9176; M97:L9176	单行多值索引的实际总字节量超上限
+server	3907	DataError	M84:L9179; M97:L9179	函数索引实际数据过长
+server	3908	DataError	M84:L9182; M97:L9182	索引标量键位置收到数组/对象数据
+server	3909	DatabaseError	M84:L9185; M97:L9185	仅转换导致函数索引不适用的优化提示
+server	3910	OperationalError	M84:L9188; M97:L9188	组复制服务函数执行失败
+server	3911	OperationalError	M84:L9191; M97:L9191	组复制正在运行，当前不能修改GTID_PURGED
+server	3912	DatabaseError	M84:L9194; M97:L9194	仅DST时区分组不确定性的查询提示
+server	3913	ProgrammingError	M84:L9197; M97:L9197	表/库标识符定义组合导致路径长度超限
+server	3914	OperationalError	M84:L9200; M97:L9200	执行审计日志操作缺少所需角色
+server	3916	DatabaseError	M84:L9206; M97:L9206	仅组复制已开始自动重加入的状态通知
+server	3917	OperationalError	M84:L9209; M97:L9209	并发插件装卸改变了查询中的系统变量表
+server	3918	OperationalError	M84:L9212; M97:L9212	并发插件装卸改变了查询中的全局状态变量表
+server	3919	OperationalError	M84:L9215; M97:L9215	组复制消息服务启动失败
+server	3920	DataError	M84:L9218; M97:L9218	复制压缩算法参数的实际名称/列表值不在允许集合内
+server	3921	DataError	M84:L9221; M97:L9221	复制zstd压缩等级配置值不合法
+server	3922	DataError	M84:L9224; M97:L9224	压缩算法参数值无效
+server	3923	DataError	M84:L9227; M97:L9227	zstd压缩等级配置值不合法
+server	3924	ProgrammingError	M84:L9230; M97:L9230	复制压缩算法列表数量超过接口上限
+server	3925	ProgrammingError	M84:L9233; M97:L9233	PRIVILEGE_CHECKS_USER配置非法选择匿名账号
+server	3926	ProgrammingError	M84:L9236; M97:L9236	PRIVILEGE_CHECKS_USER配置引用不存在账号
+server	3927	OperationalError	M84:L9239; M97:L9239	持久复制权限账号配置损坏，需要修复
+server	3928	OperationalError	M84:L9242; M97:L9242	复制权限账号缺少REPLICATION_APPLIER授权
+server	3929	ProgrammingError	M84:L9245; M97:L9245	请求的动态权限名称未注册
+server	3930	DataError	M84:L9248; M97:L9248	keyring函数接收的密钥值无效
+server	3931	DataError	M84:L9251; M97:L9251	keyring函数接收的密钥类型值无效
+server	3932	DataError	M84:L9254; M97:L9254	keyring函数接收的密钥数据过长
+server	3933	DataError	M84:L9257; M97:L9257	keyring函数接收的密钥类型字符串过长
+server	3934	DataError	M84:L9260; M97:L9260	JSON数据未通过schema验证，详细报告不改变内容错误属性
+server	3935	ProgrammingError	M84:L9263; M97:L9263	UDF扩展配置指定无效字符集/排序规则名称
+server	3936	ProgrammingError	M84:L9266; M97:L9266	UDF扩展配置指定无效字符集名称
+server	3937	ProgrammingError	M84:L9269; M97:L9269	UDF扩展配置指定无效排序规则名称
+server	3938	ProgrammingError	M84:L9272; M97:L9272	UDF扩展接口指定不合法参数种类
+server	3939	ProgrammingError	M84:L9275; M97:L9275	约束名不唯一且未使用要求的种类限定子句
+server	3940	ProgrammingError	M84:L9278; M97:L9278	DDL引用不存在的约束对象
+server	3941	NotSupportedError	M84:L9281; M97:L9281	PRIMARY/UNIQUE/FK不支持切换enforcement的操作
+server	3942	ProgrammingError	M84:L9284; M97:L9284	VALUES表构造器的行缺少要求的列
+server	3943	ProgrammingError	M84:L9287; M97:L9287	VALUES表构造器在不允许位置使用DEFAULT
+server	3944	ProgrammingError	M84:L9290; M97:L9290	语句结构违反require_row_format明确约束
+server	3945	DataError	M84:L9293; M97:L9293	REQUIRE_ROW_FORMAT配置值不是0或1
+server	3946	OperationalError	M84:L9296; M97:L9296	用户管理服务锁获取失败
+server	3947	OperationalError	M84:L9299; M97:L9299	读取强制角色清单时服务锁获取失败
+server	3948	NotSupportedError	M84:L9302; M97:L9302	LOCAL文件能力被客户端/服务端禁用
+server	3949	NotSupportedError	M84:L9305; M97:L9305	导入CFG文件格式版本不兼容
+server	3950	OperationalError	M84:L9308; M97:L9308	服务器内存耗尽
+server	3951	ProgrammingError	M84:L9311; M97:L9311	UDF字符集设置接口用在非STRING实参
+server	3952	ProgrammingError	M84:L9314; M97:L9314	UDF字符集设置接口用在非STRING返回值
+server	3953	ProgrammingError	M84:L9317; M97:L9317	同一查询块出现重复INTO
+server	3954	ProgrammingError	M84:L9320; M97:L9320	INTO所在子查询/UNION位置不合法
+server	3955	OperationalError	M84:L9323; M97:L9323	账号因登录失败次数被服务端安全政策封锁
+server	3956	DatabaseError	M84:L9328; M97:L9328	仅YEAR UNSIGNED属性弃用通知
+server	3957	OperationalError	M84:L9331; M97:L9331	服务器包长配置不足以执行clone
+server	3958	OperationalError	M84:L9334; M97:L9334	SDI持久化操作缺少所需底层记录
+server	3959	ProgrammingError	M84:L9337; M97:L9337	删除/改名列前未解除CHECK表达式依赖
+server	3960	OperationalError	M84:L9340; M97:L9340	组复制仍运行，操作要求先停止
+server	3961	DatabaseError	M84:L9344; M97:L9344	仅JSON_TABLE子句顺序弃用通知
+server	3962	DatabaseError	M84:L9347; M97:L9347	仅查询块内INTO旧位置弃用通知
+server	3963	DatabaseError	M84:L9351; M97:L9351	仅VALUES函数弃用和当前NULL语义说明
+server	3964	DatabaseError	M84:L9356; M97:L9356	仅SQL_CALC_FOUND_ROWS弃用通知
+server	3965	DatabaseError	M84:L9361; M97:L9361	仅FOUND_ROWS函数弃用通知
+server	3966	DataError	M84:L9364; M97:L9364	实际JSON数据在所需路径缺失值
+server	3967	DataError	M84:L9367; M97:L9367	实际JSON路径返回多个值但要求单值
+server	3968	DataError	M84:L9370; M97:L9370	提供的主机名值超过允许字符数
+server	3970	ProgrammingError	M84:L9377; M97:L9377	START GROUP_REPLICATION的恢复账号名为空
+server	3971	ProgrammingError	M84:L9380; M97:L9380	恢复通道选项给PASSWORD但遗漏USER
+server	3972	DataError	M84:L9383; M97:L9383	恢复通道密码值长度超过允许上限
+server	3973	NotSupportedError	M84:L9386; M97:L9386	当前优化器模式不允许完成所需子查询转换
+server	3974	ProgrammingError	M84:L9389; M97:L9389	恢复端点配置的IP:port列表格式不合法
+server	3975	OperationalError	M84:L9392; M97:L9392	服务器没有监听指定恢复端点
+server	3976	DataError	M84:L9395; M97:L9395	系统变量被设置为不允许的值
+server	3977	ProgrammingError	M84:L9398; M97:L9398	CREATE TABLE START TRANSACTION之后执行了禁止的语句
+server	3978	NotSupportedError	M84:L9401; M97:L9401	所给原子CREATE SELECT/START TRANSACTION形式不支持创建外键
+server	3979	ProgrammingError	M84:L9404; M97:L9404	START TRANSACTION子句用于不允许的位置
+server	3980	DataError	M84:L9407; M97:L9407	引擎/对象JSON属性内容格式不合法
+server	3981	NotSupportedError	M84:L9410; M97:L9410	存储引擎不支持ENGINE_ATTRIBUTE
+server	3982	DataError	M84:L9413; M97:L9413	账号属性数据不是有效JSON对象
+server	3983	OperationalError	M84:L9416; M97:L9416	InnoDB redo当前关闭，运行前置状态不满足
+server	3984	OperationalError	M84:L9419; M97:L9419	redo归档正运行，当前操作受阻
+server	3985	OperationalError	M84:L9422; M97:L9422	元数据锁请求所需资源不足
+server	3986	DatabaseError	M84:L9425; M97:L9425	仅JSON隐式布尔比较行为说明
+server	3987	NotSupportedError	M84:L9428; M97:L9428	函数不支持指定字符集能力
+server	3988	DataError	M84:L9431; M97:L9431	实际字符串/排序规则转换无法完成
+server	3989	OperationalError	M84:L9434; M97:L9434	schema当前处于只读模式
+server	3990	OperationalError	M84:L9437; M97:L9437	GTID模式未开启，不能启用复制故障转移
+server	3991	ProgrammingError	M84:L9440; M97:L9440	故障转移配置缺少要求的自动定位选项
+server	3992	OperationalError	M84:L9443; M97:L9443	复制故障转移仍开启，不能关闭GTID模式
+server	3993	ProgrammingError	M84:L9446; M97:L9446	故障转移开启时不能关闭自动定位选项
+server	3994	ProgrammingError	M84:L9449; M97:L9449	参数在当前函数/命令中的使用方式非法
+server	3995	ProgrammingError	M84:L9452; M97:L9452	函数调用所指定字符集组合不允许
+server	3996	NotSupportedError	M84:L9455; M97:L9455	当前平台不支持修改该变量
+server	3997	DataError	M84:L9458; M97:L9458	时区偏移间隔字符串值不合法
+server	3998	DataError	M84:L9461; M97:L9461	实际输入值不能转换为目标类型
+server	3999	NotSupportedError	M84:L9464; M97:L9464	当前hypergraph优化器尚未实现所请求功能
+server	4000	DatabaseError	M84:L9467	仅实验性优化器风险提示
+server	4001	DatabaseError	M84:L9470; M97:L9470	仅现有日志sink不提供历史解析器的状态说明
+server	4002	DatabaseError	M84:L9473; M97:L9473	仅现有日志sink不写入performance_schema的状态说明
+server	4003	DatabaseError	M84:L9476; M97:L9476	仅多日志过滤器配置的可理解性建议
+server	4004	OperationalError	M84:L9479; M97:L9479	服务端错误日志文件打开失败
+server	4005	DatabaseError	M84:L9482; M97:L9482	仅账号被用作definer的依赖通知
+server	4006	ProgrammingError	M84:L9485; M97:L9485	账号DDL动作与既有definer依赖冲突
+server	4007	DataError	M84:L9488; M97:L9488	输入正则表达式中的十进制数值过大
+server	4008	ProgrammingError	M84:L9492; M97:L9492	存储程序接口要求整数变量但声明类型不符
+server	4009	NotSupportedError	M84:L9495; M97:L9495	ACL表不支持所请求的串行化/共享锁读取
+server	4010	DatabaseError	M84:L9498; M97:L9498	仅ACL表读参与写入时的复制风险提示
+server	4011	OperationalError	M84:L9501; M97:L9501	副本monitor线程忙，STOP操作未完成
+server	4012	OperationalError	M84:L9504; M97:L9504	副本monitor线程启动失败
+server	4013	OperationalError	M84:L9507; M97:L9507	服务端GTID模式未开启，复制不能启动
+server	4014	ProgrammingError	M84:L9510; M97:L9510	匿名事务赋GTID与自动定位选项互斥
+server	4015	OperationalError	M84:L9513; M97:L9513	GTID模式未开启，匿名事务赋GTID前置状态不满足
+server	4016	DatabaseError	M84:L9516; M97:L9516	仅skip-counter对特定通道生效范围的提示
+server	4017	DatabaseError	M84:L9519; M97:L9519	仅匿名事务GTID配置的复制拓扑限制说明
+server	4019	ProgrammingError	M84:L9525; M97:L9525	已选匿名赋GTID时使用了互斥的UNTIL条件
+server	4020	ProgrammingError	M84:L9528; M97:L9528	已有复制配置的匿名GTID UUID与组名冲突
+server	4021	ProgrammingError	M84:L9531; M97:L9531	CHANGE SOURCE传入与组名相同的UUID
+server	4022	OperationalError	M84:L9534; M97:L9534	组恢复通道仍在等待/运行，尚未停止
+server	4023	DataError	M84:L9537; M97:L9537	AUTOEXTEND_SIZE配置值不是要求的粒度倍数
+server	4024	NotSupportedError	M84:L9540; M97:L9540	一般表空间不支持所请求InnoDB选项
+server	4025	DataError	M84:L9543; M97:L9543	AUTOEXTEND_SIZE配置值超允许上下界
+server	4026	ProgrammingError	M84:L9546; M97:L9546	AUTOEXTEND_SIZE子句用于不适用的表空间种类
+server	4027	ProgrammingError	M84:L9549; M97:L9549	GRANT ROLE构成角色授权环
+server	4028	ProgrammingError	M84:L9552; M97:L9552	表定义没有至少一列可见列
+server	4029	OperationalError	M84:L9555; M97:L9555	InnoDB压缩处理失败，原底层原因须保留
+server	4030	DatabaseError	M84:L9558; M97:L9558	仅network_namespace参数保留/使用位置的提示
+server	4031	OperationalError	M84:L9561; M97:L9561	服务器因空闲超时主动断线，不是本库截止
+server	4032	DataError	M84:L9564; M97:L9564	实际值不能转换为目标几何类型
+server	4033	DataError	M84:L9567; M97:L9567	实际多边形环方向不符合目标转换要求
+server	4034	DataError	M84:L9570; M97:L9570	实际几何聚合参数SRID不一致
+server	4035	OperationalError	M84:L9573; M97:L9573	keyring重装载执行失败
+server	4036	NotSupportedError	M84:L9576; M97:L9576	该表空间不支持所请求SDI操作
+server	4037	DataError	M84:L9579; M97:L9579	SOURCE_COMPRESSION_ALGORITHMS配置字符串过长
+server	4039	ProgrammingError	M84:L9585; M97:L9585	匿名GTID UUID配置与view-change UUID冲突
+server	4040	ProgrammingError	M84:L9588; M97:L9588	既存匿名GTID UUID配置与view-change UUID冲突
+server	4041	OperationalError	M84:L9591; M97:L9591	复制状态核查时无法取得所需服务器变量
+server	4042	DatabaseError	M84:L9594; M97:L9594	仅审计日志两配置优先级/忽略关系通知
+server	4043	DataError	M84:L9597; M97:L9597	审计旋转大小与最大尺寸参数之间不满足数值比例要求
+server	4044	ProgrammingError	M84:L9600; M97:L9600	Kerberos账号DDL未提供要求的非空realm配置
+server	4045	NotSupportedError	M84:L9603; M97:L9603	两个插件不能共存的能力限制
+server	4046	OperationalError	M84:L9606; M97:L9606	错误日志组件flush失败，文件/权限问题可为根因
+server	4047	DatabaseError	M84:L9609; M97:L9609	仅UNTIL条件在当前GTID模式下不适用的运行提示
+server	4048	ProgrammingError	M84:L9612; M97:L9612	INSERT/UPDATE赋值目标不是合法可写目标
+server	4049	OperationalError	M84:L9615; M97:L9615	当前成员是secondary，操作要求在primary执行
+server	4050	OperationalError	M84:L9618; M97:L9618	复制故障转移配置向组成员传播失败
+server	4051	ProgrammingError	M84:L9621; M97:L9621	Unix时间戳格式选项缺少要求的JSON日志格式
+server	4052	ProgrammingError	M84:L9624; M97:L9624	MFA账号DDL为指定因子选取了不合法插件
+server	4053	NotSupportedError	M84:L9627; M97:L9627	认证插件不支持IDENTIFIED BY子句
+server	4054	NotSupportedError	M84:L9630; M97:L9630	认证插件不支持所请求注册动作
+server	4055	OperationalError	M84:L9633; M97:L9633	账号认证插件尚需注册，当前状态不满足
+server	4056	ProgrammingError	M84:L9636; M97:L9636	ADD的MFA因子已经存在
+server	4057	ProgrammingError	M84:L9639; M97:L9639	修改/删除的MFA因子不存在
+server	4058	ProgrammingError	M84:L9642; M97:L9642	MFA因子声明与服务器认证策略不匹配
+server	4059	ProgrammingError	M84:L9645; M97:L9645	注册动作重复执行已完成的因子注册
+server	4060	OperationalError	M84:L9648; M97:L9648	注册动作不是用户自身会话，安全授权拒绝
+server	4061	OperationalError	M84:L9651; M97:L9651	认证插件注册执行失败
+server	4062	ProgrammingError	M84:L9654; M97:L9654	MFA因子添加次序不合法
+server	4063	ProgrammingError	M84:L9657; M97:L9657	MFA因子方法重复，不满足互异定义要求
+server	4064	ProgrammingError	M84:L9660; M97:L9660	无密码账号类型不允许所请求账号DDL动作
+server	4065	ProgrammingError	M84:L9663; M97:L9663	GTID_ONLY配置遗漏配套选项
+server	4066	ProgrammingError	M84:L9666; M97:L9666	启用GTID_ONLY时不能关闭REQUIRE_ROW_FORMAT
+server	4067	ProgrammingError	M84:L9669; M97:L9669	启用GTID_ONLY时不能关闭SOURCE_AUTO_POSITION
+server	4068	ProgrammingError	M84:L9672; M97:L9672	关闭GTID_ONLY/自动定位的语句缺少日志位置
+server	4069	ProgrammingError	M84:L9675; M97:L9675	关闭自动定位的语句缺少要求的源日志位置
+server	4070	OperationalError	M84:L9678; M97:L9678	服务器GTID模式未开启，组复制通道不能配置
+server	4071	OperationalError	M84:L9681; M97:L9681	服务器GTID模式未开启，GTID_ONLY复制不能启动
+server	4072	DatabaseError	M84:L9684; M97:L9684	仅GTID_ONLY旧日志位置可用性提示
+server	4073	OperationalError	M84:L9687; M97:L9687	服务端SSL FIPS模式初始化/运行失败
+server	4074	DataError	M84:L9690; M97:L9690	系统设置值超界并被服务器归一化
+server	4075	NotSupportedError	M84:L9693; M97:L9693	MATCH能力不支持ROLLUP列
+server	4076	OperationalError	M84:L9696; M97:L9696	正则库的运行locale资源缺失
+server	4077	DatabaseError	M84:L9699; M97:L9699	仅正则库回退到默认locale的通知
+server	4078	OperationalError	M84:L9702; M97:L9702	正则库所需数据文件缺失
+server	4079	DatabaseError	M84:L9705; M97:L9705	仅排序规则/字符集弃用通知
+server	4080	OperationalError	M84:L9708; M97:L9708	已有同一过程的并发调用，当前调用未执行
+server	4081	OperationalError	M84:L9711; M97:L9711	全局连接内存限额耗尽，服务端关闭连接
+server	4082	OperationalError	M84:L9714; M97:L9714	单连接内存限额耗尽，服务端关闭连接
+server	4083	NotSupportedError	M84:L9717; M97:L9717	INSTANT算法不支持所需列类型变更，需重建
+server	4084	DatabaseError	M84:L9720; M97:L9720	仅存储函数/UDF名称冲突的调用限定提示
+server	4085	OperationalError	M84:L9723; M97:L9723	另一会话的备份锁阻止binlog清理
+server	4086	ProgrammingError	M84:L9726; M97:L9726	SELECT定义的窗口数量超过结构上限
+server	4087	DatabaseError	M84:L9729; M97:L9729	mysqlbackup动态消息包装没有固定更细含义
+server	4088	DataError	M84:L9732; M97:L9732	对象注释数据含目标编码下无效字符串
+server	4089	DataError	M84:L9735; M97:L9735	对象定义文本含目标编码下无效字符串
+server	4090	ProgrammingError	M84:L9738; M97:L9738	指定GTID_NEXT时执行禁止的命令
+server	4091	NotSupportedError	M84:L9741; M97:L9741	所选XA detach模式不支持访问临时表
+server	4092	OperationalError	M84:L9744; M97:L9744	表的即时列变更版本容量已耗尽，当前不能继续INSTANT
+server	4094	OperationalError	M84:L9750; M97:L9750	组复制primary切换正在执行，当前查询被阻塞
+server	4095	DatabaseError	M84:L9753; M97:L9753	仅日期时间旧分隔符弃用提示
+server	4096	DatabaseError	M84:L9756; M97:L9756	仅日期时间多余分隔符弃用提示
+server	4097	OperationalError	M84:L9759; M97:L9759	缺少keyring支持，敏感系统变量不能持久化
+server	4098	DatabaseError	M84:L9762; M97:L9762	仅敏感变量已明文持久化的安全告知
+server	4099	ProgrammingError	M84:L9765; M97:L9765	实际ERR表示触发器对象已存在
+server	4100	ProgrammingError	M84:L9768; M97:L9768	触发器IF NOT EXISTS不能忽略不同表上的同名对象
+server	4101	ProgrammingError	M84:L9771; M97:L9771	原生函数同名冲突不能由IF NOT EXISTS忽略
+server	4102	NotSupportedError	M84:L9774; M97:L9774	认证插件不在服务器存密码，SET PASSWORD接口不适用
+server	4105	DataError	M84:L9783; M97:L9783	SRS原点纬度值超合法范围
+server	4106	DataError	M84:L9786; M97:L9786	SRS原点经度值超合法范围
+server	4107	DataError	M84:L9789; M97:L9789	SRS定义包含不适用于该投影的参数数据
+server	4108	ProgrammingError	M84:L9792; M97:L9792	自动生成主键所需保留列名与既有列冲突
+server	4109	ProgrammingError	M84:L9795; M97:L9795	已有自增列与自动生成主键定义冲突
+server	4110	ProgrammingError	M84:L9798; M97:L9798	DDL修改了禁止变更的自动不可见主键列
+server	4111	ProgrammingError	M84:L9801; M97:L9801	删除自动主键时未使用要求的列删除顺序
+server	4112	NotSupportedError	M84:L9804; M97:L9804	STATEMENT记录模式不支持所给自动主键CREATE SELECT组合
+server	4114	ProgrammingError	M84:L9810; M97:L9810	递归CTE引用出现在禁止的EXCEPT/INTERSECT分支
+server	4115	OperationalError	M84:L9813; M97:L9813	服务端建立内部命令会话时安全上下文读取失败
+server	4116	DatabaseError	M84:L9816; M97:L9816	内部命令服务的动态错误模板未固定具体类别
+server	4117	OperationalError	M84:L9819; M97:L9819	复制权限账号缺少执行该LOAD DATA所需FILE授权
+server	4118	OperationalError	M84:L9822; M97:L9822	组复制force-members管理操作失败
+server	4119	DatabaseError	M84:L9825; M97:L9825	仅未加引号标识符弃用通知
+server	4120	DataError	M84:L9828; M97:L9828	INTERSECT ALL实际重复行数超过结果表示上限
+server	4121	DataError	M84:L9831; M97:L9831	线程池query线程配置数大于事务线程上限
+server	4122	DataError	M84:L9834; M97:L9834	UDF接收的timestamp文本格式无效
+server	4123	DatabaseError	M84:L9837; M97:L9837	SHAPE_PREDICTION UDF的动态错误原因未固定
+server	4124	DataError	M84:L9840; M97:L9840	SRS高度参数为禁止的负值
+server	4125	DataError	M84:L9843; M97:L9843	SRS比例参数为禁止的负值
+server	4126	DataError	M84:L9846; M97:L9846	SRS分区宽度参数不是1–60整数
+server	4127	DataError	M84:L9849; M97:L9849	所选极区投影要求的纬度值不是正负90度
+server	4128	DatabaseError	M84:L9852; M97:L9852	仅CLIENT_NO_SCHEMA协议选项弃用通知
+server	4129	OperationalError	M84:L9855; M97:L9855	目标表当前非空，所需操作前置状态不满足
+server	4130	ProgrammingError	M84:L9858; M97:L9858	目标表定义缺少该操作要求的主键
+server	4131	NotSupportedError	M84:L9861; M97:L9861	当前操作不支持共享表空间中的表
+server	4132	ProgrammingError	M84:L9864; M97:L9864	目标表定义含操作不允许的额外索引
+server	4133	DataError	M84:L9867; M97:L9867	批量输入数据未按声明的主键顺序排序
+server	4134	DatabaseError	M84:L9870; M97:L9870	bulk执行器通用子错误可以是数据/系统/内部原因
+server	4135	OperationalError	M84:L9873; M97:L9873	bulk读取器libcurl初始化失败
+server	4136	OperationalError	M84:L9876; M97:L9876	bulk读取器外部传输库调用失败
+server	4137	OperationalError	M84:L9879; M97:L9879	bulk源服务器返回错误响应
+server	4138	OperationalError	M84:L9884; M97:L9884	bulk读取器与源服务器通信失败
+server	4139	OperationalError	M84:L9887; M97:L9887	bulk加载的InnoDB引擎执行失败
+server	4140	DataError	M84:L9890; M97:L9890	输入CSV单列数据超过跨缓冲表示容量
+server	4141	DatabaseError	M84:L9893; M97:L9893	bulk组件通用错误模板未限定具体子因
+server	4142	DataError	M84:L9896; M97:L9896	输入文件行数少于要求跳过的行数
+server	4143	DataError	M84:L9899; M97:L9899	输入CSV指定行缺少要求的包围符
+server	4144	DataError	M84:L9902; M97:L9902	实际输入列数超过bulk解析表示容量
+server	4145	DataError	M84:L9905; M97:L9905	输入转义列数据超过bulk复制缓冲容量
+server	4146	DataError	M84:L9908; M97:L9908	输入文件截断导致列数据缺失
+server	4147	DataError	M84:L9911; M97:L9911	输入行终止符提前导致列数据缺失
+server	4148	DataError	M84:L9914; M97:L9914	CSV包围符后出现非法字符
+server	4149	DataError	M84:L9917; M97:L9917	CSV NULL转义后出现非法字符
+server	4150	DataError	M84:L9920; M97:L9920	CSV列终止符后出现非法字符
+server	4151	DataError	M84:L9923; M97:L9923	输入结束留下不完整转义序列
+server	4152	DatabaseError	M84:L9926; M97:L9926	LOAD BULK DATA通用失败带动态子因，不能单凭包装细分
+server	4153	DataError	M84:L9929; M97:L9929	导入字段实际值不符合目标类型
+server	4154	IntegrityError	M84:L9932; M97:L9932	导入NULL违反NOT NULL约束
+server	4155	ProgrammingError	M84:L9935; M97:L9935	组复制通道配置使用禁止的主键检查GENERATE选项
+server	4156	OperationalError	M84:L9938; M97:L9938	服务器只读运行模式禁止修改该系统变量
+server	4157	NotSupportedError	M84:L9941; M97:L9941	当前表大小/所选INSTANT算法不支持此列变更
+server	4158	NotSupportedError	M84:L9944; M97:L9944	当前表列容量/所选INSTANT算法不支持此加列
+server	4159	OperationalError	M84:L9947; M97:L9947	持久化系统选项设置执行失败
+server	4160	DataError	M84:L9950; M97:L9950	组件SET配置值不允许NULL
+server	4161	ProgrammingError	M84:L9953; M97:L9953	组件SET列表赋值给未注册的变量
+server	4162	DatabaseError	M84:L9956; M97:L9956	仅用户自定义排序规则弃用通知
+server	4163	ProgrammingError	M84:L9959; M97:L9959	用户锁对象名称超过该接口命名长度契约
+server	4164	DatabaseError	M84:L9962; M97:L9962	仅版本注释空白写法弃用通知
+server	4165	DataError	M84:L9965; M97:L9965	新密码与旧密码不同字符数不足，内容违反安全策略
+server	4166	DatabaseError	M84:L9968; M97:L9968	带动态补充说明的通用弃用通知
+server	4167	NotSupportedError	M84:L9971; M97:L9971	SQL执行服务明确不支持递归调用
+server	4168	DatabaseError	M84:L9974; M97:L9974	仅审计过滤器失效时日志策略的安全提示
+server	4169	ProgrammingError	M84:L9977; M97:L9977	CTE查询定义展开超过实现结构限额
+server	6000	DatabaseError	M84:L10018; M97:L10018	语言组件任意动态消息没有固定错误语义
+server	6001	NotSupportedError	M84:L10021; M97:L10021	所需语言组件能力不可用
+server	6002	NotSupportedError	M84:L10024; M97:L10024	语言组件不支持指定语言
+server	6003	OperationalError	M84:L10027; M97:L10027	仍有连接会话占用，语言组件不能卸载
+server	6004	ProgrammingError	M84:L10030; M97:L10030	ALTER不允许改变既有例程语言定义
+server	6005	NotSupportedError	M84:L10033	EXPLAIN ANALYZE不支持INTO组合
+server	6006	NotSupportedError	M84:L10036; M97:L10036	EXPLAIN INTO不支持隐式FORMAT
+server	6007	NotSupportedError	M84:L10039; M97:L10039	EXPLAIN INTO不支持指定FORMAT
+server	6008	NotSupportedError	M84:L10042; M97:L10042	命令行专用只读变量不支持持久化NULL
+server	6009	NotSupportedError	M84:L10045; M97:L10045	EXPLAIN FOR CONNECTION不支持INTO
+server	6010	DataError	M84:L10048; M97:L10048	导入元数据中的ENUM成员长度无效
+server	6011	DataError	M84:L10051; M97:L10051	导入元数据的索引数量非法为0
+server	6012	DataError	M84:L10054; M97:L10054	导入元数据的索引数量过大
+server	6013	DataError	M84:L10057; M97:L10057	导入CFG与目标字典的INSTANT列元数据不一致
+server	6014	DataError	M84:L10060; M97:L10060	导入ENUM/SET成员缺少数据终止符
+server	6015	DatabaseError	M84:L10063; M97:L10063	模拟故障注入通用模板，不能推断真实类别
+server	6016	DatabaseError	M84:L10066; M97:L10066	仅动态权限名称弃用通知
+server	6017	OperationalError	M84:L10069; M97:L10069	bulk多文件读取器打开文件失败
+server	6018	OperationalError	M84:L10072; M97:L10072	bulk多文件读取器实际读文件失败
+server	6019	DatabaseError	M84:L10075; M97:L10075	仅说明bulk merge块无效；公开说明未区分输入块不合法与内部不变量失败
+server	6020	DatabaseError	M84:L10078; M97:L10078	仅说明bulk merge块未全部消费；公开说明不足以固定为输入问题或内部不变量失败
+server	6021	OperationalError	M84:L10081; M97:L10081	bulk写入器libcurl初始化失败
+server	6022	OperationalError	M84:L10084; M97:L10084	bulk写入器外部传输操作失败
+server	6023	OperationalError	M84:L10087; M97:L10087	bulk排序临时文件写入失败
+server	6024	OperationalError	M84:L10090; M97:L10090	bulk排序等待被中断，属于服务端执行中止
+server	6025	OperationalError	M84:L10093; M97:L10093	bulk源文件访问失败
+server	6026	NotSupportedError	M84:L10096; M97:L10096	bulk算法不支持当前INSTANT列存储布局
+server	6027	OperationalError	M84:L10099; M97:L10099	bulk加载内存资源不足
+server	6028	NotSupportedError	M84:L10102; M97:L10102	bulk算法不支持secondary-engine表
+server	6029	DatabaseError	M84:L10105; M97:L10105	bulk读取器任意动态子错误没有固定更细类别
+server	6030	OperationalError	M84:L10108; M97:L10108	bulk数据源文件不存在
+server	6031	OperationalError	M84:L10111; M97:L10111	bulk源主机DNS解析失败
+server	6032	OperationalError	M84:L10114; M97:L10114	复制通道配置状态不能完成启动
+server	6033	NotSupportedError	M84:L10117; M97:L10117	当前primary执行上下文不支持所请求功能
+server	6034	ProgrammingError	M84:L10120; M97:L10120	GROUP BY修饰器的声明元素数超过上限
+server	6035	DatabaseError	M84:L10124; M97:L10124	仅指定引擎语法弃用通知
+server	6036	ProgrammingError	M84:L10127; M97:L10127	QUALIFY子句缺少要求的窗口函数
+server	6037	OperationalError	M84:L10130; M97:L10130	所需hypergraph优化器未启用
+server	6038	OperationalError	M84:L10133; M97:L10133	执行操作缺少指定权限
+server	6039	ProgrammingError	M84:L10136; M97:L10136	GTID_MODE当前配置不允许指定AUTOMATIC TAG值
+server	6040	ProgrammingError	M84:L10139; M97:L10139	GTID_MODE关闭时使用禁止的带TAG GTID配置
+server	6041	IntegrityError	M84:L10142; M97:L10142	输入列NULL违反NOT NULL约束
+server	6042	IntegrityError	M84:L10145; M97:L10145	输入缺失的NOT NULL列没有默认值
+server	6043	DataError	M84:L10148; M97:L10148	导入必需字段数据为空
+server	6044	DatabaseError	M84:L10151; M97:L10151	仅空字段被赋默认值的行为通知
+server	6045	DataError	M84:L10154; M97:L10154	导入字段的实际值无效
+server	6046	DatabaseError	M84:L10157; M97:L10157	Decimal解析的未知错误不保证只是数据格式问题
+server	6047	OperationalError	M84:L10160; M97:L10160	导入Decimal时内存分配不足
+server	6048	DataError	M84:L10163; M97:L10163	实际小数位数超schema并发生舍入
+server	6049	DataError	M84:L10166; M97:L10166	Decimal实际精度超过schema
+server	6050	DataError	M84:L10169; M97:L10169	实际字段值越过最小允许边界
+server	6051	DataError	M84:L10172; M97:L10172	实际字段值越过最大允许边界
+server	6052	DataError	M84:L10175; M97:L10175	实际字段值越界并被截到最小值
+server	6053	DataError	M84:L10178; M97:L10178	实际字段值越界并被截到最大值
+server	6054	DataError	M84:L10181; M97:L10181	导入浮点数据为NaN
+server	6055	DataError	M84:L10184; M97:L10184	导入字段值超目标表示范围
+server	6056	DataError	M84:L10187; M97:L10187	输入日期时间不能按指定格式解析
+server	6057	DataError	M84:L10190; M97:L10190	导入字段发生内容截断
+server	6058	DataError	M84:L10193; M97:L10193	输入字符串不能转换为目标表示
+server	6059	OperationalError	M84:L10196; M97:L10196	外部资源principal认证/服务运行错误
+server	6060	OperationalError	M84:L10199; M97:L10199	外部AWS认证失败
+server	6061	DataError	M84:L10202; M97:L10202	输入CSV在指定字节位置存在格式错误
+server	6062	DataError	M84:L10205; M97:L10205	输入文件列数量与schema不一致
+server	6063	DataError	M84:L10208; M97:L10208	输入文件实际列数超过允许数量
+server	6064	NotSupportedError	M84:L10211; M97:L10211	输入所指定字符集能力不受支持
+server	6065	DataError	M84:L10214; M97:L10214	Parquet实际Decimal数据转换失败
+server	6066	DataError	M84:L10217; M97:L10217	输入字符串超过目标列长度
+server	6067	OperationalError	M84:L10220; M97:L10220	资源principal端点未配置，不能访问对象存储
+server	6068	OperationalError	M84:L10223; M97:L10223	指定数据位置没有可读取的源文件
+server	6069	DataError	M84:L10226; M97:L10226	输入文件为空，不能提供所需数据
+server	6070	DatabaseError	M84:L10229; M97:L10229	仅重复文件已被跳过的处理通知
+server	6071	DataError	M84:L10232; M97:L10232	Avro输入schema嵌套超过解析允许深度
+server	6072	DataError	M84:L10235; M97:L10235	批次中文件头定义互不一致
+server	6073	DataError	M84:L10238; M97:L10238	Avro枚举成员不能转为列字符集
+server	6074	DataError	M84:L10241; M97:L10241	Avro枚举成员集合或次序不一致
+server	6075	NotSupportedError	M84:L10244; M97:L10244	Avro物理/逻辑类型到所需MySQL类型的映射不受支持
+server	6076	DataError	M84:L10247; M97:L10247	Avro文件意外截断
+server	6077	DataError	M84:L10250; M97:L10250	外部Avro输入数据损坏
+server	6078	NotSupportedError	M84:L10253; M97:L10253	Avro映射仅支持nullable联合，不支持其他union结构
+server	6079	DataError	M84:L10256; M97:L10256	Avro输入块尺寸无效
+server	6080	DataError	M84:L10259; M97:L10259	Avro输入块记录数无效
+server	6081	DataError	M84:L10262; M97:L10262	外部文件缺少格式magic/元数据或格式不符
+server	6082	DataError	M84:L10265; M97:L10265	Avro输入头元数据损坏/非法
+server	6083	DataError	M84:L10268; M97:L10268	Avro输入头缺少schema
+server	6084	DataError	M84:L10271; M97:L10271	Avro输入头缺少此处理器要求的codec信息
+server	6085	DataError	M84:L10274; M97:L10274	Avro输入schema包含非法名称
+server	6086	DataError	M84:L10277; M97:L10277	Avro输入数据不能按其编码解码
+server	6087	NotSupportedError	M84:L10280; M97:L10280	Parquet字符串的文件编码不在支持的UTF8范围
+server	6088	DataError	M84:L10283; M97:L10283	输入Parquet文件间schema/列类型不一致
+server	6089	DataError	M84:L10286; M97:L10286	Parquet实际row-group尺寸超允许上限
+server	6090	DataError	M84:L10289; M97:L10289	Parquet输入元数据缺少row-group偏移
+server	6091	NotSupportedError	M84:L10292; M97:L10292	Parquet类型到所需MySQL类型的转换不受支持
+server	6092	DataError	M84:L10295; M97:L10295	输入Parquet元数据中找不到schema
+server	6093	DataError	M84:L10298; M97:L10298	两版均为输入文件schema/列数不一致，符号别名不改变类
+server	6094	OperationalError	M84:L10301; M97:L10301	Lakehouse执行内存不足
+server	6095	DataError	M84:L10304; M97:L10304	输入行因字段数量不匹配被跳过
+server	6096	DataError	M84:L10307; M97:L10307	输入文件因字段数量不匹配被跳过
+server	6097	DatabaseError	M84:L10310; M97:L10310	仅文件无有效数据而跳过的通知
+server	6098	DatabaseError	M84:L10313; M97:L10313	没有有效数据的通用条件未限定具体失败根因
+server	6099	OperationalError	M84:L10316; M97:L10316	处理阶段没有可用的有效源文件
+server	6100	DatabaseError	M84:L10319; M97:L10319	仅无法推断列名而使用默认列名的通知
+server	6101	DatabaseError	M84:L10322; M97:L10322	无法读取Parquet头可能为截断/格式/实际I/O，固定码不足以细分
+server	6102	DatabaseError	M84:L10325; M97:L10325	文件任务捕获任意异常的提示，根因未固定
+server	6103	DataError	M84:L10328; M97:L10328	Avro输入头不可解析，可能损坏
+server	6104	OperationalError	M84:L10331; M97:L10331	Parquet输入文件无法打开
+server	6105	DataError	M84:L10334; M97:L10334	实际输入单值超过加载表示上限
+server	6106	DataError	M84:L10337; M97:L10337	实际输入整行超过加载表示上限
+server	6107	DataError	M84:L10340; M97:L10340	TABLESAMPLE实际比例值不在0–100范围
+server	6108	ProgrammingError	M84:L10343; M97:L10343	TABLESAMPLE应用于非基表目标
+server	6110	OperationalError	M84:L10349; M97:L10349	查询结果达到服务端尺寸资源限额
+server	6111	InternalError	M84:L10352; M97:L10352	语言组件明确报告内部错误
+server	6112	OperationalError	M84:L10355; M97:L10355	语言组件并发请求资源达到上限
+server	6113	DatabaseError	M84:L10358; M97:L10358	语言运行时的动态异常可为多类根因
+server	6114	NotSupportedError	M84:L10361; M97:L10361	语言组件不支持指定时区
+server	6115	ProgrammingError	M84:L10364; M97:L10364	语言例程使用非法/保留标识符
+server	6116	OperationalError	M84:L10367; M97:L10367	组件仍活动，当前不能修改受保护变量
+server	6117	NotSupportedError	M84:L10370; M97:L10370	语言组件明确不支持该类型
+server	6118	DatabaseError	M84:L10373; M97:L10373	语言组件转换的动态出口可能为值/类型/运行问题
+server	6119	OperationalError	M84:L10376; M97:L10376	存储语句只部分完成，执行事实不是成功完整结果
+server	6120	NotSupportedError	M84:L10379; M97:L10379	该语句句柄接口不支持在函数/触发器/UDF内执行SQL
+server	6121	DataError	M84:L10382; M97:L10382	输入JSON字段解析失败
+server	6122	ProgrammingError	M84:L10385; M97:L10385	默认引擎配置选择了不允许作为默认的引擎
+server	6123	NotSupportedError	M84:L10388; M97:L10388	PARTITION BY KEY不支持所请求前缀键
+server	6124	DatabaseError	M84:L10391; M97:L10391	仅非标准外键引用键的弃用提示
+server	6125	ProgrammingError	M84:L10394; M97:L10394	外键DDL缺少要求的父表唯一键定义
+server	6126	OperationalError	M84:L10397; M97:L10397	代理登录缺少PROXY权限
+server	6127	OperationalError	M84:L10400; M97:L10400	代理登录所需被代理账号不存在
+server	6128	OperationalError	M84:L10403; M97:L10403	外部用户数据位置不可访问
+server	6129	DatabaseError	M84:L10406; M97:L10406	ZSTD统一解压失败可含数据/容量原因，不能仅据包装细分
+server	6130	DatabaseError	M84:L10409; M97:L10409	bulk解析器统一动态错误没有固定更细根因
+server	6131	ProgrammingError	M84:L10412; M97:L10412	所配置JSON文件格式schema定义不合法
+server	6132	DataError	M84:L10415; M97:L10415	从输入推断的schema不满足JSON文件整体列要求
+server	6133	DatabaseError	M84:L10418; M97:L10418	仅推断schema被调整为单JSON列的通知
+server	6134	ProgrammingError	M84:L10421; M97:L10421	索引定义把非标量列当作标量键
+server	6135	ProgrammingError	M84:L10424; M97:L10424	聚合列声明类型彼此不兼容
+server	6136	DataError	M84:L10427; M97:L10427	实际输入类型/字节尺寸不能转换成向量值
+server	6137	DataError	M84:L10430; M97:L10430	向量数据尺寸/维数超过列表示上限
+server	6138	DataError	M84:L10433; M97:L10433	实际数据不能解析为合法向量
+server	6139	DatabaseError	M84:L10436	仅外部引擎忽略索引算法的行为通知
+server	6140	ProgrammingError	M84:L10439; M97:L10439	线程池监听选项与事务限额0的配置组合非法
+server	6141	OperationalError	M84:L10442; M97:L10442	组复制连接交接当前正忙
+server	6400	OperationalError	M97:L10464	服务器当前离线并给出起始时间/原因
+server	6402	DatabaseError	M97:L10470	没有提取到数据的条件未限定具体失败根因
+server	6403	DataError	M97:L10473	非结构化输入文件解析失败
+server	6404	DataError	M97:L10476	输入文件分段编码转换失败
+server	6405	NotSupportedError	M97:L10479	文件类型不在支持范围
+server	6406	ProgrammingError	M97:L10482	所定义schema与该列要求的schema不匹配
+server	6407	ProgrammingError	M97:L10485	列ENGINE_ATTRIBUTE配置无效
+server	6408	OperationalError	M97:L10488	外部非结构化输入文件读取失败
+server	6409	DatabaseError	M97:L10491	输入文件没有产生分段，未固定错误根因
+server	6410	DataError	M97:L10494	输入文件尺寸超过处理支持范围
+server	6411	OperationalError	M97:L10497	会话常规语句句柄资源额度耗尽
+server	6412	NotSupportedError	M97:L10500	EXPLAIN ANALYZE不支持所选JSON格式版本组合
+server	6413	ProgrammingError	M97:L10503	非DML语句使用了禁止的动态参数
+server	6414	DatabaseError	M97:L10506	仅多引擎组合弃用通知
+server	6415	DataError	M97:L10509	bulk输入JSON字段无效
+server	6416	DataError	M97:L10512	实际列数据字节量超过目标列上限
+server	6417	DatabaseError	M97:L10515	优化器没有可用计划，未固定SQL能力/内部失败根因
+server	6418	OperationalError	M97:L10518	增量加载变更数量达到处理上限并忽略部分变更
+server	6419	OperationalError	M97:L10521	Lakehouse增量加载未启用
+server	6420	NotSupportedError	M97:L10524	向量存储表不支持增量加载
+server	6421	NotSupportedError	M97:L10527	validation模式不支持增量加载
+server	6423	OperationalError	M97:L10533	增量加载事务提交失败
+server	6424	ProgrammingError	M97:L10536	非结构化加载配置指定非法语言代码
+server	6425	DataError	M97:L10539	输入向量元素数超过声明维数
+server	6426	DataError	M97:L10542	CSV未包围字段中出现非法包围符
+server	6427	OperationalError	M97:L10545	创建/管理SRS所需SUPER或专门权限不足
+server	6428	DatabaseError	M97:L10548	通用子句被忽略通知，无法据此固定错误类
+server	6429	ProgrammingError	M97:L10551	SQL子句不适用于当前上下文
+server	6430	ProgrammingError	M97:L10554	两个SQL子句组合不合法
+server	6431	OperationalError	M97:L10557	授权不足使SHOW结果受安全策略删节
+server	6432	ProgrammingError	M97:L10560	窗口ORDER/PARTITION BY包含禁止的外部引用
+server	6433	NotSupportedError	M97:L10563	所选语言/对象种类不支持库引用能力
+server	6434	DatabaseError	M97:L10566	Lakehouse任意警告汇总没有固定更细含义
+server	6435	DatabaseError	M97:L10569	仅自动分隔符检测被跳过的通知
+server	6436	DatabaseError	M97:L10572	同码可为库对象缺失或授权不足，不能唯一细分
+server	6437	NotSupportedError	M97:L10575	事务隔离级别不支持持久化接口
+server	6438	NotSupportedError	M97:L10578	Avro映射不支持嵌套record
+server	6439	DataError	M97:L10581	输入向量含不允许的元素值
+server	6440	DataError	M97:L10584	输入整数向浮点转换有精度损失风险
+server	6441	DataError	M97:L10587	非结构化文件的向量分块发生截断
+server	6442	DatabaseError	M97:L10590	仅文件格式使page分块回退为document分块的通知
+server	6443	DataError	M97:L10593	输入文件产生的分块数量超过表示上限
+server	6444	OperationalError	M97:L10596	服务端firewall访问政策拒绝请求
+server	6445	DatabaseError	M97:L10599	损坏/错误格式/多文件归档共用出口，不能唯一选Data或NotSupported
+server	6446	ProgrammingError	M97:L10602	JDV定义中的字段注解非法/重复/冲突
+server	6447	NotSupportedError	M97:L10605	JDV不支持TEMPTABLE算法
+server	6448	NotSupportedError	M97:L10608	JDV不支持指定CHECK OPTION子句
+server	6449	NotSupportedError	M97:L10611	JDV不支持所给集合运算/多级排序定义形式
+server	6450	NotSupportedError	M97:L10614	JDV定义不支持CTE
+server	6451	NotSupportedError	M97:L10617	JDV定义不支持GROUP BY/HAVING
+server	6452	NotSupportedError	M97:L10620	JDV定义不支持窗口函数
+server	6453	NotSupportedError	M97:L10623	JDV定义不支持LIMIT
+server	6454	NotSupportedError	M97:L10626	JDV定义不支持ORDER BY
+server	6455	NotSupportedError	M97:L10629	JDV单个对象投影不支持多基表FROM
+server	6456	ProgrammingError	M97:L10632	JDV子对象定义遗漏必须的WHERE
+server	6457	ProgrammingError	M97:L10635	JDV根对象定义使用禁止的WHERE
+server	6458	ProgrammingError	M97:L10638	JDV子对象关联条件的SQL结构不符合要求
+server	6459	ProgrammingError	M97:L10641	JDV对象字段定义不是允许的列引用/子查询
+server	6460	DatabaseError	M97:L10644	JDV上下文准备统一失败，未固定定义/资源根因
+server	6461	ProgrammingError	M97:L10647	JDV根SELECT列表未使用要求的构造函数
+server	6462	ProgrammingError	M97:L10650	JDV单例子对象投影未使用要求的构造函数
+server	6463	ProgrammingError	M97:L10653	JDV嵌套子对象投影未使用要求的聚合构造
+server	6464	ProgrammingError	M97:L10656	JDV数组聚合实参不是要求的JSON对象构造
+server	6465	ProgrammingError	M97:L10659	JDV声明关联条件使用了错误侧的主键列
+server	6466	NotSupportedError	M97:L10662	JDV不支持投影该列类型
+server	6467	ProgrammingError	M97:L10665	JDV引用了不允许的非基表对象
+server	6468	ProgrammingError	M97:L10668	JDV所引用表定义缺少主键
+server	6469	ProgrammingError	M97:L10671	JDV投影定义遗漏所引用表主键
+server	6470	ProgrammingError	M97:L10674	JDV的保留_id键被分配给非根主键
+server	6471	ProgrammingError	M97:L10677	JDV根主键未按要求命名为_id
+server	6472	ProgrammingError	M97:L10680	JDV单例子对象的读写注解组合非法
+server	6473	ProgrammingError	M97:L10683	JDV根/嵌套子对象读写注解组合非法
+server	6474	ProgrammingError	M97:L10686	JDV对象定义重复投影同一JSON键
+server	6475	ProgrammingError	M97:L10689	JDV定义重复投影同一列
+server	6476	ProgrammingError	M97:L10692	JDV多次投影同表的列集合不一致
+server	6477	NotSupportedError	M97:L10695	JDV不支持显式列列表定义
+server	6478	ProgrammingError	M97:L10698	JDV对象投影引用不属于该表的列
+server	6479	ProgrammingError	M97:L10701	JDV子对象关联引用了非直接父层表
+server	6480	NotSupportedError	M97:L10704	JDV当前不支持复合主键
+server	6481	ProgrammingError	M97:L10707	JDV自关联同表时遗漏必须的别名
+server	6482	NotSupportedError	M97:L10711	JDV不支持所请求操作
+server	6483	NotSupportedError	M97:L10714	REPLACE不支持跨不同视图种类替换
+server	6484	ProgrammingError	M97:L10717	JSON_DUALITY_OBJECT用于非JDV定义语境
+server	6485	DataError	M97:L10720	输入JSON路径值类型不符合声明
+server	6486	IntegrityError	M97:L10723	输入文档缺少必须提供的主键值
+server	6487	IntegrityError	M97:L10726	输入父子键值不满足关联约束
+server	6488	IntegrityError	M97:L10729	同主键的重复输入投影含冲突列值
+server	6489	DataError	M97:L10732	输入JSON键没有对应目标列映射
+server	6490	ProgrammingError	M97:L10735	对没有INSERT许可注解的JDV对象执行插入
+server	6491	IntegrityError	M97:L10738	输入只读关联对象引用不存在的目标行
+server	6492	IntegrityError	M97:L10741	输入关联对象违反INSERT的连接条件
+server	6493	ProgrammingError	M97:L10744	JDV更新缺少要求的ETAG参数
+server	6494	OperationalError	M97:L10747	ETAG与当前文档版本不一致，属于乐观并发冲突
+server	6495	DataError	M97:L10750	输入文档缺少无法推断的字段值
+server	6496	ProgrammingError	M97:L10753	JDV更新接口不允许修改主键
+server	6497	ProgrammingError	M97:L10756	JDV定义缺少UPDATE注解却请求更新
+server	6498	ProgrammingError	M97:L10759	JDV定义缺少DELETE注解却请求删除
+server	6499	DataError	M97:L10762	JDV插入文档值不能为SQL NULL
+server	6500	ProgrammingError	M97:L10765	JDV插入值使用了需要解析引用的非固定表达式
+server	6501	DataError	M97:L10768	JDV更新文档值不能为SQL NULL
+server	6502	ProgrammingError	M97:L10771	JDV更新值使用了不允许的非固定表达式
+server	6504	NotSupportedError	M97:L10777	JDV不支持所请求SQL功能组合
+server	6505	DatabaseError	M97:L10780	仅JDV影响行数/警告数统计模板
+server	6507	DataError	M97:L10786	输入二进制JSON值缺少合法base64类型头
+server	6508	NotSupportedError	M97:L10789	向量/几何类型不支持ETAG计算
+server	6509	ProgrammingError	M97:L10792	ENGINE_ATTRIBUTE与其他显式配置冲突
+server	6510	ProgrammingError	M97:L10795	EXTERNAL_FORMAT声明用于非时间列
+server	6511	ProgrammingError	M97:L10798	外部表声明包含非法选项
+server	6512	NotSupportedError	M97:L10801	所选存储引擎不支持外部表
+server	6513	ProgrammingError	M97:L10804	外部表定义未指定必须的引擎
+server	6514	OperationalError	M97:L10806	输入文件不可用或不在服务端允许文件范围
+server	6515	DataError	M97:L10809	输入文件头/元数据缺少列名
+server	6516	DataError	M97:L10812	输入文件头/元数据包含重复列名
+server	6517	OperationalError	M97:L10815	外部OCI GenAI服务调用失败
+server	6518	DataError	M97:L10818	输入文档只解析部分内容，存在解析错误
+server	6519	ProgrammingError	M97:L10821	JDV不支持用0请求自增值的写入方式
+server	6520	DataError	M97:L10824	输入文件之间的列名称集合不一致
+server	6521	DataError	M97:L10827	外部delta数据schema与目标不匹配
+server	6522	DatabaseError	M97:L10830	delta元数据读取错误可能为I/O或格式，固定码不足细分
+server	6523	NotSupportedError	M97:L10833	delta表所请求功能不受支持
+server	6524	DatabaseError	M97:L10836	仅账号名/主机名边缘空白被裁剪的通知
+server	6525	DatabaseError	M97:L10839	仅两种日期格式选项的优先级通知
+server	6526	DatabaseError	M97:L10841	生成列表达式执行的动态子错误未固定类别
+server	6527	DataError	M97:L10844	时间函数的实际计算结果溢出
+server	6528	DataError	M97:L10847	输入推断的总列数超过允许上限
+server	6529	DataError	M97:L10850	输入文件包含目标表没有的额外列
+server	6530	DatabaseError	M97:L10853	Parquet复杂转换统一失败，未固定值/类型支持根因
+server	6531	OperationalError	M97:L10856	审计日志文件输出当前未启用
+server	6532	DataError	M97:L10859	审计过滤器JSON内容/表达式解析失败
+server	6533	OperationalError	M97:L10862	审计过滤器系统表集合无法打开
+server	6534	OperationalError	M97:L10865	审计日志所需系统表无法打开
+server	6535	ProgrammingError	M97:L10868	审计过滤器名称参数不能为空
+server	6536	ProgrammingError	M97:L10871	审计配置用户名标识含非法字符
+server	6537	OperationalError	M97:L10874	审计日志所需keyring未安装
+server	6538	OperationalError	M97:L10877	审计加密密码材料无法读取
+server	6539	ProgrammingError	M97:L10880	审计配置主机名标识含非法字符
+server	6540	ProgrammingError	M97:L10883	审计配置用户名标识不能为空
+server	6541	DataError	M97:L10886	keyring标识中的时间戳值无效
+server	6542	ProgrammingError	M97:L10889	审计UDF实参类型不符合接口
+server	6543	ProgrammingError	M97:L10892	审计UDF实参数量不正确
+server	6544	OperationalError	M97:L10895	审计日志过滤器按策略中止语句
+server	6545	OperationalError	M97:L10898	审计过滤器重新装载失败
+server	6546	DataError	M97:L10901	审计UDF输入值不支持NULL
+server	6547	DataError	M97:L10904	审计日志旋转数值配置粒度不满足允许关系
+server	6548	DatabaseError	M97:L10907	仅审计保留策略两配置的优先级通知
+server	6549	OperationalError	M97:L10910	审计加密密码尚未配置
+server	6550	OperationalError	M97:L10913	审计系统表结构不满足组件要求
+server	6551	OperationalError	M97:L10916	审计过滤器字段写入系统表失败
+server	6552	OperationalError	M97:L10919	审计过滤器系统表读取初始化失败
+server	6553	OperationalError	M97:L10922	审计过滤器系统表删除操作失败
+server	6554	ProgrammingError	M97:L10925	审计分配操作引用不存在的过滤器对象
+server	6555	DatabaseError	M97:L10928	仅自定义数据放置优先于默认设置的通知
+server	6556	DataError	M97:L10931	输入Avro文件之间列数据类型不一致
+server	6557	OperationalError	M97:L10934	已配置审计过滤器无效导致服务端按策略中止操作
+server	6558	OperationalError	M97:L10937	当前审计过滤器配置无效，在修复前不能使用
+server	6559	DatabaseError	M97:L10940	仅部分审计过滤器无效并已记日志的汇总通知
+server	6560	ProgrammingError	M97:L10943	同一主键的输入路径混用自动生成和显式值两种写法
+server	6561	DatabaseError	M97:L10946	数据脱敏组件任意子错误缺少固定细因
+server	6562	ProgrammingError	M97:L10949	创建的MASKING POLICY对象已经存在
+server	6563	ProgrammingError	M97:L10952	脱敏策略定义遗漏必须的CASE结构
+server	6564	ProgrammingError	M97:L10955	脱敏策略定义未使用要求的CASE WHEN形式
+server	6565	ProgrammingError	M97:L10958	脱敏策略定义缺少ELSE
+server	6566	ProgrammingError	M97:L10961	脱敏策略定义的WHEN数量不合法
+server	6567	ProgrammingError	M97:L10964	脱敏策略分支未按要求返回原值
+server	6568	ProgrammingError	M97:L10967	脱敏策略gatekeeper函数不在允许定义范围
+server	6569	ProgrammingError	M97:L10970	脱敏策略gatekeeper形参不是要求的字符串字面量
+server	6570	ProgrammingError	M97:L10973	脱敏策略定义引用禁止的结构
+server	6571	ProgrammingError	M97:L10976	脱敏策略表达式引用其形参之外的列
+server	6572	ProgrammingError	M97:L10979	脱敏策略与所声明列功能组合冲突
+server	6573	ProgrammingError	M97:L10982	脱敏策略表达式声明类型不兼容
+server	6574	ProgrammingError	M97:L10985	脱敏策略定义含禁止的非确定函数
+server	6575	IntegrityError	M97:L10988	外键级联处理超过允许关联表数量
+server	6576	NotSupportedError	M97:L10991	外键级联时不支持子表触发器修改关联键列
+server	6577	ProgrammingError	M97:L10994	触发器/函数级联动作修改了正在级联处理的表
+server	6578	OperationalError	M97:L10997	集合运算的哈希缓冲配置不足
+server	6579	InternalError	M97:L11000	JDV出现不应有的非法值且官方要求报告bug

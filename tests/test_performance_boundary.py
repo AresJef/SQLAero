@@ -4,11 +4,25 @@
 
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal
+from argparse import Namespace
+from pathlib import Path
 
 import pytest
 
 from sqlaero import _sqlaero
-from tools.benchmark import quality
+from tools.benchmark import collect, quality
+
+
+def test_mixed_valid_and_misspelled_case_ids_do_not_silently_reduce_coverage(tmp_path: Path) -> None:
+    package = str(Path(_sqlaero.__file__).parent.parent)
+    arguments = Namespace(output=str(tmp_path / 'run'), legacy=False, prefix=[],
+                          case=['escape/none/v0/scalar', 'execute/84/unix/select/R100'],
+                          reference=package, candidate=package, config=None,
+                          command='calibrate', cycles=1, seconds=1,
+                          target_ms=2, minimum_ms=1)
+    with pytest.raises(ValueError, match='Unknown or inapplicable case IDs'):
+        collect(arguments)
+    assert not (tmp_path / 'run').exists()
 
 
 @pytest.mark.parametrize("value", [

@@ -2,8 +2,14 @@
 
 This native build uses the locked packages below. Original notices and license
 texts are preserved under `licenses/third-party/`. This inventory describes the
-current aarch64-apple-darwin graph; it is regenerated when the shipped graph changes.
+union of the locked runtime/build graphs for all four native release targets;
+it is updated when the shipped graphs change.
 The package license expression does not replace its original copyright notices.
+
+SQLAero carries a narrowly patched jiter 0.17.0 at `third-party/jiter/`.
+Its upstream MIT license and platform scanners are preserved. The local changes
+add fallible work checkpoints used only by the Python result boundary; provenance,
+scope and upgrade instructions are in `third-party/jiter/SQLAERO_PATCH.md`.
 
 | Package | Version | Declared license | Original texts |
 | --- | --- | --- | --- |
@@ -34,6 +40,7 @@ The package license expression does not replace its original copyright notices.
 | const-oid | 0.10.2 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/const-oid-0.10.2/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/const-oid-0.10.2/LICENSE-MIT) |
 | core-foundation | 0.10.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/core-foundation-0.10.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/core-foundation-0.10.1/LICENSE-MIT) |
 | core-foundation-sys | 0.8.7 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/core-foundation-sys-0.8.7/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/core-foundation-sys-0.8.7/LICENSE-MIT) |
+| core_detect | 1.0.0 | MIT/Apache-2.0 | [LICENSE-APACHE](licenses/third-party/core_detect-1.0.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/core_detect-1.0.0/LICENSE-MIT) |
 | cpubits | 0.1.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/cpubits-0.1.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/cpubits-0.1.1/LICENSE-MIT) |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/cpufeatures-0.3.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/cpufeatures-0.3.1/LICENSE-MIT) |
 | crc32fast | 1.5.3 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/crc32fast-1.5.3/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/crc32fast-1.5.3/LICENSE-MIT) |
@@ -75,6 +82,7 @@ The package license expression does not replace its original copyright notices.
 | num-integer | 0.1.47 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/num-integer-0.1.47/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/num-integer-0.1.47/LICENSE-MIT) |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/num-traits-0.2.19/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/num-traits-0.2.19/LICENSE-MIT) |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/once_cell-1.21.4/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/once_cell-1.21.4/LICENSE-MIT) |
+| openssl-probe | 0.2.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/openssl-probe-0.2.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/openssl-probe-0.2.1/LICENSE-MIT) |
 | pbkdf2 | 0.13.0 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/pbkdf2-0.13.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/pbkdf2-0.13.0/LICENSE-MIT) |
 | pem-rfc7468 | 1.0.0 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/pem-rfc7468-1.0.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/pem-rfc7468-1.0.0/LICENSE-MIT) |
 | pkcs5 | 0.8.1 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/pkcs5-0.8.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/pkcs5-0.8.1/LICENSE-MIT) |
@@ -95,6 +103,7 @@ The package license expression does not replace its original copyright notices.
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/regex-syntax-0.8.11/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/regex-syntax-0.8.11/LICENSE-MIT) |
 | ring | 0.17.14 | Apache-2.0 AND ISC | [LICENSE](licenses/third-party/ring-0.17.14/LICENSE), [LICENSE-BoringSSL](licenses/third-party/ring-0.17.14/LICENSE-BoringSSL), [LICENSE-other-bits](licenses/third-party/ring-0.17.14/LICENSE-other-bits) |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | [LICENSE-APACHE](licenses/third-party/rustls-0.23.46/LICENSE-APACHE), [LICENSE-ISC](licenses/third-party/rustls-0.23.46/LICENSE-ISC), [LICENSE-MIT](licenses/third-party/rustls-0.23.46/LICENSE-MIT) |
+| rustls-native-certs | 0.8.5 | Apache-2.0 OR ISC OR MIT | [LICENSE-APACHE](licenses/third-party/rustls-native-certs-0.8.5/LICENSE-APACHE), [LICENSE](licenses/third-party/rustls-native-certs-0.8.5/LICENSE), [LICENSE-ISC](licenses/third-party/rustls-native-certs-0.8.5/LICENSE-ISC), [LICENSE-MIT](licenses/third-party/rustls-native-certs-0.8.5/LICENSE-MIT) |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/rustls-pki-types-1.15.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/rustls-pki-types-1.15.1/LICENSE-MIT) |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/rustls-platform-verifier-0.7.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/rustls-platform-verifier-0.7.1/LICENSE-MIT) |
 | rustls-webpki | 0.103.16 | ISC | [LICENSE](licenses/third-party/rustls-webpki-0.103.16/LICENSE) |
@@ -131,6 +140,8 @@ The package license expression does not replace its original copyright notices.
 | untrusted | 0.9.0 | ISC | [LICENSE.txt](licenses/third-party/untrusted-0.9.0/LICENSE.txt) |
 | uuid | 1.29.0 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/uuid-1.29.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/uuid-1.29.0/LICENSE-MIT) |
 | version_check | 0.9.5 | MIT/Apache-2.0 | [LICENSE-APACHE](licenses/third-party/version_check-0.9.5/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/version_check-0.9.5/LICENSE-MIT) |
+| windows-link | 0.2.1 | MIT OR Apache-2.0 | [license-apache-2.0](licenses/third-party/windows-link-0.2.1/license-apache-2.0), [license-mit](licenses/third-party/windows-link-0.2.1/license-mit) |
+| windows-sys | 0.61.2 | MIT OR Apache-2.0 | [license-apache-2.0](licenses/third-party/windows-sys-0.61.2/license-apache-2.0), [license-mit](licenses/third-party/windows-sys-0.61.2/license-mit) |
 | wyz | 0.5.1 | MIT | [LICENSE.txt](licenses/third-party/wyz-0.5.1/LICENSE.txt) |
 | zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/zerocopy-0.8.63/LICENSE-APACHE), [LICENSE-BSD](licenses/third-party/zerocopy-0.8.63/LICENSE-BSD), [LICENSE-MIT](licenses/third-party/zerocopy-0.8.63/LICENSE-MIT) |
 | zeroize | 1.9.1 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/zeroize-1.9.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/zeroize-1.9.1/LICENSE-MIT) |
