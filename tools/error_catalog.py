@@ -55,12 +55,12 @@ def installed(version: str, label: str) -> tuple[dict[int, dict[str, str]], list
     header = Path(f'/opt/homebrew/opt/mysql@{version}/include/mysql/mysqld_error.h')
     observed_path = EVIDENCE / f'error-catalog-{label}-observed.json'
     observed: dict[int, tuple[str, str]] = {
-        row[0]: (row[1], row[2]) for row in json.loads(observed_path.read_text()) if row[0] is not None
+        row[0]: (row[1], row[2]) for row in json.loads(observed_path.read_text(encoding='utf-8')) if row[0] is not None
     }
-    definitions = {name: int(code) for name, code in re.findall(r'^#define (\w+) (\d+)$', header.read_text(), re.M)}
+    definitions = {name: int(code) for name, code in re.findall(r'^#define (\w+) (\d+)$', header.read_text(encoding='utf-8'), re.M)}
     codes: dict[int, dict[str, str]] = {}
     excluded: list[dict[str, Any]] = []
-    source_text = source.read_text()
+    source_text = source.read_text(encoding='utf-8')
     fingerprints = message_fingerprints(source_text)
     number = 1000
     for line in source_text.splitlines():
@@ -87,7 +87,7 @@ def installed(version: str, label: str) -> tuple[dict[int, dict[str, str]], list
 def globals_for(label: str) -> tuple[dict[int, dict[str, str]], dict[str, str]]:
     path = EVIDENCE / f'global-errors-{label}.html'
     values: dict[int, dict[str, str]] = {}
-    for block in re.findall(r'<li class="listitem">(.*?)</li>', path.read_text(), re.S):
+    for block in re.findall(r'<li class="listitem">(.*?)</li>', path.read_text(encoding='utf-8'), re.S):
         text = unescape(re.sub(r'<[^>]*>', ' ', block))
         identity = re.search(r'Error number:\s*(\d+)\s*;\s*Symbol:\s*([A-Z][A-Z_0-9]+)', text)
         if identity is None:
@@ -116,7 +116,7 @@ def snapshot() -> None:
     declaration, never inferred from SQLSTATE, names or already generated Rust.
     All comparisons finish before atomic replacement of the previous registry.
     """
-    maintained: dict[str, Any] = json.loads(REGISTRY.read_text())
+    maintained: dict[str, Any] = json.loads(REGISTRY.read_text(encoding='utf-8'))
     versions: dict[str, dict[int, dict[str, str]]] = {}
     sources: list[dict[str, str]] = []
     excluded: list[dict[str, Any]] = []
@@ -171,7 +171,7 @@ def description(row: dict[str, Any], server: bool) -> str:
 
 
 def generate(check: bool) -> None:
-    data: dict[str, Any] = json.loads(REGISTRY.read_text())
+    data: dict[str, Any] = json.loads(REGISTRY.read_text(encoding='utf-8'))
     checksum = digest(REGISTRY)
     client: list[dict[str, Any]] = data['client']
     server: list[dict[str, Any]] = data['server']
@@ -253,10 +253,10 @@ def generate(check: bool) -> None:
             formatted=subprocess.run(['rustfmt','--edition','2024','--emit','stdout'],input=content,text=True,capture_output=True,check=True)
             content=formatted.stdout
         if check:
-            if not path.exists() or path.read_text()!=content:
+            if not path.exists() or path.read_text(encoding='utf-8')!=content:
                 raise ValueError(f'Generated registry output differs: {path}')
         else:
-            path.write_text(content)
+            path.write_text(content, encoding='utf-8', newline='\n')
     print(f"registry outputs {'verified' if check else 'written'}; {len(client)} client, {len(server)} server values")
 
 

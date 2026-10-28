@@ -114,7 +114,7 @@ jobs:
           PY
             done
           fi
-      - name: Verify native sources and build a probe wheel
+      - name: Verify native sources
         run: |
           set -euo pipefail
           rustc --version
@@ -124,7 +124,21 @@ jobs:
           cargo clippy --workspace --locked -- -D warnings
           python tools/error_catalog.py --check
           pyright
+      - name: Build the native probe wheel
+        if: runner.os != 'Linux'
+        run: |
           maturin build --release --locked --interpreter python --out probe-wheels
+      - name: Build the manylinux probe wheel
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          maturin-version: '1.15.0'
+          rust-toolchain: '1.99.1'
+          target: x86_64-unknown-linux-gnu
+          manylinux: '2_28'
+          args: --release --locked --interpreter python3.13 --out probe-wheels
+      - name: Install the actual probe wheel
+        run: |
           python - <<'PY'
           from pathlib import Path
           import subprocess

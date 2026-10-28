@@ -14,7 +14,7 @@ def reviewed_expectations() -> dict[str, dict[int, str]]:
     """Load a fixed audit oracle which the product generator cannot rewrite."""
     path = Path(__file__).parent / 'data/error-classification-audit-20261026.tsv'
     result: dict[str, dict[int, str]] = {'client': {}, 'server': {}}
-    for line in path.read_text().splitlines():
+    for line in path.read_text(encoding='utf-8').splitlines():
         if line.startswith('#'):
             continue
         origin, code, category, evidence, rationale = line.split('\t')
@@ -25,7 +25,7 @@ def reviewed_expectations() -> dict[str, dict[int, str]]:
 
 
 def test_complete_registry_matches_independent_reviewed_semantics() -> None:
-    source: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text())
+    source: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text(encoding='utf-8'))
     expected = reviewed_expectations()
     for origin in ('client', 'server'):
         actual = {row['code']: row['class'] for row in source[origin]}
@@ -67,7 +67,7 @@ def test_fact_refresh_preserves_reviewed_semantics_or_refuses_atomic_update(
 ) -> None:
     from tools import error_catalog
 
-    maintained: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text())
+    maintained: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text(encoding='utf-8'))
     row = next(entry for entry in maintained['server'] if entry['code'] == 1052)
     row['class'] = 'ProgrammingError'
     row['basis'] = 'Reviewed column ambiguity, not a relationship constraint failure.'
@@ -76,7 +76,7 @@ def test_fact_refresh_preserves_reviewed_semantics_or_refuses_atomic_update(
         for facts in entry['versions'].values():
             facts['message_sha256'] = 'a' * 64
     registry = tmp_path / 'error-catalog.json'
-    registry.write_text(json.dumps(maintained, ensure_ascii=False))
+    registry.write_text(json.dumps(maintained, ensure_ascii=False), encoding='utf-8')
     before = registry.read_bytes()
     versions = {version: {entry['code']: deepcopy(entry['versions'][version])
                           for entry in maintained['server'] if version in entry['versions']}
@@ -105,13 +105,13 @@ def test_fact_refresh_preserves_reviewed_semantics_or_refuses_atomic_update(
         assert registry.read_bytes() == before
     else:
         error_catalog.snapshot()
-        refreshed = json.loads(registry.read_text())
+        refreshed = json.loads(registry.read_text(encoding='utf-8'))
         assert refreshed['server'] == maintained['server']
         assert refreshed['client'] == maintained['client']
 
 
 def test_public_enums_match_all_frozen_values_aliases_and_individual_docs() -> None:
-    source: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text())
+    source: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text(encoding='utf-8'))
     assert issubclass(MySQLErrorCode, IntEnum) and issubclass(SQLAeroErrorCode, IntEnum)
     for row in source['client']:
         member = SQLAeroErrorCode.__members__[row['name']]
