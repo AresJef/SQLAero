@@ -91,17 +91,18 @@ jobs:
                 tar -xf "$RUNNER_TEMP/$archive" -C "$destination"
               fi
               MYSQL_LABEL="$label" MYSQL_DIRECTORY="$destination" MYSQL_ARCHIVE="$RUNNER_TEMP/$archive" python - <<'PY'
-              import hashlib
-              import os
-              from pathlib import Path
-              directory: Path = Path(os.environ['MYSQL_DIRECTORY'])
-              installations: list[Path] = [path for path in directory.iterdir() if path.is_dir() and (path / 'bin').is_dir()]
-              assert len(installations) == 1, installations
-              with Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8') as output:
-                  output.write(f"SQLAERO_MYSQL_{os.environ['MYSQL_LABEL']}_ROOT={installations[0]}\n")
-              archive: Path = Path(os.environ['MYSQL_ARCHIVE'])
-              print(archive.name, hashlib.file_digest(archive.open('rb'), 'sha256').hexdigest())
-              PY
+          import hashlib
+          import os
+          from pathlib import Path
+          directory: Path = Path(os.environ['MYSQL_DIRECTORY'])
+          installations: list[Path] = [path for path in directory.iterdir() if path.is_dir() and (path / 'bin').is_dir()]
+          assert len(installations) == 1, installations
+          with Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8') as output:
+              output.write(f"SQLAERO_MYSQL_{os.environ['MYSQL_LABEL']}_ROOT={installations[0]}\n")
+          archive: Path = Path(os.environ['MYSQL_ARCHIVE'])
+          with archive.open('rb') as input_file:
+              print(archive.name, hashlib.file_digest(input_file, 'sha256').hexdigest())
+          PY
             done
           fi
       - name: Verify native sources and build a probe wheel
