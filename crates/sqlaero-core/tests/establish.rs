@@ -56,6 +56,14 @@ fn configuration(
     mode: Option<Mode>,
     name: &str,
 ) -> ConnectParams {
+    // Command/state tests need the fixture's supported local channel. On
+    // Windows use verified loopback TLS; explicit Unix rejection is covered
+    // separately at the public connection boundary.
+    let (local, mode) = if local && !cfg!(unix) {
+        (false, mode.or(Some(Mode::VerifyIdentity)))
+    } else {
+        (local, mode)
+    };
     let values: mysql_common::serde_json::Value = mysql_common::serde_json::from_slice(
         &std::fs::read(root.join(label).join("state.json")).unwrap(),
     )
