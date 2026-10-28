@@ -47,6 +47,11 @@ def _private_console() -> None:
     """
     if os.environ.get('SQLAERO_TEST_PRIVATE_CONSOLE') != '1':
         raise RuntimeError('Windows signal tests require python tests/_native_signal.py --pytest ...')
+    # A runner can pass down the inheritable ignore-Ctrl+C attribute. Restoring
+    # normal processing changes only this private target and keeps CPython's
+    # registered handler table intact (no console detach/reallocation).
+    if not _kernel().SetConsoleCtrlHandler(None, False):
+        raise _win.WinError(_win.get_last_error())
 
 
 class NativeAlarm:
@@ -141,13 +146,23 @@ def _send(parent: int, event: int) -> None:
     deadline: float | None = None
     repeat = 0.0
     while True:
-        try:
-            command = commands.get(timeout=None if deadline is None else max(0, deadline - time.monotonic()))
-        except Empty:
-            if not kernel.GenerateConsoleCtrlEvent(event, 0):
-                raise _win.WinError(_win.get_last_error())
-            deadline = time.monotonic() + repeat if repeat else None
-            continue
+        if deadline is None:
+            command = commands.get()
+        else:
+            try:
+                command = commands.get_nowait()
+            except Empty:
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    # Queue's timed lock wait uses the coarse Windows wait
+                    # clock. CPython's public sleep uses a high-resolution
+                    # waitable timer; poll only while this finite alarm is armed.
+                    time.sleep(min(remaining, 0.0001))
+                    continue
+                if not kernel.GenerateConsoleCtrlEvent(event, 0):
+                    raise _win.WinError(_win.get_last_error())
+                deadline = time.monotonic() + repeat if repeat else None
+                continue
         if command is None:
             return
         delay, repeat = command
@@ -173,14 +188,15 @@ if __name__ == '__main__':
                                    creationflags=subprocess.CREATE_NEW_CONSOLE, timeout=10, check=False)
         raise SystemExit(completed.returncode)
     else:
-        hits: list[int] = []
-        alarm = NativeAlarm(lambda number, _frame: hits.append(number))
-        try:
-            alarm.start(0.02)
-            end = time.monotonic() + 3
-            while not hits and time.monotonic() < end:
-                time.sleep(0.01)
-            assert hits == [alarm.number], hits
-            print(f'real native signal received: {hits[0]}')
-        finally:
-            alarm.close()
+        for sigint in ((False, True) if os.name == 'nt' else (False,)):
+            hits: list[int] = []
+            alarm = NativeAlarm(lambda number, _frame: hits.append(number), sigint=sigint)
+            try:
+                alarm.start(0.02)
+                end = time.monotonic() + 3
+                while not hits and time.monotonic() < end:
+                    time.sleep(0.01)
+                assert hits == [alarm.number], hits
+                print(f'real native signal received: {hits[0]}')
+            finally:
+                alarm.close()
