@@ -101,22 +101,9 @@ jobs:
       - name: Stop only this job's isolated servers
         if: always()
         run: python tools/mysql_fixture.py stop
-      - name: Collect native server diagnostics without credentials
+      - name: Collect redacted native server diagnostics
         if: always()
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import shutil
-          source: Path = Path(os.environ['SQLAERO_TEST_MYSQL_ROOT'])
-          destination: Path = Path('probe-evidence')
-          destination.mkdir(exist_ok=True)
-          for label in ('84', '97'):
-              for name in ('initialize.log', 'server.log', 'launcher.log'):
-                  log: Path = source / label / name
-                  if log.is_file():
-                      shutil.copyfile(log, destination / f'mysql-{label}-{name}')
-          PY
+        run: python tools/mysql_fixture.py diagnostics --output probe-evidence
       - name: Preserve probe evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

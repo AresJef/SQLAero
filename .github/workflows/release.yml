@@ -149,6 +149,7 @@ jobs:
         run: |
           set -euo pipefail
           python tools/mysql_fixture.py prepare > validation-evidence/mysql-instances.json
+          cargo test -p sqlaero-core --lib explicit_roots_keep_platform_ssl_name_usage_and_time_policy --locked -- --ignored --test-threads=1
           cargo test -p sqlaero-core --test establish --locked -- --ignored --test-threads=1
           cargo test -p sqlaero-core --test component_contracts --locked -- --ignored --test-threads=1
           cargo test -p sqlaero-core --test protocol_wire --locked -- --ignored --test-threads=1
@@ -214,22 +215,9 @@ jobs:
       - name: Stop only this job's owned servers
         if: always()
         run: python tools/mysql_fixture.py stop
-      - name: Collect safe native server diagnostics
+      - name: Collect redacted native server diagnostics
         if: always()
-        run: |
-          python - <<'PY'
-          import os
-          from pathlib import Path
-          import shutil
-          root: Path = Path(os.environ['SQLAERO_TEST_MYSQL_ROOT'])
-          output: Path = Path('validation-evidence')
-          output.mkdir(exist_ok=True)
-          for label in ('84', '97'):
-              for name in ('initialize.log', 'server.log', 'launcher.log'):
-                  path: Path = root / label / name
-                  if path.is_file():
-                      shutil.copyfile(path, output / f'mysql-{label}-{name}')
-          PY
+        run: python tools/mysql_fixture.py diagnostics --output validation-evidence
       - name: Save the exact validated original wheel
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

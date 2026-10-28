@@ -54,23 +54,39 @@ def config_path(path: Path) -> str:
     return '"' + path.as_posix().replace('"', '\\"') + '"'
 
 
+def redact(text: str) -> str:
+    """Remove this fixture's credentials before exporting native diagnostics."""
+    for label in VERSIONS:
+        state_file = ROOT / label / 'state.json'
+        if state_file.is_file():
+            state: dict[str, Any] = json.loads(state_file.read_text(encoding='utf-8'))
+            for name in ('root_password', 'test_password'):
+                password = state.get(name)
+                if isinstance(password, str) and password:
+                    text = text.replace(password, '<redacted>')
+    return text
+
+
 def run(command: list[str], *, data: str | None = None) -> str:
     """Report a native command failure while redacting fixture passwords."""
     result = subprocess.run(command, input=data, text=True, encoding='utf-8',
                             capture_output=True, check=False, timeout=90)
     if result.returncode:
-        detail = result.stderr.strip()
-        for label in VERSIONS:
-            state_file = ROOT / label / 'state.json'
-            if state_file.is_file():
-                state: dict[str, Any] = json.loads(state_file.read_text())
-                for name in ('root_password', 'test_password'):
-                    password = state.get(name)
-                    if isinstance(password, str) and password:
-                        detail = detail.replace(password, '<redacted>')
+        detail = redact(result.stderr.strip())
         raise RuntimeError(f'{Path(command[0]).name} failed (exit {result.returncode}); '
                            + detail[-2000:])
     return result.stdout
+
+
+def diagnostics(destination: Path) -> None:
+    """Export only known logs, never account state, option files or private keys."""
+    destination.mkdir(parents=True, exist_ok=True)
+    for label in VERSIONS:
+        for name in ('initialize.log', 'server.log', 'launcher.log'):
+            path = ROOT / label / name
+            if path.is_file():
+                text = path.read_text(encoding='utf-8', errors='replace')
+                (destination / f'mysql-{label}-{name}').write_text(redact(text), encoding='utf-8')
 
 
 def write_private(path: Path, content: str) -> None:
@@ -165,9 +181,22 @@ def prepare(label: str, tls: Path) -> dict[str, Any]:
         'max-allowed-packet=64M', 'local-infile=OFF', f'ssl-ca={config_path(tls / "ca.pem")}',
         f'ssl-cert={config_path(tls / "server.pem")}', f'ssl-key={config_path(tls / "server-key.pem")}', '',
     ]))
+    bootstrap = directory / 'bootstrap.sql'
+    if fresh:
+        # Initialize accounts before accepting authenticated clients. This
+        # avoids relying on root@localhost matching a TCP loopback address.
+        setup = (f"ALTER USER 'root'@'localhost' IDENTIFIED BY '{state['root_password']}';\n"
+                 f"CREATE USER 'root'@'127.0.0.1' IDENTIFIED BY '{state['root_password']}';\n"
+                 "GRANT ALL ON *.* TO 'root'@'127.0.0.1' WITH GRANT OPTION;\n"
+                 'CREATE DATABASE sqlaero_test;\n')
+        for host in ('localhost', '127.0.0.1'):
+            setup += (f"CREATE USER 'sqlaero'@'{host}' IDENTIFIED BY '{state['test_password']}';\n"
+                      f"GRANT ALL ON sqlaero_test.* TO 'sqlaero'@'{host}';\n")
+        write_private(bootstrap, setup)
     if not pidfile.exists():
         with (directory / 'launcher.log').open('ab') as output:
-            process = subprocess.Popen([str(binary), f'--defaults-file={config}'],
+            process = subprocess.Popen([str(binary), f'--defaults-file={config}',
+                                        *([f'--init-file={bootstrap.as_posix()}'] if fresh else [])],
                                        stdin=subprocess.DEVNULL, stdout=output, stderr=output,
                                        start_new_session=os.name != 'nt')
         end = time.monotonic() + 60
@@ -188,21 +217,12 @@ def prepare(label: str, tls: Path) -> dict[str, Any]:
     ]:
         write_private(directory / f'{account}.cnf', f'[client]\n{endpoint}'
                       f'user={user}\npassword={password}\n')
-    if fresh:
-        setup = (f"ALTER USER 'root'@'localhost' IDENTIFIED BY '{state['root_password']}';\n"
-                 'CREATE DATABASE sqlaero_test;\n')
-        for host in ['localhost', '127.0.0.1']:
-            setup += (f"CREATE USER 'sqlaero'@'{host}' IDENTIFIED BY '{state['test_password']}';\n"
-                      f"GRANT ALL ON sqlaero_test.* TO 'sqlaero'@'{host}';\n")
-        bootstrap = ['--protocol=TCP', '--host=127.0.0.1', f'--port={port}',
-                     '--ssl-mode=VERIFY_IDENTITY', f'--ssl-ca={tls / "ca.pem"}'] if os.name == 'nt' else [
-                         '--protocol=SOCKET', f'--socket={socket}']
-        run([str(program(label, 'mysql')), '--no-defaults', '--no-login-paths',
-             *bootstrap, '--user=root'], data=setup)
     state.update({'mysql': str(program(label, 'mysql')), 'port': str(port),
                   'transport': 'tcp' if os.name == 'nt' else 'unix'})
     write_private(state_path, json.dumps(state))
     actual = run(mysql_command(label), data='SELECT VERSION(), @@port, @@socket;').strip()
+    if fresh:
+        bootstrap.unlink()
     run(mysql_command(label, 'test'), data='SELECT 1;')
     tcp = mysql_command(label, 'test') + ['--protocol=TCP', '--host=127.0.0.1', f'--port={port}',
                                        '--ssl-mode=VERIFY_IDENTITY', f'--ssl-ca={tls / "ca.pem"}']
@@ -232,8 +252,14 @@ def stop(label: str) -> None:
 def main() -> None:
     """Run the explicitly selected fixture operation."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['prepare', 'stop'])
+    parser.add_argument('action', choices=['prepare', 'stop', 'diagnostics'])
+    parser.add_argument('--output', type=Path)
     arguments = parser.parse_args()
+    if arguments.action == 'diagnostics':
+        if arguments.output is None:
+            parser.error('diagnostics requires --output')
+        diagnostics(arguments.output)
+        return
     ROOT.mkdir(mode=0o700, exist_ok=True)
     if ROOT.is_symlink() or (os.name == 'posix' and ROOT.stat().st_uid != os.getuid()):
         raise RuntimeError('Fixture root must be owned by the current user and not be a symlink')
