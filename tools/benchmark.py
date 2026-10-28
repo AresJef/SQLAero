@@ -9,25 +9,29 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime, time as daytime, timedelta, timezone
 from decimal import Decimal
 import gc
 import hashlib
 import importlib
 import importlib.util
+from importlib.machinery import EXTENSION_SUFFIXES
 import json
 import math
 import os
 from pathlib import Path
 import pickle
 import platform
-import resource
 import statistics
 import subprocess
 import sys
 import time
 from typing import Any, Callable, TextIO, cast
+
+# Formal resource snapshots are a macOS responsibility. The CI smoke path
+# below only needs portable wall timing and must also import on Windows.
+resource: Any = None if os.name == 'nt' else importlib.import_module('resource')
 
 ROOT = Path(__file__).resolve().parents[1]
 FROZEN = ROOT / "experimental/rust/list_rust.so"
@@ -225,7 +229,7 @@ def network_target(case: Case, native: Any, sessions: dict[str, Any]) -> Task:
     if transport == "unix":
         settings["unix_socket"] = fixture / f"{label}.sock"
     else:
-        settings.update(host="127.0.0.1", port=13384 if label == "84" else 13397)
+        settings.update(host="127.0.0.1", port=int(secret.get("port", 13384 if label == "84" else 13397)))
         settings["ssl"] = native.SSL(mode="DISABLED")
         settings["server_public_key_path"] = fixture / label / "data/public_key.pem"
     if spec.get("tls") == "verified":
@@ -602,7 +606,8 @@ def append(path: Path, value: object) -> None:
 
 def package_identity(package: str | None) -> dict[str, object]:
     folder = Path(package).resolve() / "sqlaero" if package else ROOT / "python/sqlaero"
-    artifacts = sorted(folder.glob("_sqlaero*.so"))
+    artifacts = sorted(path for path in folder.iterdir() if path.name.startswith('_sqlaero')
+                       and path.name.endswith(tuple(EXTENSION_SUFFIXES)))
     if len(artifacts) != 1:
         raise RuntimeError(f"Expected exactly one native artifact in {folder}")
     return {"package": str(folder), "artifact": str(artifacts[0]),
@@ -852,9 +857,74 @@ def summarize(directory: Path) -> None:
     print(json.dumps({"summarized": len(report), "path": str(directory / "summary.json")}))
 
 
+def smoke(directory: Path, seconds: float) -> None:
+    """Record five fixed wall batches for eight existing tasks, without filtering.
+
+    CI uses this diagnostic only. It does not claim statistical stability or
+    replace formal macOS paired measurements and their quality contract.
+    """
+    native = importlib.import_module('sqlaero._sqlaero')
+    native_file = native.__file__
+    if native_file is None:
+        raise RuntimeError('The installed native extension has no file identity')
+    fixed = {
+        'escape/int/same/list/N1000': 200,
+        'escape/str/same/list/N1000': 200,
+        'bind/positions/list/N1000': 100,
+        'bind/insert/rows/N1000': 100,
+        'decode-json/ascii-small': 1000,
+        'execute/84/tcp/select/R100C3': 5,
+        'fetch/84/json/fetchall/R100': 10,
+        'fetch/84/mixed/fetchall/R100': 10,
+    }
+    collection = {case.id: case for case in cases()}
+    sessions: dict[str, Any] = {}
+    results: list[dict[str, object]] = []
+    started = time.monotonic()
+    try:
+        for case_id, count in fixed.items():
+            case = collection[case_id]
+            if case.family == 'fetch':
+                case = replace(case, value={**cast(dict[str, Any], case.value), 'transport': 'tcp'})
+            task = target(case, native, None, sessions)
+            try:
+                if task.prepare:
+                    task.prepare(1)
+                checked = fingerprint(task.call())
+                if task.finish:
+                    task.finish()
+                batches: list[int] = []
+                for _ in range(5):
+                    if time.monotonic() - started >= seconds:
+                        raise TimeoutError('the fixed CI smoke command exhausted its wall budget')
+                    if task.prepare:
+                        task.prepare(count)
+                    before = time.perf_counter_ns()
+                    for _ in range(count):
+                        task.call()
+                    batches.append(time.perf_counter_ns() - before)
+                    if task.finish:
+                        task.finish()
+                results.append({'case': case_id, 'calls_per_batch': count,
+                                'wall_ns': batches, 'output': checked})
+            finally:
+                if task.finish:
+                    task.finish()
+    finally:
+        for connection in sessions.values():
+            connection.close()
+    directory.mkdir(parents=True, exist_ok=True)
+    output = {'purpose': 'diagnostic only; no formal performance verdict',
+              'python': sys.version, 'platform': platform.platform(), 'machine': platform.machine(),
+              'native': native_file, 'native_sha256': digest(Path(native_file)),
+              'elapsed_seconds': time.monotonic() - started, 'cases': results}
+    (directory / 'performance-smoke.json').write_text(json.dumps(output, indent=2) + '\n', encoding='utf-8')
+    print(json.dumps(output))
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("worker", "list", "calibrate", "run", "summarize"))
+    parser.add_argument("command", choices=("worker", "list", "calibrate", "run", "summarize", "smoke"))
     parser.add_argument("--output", default="evidence/rust-sync-kernel/performance/preflight")
     parser.add_argument("--package")
     parser.add_argument("--reference")
@@ -868,7 +938,13 @@ def main() -> None:
     parser.add_argument("--target-ms", type=float, default=2)
     parser.add_argument("--minimum-ms", type=float, default=1)
     args = parser.parse_args()
-    if args.command == "worker":
+    if resource is None and args.command not in ('list', 'smoke'):
+        raise RuntimeError('Formal resource-based performance measurement is supported on the macOS development host')
+    if args.command == 'smoke':
+        if not 0 < args.seconds <= 180:
+            raise ValueError('CI smoke requires a positive budget of at most 180 seconds')
+        smoke(Path(args.output), args.seconds)
+    elif args.command == "worker":
         worker(args.package, args.legacy)
     elif args.command == "list":
         print(json.dumps([case.identity() for case in cases()], indent=2))

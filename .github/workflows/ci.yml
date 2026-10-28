@@ -37,83 +37,8 @@ jobs:
         with:
           python-version: "3.13.17"
           architecture: ${{ matrix.platform.architecture }}
-      - name: Install the fixed native toolchain
-        run: rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
-      - name: Prepare the isolated Python environment
-        run: |
-          set -euo pipefail
-          python -m venv .venv
-          if [ "$RUNNER_OS" = Windows ]; then
-            vpython=.venv/Scripts/python
-          else
-            vpython=.venv/bin/python
-          fi
-          "$vpython" -m pip install --disable-pip-version-check -r requirements-dev.txt
-          "$vpython" - <<'PY'
-          import os
-          from pathlib import Path
-          import sys
-          with Path(os.environ['GITHUB_PATH']).open('a', encoding='utf-8') as output:
-              output.write(str(Path(sys.executable).parent) + '\n')
-          with Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8') as output:
-              output.write('SQLAERO_TEST_MYSQL_ROOT=' + str(Path(os.environ['RUNNER_TEMP']) / 'sqlaero-mysql') + '\n')
-          PY
-          mkdir -p probe-evidence
-      - name: Provision native MySQL executables
-        run: |
-          set -euo pipefail
-          if [ "$RUNNER_OS" = macOS ]; then
-            brew install --force-bottle --skip-post-install mysql@8.4 mysql@9.7 openssl@4
-            echo "SQLAERO_MYSQL_84_ROOT=$(brew --prefix mysql@8.4)" >> "$GITHUB_ENV"
-            echo "SQLAERO_MYSQL_97_ROOT=$(brew --prefix mysql@9.7)" >> "$GITHUB_ENV"
-            echo "SQLAERO_OPENSSL=$(brew --prefix openssl@4)/bin/openssl" >> "$GITHUB_ENV"
-          else
-            if [ "$RUNNER_OS" = Linux ]; then
-              sudo apt-get update -qq
-              sudo apt-get install -y libaio1t64 libnuma1 libtinfo6
-              # The official generic MySQL tarball still requests the pre-t64
-              # SONAME. On amd64 this is the same ABI; keep the alias job-local.
-              mkdir -p "$RUNNER_TEMP/mysql-runtime"
-              ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 "$RUNNER_TEMP/mysql-runtime/libaio.so.1"
-              export LD_LIBRARY_PATH="$RUNNER_TEMP/mysql-runtime${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-              echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
-            fi
-            for pair in 84:8.4.13 97:9.7.4; do
-              label="${pair%%:*}"
-              version="${pair#*:}"
-              line="${version%.*}"
-              destination="$RUNNER_TEMP/mysql-$label"
-              mkdir -p "$destination"
-              if [ "$RUNNER_OS" = Windows ]; then
-                archive="mysql-$version-winx64.zip"
-              else
-                archive="mysql-$version-linux-glibc2.28-x86_64-minimal.tar.xz"
-              fi
-              curl --fail --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 240 \
-                "https://dev.mysql.com/get/Downloads/MySQL-$line/$archive" -o "$RUNNER_TEMP/$archive"
-              if [ "$RUNNER_OS" = Windows ]; then
-                python -m zipfile -e "$RUNNER_TEMP/$archive" "$destination"
-              else
-                tar -xf "$RUNNER_TEMP/$archive" -C "$destination"
-              fi
-              if [ "$RUNNER_OS" = Linux ]; then
-                ldd "$destination"/*/bin/mysqld
-              fi
-              MYSQL_LABEL="$label" MYSQL_DIRECTORY="$destination" MYSQL_ARCHIVE="$RUNNER_TEMP/$archive" python - <<'PY'
-          import hashlib
-          import os
-          from pathlib import Path
-          directory: Path = Path(os.environ['MYSQL_DIRECTORY'])
-          installations: list[Path] = [path for path in directory.iterdir() if path.is_dir() and (path / 'bin').is_dir()]
-          assert len(installations) == 1, installations
-          with Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8') as output:
-              output.write(f"SQLAERO_MYSQL_{os.environ['MYSQL_LABEL']}_ROOT={installations[0]}\n")
-          archive: Path = Path(os.environ['MYSQL_ARCHIVE'])
-          with archive.open('rb') as input_file:
-              print(archive.name, hashlib.file_digest(input_file, 'sha256').hexdigest())
-          PY
-            done
-          fi
+      - name: Prepare the shared native test environment
+        uses: ./.github/actions/native-environment
       - name: Verify native sources
         run: |
           set -euo pipefail
@@ -150,6 +75,7 @@ jobs:
       - name: Verify the installed wheel and real MySQL behavior
         run: |
           set -euo pipefail
+          mkdir -p probe-evidence
           python - <<'PY'
           import hashlib
           from importlib.metadata import version

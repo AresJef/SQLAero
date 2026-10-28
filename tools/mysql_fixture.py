@@ -20,7 +20,7 @@ import time
 from typing import Any
 
 
-_USER = str(os.getuid()) if hasattr(os, 'getuid') else getpass.getuser()
+_USER = str(os.getuid()) if os.name == 'posix' else getpass.getuser()
 _DEFAULT_ROOT = Path('/private/tmp' if os.name == 'posix' and Path('/private/tmp').is_dir()
                      else tempfile.gettempdir()) / f'sqlaero-mysql-{_USER}'
 ROOT = Path(os.environ.get('SQLAERO_TEST_MYSQL_ROOT', str(_DEFAULT_ROOT))).absolute()
@@ -235,7 +235,7 @@ def main() -> None:
     parser.add_argument('action', choices=['prepare', 'stop'])
     arguments = parser.parse_args()
     ROOT.mkdir(mode=0o700, exist_ok=True)
-    if ROOT.is_symlink() or (hasattr(os, 'getuid') and ROOT.stat().st_uid != os.getuid()):
+    if ROOT.is_symlink() or (os.name == 'posix' and ROOT.stat().st_uid != os.getuid()):
         raise RuntimeError('Fixture root must be owned by the current user and not be a symlink')
     ROOT.chmod(0o700)
     if arguments.action == 'stop':

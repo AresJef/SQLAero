@@ -14,96 +14,288 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
-    name: CPython ${{ matrix.python }} / macOS arm64
-    runs-on: macos-26
-    timeout-minutes: 45
-    strategy:
-      fail-fast: false
-      matrix:
-        python: ["3.12.10", "3.13.17", "3.14.9", "3.15.1"]
-    env:
-      MACOSX_DEPLOYMENT_TARGET: "11.0"
-      SQLAERO_NATIVE_MYSQL: "1"
-      HOMEBREW_NO_AUTO_UPDATE: "1"
+  source:
+    name: Canonical source distribution
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      version: ${{ steps.source.outputs.version }}
+      sha256: ${{ steps.source.outputs.sha256 }}
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: ${{ matrix.python }}
-          architecture: arm64
-      - name: Check release identity and install fixed tools
+          python-version: '3.13.17'
+      - name: Create the single canonical sdist
+        id: source
+        shell: bash
         run: |
+          set -euo pipefail
+          rustup toolchain install 1.99.1 --profile minimal
+          python -m venv .source-venv
+          .source-venv/bin/python -m pip install --disable-pip-version-check maturin==1.15.0
+          .source-venv/bin/maturin sdist --out source-dist
           python - <<'PY'
+          import hashlib
+          import json
           import os
           from pathlib import Path
+          import subprocess
+          import tarfile
           import tomllib
-          version = tomllib.loads(Path('pyproject.toml').read_text())['project']['version']
+          version: str = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version']
           if os.environ['GITHUB_REF_TYPE'] == 'tag':
               assert os.environ['GITHUB_REF_NAME'] == 'v' + version
-              assert (Path('docs/releases') / (os.environ['GITHUB_REF_NAME'] + '.md')).is_file()
+              assert (Path('docs/releases') / f'v{version}.md').is_file()
+          packages: list[Path] = list(Path('source-dist').glob('*.tar.gz'))
+          assert len(packages) == 1 and packages[0].name == f'sqlaero-{version}.tar.gz'
+          package: Path = packages[0]
+          digest: str = hashlib.sha256(package.read_bytes()).hexdigest()
+          with tarfile.open(package) as archive:
+              names: list[str] = archive.getnames()
+              assert not any('/.runtime/' in name or '/evidence/' in name or '/experimental/' in name for name in names)
+          Path('source-evidence').mkdir()
+          Path('source-evidence/identity.json').write_text(json.dumps({'version': version, 'file': package.name, 'sha256': digest, 'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'source_tree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(), 'members': names}, indent=2) + '\n', encoding='utf-8')
+          with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
+              output.write(f'version={version}\nsha256={digest}\n')
           PY
-          test "$(uname -m)" = arm64
-          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
-          python -m venv .venv
-          .venv/bin/python -m pip install --disable-pip-version-check -r requirements-dev.txt
-          brew install --force-bottle --skip-post-install mysql@8.4 mysql@9.7 openssl@4
-          echo "SQLAERO_TEST_MYSQL_ROOT=/private/tmp/sqlaero-mysql-$(id -u)" >> "$GITHUB_ENV"
-          mkdir -p evidence/rust-sync-kernel/startup
-      - name: Verify native sources and build the actual wheel
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: canonical-sdist
+          path: source-dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: source-evidence
+          path: source-evidence/
+          if-no-files-found: error
+          retention-days: 7
+
+  build:
+    name: ${{ matrix.platform.name }} / CPython ${{ matrix.python.version }}
+    needs: source
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 70
+    strategy:
+      fail-fast: false
+      matrix:
+        python:
+          - {version: '3.12.10', minor: '3.12'}
+          - {version: '3.13.17', minor: '3.13'}
+          - {version: '3.14.9', minor: '3.14'}
+          - {version: '3.15.1', minor: '3.15'}
+        platform:
+          - {name: macos-arm64, runner: macos-26, architecture: arm64}
+          - {name: macos-x86_64, runner: macos-15-intel, architecture: x64}
+          - {name: windows-x86_64, runner: windows-2022, architecture: x64}
+          - {name: linux-x86_64, runner: ubuntu-24.04, architecture: x64}
+    defaults:
+      run:
+        shell: bash
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      SQLAERO_NATIVE_MYSQL: '1'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      EXPECTED_SDIST_SHA: ${{ needs.source.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python.version }}
+          architecture: ${{ matrix.platform.architecture }}
+      - name: Prepare the shared native test environment
+        uses: ./.github/actions/native-environment
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: canonical-sdist
+          path: source-dist
+      - name: Check the native source and public declarations
         run: |
-          source .venv/bin/activate
+          set -euo pipefail
+          mkdir -p validation-evidence
+          rustc --version
+          python --version
           cargo fmt --all --check
           cargo test -p sqlaero-core --locked
           cargo clippy --workspace --all-targets --locked -- -D warnings
           python tools/error_catalog.py --check
           pyright
-          maturin build --release --locked --interpreter python --out dist
-      - name: Build and reconstruct the source distribution
-        if: matrix.python == '3.13.17'
+      - name: Build the original native wheel
+        id: native-build
+        if: runner.os != 'Linux'
+        run: maturin build --release --locked --interpreter python --out dist
+      - name: Build the original manylinux wheel
+        id: manylinux-build
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          maturin-version: '1.15.0'
+          rust-toolchain: '1.99.1'
+          target: x86_64-unknown-linux-gnu
+          manylinux: '2_28'
+          args: --release --locked --interpreter python${{ matrix.python.minor }} --out dist
+      - name: Install and identify the original wheel
+        id: original-install
         run: |
-          source .venv/bin/activate
-          maturin sdist --out dist
-          mkdir sdist-source
-          tar -xzf dist/*.tar.gz --directory sdist-source
-          cd sdist-source/*
-          maturin build --release --locked --interpreter "$GITHUB_WORKSPACE/.venv/bin/python" --out "$GITHUB_WORKSPACE/sdist-wheels"
-      - name: Install and test the wheel against both isolated servers
-        run: |
-          source .venv/bin/activate
+          set -euo pipefail
           python -m pip install --no-deps dist/*.whl
-          python - <<'PY'
-          from importlib.metadata import version
-          from pathlib import Path
-          import platform
-          import sqlaero
-          assert platform.machine() == 'arm64'
-          assert '.venv' in Path(sqlaero.__file__).parts
-          assert version('sqlaero') == '0.2.0a1'
-          PY
-          python tools/mysql_fixture.py prepare
-          python -m pytest -q tests
-          if [ -d sdist-wheels ]; then
-            python -m pip install --no-deps --force-reinstall sdist-wheels/*.whl
-            python -m pytest -q tests
-          fi
+          python tools/release_artifacts.py identity --kind original --wheel dist/*.whl --sdist source-dist/*.tar.gz --output validation-evidence/original-wheel-identity.json
+      - name: Prepare and verify the owned native servers
+        run: |
+          set -euo pipefail
+          python tools/mysql_fixture.py prepare > validation-evidence/mysql-instances.json
+          cargo test -p sqlaero-core --test establish --locked -- --ignored --test-threads=1
+          cargo test -p sqlaero-core --test component_contracts --locked -- --ignored --test-threads=1
+          cargo test -p sqlaero-core --test protocol_wire --locked -- --ignored --test-threads=1
+      - name: Verify real system trust on each platform
+        if: matrix.python.minor == '3.13'
+        run: cargo test -p sqlaero-core --test system_trust --locked -- --ignored --test-threads=1
+      - name: Test the installed original wheel
+        id: original-test
+        run: |
+          set -euo pipefail
+          python tests/_native_signal.py
+          python -m pytest -q tests --junitxml=validation-evidence/python-original.xml
           python -m pip check
-      - name: Stop only this job's isolated servers
+      - name: Record the fixed diagnostic performance batches
+        if: matrix.python.minor == '3.13'
+        timeout-minutes: 3
+        run: python tools/benchmark.py smoke --seconds 180 --output validation-evidence
+      - name: Unpack the exact independent sdist source
+        run: |
+          set -euo pipefail
+          echo "SDIST_SOURCE=$(python tools/release_artifacts.py extract --sdist source-dist/*.tar.gz --destination sdist-source --expected-sha "$EXPECTED_SDIST_SHA")" >> "$GITHUB_ENV"
+      - name: Rebuild the sdist as a native wheel
+        id: sdist-native-build
+        if: runner.os != 'Linux'
+        run: |
+          set -euo pipefail
+          interpreter=$(python -c 'import sys; print(sys.executable)')
+          cd "$SDIST_SOURCE"
+          "$interpreter" -m maturin build --release --locked --interpreter "$interpreter" --out "$GITHUB_WORKSPACE/sdist-wheels"
+      - name: Rebuild the sdist as a manylinux wheel
+        id: sdist-manylinux-build
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          maturin-version: '1.15.0'
+          rust-toolchain: '1.99.1'
+          target: x86_64-unknown-linux-gnu
+          manylinux: '2_28'
+          working-directory: ${{ env.SDIST_SOURCE }}
+          args: --release --locked --interpreter python${{ matrix.python.minor }} --out ../../sdist-wheels
+      - name: Install and test the sdist in another environment
+        id: sdist-test
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import subprocess
+          import sys
+          import venv
+          environment: Path = Path(os.environ['RUNNER_TEMP']) / 'sdist-installed'
+          venv.EnvBuilder(with_pip=True).create(environment)
+          python: Path = environment / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
+          subprocess.run([str(python), '-m', 'pip', 'install', '--disable-pip-version-check', '-r', 'requirements-dev.txt'], check=True)
+          wheels: list[Path] = list(Path('sdist-wheels').glob('*.whl'))
+          assert len(wheels) == 1, wheels
+          source: Path = next(Path('source-dist').glob('*.tar.gz'))
+          subprocess.run([str(python), '-m', 'pip', 'install', '--no-deps', str(wheels[0])], check=True)
+          subprocess.run([str(python), 'tools/release_artifacts.py', 'identity', '--kind', 'sdist', '--wheel', str(wheels[0]), '--sdist', str(source), '--output', 'validation-evidence/sdist-wheel-identity.json'], check=True)
+          subprocess.run([str(python), '-m', 'pytest', '-q', 'tests', '--junitxml=validation-evidence/python-sdist.xml'], check=True)
+          subprocess.run([str(python), '-m', 'pip', 'check'], check=True)
+          PY
+      - name: Stop only this job's owned servers
         if: always()
-        run: .venv/bin/python tools/mysql_fixture.py stop
-      - name: Save tested distributions
+        run: python tools/mysql_fixture.py stop
+      - name: Collect safe native server diagnostics
+        if: always()
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import shutil
+          root: Path = Path(os.environ['SQLAERO_TEST_MYSQL_ROOT'])
+          output: Path = Path('validation-evidence')
+          output.mkdir(exist_ok=True)
+          for label in ('84', '97'):
+              for name in ('initialize.log', 'server.log', 'launcher.log'):
+                  path: Path = root / label / name
+                  if path.is_file():
+                      shutil.copyfile(path, output / f'mysql-{label}-{name}')
+          PY
+      - name: Save the exact validated original wheel
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: distributions-${{ matrix.python }}
+          name: distributions-${{ matrix.platform.name }}-cp${{ matrix.python.minor }}
+          path: dist/*.whl
+          if-no-files-found: error
+          retention-days: 7
+      - name: Preserve the original and sdist evidence separately
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: validation-${{ matrix.platform.name }}-cp${{ matrix.python.minor }}
+          path: validation-evidence/
+          if-no-files-found: warn
+          retention-days: 7
+
+  bundle:
+    name: Validate the complete tested release bundle
+    needs: [source, build]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.13.17'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: distributions-*
+          merge-multiple: true
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: canonical-sdist
+          path: dist
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: validation-*
+          path: all-evidence
+      - name: Check all file and installation identities
+        shell: bash
+        run: |
+          set -euo pipefail
+          python tools/release_artifacts.py manifest --directory dist --identities all-evidence --output release-manifest.json
+          (cd dist && sha256sum * > ../SHA256SUMS)
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: validated-distributions
           path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-manifest
+          path: |
+            release-manifest.json
+            SHA256SUMS
           if-no-files-found: error
           retention-days: 7
 
   github-release:
+    name: Publish the exact tested Beta to GitHub
     if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: build
+    needs: bundle
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -113,19 +305,22 @@ jobs:
           persist-credentials: false
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: distributions-*
-          merge-multiple: true
+          name: validated-distributions
           path: dist
-      - name: Publish the tested alpha with its authored notes
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-manifest
+      - name: Verify the final bundle and publish the authored notes
         env:
           GH_TOKEN: ${{ github.token }}
+        shell: bash
         run: |
-          test "$(find dist -name '*.whl' | wc -l)" -eq 4
-          test "$(find dist -name '*.tar.gz' | wc -l)" -eq 1
-          sha256sum dist/* > SHA256SUMS
-          gh release create "$GITHUB_REF_NAME" dist/* SHA256SUMS --verify-tag --prerelease --title "SQLAero $GITHUB_REF_NAME" --notes-file "docs/releases/$GITHUB_REF_NAME.md"
+          set -euo pipefail
+          (cd dist && sha256sum --check ../SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" dist/* SHA256SUMS release-manifest.json --verify-tag --prerelease --title "SQLAero $GITHUB_REF_NAME" --notes-file "docs/releases/$GITHUB_REF_NAME.md"
 
   pypi-publish:
+    name: Publish the same 17 files through Trusted Publishing
     needs: github-release
     runs-on: ubuntu-24.04
     environment: pypi
@@ -134,8 +329,108 @@ jobs:
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          pattern: distributions-*
-          merge-multiple: true
+          name: validated-distributions
           path: dist
-      - name: Publish the same distributions through Trusted Publishing
+      - name: Publish the same validated distributions
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+
+  pypi-verify:
+    name: PyPI / ${{ matrix.platform.name }} / CPython ${{ matrix.python.version }}
+    needs: [source, pypi-publish]
+    runs-on: ${{ matrix.platform.runner }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        python:
+          - {version: '3.12.10', minor: '3.12'}
+          - {version: '3.13.17', minor: '3.13'}
+          - {version: '3.14.9', minor: '3.14'}
+          - {version: '3.15.1', minor: '3.15'}
+        platform:
+          - {name: macos-arm64, runner: macos-26, architecture: arm64}
+          - {name: macos-x86_64, runner: macos-15-intel, architecture: x64}
+          - {name: windows-x86_64, runner: windows-2022, architecture: x64}
+          - {name: linux-x86_64, runner: ubuntu-24.04, architecture: x64}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SQLAERO_NATIVE_MYSQL: '1'
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      RELEASE_VERSION: ${{ needs.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python.version }}
+          architecture: ${{ matrix.platform.architecture }}
+      - name: Prepare the shared native test environment
+        uses: ./.github/actions/native-environment
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-manifest
+      - name: Download the exact version from official PyPI and check its hash
+        id: pypi-download
+        run: |
+          set -euo pipefail
+          mkdir -p pypi-wheels validation-evidence
+          for attempt in 1 2 3 4 5 6; do
+            if python -m pip download --index-url https://pypi.org/simple --no-cache-dir --no-deps --only-binary=:all: "sqlaero==$RELEASE_VERSION" --dest pypi-wheels; then
+              break
+            fi
+            if [ "$attempt" -eq 6 ]; then exit 1; fi
+            sleep 10
+          done
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          manifest: dict[str, object] = json.loads(Path('release-manifest.json').read_text(encoding='utf-8'))
+          wheels: list[Path] = list(Path('pypi-wheels').glob('*.whl'))
+          assert len(wheels) == 1, wheels
+          wheel: Path = wheels[0]
+          record = next(row for row in manifest['wheels'] if row['file'] == wheel.name)
+          assert hashlib.sha256(wheel.read_bytes()).hexdigest() == record['sha256']
+          Path('validation-evidence/pypi-download.json').write_text(json.dumps({'index': 'https://pypi.org/simple', 'file': wheel.name, 'sha256': record['sha256']}, indent=2) + '\n', encoding='utf-8')
+          PY
+      - name: Install and verify the downloaded PyPI wheel
+        id: pypi-test
+        run: |
+          set -euo pipefail
+          python -m pip install --no-deps pypi-wheels/*.whl
+          python tools/release_artifacts.py identity --kind pypi --wheel pypi-wheels/*.whl --output validation-evidence/pypi-wheel-identity.json
+          python tools/mysql_fixture.py prepare > validation-evidence/mysql-instances.json
+          python -m pytest -q tests --junitxml=validation-evidence/python-pypi.xml
+          python -m pip check
+      - name: Verify the published canonical sdist bytes
+        if: matrix.platform.name == 'linux-x86_64' && matrix.python.minor == '3.13'
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          import urllib.request
+          manifest = json.loads(Path('release-manifest.json').read_text(encoding='utf-8'))
+          with urllib.request.urlopen(f"https://pypi.org/pypi/sqlaero/{manifest['version']}/json", timeout=30) as response:
+              files = json.load(response)['urls']
+          sdist = next(row for row in files if row['filename'] == manifest['sdist']['file'])
+          assert sdist['digests']['sha256'] == manifest['sdist']['sha256']
+          with urllib.request.urlopen(sdist['url'], timeout=60) as response:
+              raw = response.read()
+          assert hashlib.sha256(raw).hexdigest() == manifest['sdist']['sha256']
+          Path('validation-evidence/pypi-sdist.json').write_text(json.dumps({'url': sdist['url'], 'sha256': hashlib.sha256(raw).hexdigest()}, indent=2) + '\n', encoding='utf-8')
+          PY
+      - name: Stop only this job's owned servers
+        if: always()
+        run: python tools/mysql_fixture.py stop
+      - name: Preserve PyPI installation evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: pypi-validation-${{ matrix.platform.name }}-cp${{ matrix.python.minor }}
+          path: validation-evidence/
+          if-no-files-found: warn
+          retention-days: 7
