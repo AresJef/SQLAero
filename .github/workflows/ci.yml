@@ -71,6 +71,12 @@ jobs:
             if [ "$RUNNER_OS" = Linux ]; then
               sudo apt-get update -qq
               sudo apt-get install -y libaio1t64 libnuma1 libtinfo6
+              # The official generic MySQL tarball still requests the pre-t64
+              # SONAME. On amd64 this is the same ABI; keep the alias job-local.
+              mkdir -p "$RUNNER_TEMP/mysql-runtime"
+              ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 "$RUNNER_TEMP/mysql-runtime/libaio.so.1"
+              export LD_LIBRARY_PATH="$RUNNER_TEMP/mysql-runtime${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+              echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
             fi
             for pair in 84:8.4.13 97:9.7.4; do
               label="${pair%%:*}"

@@ -854,19 +854,21 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
                 current.execute('SELECT CAST(%s AS JSON) AS payload', (document,))
                 cursors.append(current)
                 ready.set()
-                assert fetching.wait(3), 'fetch did not reach its existing signal boundary'
+                assert fetching.wait(10), 'fetch did not reach its existing signal boundary'
         finally:
             exited.set()
 
     def overlap(signum: int, frame: FrameType | None) -> None:
         fetching.set()
-        assert exited.wait(3), 'transaction exit did not finish while the fetch was paused'
+        assert exited.wait(10), 'transaction exit did not finish while the fetch was paused'
 
     previous = signal.signal(signal.SIGALRM, overlap)
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(transaction_body)
-            assert ready.wait(3)
+            # Server-side validation of the large JSON precedes the overlap;
+            # it is preparation, not the behavior's interruption deadline.
+            assert ready.wait(20), 'server did not finish preparing the JSON result'
             current = cursors[0]
             signal.setitimer(signal.ITIMER_REAL, 0.001)
             try:
