@@ -161,7 +161,7 @@ jobs:
         run: |
           set -euo pipefail
           python tests/_native_signal.py
-          python -m pytest -q tests --junitxml=validation-evidence/python-original.xml
+          python tests/_native_signal.py --pytest -q tests --junitxml=validation-evidence/python-original.xml
           python -m pip check
       - name: Record the fixed diagnostic performance batches
         if: matrix.python.minor == '3.13'
@@ -209,7 +209,7 @@ jobs:
           source: Path = next(Path('source-dist').glob('*.tar.gz'))
           subprocess.run([str(python), '-m', 'pip', 'install', '--no-deps', str(wheels[0])], check=True)
           subprocess.run([str(python), 'tools/release_artifacts.py', 'identity', '--kind', 'sdist', '--wheel', str(wheels[0]), '--sdist', str(source), '--output', 'validation-evidence/sdist-wheel-identity.json'], check=True)
-          subprocess.run([str(python), '-m', 'pytest', '-q', 'tests', '--junitxml=validation-evidence/python-sdist.xml'], check=True)
+          subprocess.run([str(python), 'tests/_native_signal.py', '--pytest', '-q', 'tests', '--junitxml=validation-evidence/python-sdist.xml'], check=True)
           subprocess.run([str(python), '-m', 'pip', 'check'], check=True)
           PY
       - name: Stop only this job's owned servers
@@ -391,7 +391,7 @@ jobs:
           python -m pip install --no-deps pypi-wheels/*.whl
           python tools/release_artifacts.py identity --kind pypi --wheel pypi-wheels/*.whl --output validation-evidence/pypi-wheel-identity.json
           python tools/mysql_fixture.py prepare > validation-evidence/mysql-instances.json
-          python -m pytest -q tests --junitxml=validation-evidence/python-pypi.xml
+          python tests/_native_signal.py --pytest -q tests --junitxml=validation-evidence/python-pypi.xml
           python -m pip check
       - name: Verify the published canonical sdist bytes
         if: matrix.platform.name == 'linux-x86_64' && matrix.python.minor == '3.13'

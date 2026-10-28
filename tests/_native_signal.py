@@ -1,7 +1,8 @@
 """Deliver real OS signals while the tested extension can hold the Python GIL.
 
-POSIX keeps its existing interval timer. Windows uses a prestarted sender in a
-private console, so no event can reach the Actions runner or a user's console.
+POSIX keeps its existing interval timer. Windows starts the test interpreter in
+a private console before CPython registers its handlers, then uses a prestarted
+sender. No event can reach the Actions runner or a user's console.
 This is a test fixture only; production signal handling remains in CPython.
 """
 
@@ -18,14 +19,13 @@ import time
 from types import FrameType
 from typing import Any
 
-_console_ready: bool = False
 _win: Any = ctypes  # Windows-only ctypes exports are absent from non-Windows stubs.
 
 
 def _kernel() -> Any:
     """Bind only the documented Windows console API, with exact scalar types."""
     kernel = _win.WinDLL('kernel32', use_last_error=True)
-    for name in ('FreeConsole', 'AllocConsole'):
+    for name in ('FreeConsole',):
         function = getattr(kernel, name)
         function.argtypes = []
         function.restype = ctypes.c_int
@@ -39,17 +39,14 @@ def _kernel() -> Any:
 
 
 def _private_console() -> None:
-    """Detach only this test process before creating its isolated signal domain."""
-    global _console_ready
-    if _console_ready:
-        return
-    kernel = _kernel()
-    kernel.FreeConsole()
-    if not kernel.AllocConsole():
-        raise _win.WinError(_win.get_last_error())
-    if not kernel.SetConsoleCtrlHandler(None, False):
-        raise _win.WinError(_win.get_last_error())
-    _console_ready = True
+    """Require a console allocated before Python initialized its CRT handlers.
+
+    AllocConsole/AttachConsole reset Windows control handlers, so creating a
+    console inside the already running target interpreter would invalidate the
+    test. The CLI below owns process creation and keeps the runner separate.
+    """
+    if os.environ.get('SQLAERO_TEST_PRIVATE_CONSOLE') != '1':
+        raise RuntimeError('Windows signal tests require python tests/_native_signal.py --pytest ...')
 
 
 class NativeAlarm:
@@ -160,6 +157,21 @@ def _send(parent: int, event: int) -> None:
 if __name__ == '__main__':
     if len(sys.argv) == 4 and sys.argv[1] == '--sender':
         _send(int(sys.argv[2]), int(sys.argv[3]))
+    elif sys.argv[1:2] == ['--pytest']:
+        command = [sys.executable, '-m', 'pytest', *sys.argv[2:]]
+        if os.name == 'nt':
+            environment = {**os.environ, 'SQLAERO_TEST_PRIVATE_CONSOLE': '1'}
+            completed = subprocess.run(command, env=environment, stdin=subprocess.DEVNULL,
+                                       stdout=sys.stdout, stderr=sys.stderr,
+                                       creationflags=subprocess.CREATE_NEW_CONSOLE, check=False)
+            raise SystemExit(completed.returncode)
+        os.execv(sys.executable, command)
+    elif os.name == 'nt' and os.environ.get('SQLAERO_TEST_PRIVATE_CONSOLE') != '1':
+        environment = {**os.environ, 'SQLAERO_TEST_PRIVATE_CONSOLE': '1'}
+        completed = subprocess.run([sys.executable, str(Path(__file__).resolve())], env=environment,
+                                   stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,
+                                   creationflags=subprocess.CREATE_NEW_CONSOLE, timeout=10, check=False)
+        raise SystemExit(completed.returncode)
     else:
         hits: list[int] = []
         alarm = NativeAlarm(lambda number, _frame: hits.append(number))

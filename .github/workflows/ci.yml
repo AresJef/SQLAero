@@ -2,26 +2,28 @@ name: Native build checks
 
 on:
   push:
-    branches: [main, codex/rust-sync-kernel, codex/rust-sync-cross-platform-beta]
+    branches: [main, codex/rust-sync-kernel]
   pull_request:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Native probe target; use all for the four-platform preflight.
+        type: choice
+        default: all
+        options: [all, macos-arm64, macos-x86_64, windows-x86_64, linux-x86_64]
 
 permissions:
   contents: read
 
 jobs:
   native-smoke:
-    name: Native probe / ${{ matrix.platform.name }} / CPython 3.13
-    runs-on: ${{ matrix.platform.runner }}
+    name: Native probe / ${{ matrix.platform }} / CPython 3.13
+    runs-on: ${{ fromJSON('{"macos-arm64":"macos-26","macos-x86_64":"macos-15-intel","windows-x86_64":"windows-2022","linux-x86_64":"ubuntu-24.04"}')[matrix.platform] }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        platform:
-          - {name: macos-arm64, runner: macos-26, architecture: arm64}
-          - {name: macos-x86_64, runner: macos-15-intel, architecture: x64}
-          - {name: windows-x86_64, runner: windows-2022, architecture: x64}
-          - {name: linux-x86_64, runner: ubuntu-24.04, architecture: x64}
+        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-arm64","macos-x86_64","windows-x86_64","linux-x86_64"]') }}
     defaults:
       run:
         shell: bash
@@ -36,7 +38,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13.17"
-          architecture: ${{ matrix.platform.architecture }}
+          architecture: ${{ matrix.platform == 'macos-arm64' && 'arm64' || 'x64' }}
       - name: Prepare the shared native test environment
         uses: ./.github/actions/native-environment
       - name: Verify native sources
@@ -96,7 +98,7 @@ jobs:
           PY
           python tools/mysql_fixture.py prepare > probe-evidence/mysql-instances.json
           python tests/_native_signal.py
-          python -m pytest -q tests --junitxml=probe-evidence/python-tests.xml
+          python tests/_native_signal.py --pytest -q tests --junitxml=probe-evidence/python-tests.xml
           python -m pip check
       - name: Stop only this job's isolated servers
         if: always()
@@ -108,7 +110,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: native-probe-${{ matrix.platform.name }}-cp313
+          name: native-probe-${{ matrix.platform }}-cp313
           path: probe-evidence/
           if-no-files-found: warn
           retention-days: 7

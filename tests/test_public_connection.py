@@ -1398,7 +1398,9 @@ finally:
 '''
     code = 'import sys; sys.path.insert(0, ' + repr(str(Path(__file__).resolve().parent)) + ')\n' + code
     completed = subprocess.run([sys.executable, '-c', code, str(ROOT), label, mode],
-                               capture_output=True, text=True, timeout=8, check=False)
+                               capture_output=True, text=True, timeout=8, check=False,
+                               creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == 'nt' else 0,
+                               env={**os.environ, 'SQLAERO_TEST_PRIVATE_CONSOLE': '1'})
     assert completed.returncode == 0, (completed.stdout, completed.stderr)
     proof: dict[str, object] = json.loads(completed.stdout)
     assert proof['closed'] is True and proof['mode'] == mode and proof['label'] == label

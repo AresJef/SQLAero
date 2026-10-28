@@ -246,7 +246,12 @@ pub(super) fn verify(
     }
     let chain = Chain(chain);
     let mut hostname: Option<Vec<u16>> = name.map(|name| {
-        name.to_str()
+        // Match the selected platform verifier's public DNS policy: the final
+        // root label does not change the identity, but Crypt32 compares it
+        // literally. ServerName has already validated the original name.
+        let text = name.to_str();
+        text.strip_suffix('.')
+            .unwrap_or(&text)
             .encode_utf16()
             .chain(std::iter::once(0))
             .collect()

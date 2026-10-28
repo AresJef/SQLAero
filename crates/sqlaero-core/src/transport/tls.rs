@@ -540,6 +540,12 @@ mod tests {
                 .verify_server_cert(&chain[0], &[], &name, &[], now)
                 .is_ok()
         );
+        let absolute = rustls_pki_types::ServerName::try_from("localhost.").unwrap();
+        assert!(
+            identity
+                .verify_server_cert(&chain[0], &[], &absolute, &[], now)
+                .is_ok()
+        );
         assert!(
             identity
                 .verify_server_cert(&chain[0], &[], &wrong, &[], now)
