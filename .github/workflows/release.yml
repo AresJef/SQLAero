@@ -1,10 +1,16 @@
 name: Build and publish native distributions
 
 on:
-  pull_request:
+  # PRs run the four native probes in ci.yml. The complete 16-way release
+  # matrix runs explicitly, so publishing never repeats a successful PR build.
   push:
     tags: ["v*"]
   workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the exact tested bundle after all gates; main branch only.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -282,8 +288,8 @@ jobs:
 
   github-release:
     name: Publish the exact tested Beta to GitHub
-    if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: bundle
+    if: (github.event_name == 'push' && github.ref_type == 'tag') || (github.event_name == 'workflow_dispatch' && inputs.publish && github.ref == 'refs/heads/main')
+    needs: [source, bundle]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -301,11 +307,22 @@ jobs:
       - name: Verify the final bundle and publish the authored notes
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_VERSION: ${{ needs.source.outputs.version }}
         shell: bash
         run: |
           set -euo pipefail
           (cd dist && sha256sum --check ../SHA256SUMS)
-          gh release create "$GITHUB_REF_NAME" dist/* SHA256SUMS release-manifest.json --verify-tag --prerelease --title "SQLAero $GITHUB_REF_NAME" --notes-file "docs/releases/$GITHUB_REF_NAME.md"
+          release_tag="v$RELEASE_VERSION"
+          if [[ "$GITHUB_REF_TYPE" != tag ]]; then
+            # The full matrix and local preflight precede this job. Creating
+            # the tag here publishes the already tested files, without a second
+            # rebuild; the scoped GITHUB_TOKEN does not start another tag run.
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/tags/$release_tag" -f "sha=$GITHUB_SHA"
+          else
+            test "$GITHUB_REF_NAME" = "$release_tag"
+          fi
+          gh release create "$release_tag" dist/* SHA256SUMS release-manifest.json --verify-tag --prerelease --title "SQLAero $release_tag" --notes-file "docs/releases/$release_tag.md"
 
   pypi-publish:
     name: Publish the same 17 files through Trusted Publishing
