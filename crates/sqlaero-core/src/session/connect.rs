@@ -261,7 +261,14 @@ impl Establish {
             if self.phase == Phase::Socket {
                 if self.channel.is_none() {
                     let transport = match &self.params.endpoint {
+                        #[cfg(unix)]
                         Endpoint::Unix(path) => Transport::unix(path),
+                        #[cfg(not(unix))]
+                        Endpoint::Unix(_) => {
+                            return Err(ConnectError::Unsupported(
+                                "unix_socket is not supported on this platform; use host and port for TCP",
+                            ));
+                        }
                         Endpoint::Tcp { .. } => {
                             let address =
                                 self.addresses

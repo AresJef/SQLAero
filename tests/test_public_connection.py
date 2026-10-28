@@ -18,6 +18,16 @@ from sqlaero.errors import InterfaceError, ProgrammingError
 _JSON_SIGNAL_IDS = count(7812394560000)
 
 
+@pytest.mark.skipif(os.name != 'nt', reason='Windows explicitly rejects the Unix-only transport')
+def test_windows_unix_socket_is_rejected_without_tcp_fallback(tmp_path: Path) -> None:
+    from sqlaero.errors import NotSupportedError, SQLAeroErrorCode
+
+    with pytest.raises(NotSupportedError, match='unix_socket.*host and port') as caught:
+        connect(user='unopened', unix_socket=tmp_path / 'unopened.sock', ssl=SSL(mode='DISABLED'))
+    assert caught.value.code == SQLAeroErrorCode.UNSUPPORTED_CAPABILITY
+    assert caught.value.is_server_error is False
+
+
 class PreparationReached(Exception):
     """Stop accepted configuration at the existing PathLike boundary."""
 
