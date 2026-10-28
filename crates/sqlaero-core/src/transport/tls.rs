@@ -11,12 +11,19 @@ use std::sync::Arc;
 // Apple wrapper owns its certificates and implements Send + Sync upstream.
 #[cfg(target_vendor = "apple")]
 type TrustAnchor = security_framework::certificate::SecCertificate;
-#[cfg(not(target_vendor = "apple"))]
-type TrustAnchor = CertificateDer<'static>;
+#[cfg(target_vendor = "apple")]
+type PreparedRoots = Vec<TrustAnchor>;
+#[cfg(windows)]
+type PreparedRoots = Vec<CertificateDer<'static>>;
+#[cfg(not(any(target_vendor = "apple", windows)))]
+type PreparedRoots = rustls::RootCertStore;
+
+#[cfg(windows)]
+mod windows;
 
 fn prepare_anchors(
     certificates: Vec<CertificateDer<'static>>,
-) -> Result<Vec<TrustAnchor>, ConfigError> {
+) -> Result<PreparedRoots, ConfigError> {
     if certificates.is_empty() {
         return Err(ConfigError::Invalid("ca_file contains no trust anchors"));
     }
@@ -33,7 +40,44 @@ fn prepare_anchors(
     }
     #[cfg(not(target_vendor = "apple"))]
     {
-        Ok(certificates)
+        // Validate and prepare DER at the configuration boundary. The Linux
+        // verifier borrows this store; it does not reload or reparse CA files
+        // while advancing the connection state machine.
+        let mut store = rustls::RootCertStore::empty();
+        for certificate in &certificates {
+            store.add(certificate.clone()).map_err(|_| {
+                ConfigError::Invalid("ca_file contains an invalid X.509 certificate")
+            })?;
+        }
+        #[cfg(windows)]
+        return Ok(certificates);
+        #[cfg(not(windows))]
+        return Ok(store);
+    }
+}
+
+fn system_ca_policy() -> Result<Policy, ConfigError> {
+    #[cfg(any(target_vendor = "apple", windows))]
+    {
+        Ok(Policy::SystemCa)
+    }
+    #[cfg(not(any(target_vendor = "apple", windows)))]
+    {
+        // This is the same native-root loader used by the existing default
+        // rustls-platform-verifier on these targets. Partial loader errors do
+        // not discard other usable roots, but an empty store is never trusted.
+        let loaded = rustls_native_certs::load_native_certs();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add_parsable_certificates(loaded.certs);
+        if roots.is_empty() {
+            return Err(ConfigError::Invalid(
+                "the system trust store contains no usable trust anchors",
+            ));
+        }
+        Ok(Policy::Explicit {
+            roots,
+            check_name: false,
+        })
     }
 }
 
@@ -258,7 +302,7 @@ pub fn client_config(
         }),
         (Mode::VerifyCa, None) => Arc::new(PolicyVerifier {
             provider: Arc::clone(&provider),
-            policy: Policy::SystemCa,
+            policy: system_ca_policy()?,
         }),
         (_, Some(certificates)) => Arc::new(PolicyVerifier {
             provider: Arc::clone(&provider),
@@ -293,9 +337,10 @@ pub fn client_config(
 enum Policy {
     Required,
     Explicit {
-        roots: Vec<TrustAnchor>,
+        roots: PreparedRoots,
         check_name: bool,
     },
+    #[cfg(any(target_vendor = "apple", windows))]
     SystemCa,
 }
 
@@ -326,6 +371,7 @@ impl rustls::client::danger::ServerCertVerifier for PolicyVerifier {
                     now,
                 )?;
             }
+            #[cfg(any(target_vendor = "apple", windows))]
             Policy::SystemCa => {
                 verify_platform_trust(end, intermediates, None, None, ocsp, now)?;
             }
@@ -370,7 +416,7 @@ fn verify_platform_trust(
     end: &CertificateDer<'_>,
     intermediates: &[CertificateDer<'_>],
     name: Option<&rustls_pki_types::ServerName<'_>>,
-    anchors: Option<&[TrustAnchor]>,
+    anchors: Option<&PreparedRoots>,
     ocsp: &[u8],
     now: rustls_pki_types::UnixTime,
 ) -> Result<(), rustls::Error> {
@@ -418,25 +464,55 @@ fn verify_platform_trust(
         .map_err(|error| rustls::Error::General(error.to_string()))
 }
 
-#[cfg(not(target_vendor = "apple"))]
+#[cfg(not(any(target_vendor = "apple", windows)))]
 fn verify_platform_trust(
-    _end: &CertificateDer<'_>,
-    _intermediates: &[CertificateDer<'_>],
-    _name: Option<&rustls_pki_types::ServerName<'_>>,
-    _anchors: Option<&[TrustAnchor]>,
+    end: &CertificateDer<'_>,
+    intermediates: &[CertificateDer<'_>],
+    name: Option<&rustls_pki_types::ServerName<'_>>,
+    anchors: Option<&PreparedRoots>,
     _ocsp: &[u8],
-    _now: rustls_pki_types::UnixTime,
+    now: rustls_pki_types::UnixTime,
 ) -> Result<(), rustls::Error> {
-    Err(rustls::Error::General(
-        "platform SSL trust validation requires the supported Apple transport adapter".to_owned(),
-    ))
+    let roots = anchors.ok_or_else(|| {
+        rustls::Error::General("system trust anchors were not prepared".to_owned())
+    })?;
+    let certificate = rustls::server::ParsedCertificate::try_from(end)?;
+    rustls::client::verify_server_cert_signed_by_trust_anchor(
+        &certificate,
+        roots,
+        intermediates,
+        now,
+        provider().signature_verification_algorithms.all,
+    )?;
+    if let Some(name) = name {
+        rustls::client::verify_server_name(&certificate, name)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn verify_platform_trust(
+    end: &CertificateDer<'_>,
+    intermediates: &[CertificateDer<'_>],
+    name: Option<&rustls_pki_types::ServerName<'_>>,
+    anchors: Option<&PreparedRoots>,
+    ocsp: &[u8],
+    now: rustls_pki_types::UnixTime,
+) -> Result<(), rustls::Error> {
+    windows::verify(
+        end,
+        intermediates,
+        name,
+        anchors.map(Vec::as_slice),
+        ocsp,
+        now,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[cfg(target_vendor = "apple")]
     #[test]
     #[ignore = "requires the owned MySQL fixture certificate material"]
     fn explicit_roots_keep_platform_ssl_name_usage_and_time_policy() {

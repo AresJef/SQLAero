@@ -55,12 +55,21 @@ def config_path(path: Path) -> str:
 
 
 def run(command: list[str], *, data: str | None = None) -> str:
-    """Run a fixture command without exposing SQL or credentials on failure."""
+    """Report a native command failure while redacting fixture passwords."""
     result = subprocess.run(command, input=data, text=True, encoding='utf-8',
                             capture_output=True, check=False, timeout=90)
     if result.returncode:
+        detail = result.stderr.strip()
+        for label in VERSIONS:
+            state_file = ROOT / label / 'state.json'
+            if state_file.is_file():
+                state: dict[str, Any] = json.loads(state_file.read_text())
+                for name in ('root_password', 'test_password'):
+                    password = state.get(name)
+                    if isinstance(password, str) and password:
+                        detail = detail.replace(password, '<redacted>')
         raise RuntimeError(f'{Path(command[0]).name} failed (exit {result.returncode}); '
-                           'inspect the private fixture logs')
+                           + detail[-2000:])
     return result.stdout
 
 
@@ -80,11 +89,18 @@ def certificates() -> Path:
     openssl = os.environ.get('SQLAERO_OPENSSL') or shutil.which('openssl')
     if not openssl:
         raise RuntimeError('Set SQLAERO_OPENSSL or provide OpenSSL on PATH')
+    configuration = directory / 'openssl.cnf'
+    write_private(configuration, '[req]\ndistinguished_name=dn\nprompt=no\n'
+                  '[dn]\nCN=SQLAero isolated test CA\n'
+                  '[ca_extensions]\nbasicConstraints=critical,CA:TRUE\n'
+                  'keyUsage=critical,keyCertSign,cRLSign\nsubjectKeyIdentifier=hash\n')
     run([openssl, 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '7',
+         '-config', str(configuration), '-extensions', 'ca_extensions',
          '-subj', '/CN=SQLAero isolated test CA', '-keyout', str(directory / 'ca-key.pem'),
          '-out', str(directory / 'ca.pem')])
     for name, usage in [('server', 'serverAuth'), ('client', 'clientAuth')]:
         run([openssl, 'req', '-new', '-newkey', 'rsa:2048', '-nodes',
+             '-config', str(configuration),
              '-subj', f'/CN=SQLAero {name}', '-keyout', str(directory / f'{name}-key.pem'),
              '-out', str(directory / f'{name}.csr')])
         extensions = directory / f'{name}.ext'

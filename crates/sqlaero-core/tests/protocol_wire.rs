@@ -4,6 +4,7 @@ use sqlaero_core::protocol::{framing, packets};
 use sqlaero_core::transport::deadline::{Direction, IoBudget, TimeoutKind};
 use sqlaero_core::transport::socket::Transport;
 use std::net::SocketAddr;
+#[cfg(unix)]
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -47,17 +48,21 @@ fn greeting(mut transport: Transport, prefix: &[u8]) {
 #[test]
 #[ignore = "requires the two isolated local MySQL servers"]
 fn both_mysql_lines_provide_a_valid_protocol_10_greeting() {
+    #[cfg(unix)]
     let root = std::env::var_os("SQLAERO_TEST_MYSQL_ROOT")
         .map(PathBuf::from)
         .expect("set SQLAERO_TEST_MYSQL_ROOT to the isolated fixture directory");
     for (port, prefix) in [(13384, b"8.4.".as_slice()), (13397, b"9.7.".as_slice())] {
         let address = SocketAddr::from(([127, 0, 0, 1], port));
         greeting(Transport::tcp(address).unwrap(), prefix);
-        let label = if port == 13384 { "84" } else { "97" };
-        greeting(
-            Transport::unix(&root.join(format!("{label}.sock"))).unwrap(),
-            prefix,
-        );
+        #[cfg(unix)]
+        {
+            let label = if port == 13384 { "84" } else { "97" };
+            greeting(
+                Transport::unix(&root.join(format!("{label}.sock"))).unwrap(),
+                prefix,
+            );
+        }
     }
 }
 

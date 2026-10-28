@@ -90,6 +90,9 @@ jobs:
               else
                 tar -xf "$RUNNER_TEMP/$archive" -C "$destination"
               fi
+              if [ "$RUNNER_OS" = Linux ]; then
+                ldd "$destination"/*/bin/mysqld
+              fi
               MYSQL_LABEL="$label" MYSQL_DIRECTORY="$destination" MYSQL_ARCHIVE="$RUNNER_TEMP/$archive" python - <<'PY'
           import hashlib
           import os

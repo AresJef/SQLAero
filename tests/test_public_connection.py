@@ -134,8 +134,13 @@ def live(label: str, **overrides: Any) -> Connection:
     secret: dict[str, str] = json.loads((ROOT / label / 'state.json').read_text())
     settings: dict[str, Any] = {
         'user': 'sqlaero', 'password': secret['test_password'], 'database': 'sqlaero_test',
-        'unix_socket': ROOT / f'{label}.sock', 'operation_timeout': 5,
+        'operation_timeout': 5,
     }
+    if os.name == 'nt':
+        settings.update(host='127.0.0.1', port=int(secret['port']),
+                        ssl=SSL(ca_file=ROOT / 'tls/ca.pem'))
+    else:
+        settings['unix_socket'] = ROOT / f'{label}.sock'
     settings.update(overrides)
     return connect(**settings)
 

@@ -1261,11 +1261,13 @@ dependencies = [
  "pkcs8",
  "regex",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "rustls-platform-verifier",
  "security-framework",
  "socket2",
  "thiserror",
+ "windows-sys 0.61.2",
  "zeroize",
  "zmij",
 ]
