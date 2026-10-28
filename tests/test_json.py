@@ -6,6 +6,7 @@ import math
 from typing import Any, cast
 
 import pytest
+from _native_signal import NativeAlarm
 
 from sqlaero import _sqlaero
 
@@ -66,7 +67,6 @@ def test_json_bigint_keeps_its_bound_independent_of_python_text_conversion_limit
 def test_json_checks_signals_before_a_single_large_value_completes(escaped: bool) -> None:
     """Observe a real handler inside one value, without a timing-based SLA."""
     import gc
-    import signal
     from types import FrameType
 
     marker = 8712394560123 + int(escaped)
@@ -76,7 +76,7 @@ def test_json_checks_signals_before_a_single_large_value_completes(escaped: bool
     observed: list[int] = []
 
     def inspect_progress(_signum: int, _frame: FrameType | None) -> None:
-        signal.setitimer(signal.ITIMER_REAL, 0)
+        alarm.start(0)
         if observed:
             return
         for value in gc.get_objects():
@@ -85,21 +85,20 @@ def test_json_checks_signals_before_a_single_large_value_completes(escaped: bool
             candidate = cast(list[object], value)
             if len(candidate) in (1, 2) and type(candidate[0]) is int and candidate[0] == marker:
                 observed.append(len(candidate))
-                signal.setitimer(signal.ITIMER_REAL, 0)
+                alarm.start(0)
                 raise original
-        signal.setitimer(signal.ITIMER_REAL, 0.0001)
+        alarm.start(0.0001)
 
-    previous = signal.signal(signal.SIGALRM, inspect_progress)
+    alarm = NativeAlarm(inspect_progress)
     try:
         with pytest.raises(ValueError) as caught:
-            signal.setitimer(signal.ITIMER_REAL, 0.0001)
+            alarm.start(0.0001)
             decode(payload)
         assert caught.value is original
         assert observed == [1], 'the handler ran only after the whole value was constructed'
         assert not hasattr(original, 'error_info')
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        alarm.close()
 
 
 @pytest.mark.parametrize('offset', [0, 1, 2, 3, 4, 5, 6])
@@ -163,7 +162,8 @@ print('native allocation failures propagated as MemoryError:', failures)
         'numbers': b'[0.1,1234567,1000000000000000000000000]',
     }[kind]
     source = source.replace('PAYLOAD', repr(payload))
-    result = subprocess.run([sys.executable, '-c', source], text=True,
+    # Large fault-injection inputs must not depend on OS command-line limits.
+    result = subprocess.run([sys.executable, '-'], input=source, text=True,
                             capture_output=True, timeout=15, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'propagated as MemoryError' in result.stdout

@@ -155,6 +155,7 @@ jobs:
           Path('probe-evidence/installed-identity.json').write_text(json.dumps({'wheel': wheel.name, 'version': version('sqlaero'), 'package': sqlaero.__file__, 'native': str(native), 'native_sha256': hashlib.sha256(native.read_bytes()).hexdigest()}, indent=2) + '\n')
           PY
           python tools/mysql_fixture.py prepare > probe-evidence/mysql-instances.json
+          python tests/_native_signal.py
           python -m pytest -q tests --junitxml=probe-evidence/python-tests.xml
           python -m pip check
       - name: Stop only this job's isolated servers

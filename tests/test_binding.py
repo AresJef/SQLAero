@@ -3,9 +3,9 @@
 # pyright: reportPrivateUsage=false
 
 from datetime import datetime, timedelta, tzinfo
-import signal
 from types import FrameType
 import pytest
+from _native_signal import NativeAlarm
 from sqlaero import _sqlaero
 from sqlaero._sqlaero import DataError, ProgrammingError, OperationalTimeoutError
 
@@ -145,21 +145,19 @@ class InterruptedBinding(Exception):
     """An actual user signal exception, preserved without library wrapping."""
 
 
-@pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="POSIX signal fixture")
 def test_large_binding_returns_to_python_signal_checks() -> None:
     source = "'" * (16 * 1024 * 1024)
 
     def interrupt(signum: int, frame: FrameType | None) -> None:
         raise InterruptedBinding("original signal handler")
 
-    previous = signal.signal(signal.SIGALRM, interrupt)
+    alarm = NativeAlarm(interrupt)
     try:
-        signal.setitimer(signal.ITIMER_REAL, 0.005)
+        alarm.start(0.005)
         with pytest.raises(InterruptedBinding, match="original signal handler"):
             _sqlaero._bind_sql("SELECT %s", [source])
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        alarm.close()
 
 
 def test_failure_summaries_are_bounded_and_keep_source_unicode_error_identity() -> None:

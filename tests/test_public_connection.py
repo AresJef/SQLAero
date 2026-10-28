@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import pytest
+from _native_signal import NativeAlarm
 from sqlaero import Connection, Cursor, SSL, connect
 from sqlaero.errors import InterfaceError, ProgrammingError
 
@@ -833,7 +834,6 @@ def test_independent_cursor_then_connection_cleanup_failures_keep_actual_order(c
 def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fetch(connection: Connection) -> None:
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
-    import signal
     from types import FrameType
     from sqlaero.errors import InterfaceBusyError
 
@@ -862,7 +862,7 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
         fetching.set()
         assert exited.wait(10), 'transaction exit did not finish while the fetch was paused'
 
-    previous = signal.signal(signal.SIGALRM, overlap)
+    alarm = NativeAlarm(overlap)
     try:
         with ThreadPoolExecutor(max_workers=1) as executor:
             future = executor.submit(transaction_body)
@@ -870,11 +870,11 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
             # it is preparation, not the behavior's interruption deadline.
             assert ready.wait(20), 'server did not finish preparing the JSON result'
             current = cursors[0]
-            signal.setitimer(signal.ITIMER_REAL, 0.001)
+            alarm.start(0.001)
             try:
                 row = current.fetchone()
             finally:
-                signal.setitimer(signal.ITIMER_REAL, 0)
+                alarm.start(0)
             assert fetching.is_set()
             assert row is not None and isinstance(row[0], list)
             payload = cast(list[int], row[0])
@@ -896,8 +896,7 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
             check.execute(f'SELECT id FROM {name}')
             assert check.fetchall() == ((1,),)
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        alarm.close()
         setup.execute(f'DROP TABLE IF EXISTS {name}')
 
 
@@ -1128,7 +1127,6 @@ def test_large_json_signal_preserves_real_fetch_state(
 ) -> None:
     """Check real native progress, reentry and all shared fetch commit boundaries."""
     import gc
-    import signal
     from types import FrameType
     from sqlaero.errors import InterfaceBusyError
 
@@ -1158,7 +1156,7 @@ def test_large_json_signal_preserves_real_fetch_state(
     observed: list[int] = []
 
     def handler(_signum: int, _frame: FrameType | None) -> None:
-        signal.setitimer(signal.ITIMER_REAL, 0)
+        alarm.start(0)
         if observed:
             return
         for value in gc.get_objects():
@@ -1166,7 +1164,7 @@ def test_large_json_signal_preserves_real_fetch_state(
                 continue
             candidate = cast(list[object], value)
             if len(candidate) in (1, 2) and type(candidate[0]) is int and candidate[0] == marker + 1:
-                signal.setitimer(signal.ITIMER_REAL, 0)
+                alarm.start(0)
                 observed.append(len(candidate))
                 if handler_mode == 'reenter':
                     with pytest.raises(InterfaceBusyError):
@@ -1174,13 +1172,13 @@ def test_large_json_signal_preserves_real_fetch_state(
                 if handler_mode in ('raise', 'custom', 'keyboard', 'memory'):
                     raise original
                 return
-        signal.setitimer(signal.ITIMER_REAL, 0.0001)
+        alarm.start(0.0001)
 
-    previous = signal.signal(signal.SIGALRM, handler)
+    alarm = NativeAlarm(handler)
     result: object = None
     try:
         try:
-            signal.setitimer(signal.ITIMER_REAL, 0.0001)
+            alarm.start(0.0001)
             if method == 'fetchone': result = cursor.fetchone()
             elif method == 'fetchmany': result = cursor.fetchmany(2)
             elif method == 'fetchall': result = cursor.fetchall()
@@ -1190,8 +1188,7 @@ def test_large_json_signal_preserves_real_fetch_state(
         else:
             assert handler_mode in ('return', 'reenter')
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        alarm.close()
     assert observed == [1]
     assert cursor.rowcount == 2 and saved.names == ('payload',)
     if handler_mode in ('raise', 'custom', 'keyboard', 'memory'):
@@ -1267,22 +1264,22 @@ def test_direct_commit_lost_confirmation_reports_unknown_without_replay(label: s
     import select
     import socket
     import time as clock_time
-    from tempfile import TemporaryDirectory
     from sqlaero.errors import OperationalError
 
     observed: list[str] = []
-    with TemporaryDirectory(prefix='ack-', dir=ROOT) as directory, live(label) as observer, socket.socket(socket.AF_UNIX) as listener, ThreadPoolExecutor(max_workers=1) as executor:
-        endpoint = Path(directory) / 'commit.sock'
-        listener.bind(str(endpoint))
+    with live(label) as observer, socket.socket() as listener, ThreadPoolExecutor(max_workers=1) as executor:
+        state: dict[str, str] = json.loads((ROOT / label / 'state.json').read_text())
+        listener.bind(('127.0.0.1', 0))
+        endpoint = listener.getsockname()
         listener.listen(1)
         listener.settimeout(3)
 
         def drop_only_commit_ack() -> None:
             """Forward real local packets, then withhold one actual COMMIT OK."""
-            with listener.accept()[0] as client, socket.socket(socket.AF_UNIX) as server:
+            with listener.accept()[0] as client, socket.socket() as server:
                 server.settimeout(3)
                 client.settimeout(3)
-                server.connect(str(ROOT / f'{label}.sock'))
+                server.connect(('127.0.0.1', int(state['port'])))
 
                 def receive_exact(peer: socket.socket, size: int) -> bytes:
                     data = bytearray()
@@ -1316,7 +1313,9 @@ def test_direct_commit_lost_confirmation_reports_unknown_without_replay(label: s
                 raise TimeoutError('the fixed COMMIT acknowledgement was not observed')
 
         future = executor.submit(drop_only_commit_ack)
-        value = live(label, unix_socket=endpoint, autocommit=False, connect_timeout=3)
+        value = live(label, unix_socket=None, host=endpoint[0], port=endpoint[1],
+                     ssl=SSL(mode='DISABLED'), server_public_key_path=ROOT / label / 'data/public_key.pem',
+                     autocommit=False, connect_timeout=3)
         name = f'sqlaero_commit_ack_{value.connection_id}'
         check = observer.cursor()
         check.execute(f'CREATE TABLE {name}(id INT PRIMARY KEY) ENGINE=InnoDB')
@@ -1353,8 +1352,12 @@ from sqlaero import connect
 from sqlaero.errors import OperationalError
 root = Path(sys.argv[1]); label = sys.argv[2]; mode = sys.argv[3]
 secret: dict[str, str] = json.loads((root / label / 'state.json').read_text())
-connection = connect(user='sqlaero', password=secret['test_password'], database='sqlaero_test',
-                     unix_socket=root / f'{label}.sock')
+settings: dict[str, Any] = {'user': 'sqlaero', 'password': secret['test_password'], 'database': 'sqlaero_test'}
+if os.name == 'nt':
+    settings.update(host='127.0.0.1', port=int(secret['port']), ssl=SSL(ca_file=root / 'tls/ca.pem'))
+else:
+    settings['unix_socket'] = root / f'{label}.sock'
+connection = connect(**settings)
 retained = connection.cursor(); retained.execute('SELECT 7')
 cursor = connection.cursor()
 original: OperationalError | None = OperationalError('original signal handler', code=777888, is_server_error=False) if mode == 'custom' else None
@@ -1363,9 +1366,15 @@ def interrupted(signum: int, frame: FrameType | None) -> None:
     assert original is not None
     raise original
 
-signal.signal(signal.SIGINT, interrupted if mode == 'custom' else signal.default_int_handler)
-timer = threading.Timer(0.1, os.kill, args=(os.getpid(), signal.SIGINT))
-start = time.monotonic(); timer.start()
+handler = interrupted if mode == 'custom' else signal.default_int_handler
+if os.name == 'nt':
+    timer = NativeAlarm(handler, sigint=True)
+else:
+    signal.signal(signal.SIGINT, handler)
+    timer = threading.Timer(0.1, os.kill, args=(os.getpid(), signal.SIGINT))
+start = time.monotonic()
+if os.name == 'nt': timer.start(0.1)
+else: timer.start()
 try:
     cursor.execute('SELECT SLEEP(5)')
 except BaseException as error:
@@ -1383,8 +1392,11 @@ except BaseException as error:
 else:
     raise AssertionError('the actual SIGINT did not interrupt the native wait')
 finally:
-    timer.cancel(); timer.join(); connection.close()
+    if os.name == 'nt': timer.close()
+    else: timer.cancel(); timer.join()
+    connection.close()
 '''
+    code = 'import sys; sys.path.insert(0, ' + repr(str(Path(__file__).resolve().parent)) + ')\n' + code
     completed = subprocess.run([sys.executable, '-c', code, str(ROOT), label, mode],
                                capture_output=True, text=True, timeout=8, check=False)
     assert completed.returncode == 0, (completed.stdout, completed.stderr)

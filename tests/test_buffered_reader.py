@@ -2,12 +2,12 @@
 
 # pyright: reportPrivateUsage=false
 
-import signal
 import sys
 from types import FrameType
 from datetime import time
 from typing import Any, cast
 import pytest
+from _native_signal import NativeAlarm
 from sqlaero._sqlaero import _Rows, _rows_from_packets, DataError, InterfaceBusyError, InterfaceError
 
 # Hosted macOS may deliver a real timer after its requested 1 ms. Keep both
@@ -21,7 +21,9 @@ def length(data: bytes) -> bytes:
         return bytes([count]) + data
     if count < 65536:
         return b"\xfc" + count.to_bytes(2, "little") + data
-    return b"\xfd" + count.to_bytes(3, "little") + data
+    if count < 1 << 24:
+        return b"\xfd" + count.to_bytes(3, "little") + data
+    return b"\xfe" + count.to_bytes(8, "little") + data
 
 
 def column(name: str, type_code: int = 3, collation_id: int = 63) -> bytes:
@@ -154,7 +156,7 @@ class Interrupted(Exception):
 @pytest.mark.parametrize('interrupt', [True, False], ids=['interrupt', 'continue'])
 def test_single_large_json_checks_signals_before_finishing_the_field(shape: str, interrupt: bool) -> None:
     """Observe partial native work, rather than imposing a timer precision SLA."""
-    count = 300_000
+    count = 1_000_000
     document = (b'[' + b'123456789,' * (count - 1) + b'123456789]' if shape == 'array'
                 else b'{' + b','.join(f'"k{index}":123456789'.encode('ascii')
                                      for index in range(count)) + b'}')
@@ -174,10 +176,10 @@ def test_single_large_json_checks_signals_before_finishing_the_field(shape: str,
         if interrupt:
             raise original
 
-    previous = signal.signal(signal.SIGALRM, check_progress)
+    alarm = NativeAlarm(check_progress)
     result: tuple[Any, ...] | None = None
     try:
-        signal.setitimer(signal.ITIMER_REAL, 0.001, 0.001)
+        alarm.start(0.001, 0.001)
         if interrupt:
             with pytest.raises(Interrupted) as caught:
                 value.fetchone()
@@ -186,8 +188,7 @@ def test_single_large_json_checks_signals_before_finishing_the_field(shape: str,
         else:
             result = cast(tuple[Any, ...], value.fetchone())
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        alarm.close()
     assert observed and 1024 <= observed[0] < count // 2, observed
     if interrupt:
         result = cast(tuple[Any, ...], value.fetchone())
@@ -201,15 +202,14 @@ def test_interrupted_output_releases_temporaries_and_does_not_commit() -> None:
     def interrupt(signum: int, frame: FrameType | None) -> None:
         raise original
 
-    previous = signal.signal(signal.SIGALRM, interrupt)
+    alarm = NativeAlarm(interrupt)
     try:
-        signal.setitimer(signal.ITIMER_REAL, 0.001)
+        alarm.start(0.001)
         with pytest.raises(Interrupted) as caught:
             value.fetchall()
         assert caught.value is original
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        alarm.close()
     assert value.position == 0
     assert value.fetchone() == (1,)
 
@@ -225,13 +225,12 @@ def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable(
         except InterfaceBusyError:
             observed.append("busy")
 
-    previous = signal.signal(signal.SIGALRM, overlap)
+    alarm = NativeAlarm(overlap)
     try:
-        signal.setitimer(signal.ITIMER_REAL, 0.001)
+        alarm.start(0.001)
         assert len(value.fetchall()) == _SIGNAL_FETCH_ROWS
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        alarm.close()
     assert observed == ["busy"]
     assert not value.closed
 

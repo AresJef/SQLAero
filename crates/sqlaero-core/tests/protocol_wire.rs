@@ -100,10 +100,27 @@ fn no_progress_read_expires_without_resetting_the_connection_budget() {
             .unwrap(),
         framing::Progress::Pending
     ));
-    assert!(matches!(
-        transport.wait(Direction::Read, &mut budget),
-        Err(TransportError::Timeout(TimeoutKind::Read))
-    ));
+    // Readiness is advisory on every backend. Keep the original budget and
+    // retry the real read, as production does, rather than requiring one poll.
+    loop {
+        match transport.wait(Direction::Read, &mut budget) {
+            Err(TransportError::Timeout(TimeoutKind::Read)) => break,
+            Err(error) => panic!("unexpected read wait failure: {error}"),
+            Ok(_) => match message.step(
+                &mut transport.io(&mut budget),
+                &mut framing::Sequence::default(),
+            ) {
+                Ok(framing::Progress::Pending | framing::Progress::Yield) => (),
+                Err(framing::WireError::Io(error))
+                    if error.kind() == std::io::ErrorKind::TimedOut =>
+                {
+                    assert_eq!(budget.check_io(Direction::Read), Err(TimeoutKind::Read));
+                    break;
+                }
+                other => panic!("a silent peer must not yield a message: {other:?}"),
+            },
+        }
+    }
     stop.send(()).unwrap();
     server.join().unwrap();
 }
