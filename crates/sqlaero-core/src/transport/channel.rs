@@ -60,6 +60,24 @@ pub struct Channel {
     local: bool,
 }
 
+/// Translate rustls's full application buffer into resumable backpressure.
+/// A zero socket write still means failure; this adapter is only for rustls's
+/// bounded plaintext sink, which accepts more bytes after TLS records drain.
+struct TlsPlaintextWriter<'a>(rustls::Writer<'a>);
+
+impl io::Write for TlsPlaintextWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        match self.0.write(bytes) {
+            Ok(0) if !bytes.is_empty() => Err(io::ErrorKind::WouldBlock.into()),
+            result => result,
+        }
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
 impl Channel {
     /// Wrap the selected endpoint. `local` is true only for the explicit Unix
     /// channel, not for a TCP loopback address.
@@ -166,31 +184,28 @@ impl Channel {
                 .map(|step| convert(step, Direction::Write))
                 .map_err(ChannelError::from);
         }
-        for _ in 0..16 {
-            if !message.is_complete() {
-                let tls = self
-                    .tls
-                    .as_mut()
-                    .ok_or(WireError::Malformed("missing TLS state"))?;
-                if tls.is_handshaking() {
-                    return Err(
-                        WireError::Malformed("application data before TLS completion").into(),
-                    );
-                }
-                match message.step(&mut tls.writer(), bytes, &mut self.sequence)? {
-                    Progress::Yield => return Ok(Step::Control),
-                    Progress::Ready(()) | Progress::Pending => (),
-                }
+        if !message.is_complete() {
+            let tls = self
+                .tls
+                .as_mut()
+                .ok_or(WireError::Malformed("missing TLS state"))?;
+            if tls.is_handshaking() {
+                return Err(WireError::Malformed("application data before TLS completion").into());
             }
-            match self.flush_tls(budget)? {
-                Step::Ready(()) => (),
-                other => return Ok(other),
-            }
-            if message.is_complete() {
-                return Ok(Step::Ready(()));
-            }
+            // Framing retains its exact offsets on both buffer pressure and a
+            // bounded-work yield. Drain accepted records in either case before
+            // returning to the host; never grow the TLS buffer without a bound.
+            message.step(
+                &mut TlsPlaintextWriter(tls.writer()),
+                bytes,
+                &mut self.sequence,
+            )?;
         }
-        Ok(Step::Control)
+        match self.flush_tls(budget)? {
+            Step::Ready(()) if message.is_complete() => Ok(Step::Ready(())),
+            Step::Ready(()) => Ok(Step::Control),
+            other => Ok(other),
+        }
     }
 
     /// Advance a response without losing partial headers across TLS records or
@@ -317,6 +332,25 @@ fn convert<T>(step: Progress<T>, direction: Direction) -> Step<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn tls_application_buffer_pressure_preserves_partial_writes() {
+        let config = ClientConfig::builder()
+            .with_root_certificates(rustls::RootCertStore::empty())
+            .with_no_client_auth();
+        let name = ServerName::try_from("localhost").expect("valid test server name");
+        let mut tls = ClientConnection::new(Arc::new(config), name).expect("valid test config");
+        tls.set_buffer_limit(Some(1));
+        let mut writer = TlsPlaintextWriter(tls.writer());
+        assert_eq!(writer.write(b"ab").expect("first byte fits"), 1);
+        assert_eq!(
+            writer.write(b"b").expect_err("buffer is full").kind(),
+            io::ErrorKind::WouldBlock
+        );
+        assert_eq!(writer.write(b"").expect("empty write remains empty"), 0);
+    }
+
     #[test]
     fn only_actual_native_deadline_sources_become_timeout_variants() {
         for kind in [

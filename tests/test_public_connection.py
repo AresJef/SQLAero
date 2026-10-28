@@ -226,7 +226,10 @@ def test_public_signatures_and_input_preflight() -> None:
 @requires_mysql
 def test_actual_connect_bind_and_independent_buffered_cursors(connection: Connection) -> None:
     assert connection.autocommit and connection.ping()
-    assert connection.ssl_mode == 'DISABLED' and connection.tls_version is None
+    if os.name == 'nt':
+        assert connection.ssl_mode == 'VERIFY_IDENTITY' and connection.tls_version is not None
+    else:
+        assert connection.ssl_mode == 'DISABLED' and connection.tls_version is None
     assert connection.connection_id > 0 and connection.server_version
     first = connection.cursor(tuple)
     second = connection.cursor(Cursor)
@@ -964,6 +967,23 @@ def test_real_itemize_many_shapes_preserve_counts_and_final_result(connection: C
 
 
 @requires_mysql
+@pytest.mark.parametrize('label', ['84', '97'])
+@pytest.mark.parametrize('size', [64 * 1024, 256 * 1024, 2 * 1024 * 1024],
+                         ids=['tls-buffer-boundary', 'framing-work-boundary', 'multi-step'])
+def test_verified_tls_resumes_large_requests_without_losing_bytes(label: str, size: int) -> None:
+    """Exercise TLS backpressure even when the platform normally uses a socket."""
+    secret: dict[str, str] = json.loads((ROOT / label / 'state.json').read_text())
+    with live(label, host='127.0.0.1', port=int(secret['port']), unix_socket=None,
+              ssl=SSL(ca_file=ROOT / 'tls/ca.pem'), operation_timeout=20) as value:
+        assert value.ssl_mode == 'VERIFY_IDENTITY' and value.tls_version is not None
+        source = 'x' * size
+        current = value.cursor()
+        assert current.execute('SELECT %s', (source,)) == 1
+        assert current.fetchall() == ((source,),)
+        assert value.ping()
+
+
+@requires_mysql
 @pytest.mark.parametrize('size', [0xFFFFFF - 10, 0xFFFFFF + 7], ids=['exact-request-frame', 'split-request-and-result'])
 def test_actual_public_physical_frame_boundaries(connection: Connection, size: int) -> None:
     # COM_QUERY + SELECT-space + two SQL quotes is 10 bytes, so the first
@@ -1348,7 +1368,8 @@ import json, os, signal, sys, threading, time
 from pathlib import Path
 from types import FrameType
 from typing import Any
-from sqlaero import connect
+from sqlaero import SSL, connect
+from _native_signal import NativeAlarm
 from sqlaero.errors import OperationalError
 root = Path(sys.argv[1]); label = sys.argv[2]; mode = sys.argv[3]
 secret: dict[str, str] = json.loads((root / label / 'state.json').read_text())

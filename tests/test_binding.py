@@ -129,7 +129,8 @@ def test_sql_encoding_error_keeps_the_original_sql_character_position() -> None:
     assert (caught.value.encoding, caught.value.start, caught.value.end) == ("latin1", 12, 13)
 
 
-@pytest.mark.parametrize("source", ["中" * 200000, bytes(range(256)) * 2000, bytearray(bytes(range(256)) * 2000)])
+@pytest.mark.parametrize("source", ["中" * 200000, bytes(range(256)) * 2000, bytearray(bytes(range(256)) * 2000)],
+                         ids=['unicode', 'bytes', 'bytearray'])
 def test_large_scalar_fragments_keep_exact_contents(source: str | bytes | bytearray) -> None:
     literal = _sqlaero._encode_scalar(source)
     assert _sqlaero._bind_sql("SELECT %s", [source]) == [b"\x03SELECT " + literal]

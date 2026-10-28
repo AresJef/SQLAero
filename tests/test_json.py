@@ -67,10 +67,14 @@ def test_json_bigint_keeps_its_bound_independent_of_python_text_conversion_limit
 def test_json_checks_signals_before_a_single_large_value_completes(escaped: bool) -> None:
     """Observe a real handler inside one value, without a timing-based SLA."""
     import gc
+    import os
     from types import FrameType
 
     marker = 8712394560123 + int(escaped)
-    text = b'\\u0001' * (1024 * 1024) if escaped else b'x' * (16 * 1024 * 1024)
+    # Windows console delivery has a coarser wake-up window than setitimer.
+    # Keep the same inside-value assertion, with enough work for the real event.
+    ascii_size = 64 * 1024 * 1024 if os.name == 'nt' else 16 * 1024 * 1024
+    text = b'\\u0001' * (1024 * 1024) if escaped else b'x' * ascii_size
     payload = b'[' + str(marker).encode() + b',"' + text + b'"]'
     original = ValueError('original single-value signal')
     observed: list[int] = []

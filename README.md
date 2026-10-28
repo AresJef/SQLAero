@@ -52,6 +52,10 @@ Linux and Windows use the official MySQL installations selected with
 the OpenSSL executable. CI uses the shared native-environment action for this
 preparation. The utility uses loopback ports and private temporary data, never
 Homebrew services or their default database directories.
+For Windows signal coverage, run `python tests/_native_signal.py --pytest -q
+tests`; the launcher creates a private console before Python starts so real
+control events cannot reach the shell or Actions runner. On POSIX this same
+launcher executes the ordinary pytest command.
 
 ## Query and fetch
 
@@ -133,12 +137,11 @@ implicitly.
 
 ## Performance and development
 
-The following figures belong to the original release evidence, not to a later
-local audit-remediation artifact. Current repair and acceptance status is tracked
-in the [audit remediation plan](tasks/rust-sync-audit-remediation/plan.md).
-The frozen performance report retains its original generation-time status;
-subsequent original-release outcomes are recorded in the
-[publication evidence](evidence/rust-sync-kernel/final/publication.json).
+The following figures belong to the original alpha evidence and do not describe
+the later repair artifacts or this Beta. The [Beta release notes](docs/releases/v0.2.0b1.md)
+explain those boundaries. Native build, installed-package and source-rebuild
+checks are available in the [release workflow runs](https://github.com/AresJef/SQLAero/actions/workflows/release.yml);
+local formal performance measurements are kept separate from CI observations.
 
 On the measured macOS arm64 / CPython 3.13.3 machine, the original frozen W06 combination
 passed 480 main and 204 independent protection scenarios against its initial
