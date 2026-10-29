@@ -403,7 +403,7 @@ def measure(call: Call, n: int) -> dict[str, object]:
             "switch_scope": "thread" if hasattr(resource, "RUSAGE_THREAD") else "process diagnostic"}
 
 
-def worker(package: str | None, with_legacy: bool) -> None:
+def worker(package: str | None, with_legacy: bool, warmup_calls: int = 16) -> None:
     native = load_native(package)
     legacy = load_legacy() if with_legacy else None
     collection = {case.id: case for case in cases()}
@@ -416,7 +416,8 @@ def worker(package: str | None, with_legacy: bool) -> None:
     ready = {"pid": os.getpid(), "start_unix_ns": time.time_ns(), "python": sys.version, "gc_enabled": gc.isenabled(),
              "module": native.__file__, "artifact_sha256": digest(Path(native.__file__)),
              "clock": calibration, "inputs": [case.identity() for case in collection.values()],
-             "legacy_sha256": digest(FROZEN) if with_legacy else None}
+             "legacy_sha256": digest(FROZEN) if with_legacy else None,
+             "warmup_calls": warmup_calls, "warmup_wall_cap_ns": 2_000_000}
     print(json.dumps({"ready": ready}), flush=True)
     for line in sys.stdin:
         request = cast(dict[str, Any], json.loads(line))
@@ -438,16 +439,19 @@ def worker(package: str | None, with_legacy: bool) -> None:
                 del actual
                 if task.finish:
                     task.finish()
-                # Warm only once, with a 2ms wall cap; counts/cost are returned.
+                # A cap of one fixes equal allocation work on both sides,
+                # avoiding speed-dependent warmup histories before timed GC.
+                # The existing 2ms wall cap and actual cost remain recorded.
                 start, count = time.perf_counter_ns(), 0
-                while count < 16 and time.perf_counter_ns() - start < 2_000_000:
+                while count < warmup_calls and time.perf_counter_ns() - start < 2_000_000:
                     if task.prepare:
                         task.prepare(1)
                     task.call()
                     if task.finish:
                         task.finish()
                     count += 1
-                warmups[key] = {"calls": count, "elapsed_ns": time.perf_counter_ns() - start}
+                warmups[key] = {"calls": count, "max_calls": warmup_calls,
+                                "elapsed_ns": time.perf_counter_ns() - start}
                 calls[key] = task
             task = calls[key]
             if request.get("timing_control"):
@@ -493,8 +497,10 @@ def worker(package: str | None, with_legacy: bool) -> None:
 
 
 class Worker:
-    def __init__(self, package: str | None, legacy: bool, log: TextIO) -> None:
-        command = [sys.executable, str(Path(__file__).resolve()), "worker"]
+    def __init__(self, package: str | None, legacy: bool, log: TextIO,
+                 *, warmup_calls: int = 16) -> None:
+        command = [sys.executable, str(Path(__file__).resolve()), "worker",
+                   "--warmup-calls", str(warmup_calls)]
         if package:
             command.extend(["--package", package])
         if legacy:
@@ -632,6 +638,8 @@ def collect(args: argparse.Namespace) -> None:
     if args.config:
         config = cast(dict[str, Any], json.loads(Path(args.config).read_text()))
         parameters = {str(key): int(value) for key, value in config["calls"].items()}
+        if "warmup_calls" in config and config["warmup_calls"] != args.warmup_calls:
+            raise ValueError("Warmup call cap differs from the frozen configuration")
     started = time.perf_counter_ns()
     deadline = started + int(args.seconds * 1e9)
     role_a = "legacy" if args.legacy else "native"
@@ -642,6 +650,7 @@ def collect(args: argparse.Namespace) -> None:
                 "A": {"legacy_sha256": digest(FROZEN)} if args.legacy else package_identity(args.reference),
                 "B": package_identity(args.candidate), "cycles": args.cycles,
                 "minimum_ms": args.minimum_ms, "target_ms": args.target_ms,
+                "warmup_calls": args.warmup_calls, "warmup_wall_cap_ns": 2_000_000,
                 "config_sha256": digest(Path(args.config)) if args.config else None,
                 "cases": [case.identity() for case in selected]}
     contract_path = directory / "contract.json"
@@ -667,6 +676,7 @@ def collect(args: argparse.Namespace) -> None:
     metadata = {"runner_sha256": digest(Path(__file__)), "phase": args.command,
                 "python": sys.version, "platform": platform.platform(), "machine": platform.machine(),
                 "start_unix_ns": time.time_ns(), "seconds": args.seconds, "cycles": args.cycles,
+                "warmup_calls": args.warmup_calls, "warmup_wall_cap_ns": 2_000_000,
                 "reference_package": args.reference, "candidate_package": args.candidate,
                 "legacy": args.legacy, "cases": [case.identity() for case in selected],
                 "boundary": "full production visitor to Rust owner; bind probe includes Python diagnostic copies",
@@ -686,17 +696,19 @@ def collect(args: argparse.Namespace) -> None:
             try:
                 # Balance actual process/module load order across true cycles.
                 if cycle % 2 == 0 or args.legacy:
-                    a = Worker(args.reference, args.legacy, log)
-                    b = a if args.legacy else Worker(args.candidate, False, log)
+                    a = Worker(args.reference, args.legacy, log, warmup_calls=args.warmup_calls)
+                    b = a if args.legacy else Worker(args.candidate, False, log, warmup_calls=args.warmup_calls)
                 else:
-                    b = Worker(args.candidate, False, log)
-                    a = Worker(args.reference, False, log)
+                    b = Worker(args.candidate, False, log, warmup_calls=args.warmup_calls)
+                    a = Worker(args.reference, False, log, warmup_calls=args.warmup_calls)
                 append(directory / "processes.jsonl", {"cycle": cycle, "A": a.ready, "B": b.ready})
                 actual_a = a.ready["ready"]["legacy_sha256"] if args.legacy else a.ready["ready"]["artifact_sha256"]
                 expected_a = cast(dict[str, Any], contract["A"])
                 expected_b = cast(dict[str, Any], contract["B"])
                 if actual_a != expected_a["legacy_sha256" if args.legacy else "sha256"] or b.ready["ready"]["artifact_sha256"] != expected_b["sha256"]:
                     raise RuntimeError("Actually loaded artifact differs from the frozen contract")
+                if any(current.ready["ready"]["warmup_calls"] != args.warmup_calls for current in (a, b)):
+                    raise RuntimeError("Worker warmup call cap differs from the frozen contract")
                 cycle_key = f"{cycle}/{a.process.pid}/{b.process.pid}/{a.ready['ready']['start_unix_ns']}"
                 for case in needed:
                     if case.id in isolated:
@@ -729,6 +741,7 @@ def collect(args: argparse.Namespace) -> None:
                         append(directory / "calibration.jsonl", {"case": case.id, "n": n, "probes": probes})
                         (directory / "config.json").write_text(json.dumps({"calls": parameters,
                             "cycles": args.cycles, "target_ms": args.target_ms,
+                            "warmup_calls": args.warmup_calls,
                             "minimum_ms": args.minimum_ms, "runner_sha256": metadata["runner_sha256"],
                             "cases": metadata["cases"]}, indent=2))
                     n = parameters[case.id]
@@ -798,6 +811,7 @@ def collect(args: argparse.Namespace) -> None:
                 if a is not None:
                     a.close()
     config_output = {"calls": parameters, "cycles": args.cycles,
+                     "warmup_calls": args.warmup_calls,
                      "target_ms": args.target_ms, "minimum_ms": args.minimum_ms,
                      "runner_sha256": metadata["runner_sha256"], "cases": metadata["cases"]}
     (directory / "config.json").write_text(json.dumps(config_output, indent=2))
@@ -937,6 +951,8 @@ def main() -> None:
     parser.add_argument("--seconds", type=float, default=600)
     parser.add_argument("--target-ms", type=float, default=2)
     parser.add_argument("--minimum-ms", type=float, default=1)
+    parser.add_argument("--warmup-calls", type=int, choices=range(1, 17), default=16,
+                        help="Maximum warmup calls per scene; use 1 for equal fixed work before timed GC")
     args = parser.parse_args()
     if resource is None and args.command not in ('list', 'smoke'):
         raise RuntimeError('Formal resource-based performance measurement is supported on the macOS development host')
@@ -945,7 +961,7 @@ def main() -> None:
             raise ValueError('CI smoke requires a positive budget of at most 180 seconds')
         smoke(Path(args.output), args.seconds)
     elif args.command == "worker":
-        worker(args.package, args.legacy)
+        worker(args.package, args.legacy, args.warmup_calls)
     elif args.command == "list":
         print(json.dumps([case.identity() for case in cases()], indent=2))
     elif args.command == "summarize":

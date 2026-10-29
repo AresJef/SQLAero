@@ -3,6 +3,13 @@ description: Prepare one isolated Python toolchain and the two owned MySQL insta
 runs:
   using: composite
   steps:
+    - name: Select the native Windows ARM64 C compiler
+      if: runner.os == 'Windows' && runner.arch == 'ARM64'
+      shell: bash
+      run: |
+        set -euo pipefail
+        clang-cl --version
+        echo "CC_aarch64_pc_windows_msvc=clang-cl" >> "$GITHUB_ENV"
     - name: Install the fixed native toolchain
       shell: bash
       run: rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
@@ -41,10 +48,14 @@ runs:
           if [ "$RUNNER_OS" = Linux ]; then
             sudo apt-get update -qq
             sudo apt-get install -y libaio1t64 libnuma1 libtinfo6
-            # The official generic MySQL tarball still requests the pre-t64
-            # SONAME. On amd64 this is the same ABI; keep the alias job-local.
+            # Both supported Linux architectures have the 64-bit libaio ABI.
+            # The official tarball requests the pre-t64 SONAME; keep the
+            # Ubuntu package alias private to this job and its native ISA.
+            multiarch=$(dpkg-architecture -qDEB_HOST_MULTIARCH)
+            runtime="/usr/lib/$multiarch/libaio.so.1t64"
+            test -f "$runtime"
             mkdir -p "$RUNNER_TEMP/mysql-runtime"
-            ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 "$RUNNER_TEMP/mysql-runtime/libaio.so.1"
+            ln -s "$runtime" "$RUNNER_TEMP/mysql-runtime/libaio.so.1"
             export LD_LIBRARY_PATH="$RUNNER_TEMP/mysql-runtime${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
             echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
           fi
@@ -57,7 +68,13 @@ runs:
             if [ "$RUNNER_OS" = Windows ]; then
               archive="mysql-$version-winx64.zip"
             else
-              archive="mysql-$version-linux-glibc2.28-x86_64-minimal.tar.xz"
+              # Oracle publishes a full aarch64 archive, without the minimal
+              # variant available for x86_64. Reject unknown architectures.
+              case "$(uname -m)" in
+                x86_64) archive="mysql-$version-linux-glibc2.28-x86_64-minimal.tar.xz" ;;
+                aarch64) archive="mysql-$version-linux-glibc2.28-aarch64.tar.xz" ;;
+                *) echo "Unsupported MySQL fixture architecture" >&2; exit 1 ;;
+              esac
             fi
             curl --fail --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 240 \
               "https://dev.mysql.com/get/Downloads/MySQL-$line/$archive" -o "$RUNNER_TEMP/$archive"

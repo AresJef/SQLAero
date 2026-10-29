@@ -207,11 +207,15 @@ def test_single_large_json_checks_signals_before_finishing_the_field(shape: str,
     assert result is not None and len(result[0]) == count and value.position == 1
 
 
-def test_interrupted_output_releases_temporaries_and_does_not_commit() -> None:
+@pytest.mark.parametrize('width', [1, 4, 32], ids=['scalar-row', 'narrow-row', 'wide-row'])
+def test_interrupted_output_releases_temporaries_and_does_not_commit(width: int) -> None:
     import gc
 
     marker = 1472853690
-    value = reader([(str(marker).encode(),)] * _SIGNAL_FETCH_ROWS)
+    value = _rows_from_packets(packets(
+        [column(f'value_{index}') for index in range(width)],
+        [(str(marker).encode(),) * width] * (_SIGNAL_FETCH_ROWS // width),
+    ))
     original = Interrupted("stop this fetch")
     observed: list[bool] = []
 
@@ -222,7 +226,7 @@ def test_interrupted_output_releases_temporaries_and_does_not_commit() -> None:
         for temporary in gc.get_objects():
             if type(temporary) is tuple:
                 candidate = cast(tuple[object, ...], temporary)
-                if len(candidate) == 1 and type(candidate[0]) is int and candidate[0] == marker:
+                if len(candidate) == width and type(candidate[0]) is int and candidate[0] == marker:
                     observed.append(True)
                     del candidate, temporary
                     raise original
@@ -238,7 +242,7 @@ def test_interrupted_output_releases_temporaries_and_does_not_commit() -> None:
         alarm.close()
     assert observed == [True]
     assert value.position == 0
-    assert value.fetchone() == (marker,)
+    assert value.fetchone() == (marker,) * width
 
 
 def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable() -> None:

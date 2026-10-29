@@ -17,14 +17,27 @@ from pathlib import Path
 import platform
 import subprocess
 import sys
+import sysconfig
 import tarfile
+import time
 import tomllib
 from typing import Any, cast
 from xml.etree import ElementTree
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
-PLATFORMS = ('macos-arm64', 'macos-x86_64', 'windows-x86_64', 'linux-x86_64')
+PLATFORM_TAGS = {
+    'macos-arm64': 'macosx_11_0_arm64',
+    'macos-x86_64': 'macosx_11_0_x86_64',
+    'windows-x86_64': 'win_amd64',
+    'windows-arm64': 'win_arm64',
+    'linux-glibc-x86_64': 'manylinux_2_28_x86_64',
+    'linux-glibc-aarch64': 'manylinux_2_28_aarch64',
+    'linux-musl-x86_64': 'musllinux_1_2_x86_64',
+    'linux-musl-aarch64': 'musllinux_1_2_aarch64',
+}
+PLATFORMS = tuple(PLATFORM_TAGS)
+TAG_PLATFORMS = {tag: target for target, tag in PLATFORM_TAGS.items()}
 PYTHONS = ('cp312', 'cp313', 'cp314', 'cp315')
 
 
@@ -44,15 +57,8 @@ def wheel_record(path: Path) -> dict[str, Any]:
     name, package_version, python, abi, tag = path.stem.split('-')
     assert name == 'sqlaero' and package_version == release_version(), path.name
     assert python in PYTHONS and abi == python, (python, abi)
-    if tag.endswith('_arm64') and tag.startswith('macosx_'):
-        target = 'macos-arm64'
-    elif tag.endswith('_x86_64') and tag.startswith('macosx_'):
-        target = 'macos-x86_64'
-    elif tag == 'win_amd64':
-        target = 'windows-x86_64'
-    else:
-        assert tag == 'manylinux_2_28_x86_64', tag
-        target = 'linux-x86_64'
+    assert tag in TAG_PLATFORMS, tag
+    target = TAG_PLATFORMS[tag]
     with zipfile.ZipFile(path) as archive:
         native = [entry for entry in archive.namelist()
                   if entry.startswith('sqlaero/_sqlaero') and entry.endswith(('.so', '.pyd'))]
@@ -68,7 +74,14 @@ def wheel_record(path: Path) -> dict[str, Any]:
 
 def installed(wheel: Path, output: Path, kind: str, sdist: Path | None) -> None:
     """Require the current interpreter to load the native bytes in this wheel."""
+    # Public packaging tags inspect the actual interpreter and ELF loader.
+    # This distinguishes musl from glibc and native ARM64 from x64 emulation.
+    # packaging is an existing pytest dependency, never a product dependency.
+    from packaging.tags import Tag, sys_tags
+
     record = wheel_record(wheel)
+    assert Tag(str(record['python']), str(record['python']),
+               PLATFORM_TAGS[str(record['platform'])]) in sys_tags(), wheel.name
     package = import_module('sqlaero')
     native = import_module('sqlaero._sqlaero')
     location = Path(cast(str, native.__file__)).resolve()
@@ -79,11 +92,12 @@ def installed(wheel: Path, output: Path, kind: str, sdist: Path | None) -> None:
     assert version('sqlaero') == record['version']
     assert record['python'] == f'cp{sys.version_info.major}{sys.version_info.minor}'
     machine = platform.machine().lower()
-    assert machine in ({'arm64', 'aarch64'} if record['platform'] == 'macos-arm64'
+    assert machine in ({'arm64', 'aarch64'} if str(record['platform']).endswith(('arm64', 'aarch64'))
                        else {'amd64', 'x86_64'}), machine
     record.update(kind=kind, executable=sys.executable, prefix=str(prefix),
                   package=str(package_location), native=str(location), python_version=sys.version,
                   machine=machine, operating_system=platform.platform(),
+                  python_platform=sysconfig.get_platform(), libc=platform.libc_ver(),
                   source_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                   cargo_lock_sha256=digest(ROOT / 'Cargo.lock'))
     if sdist is not None:
@@ -107,6 +121,37 @@ def extract(path: Path, destination: Path, expected: str) -> None:
     print(roots[0].resolve().as_posix())
 
 
+def download(package_version: str, manifest_path: Path, destination: Path, output: Path) -> None:
+    """Download this interpreter's PyPI wheel and require its tested hash.
+
+    Index propagation receives the same six bounded attempts as the original
+    release workflow. This operation never chooses an older version or builds
+    a source fallback when the requested platform wheel is unavailable.
+    """
+    release: dict[str, Any] = json.loads(manifest_path.read_text(encoding='utf-8'))
+    assert package_version == release['version'] == release_version()
+    destination.mkdir(parents=True, exist_ok=True)
+    for attempt in range(6):
+        result = subprocess.run([
+            sys.executable, '-m', 'pip', 'download', '--index-url', 'https://pypi.org/simple',
+            '--no-cache-dir', '--no-deps', '--only-binary=:all:',
+            f'sqlaero=={package_version}', '--dest', str(destination),
+        ], check=False)
+        if result.returncode == 0:
+            break
+        if attempt == 5:
+            result.check_returncode()
+        time.sleep(10)
+    wheels = list(destination.glob('*.whl'))
+    assert len(wheels) == 1, wheels
+    wheel = wheels[0]
+    record = next(row for row in release['wheels'] if row['file'] == wheel.name)
+    assert digest(wheel) == record['sha256'], 'PyPI wheel differs from the tested bundle'
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps({'index': 'https://pypi.org/simple', 'file': wheel.name,
+                                  'sha256': record['sha256']}, indent=2) + '\n', encoding='utf-8')
+
+
 def test_totals(path: Path) -> dict[str, int]:
     """Read the actual JUnit outcome rather than inferring tests from filenames."""
     root = ElementTree.parse(path).getroot()
@@ -114,24 +159,30 @@ def test_totals(path: Path) -> dict[str, int]:
     totals = {name: sum(int(suite.get(name, '0')) for suite in suites)
               for name in ('tests', 'failures', 'errors', 'skipped')}
     assert totals['tests'] > 0 and totals['failures'] == totals['errors'] == 0, (path, totals)
+    for case in root.iter('testcase'):
+        skipped = case.find('skipped')
+        if skipped is not None:
+            assert (case.get('name') == 'test_windows_unix_socket_is_rejected_without_tcp_fallback'
+                    and skipped.get('message') == 'Windows explicitly rejects the Unix-only transport'), (
+                        'Unexpected skipped requirement', path, case.attrib, skipped.attrib)
     return totals
 
 
 def manifest(directory: Path, identities: Path, output: Path) -> None:
-    """Gate the exact 16-wheel cross product and its independent sdist evidence."""
+    """Gate the exact 32-wheel cross product and its independent sdist evidence."""
+    expected = {(target, python) for target in PLATFORMS for python in PYTHONS}
     files = sorted(path for path in directory.iterdir() if path.is_file())
     wheels = [wheel_record(path) for path in files if path.suffix == '.whl']
     sdists = [path for path in files if path.name.endswith('.tar.gz')]
-    assert len(files) == 17 and len(wheels) == 16 and len(sdists) == 1, [p.name for p in files]
+    assert len(files) == len(expected) + 1 and len(wheels) == len(expected) and len(sdists) == 1, [p.name for p in files]
     assert sdists[0].name == f'sqlaero-{release_version()}.tar.gz'
-    expected = {(target, python) for target in PLATFORMS for python in PYTHONS}
     assert {(str(row['platform']), str(row['python'])) for row in wheels} == expected
     source_hash = digest(sdists[0])
     evidence: list[dict[str, Any]] = []
     commits: set[str] = set()
     for kind in ('original', 'sdist'):
         paths = list(identities.rglob(f'{kind}-wheel-identity.json'))
-        assert len(paths) == 16, (kind, paths)
+        assert len(paths) == len(expected), (kind, paths)
         seen: set[tuple[str, str]] = set()
         for path in paths:
             record: dict[str, Any] = json.loads(path.read_text(encoding='utf-8'))
@@ -143,19 +194,22 @@ def manifest(directory: Path, identities: Path, output: Path) -> None:
             if kind == 'original':
                 match = next(row for row in wheels if (row['platform'], row['python']) == key)
                 assert match['sha256'] == record['sha256'] and match['native_sha256'] == record['native_sha256']
+            totals = test_totals(path.with_name(f'python-{kind}.xml'))
+            assert totals['skipped'] == (0 if key[0].startswith('windows-') else 1), (path, totals)
             evidence.append({'kind': kind, 'platform': key[0], 'python': key[1],
                              'wheel_sha256': record['sha256'],
-                             'tests': test_totals(path.with_name(f'python-{kind}.xml'))})
+                             'tests': totals})
     assert len(commits) == 1, commits
     result = {'version': release_version(), 'source_commit': next(iter(commits)),
               'wheels': wheels, 'sdist': {'file': sdists[0].name, 'sha256': source_hash,
                                         'bytes': sdists[0].stat().st_size}, 'evidence': evidence}
     output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
-    print(f'Validated 16 original wheels, one sdist and 32 installed test identities: {output}')
+    print(f'Validated {len(expected)} original wheels, one sdist and '
+          f'{2 * len(expected)} installed test identities: {output}')
 
 
 def main() -> None:
-    """Expose the three identity operations needed by the existing workflow."""
+    """Expose shared identity operations used by the existing workflows."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     identity = commands.add_parser('identity')
@@ -171,11 +225,18 @@ def main() -> None:
     bundle.add_argument('--directory', type=Path, required=True)
     bundle.add_argument('--identities', type=Path, required=True)
     bundle.add_argument('--output', type=Path, required=True)
+    fetch = commands.add_parser('download')
+    fetch.add_argument('--version', required=True)
+    fetch.add_argument('--manifest', type=Path, required=True)
+    fetch.add_argument('--destination', type=Path, required=True)
+    fetch.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.command == 'identity':
         installed(args.wheel, args.output, args.kind, args.sdist)
     elif args.command == 'extract':
         extract(args.sdist, args.destination, args.expected_sha)
+    elif args.command == 'download':
+        download(args.version, args.manifest, args.destination, args.output)
     else:
         manifest(args.directory, args.identities, args.output)
 

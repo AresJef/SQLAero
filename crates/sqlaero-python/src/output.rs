@@ -236,12 +236,11 @@ pub(crate) fn text<'py>(
         }
         _ => return codepoints(py, &points(py, data, codec, strict, scope)?),
     };
-    // SAFETY: each branch above returns a new owned Python Unicode reference
-    // or NULL with the original Python allocation/content exception set.
+    // SAFETY: each documented Unicode decoder above returns a new Unicode
+    // reference or NULL with the original exception set. The same constructor
+    // contract used by codepoints makes a second dynamic type check redundant.
     unsafe {
-        Bound::<PyAny>::from_owned_ptr_or_err(py, pointer)?
-            .cast_into::<PyString>()
-            .map_err(Into::into)
+        Ok(Bound::<PyAny>::from_owned_ptr_or_err(py, pointer)?.cast_into_unchecked::<PyString>())
     }
 }
 

@@ -1,7 +1,7 @@
 name: Build and publish native distributions
 
 on:
-  # PRs run the four native probes in ci.yml. The complete 16-way release
+  # PRs run the representative native probes in ci.yml. The complete 32-way release
   # matrix runs explicitly, so publishing never repeats a successful PR build.
   push:
     tags: ["v*"]
@@ -81,7 +81,7 @@ jobs:
           retention-days: 7
 
   build:
-    name: ${{ matrix.platform.name }} / CPython ${{ matrix.python.version }}
+    name: ${{ matrix.platform.name }} / CPython ${{ matrix.python.minor }}
     needs: source
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 70
@@ -97,7 +97,11 @@ jobs:
           - {name: macos-arm64, runner: macos-26, architecture: arm64}
           - {name: macos-x86_64, runner: macos-15-intel, architecture: x64}
           - {name: windows-x86_64, runner: windows-2022, architecture: x64}
-          - {name: linux-x86_64, runner: ubuntu-24.04, architecture: x64}
+          - {name: windows-arm64, runner: windows-11-arm, architecture: arm64}
+          - {name: linux-glibc-x86_64, runner: ubuntu-24.04, architecture: x64}
+          - {name: linux-glibc-aarch64, runner: ubuntu-24.04-arm, architecture: arm64}
+          - {name: linux-musl-x86_64, runner: ubuntu-24.04, architecture: x64}
+          - {name: linux-musl-aarch64, runner: ubuntu-24.04-arm, architecture: arm64}
     defaults:
       run:
         shell: bash
@@ -120,7 +124,20 @@ jobs:
         with:
           name: canonical-sdist
           path: source-dist
+      - name: Prepare the owned Linux loopback servers
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          mkdir -p validation-evidence
+          python tools/mysql_fixture.py prepare > validation-evidence/mysql-instances.json
+      - name: Build and test both original and sdist wheels in the native target libc
+        if: runner.os == 'Linux'
+        env:
+          LINUX_LIBC: ${{ contains(matrix.platform.name, '-musl-') && 'musl' || 'glibc' }}
+          PYTHON_MINOR: ${{ matrix.python.minor }}
+        run: bash tools/linux_wheel.sh host build
       - name: Check the native source and public declarations
+        if: runner.os != 'Linux'
         run: |
           set -euo pipefail
           mkdir -p validation-evidence
@@ -135,23 +152,15 @@ jobs:
         id: native-build
         if: runner.os != 'Linux'
         run: maturin build --release --locked --interpreter python --out dist
-      - name: Build the original manylinux wheel
-        id: manylinux-build
-        if: runner.os == 'Linux'
-        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
-        with:
-          maturin-version: '1.15.0'
-          rust-toolchain: '1.99.1'
-          target: x86_64-unknown-linux-gnu
-          manylinux: '2_28'
-          args: --release --locked --interpreter python${{ matrix.python.minor }} --out dist
       - name: Install and identify the original wheel
+        if: runner.os != 'Linux'
         id: original-install
         run: |
           set -euo pipefail
           python -m pip install --no-deps dist/*.whl
           python tools/release_artifacts.py identity --kind original --wheel dist/*.whl --sdist source-dist/*.tar.gz --output validation-evidence/original-wheel-identity.json
       - name: Prepare and verify the owned native servers
+        if: runner.os != 'Linux'
         run: |
           set -euo pipefail
           python tools/mysql_fixture.py prepare > validation-evidence/mysql-instances.json
@@ -160,9 +169,10 @@ jobs:
           cargo test -p sqlaero-core --test component_contracts --locked -- --ignored --test-threads=1
           cargo test -p sqlaero-core --test protocol_wire --locked -- --ignored --test-threads=1
       - name: Verify real system trust on each platform
-        if: matrix.python.minor == '3.13'
+        if: matrix.python.minor == '3.13' && runner.os != 'Linux'
         run: cargo test -p sqlaero-core --test system_trust --locked -- --ignored --test-threads=1
       - name: Test the installed original wheel
+        if: runner.os != 'Linux'
         id: original-test
         run: |
           set -euo pipefail
@@ -170,10 +180,11 @@ jobs:
           python tests/_native_signal.py --pytest -q tests --junitxml=validation-evidence/python-original.xml
           python -m pip check
       - name: Record the fixed diagnostic performance batches
-        if: matrix.python.minor == '3.13'
+        if: matrix.python.minor == '3.13' && runner.os != 'Linux'
         timeout-minutes: 3
         run: python tools/benchmark.py smoke --seconds 180 --output validation-evidence
       - name: Unpack the exact independent sdist source
+        if: runner.os != 'Linux'
         run: |
           set -euo pipefail
           echo "SDIST_SOURCE=$(python tools/release_artifacts.py extract --sdist source-dist/*.tar.gz --destination sdist-source --expected-sha "$EXPECTED_SDIST_SHA")" >> "$GITHUB_ENV"
@@ -185,18 +196,8 @@ jobs:
           interpreter=$(python -c 'import sys; print(sys.executable)')
           cd "$SDIST_SOURCE"
           "$interpreter" -m maturin build --release --locked --interpreter "$interpreter" --out "$GITHUB_WORKSPACE/sdist-wheels"
-      - name: Rebuild the sdist as a manylinux wheel
-        id: sdist-manylinux-build
-        if: runner.os == 'Linux'
-        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
-        with:
-          maturin-version: '1.15.0'
-          rust-toolchain: '1.99.1'
-          target: x86_64-unknown-linux-gnu
-          manylinux: '2_28'
-          working-directory: ${{ env.SDIST_SOURCE }}
-          args: --release --locked --interpreter python${{ matrix.python.minor }} --out ../../sdist-wheels
       - name: Install and test the sdist in another environment
+        if: runner.os != 'Linux'
         id: sdist-test
         run: |
           set -euo pipefail
@@ -325,7 +326,7 @@ jobs:
           gh release create "$release_tag" dist/* SHA256SUMS release-manifest.json --verify-tag --prerelease --title "SQLAero $release_tag" --notes-file "docs/releases/$release_tag.md"
 
   pypi-publish:
-    name: Publish the same 17 files through Trusted Publishing
+    name: Publish the same 33 files through Trusted Publishing
     needs: github-release
     runs-on: ubuntu-24.04
     environment: pypi
@@ -340,7 +341,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
 
   pypi-verify:
-    name: PyPI / ${{ matrix.platform.name }} / CPython ${{ matrix.python.version }}
+    name: PyPI / ${{ matrix.platform.name }} / CPython ${{ matrix.python.minor }}
     needs: [source, pypi-publish]
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 45
@@ -356,7 +357,11 @@ jobs:
           - {name: macos-arm64, runner: macos-26, architecture: arm64}
           - {name: macos-x86_64, runner: macos-15-intel, architecture: x64}
           - {name: windows-x86_64, runner: windows-2022, architecture: x64}
-          - {name: linux-x86_64, runner: ubuntu-24.04, architecture: x64}
+          - {name: windows-arm64, runner: windows-11-arm, architecture: arm64}
+          - {name: linux-glibc-x86_64, runner: ubuntu-24.04, architecture: x64}
+          - {name: linux-glibc-aarch64, runner: ubuntu-24.04-arm, architecture: arm64}
+          - {name: linux-musl-x86_64, runner: ubuntu-24.04, architecture: x64}
+          - {name: linux-musl-aarch64, runner: ubuntu-24.04-arm, architecture: arm64}
     defaults:
       run:
         shell: bash
@@ -377,31 +382,27 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: release-manifest
+      - name: Download and test the actual PyPI wheel inside its target libc
+        if: runner.os == 'Linux'
+        env:
+          LINUX_LIBC: ${{ contains(matrix.platform.name, '-musl-') && 'musl' || 'glibc' }}
+          PYTHON_MINOR: ${{ matrix.python.minor }}
+          WHEEL_DIR: pypi-wheels
+        run: |
+          set -euo pipefail
+          mkdir -p validation-evidence
+          python tools/mysql_fixture.py prepare > validation-evidence/mysql-instances.json
+          bash tools/linux_wheel.sh host pypi
       - name: Download the exact version from official PyPI and check its hash
+        if: runner.os != 'Linux'
         id: pypi-download
         run: |
           set -euo pipefail
-          mkdir -p pypi-wheels validation-evidence
-          for attempt in 1 2 3 4 5 6; do
-            if python -m pip download --index-url https://pypi.org/simple --no-cache-dir --no-deps --only-binary=:all: "sqlaero==$RELEASE_VERSION" --dest pypi-wheels; then
-              break
-            fi
-            if [ "$attempt" -eq 6 ]; then exit 1; fi
-            sleep 10
-          done
-          python - <<'PY'
-          import hashlib
-          import json
-          from pathlib import Path
-          manifest: dict[str, object] = json.loads(Path('release-manifest.json').read_text(encoding='utf-8'))
-          wheels: list[Path] = list(Path('pypi-wheels').glob('*.whl'))
-          assert len(wheels) == 1, wheels
-          wheel: Path = wheels[0]
-          record = next(row for row in manifest['wheels'] if row['file'] == wheel.name)
-          assert hashlib.sha256(wheel.read_bytes()).hexdigest() == record['sha256']
-          Path('validation-evidence/pypi-download.json').write_text(json.dumps({'index': 'https://pypi.org/simple', 'file': wheel.name, 'sha256': record['sha256']}, indent=2) + '\n', encoding='utf-8')
-          PY
+          python tools/release_artifacts.py download --version "$RELEASE_VERSION" \
+            --manifest release-manifest.json --destination pypi-wheels \
+            --output validation-evidence/pypi-download.json
       - name: Install and verify the downloaded PyPI wheel
+        if: runner.os != 'Linux'
         id: pypi-test
         run: |
           set -euo pipefail
@@ -409,9 +410,10 @@ jobs:
           python tools/release_artifacts.py identity --kind pypi --wheel pypi-wheels/*.whl --output validation-evidence/pypi-wheel-identity.json
           python tools/mysql_fixture.py prepare > validation-evidence/mysql-instances.json
           python tests/_native_signal.py --pytest -q tests --junitxml=validation-evidence/python-pypi.xml
+          python -c 'from pathlib import Path; from tools.release_artifacts import test_totals; print(test_totals(Path("validation-evidence/python-pypi.xml")))'
           python -m pip check
       - name: Verify the published canonical sdist bytes
-        if: matrix.platform.name == 'linux-x86_64' && matrix.python.minor == '3.13'
+        if: matrix.platform.name == 'linux-glibc-x86_64' && matrix.python.minor == '3.13'
         run: |
           python - <<'PY'
           import hashlib

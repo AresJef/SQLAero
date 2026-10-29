@@ -17,6 +17,26 @@ use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
+/// Bound aggregate field work without restarting a signal check at every row.
+/// Row checkpoints and long-value decoder checkpoints remain independent.
+#[derive(Default)]
+struct FetchProgress {
+    fields: usize,
+    bytes: usize,
+}
+impl FetchProgress {
+    fn field(&mut self, py: Python<'_>, bytes: usize) -> PyResult<()> {
+        self.fields += 1;
+        self.bytes = self.bytes.saturating_add(bytes);
+        if self.fields == 64 || self.bytes >= 64 * 1024 {
+            py.check_signals()?;
+            self.fields = 0;
+            self.bytes = 0;
+        }
+        Ok(())
+    }
+}
+
 struct ReadData {
     rows: Buffered,
     plans: Buffer<Plan>,
@@ -246,6 +266,7 @@ impl Reader {
         types: &ScalarTypes,
         row_index: usize,
         start: usize,
+        progress: &mut FetchProgress,
     ) -> PyResult<Bound<'py, PyAny>> {
         let fields = data.rows.row(row_index).ok_or_else(|| {
             errors::client(
@@ -254,14 +275,15 @@ impl Reader {
                 "native row location is unavailable",
             )
         })?;
-        let decode = |column_index: usize,
-                      cell: &Cell,
-                      plan: Plan|
+        let mut decode = |column_index: usize,
+                          cell: &Cell,
+                          plan: Plan|
          -> PyResult<Bound<'py, PyAny>> {
-            let value = match cell
+            let source = cell
                 .get(&data.rows.bytes)
-                .map_err(|error| errors::wire(py, error))?
-            {
+                .map_err(|error| errors::wire(py, error))?;
+            let bytes = source.map_or(0, <[u8]>::len);
+            let value = match source {
                 None => py.None().into_bound(py),
                 Some(value) => {
                     match output::field(py, value, plan, types, Some(data.rows.scope())) {
@@ -294,9 +316,7 @@ impl Reader {
                     }
                 }
             };
-            if column_index.is_multiple_of(256) {
-                py.check_signals()?;
-            }
+            progress.field(py, bytes)?;
             Ok(value)
         };
         let row = if DIRECT {
@@ -359,16 +379,19 @@ impl Reader {
         one: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let start = range.start;
+        let mut progress = FetchProgress::default();
         if DIRECT {
             if one {
-                self.row_tuple::<true>(py, data, types, start, start)
+                self.row_tuple::<true>(py, data, types, start, start, &mut progress)
             } else if range.len() == 1 {
-                let row = self.row_tuple::<true>(py, data, types, start, start)?;
+                let row = self.row_tuple::<true>(py, data, types, start, start, &mut progress)?;
                 output::tuple_from_ready(py, [row]).map(Bound::into_any)
             } else {
                 output::tuple_from_values(
                     py,
-                    range.map(|index| self.row_tuple::<true>(py, data, types, index, start)),
+                    range.map(|index| {
+                        self.row_tuple::<true>(py, data, types, index, start, &mut progress)
+                    }),
                 )
                 .map(Bound::into_any)
             }
@@ -379,7 +402,7 @@ impl Reader {
                 .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
             for index in range {
                 result.push(
-                    self.row_tuple::<false>(py, data, types, index, start)?
+                    self.row_tuple::<false>(py, data, types, index, start, &mut progress)?
                         .unbind(),
                 );
             }
