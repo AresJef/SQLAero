@@ -10,21 +10,21 @@ on:
         description: Native probe target; use all for the supported native preflight.
         type: choice
         default: all
-        options: [all, macos-arm64, macos-x86_64, windows-x86_64, windows-arm64, linux-x86_64, linux-glibc-aarch64, linux-musl-x86_64, linux-musl-aarch64]
+        options: [all, macos-arm64, macos-x86_64, windows-x86_64, windows-arm64, linux-glibc-x86_64, linux-glibc-aarch64, linux-musl-x86_64, linux-musl-aarch64]
 
 permissions:
   contents: read
 
 jobs:
   native-smoke:
-    if: ${{ !startsWith(inputs.platform, 'linux-musl-') }}
+    if: ${{ !startsWith(inputs.platform, 'linux-') }}
     name: Native probe / ${{ matrix.platform }} / CPython 3.13
-    runs-on: ${{ fromJSON('{"macos-arm64":"macos-26","macos-x86_64":"macos-15-intel","windows-x86_64":"windows-2022","windows-arm64":"windows-11-arm","linux-x86_64":"ubuntu-24.04","linux-glibc-aarch64":"ubuntu-24.04-arm"}')[matrix.platform] }}
+    runs-on: ${{ fromJSON('{"macos-arm64":"macos-26","macos-x86_64":"macos-15-intel","windows-x86_64":"windows-2022","windows-arm64":"windows-11-arm"}')[matrix.platform] }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-arm64","macos-x86_64","windows-x86_64","windows-arm64","linux-x86_64","linux-glibc-aarch64"]') }}
+        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-arm64","macos-x86_64","windows-x86_64","windows-arm64"]') }}
     defaults:
       run:
         shell: bash
@@ -39,7 +39,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13.17"
-          architecture: ${{ (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-arm64' || matrix.platform == 'linux-glibc-aarch64') && 'arm64' || 'x64' }}
+          architecture: ${{ (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-arm64') && 'arm64' || 'x64' }}
       - name: Prepare the shared native test environment
         uses: ./.github/actions/native-environment
       - name: Verify native sources
@@ -53,18 +53,8 @@ jobs:
           python tools/error_catalog.py --check
           pyright
       - name: Build the native probe wheel
-        if: runner.os != 'Linux'
         run: |
           maturin build --release --locked --interpreter python --out probe-wheels
-      - name: Build the manylinux probe wheel
-        if: runner.os == 'Linux'
-        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
-        with:
-          maturin-version: '1.15.0'
-          rust-toolchain: '1.99.1'
-          target: ${{ matrix.platform == 'linux-glibc-aarch64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}
-          manylinux: '2_28'
-          args: --release --locked --interpreter python3.13 --out probe-wheels
       - name: Install the actual probe wheel
         run: |
           python - <<'PY'
@@ -122,15 +112,15 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
 
-  musl-smoke:
-    if: ${{ github.event_name == 'workflow_dispatch' && (inputs.platform == 'all' || startsWith(inputs.platform, 'linux-musl-')) }}
-    name: Musl probe / ${{ matrix.architecture }} / CPython 3.13
-    runs-on: ${{ matrix.architecture == 'aarch64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+  linux-smoke:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || startsWith(inputs.platform, 'linux-') }}
+    name: Linux probe / ${{ matrix.platform }} / CPython 3.13
+    runs-on: ${{ endsWith(matrix.platform, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        architecture: ${{ fromJSON(inputs.platform == 'linux-musl-aarch64' && '["aarch64"]' || inputs.platform == 'linux-musl-x86_64' && '["x86_64"]' || '["x86_64","aarch64"]') }}
+        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || github.event_name == 'workflow_dispatch' && '["linux-glibc-x86_64","linux-glibc-aarch64","linux-musl-x86_64","linux-musl-aarch64"]' || '["linux-glibc-x86_64"]') }}
     defaults:
       run:
         shell: bash
@@ -143,100 +133,32 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.13.17'
-          architecture: ${{ matrix.architecture == 'aarch64' && 'arm64' || 'x64' }}
+          architecture: ${{ endsWith(matrix.platform, 'aarch64') && 'arm64' || 'x64' }}
       - name: Prepare the shared native server environment
         uses: ./.github/actions/native-environment
-      - name: Prepare the owned loopback servers outside musl
+      - name: Prepare the owned loopback servers outside the target libc
         run: |
           set -euo pipefail
           mkdir -p probe-evidence
           python tools/mysql_fixture.py prepare > probe-evidence/mysql-instances.json
-      - name: Prepare pinned official clients at the shared administration boundary
-        run: |
-          set -euo pipefail
-          # Only this ephemeral job's Docker daemon is shared with its musl
-          # test container. SQLAero itself never calls Docker or this bridge.
-          docker pull mysql:8.4.13
-          docker pull mysql:9.7.4
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-          import shlex
-          import subprocess
-          root = Path(os.environ['SQLAERO_TEST_MYSQL_ROOT'])
-          identities = {}
-          for label, version in [('84', '8.4.13'), ('97', '9.7.4')]:
-              image = subprocess.check_output(
-                  ['docker', 'image', 'inspect', f'mysql:{version}', '--format', '{{index .RepoDigests 0}}'],
-                  text=True).strip()
-              command = ['docker', 'run', '--rm', '-i', '--network', 'host',
-                         '--user', f'{os.getuid()}:{os.getgid()}',
-                         '-v', f'{root}:{root}:ro', '--entrypoint', 'mysql', image]
-              wrapper = root / f'mysql-client-{label}'
-              wrapper.write_text('#!/bin/sh\nexec ' + shlex.join(command) + ' "$@"\n')
-              wrapper.chmod(0o700)
-              identities[label] = image
-          Path('probe-evidence/mysql-client-images.json').write_text(json.dumps(identities, indent=2))
-          PY
-          python tools/mysql_fixture.py clients \
-            --client84 "$SQLAERO_TEST_MYSQL_ROOT/mysql-client-84" \
-            --client97 "$SQLAERO_TEST_MYSQL_ROOT/mysql-client-97"
-      - name: Build and exercise the actual musl Python and wheel
+      - name: Build, install and run the complete suite in the real target libc
         env:
-          TARGET: ${{ matrix.architecture }}-unknown-linux-musl
-          IMAGE: quay.io/pypa/musllinux_1_2_${{ matrix.architecture }}
-        run: |
-          set -euo pipefail
-          docker pull "$IMAGE"
-          docker image inspect "$IMAGE" --format '{{json .RepoDigests}}' > probe-evidence/container-image.json
-          docker run --rm --network host \
-            -v "$GITHUB_WORKSPACE:/work" -w /work \
-            -v "$SQLAERO_TEST_MYSQL_ROOT:$SQLAERO_TEST_MYSQL_ROOT" \
-            -v /var/run/docker.sock:/var/run/docker.sock \
-            -e SQLAERO_TEST_MYSQL_ROOT -e SQLAERO_NATIVE_MYSQL -e TARGET \
-            -e SQLAERO_TEST_TLS="$SQLAERO_TEST_MYSQL_ROOT/tls" \
-            -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/work \
-            "$IMAGE" bash -euo pipefail -c '
-              apk add --no-cache ca-certificates curl tzdata nodejs patchelf docker-cli openssl
-              export CARGO_HOME=/tmp/sqlaero-cargo RUSTUP_HOME=/tmp/sqlaero-rustup
-              export PATH="$CARGO_HOME/bin:/opt/python/cp313-cp313/bin:$PATH"
-              curl --proto "=https" --tlsv1.2 --fail --silent --show-error https://sh.rustup.rs -o /tmp/sqlaero-rustup.sh
-              sh /tmp/sqlaero-rustup.sh -y --profile minimal --default-toolchain 1.99.1 --component clippy,rustfmt --no-modify-path
-              python -m venv /tmp/sqlaero-musl-env
-              export PATH="/tmp/sqlaero-musl-env/bin:$PATH"
-              export PYO3_PYTHON="/tmp/sqlaero-musl-env/bin/python"
-              export CARGO_TARGET_DIR=/tmp/sqlaero-musl-target
-              python -m pip install --disable-pip-version-check -r requirements-dev.txt
-              rustc -vV > probe-evidence/toolchain.txt
-              python -c "import _testcapi, sys; print(sys.version)"
-              cargo fmt --all --check
-              cargo test -p sqlaero-core --locked
-              cargo clippy --workspace --all-targets --locked -- -D warnings
-              python tools/error_catalog.py --check
-              pyright --pythonpath "$PYO3_PYTHON"
-              maturin build --release --locked --target "$TARGET" --compatibility musllinux_1_2 --interpreter python --out probe-wheels
-              python -m pip install --no-deps probe-wheels/*.whl
-              python tools/release_artifacts.py identity --kind original --wheel probe-wheels/*.whl --output probe-evidence/installed-identity.json
-              cargo test -p sqlaero-core --lib explicit_roots_keep_platform_ssl_name_usage_and_time_policy --locked -- --ignored --test-threads=1
-              cargo test -p sqlaero-core --test establish --locked -- --ignored --test-threads=1
-              cargo test -p sqlaero-core --test component_contracts --locked -- --ignored --test-threads=1
-              cargo test -p sqlaero-core --test protocol_wire --locked -- --ignored --test-threads=1
-              python tests/_native_signal.py
-              python tests/_native_signal.py --pytest -q tests --junitxml=probe-evidence/python-tests.xml
-              python -m pip check
-            '
+          LINUX_LIBC: ${{ contains(matrix.platform, '-musl-') && 'musl' || 'glibc' }}
+          PYTHON_MINOR: '3.13'
+          EVIDENCE_DIR: probe-evidence
+          WHEEL_DIR: probe-wheels
+        run: bash tools/linux_wheel.sh host probe
       - name: Stop only this jobs isolated servers
         if: always()
         run: python tools/mysql_fixture.py stop
       - name: Collect redacted native server diagnostics
         if: always()
         run: python tools/mysql_fixture.py diagnostics --output probe-evidence
-      - name: Preserve the actual musl probe evidence
+      - name: Preserve the actual Linux probe evidence
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: native-probe-linux-musl-${{ matrix.architecture }}-cp313
+          name: native-probe-${{ matrix.platform }}-cp313
           path: probe-evidence/
           if-no-files-found: warn
           retention-days: 7

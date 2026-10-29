@@ -19,6 +19,7 @@ import subprocess
 import sys
 import sysconfig
 import tarfile
+import time
 import tomllib
 from typing import Any, cast
 from xml.etree import ElementTree
@@ -120,6 +121,37 @@ def extract(path: Path, destination: Path, expected: str) -> None:
     print(roots[0].resolve().as_posix())
 
 
+def download(package_version: str, manifest_path: Path, destination: Path, output: Path) -> None:
+    """Download this interpreter's PyPI wheel and require its tested hash.
+
+    Index propagation receives the same six bounded attempts as the original
+    release workflow. This operation never chooses an older version or builds
+    a source fallback when the requested platform wheel is unavailable.
+    """
+    release: dict[str, Any] = json.loads(manifest_path.read_text(encoding='utf-8'))
+    assert package_version == release['version'] == release_version()
+    destination.mkdir(parents=True, exist_ok=True)
+    for attempt in range(6):
+        result = subprocess.run([
+            sys.executable, '-m', 'pip', 'download', '--index-url', 'https://pypi.org/simple',
+            '--no-cache-dir', '--no-deps', '--only-binary=:all:',
+            f'sqlaero=={package_version}', '--dest', str(destination),
+        ], check=False)
+        if result.returncode == 0:
+            break
+        if attempt == 5:
+            result.check_returncode()
+        time.sleep(10)
+    wheels = list(destination.glob('*.whl'))
+    assert len(wheels) == 1, wheels
+    wheel = wheels[0]
+    record = next(row for row in release['wheels'] if row['file'] == wheel.name)
+    assert digest(wheel) == record['sha256'], 'PyPI wheel differs from the tested bundle'
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps({'index': 'https://pypi.org/simple', 'file': wheel.name,
+                                  'sha256': record['sha256']}, indent=2) + '\n', encoding='utf-8')
+
+
 def test_totals(path: Path) -> dict[str, int]:
     """Read the actual JUnit outcome rather than inferring tests from filenames."""
     root = ElementTree.parse(path).getroot()
@@ -169,7 +201,7 @@ def manifest(directory: Path, identities: Path, output: Path) -> None:
 
 
 def main() -> None:
-    """Expose the three identity operations needed by the existing workflow."""
+    """Expose shared identity operations used by the existing workflows."""
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
     identity = commands.add_parser('identity')
@@ -185,11 +217,18 @@ def main() -> None:
     bundle.add_argument('--directory', type=Path, required=True)
     bundle.add_argument('--identities', type=Path, required=True)
     bundle.add_argument('--output', type=Path, required=True)
+    fetch = commands.add_parser('download')
+    fetch.add_argument('--version', required=True)
+    fetch.add_argument('--manifest', type=Path, required=True)
+    fetch.add_argument('--destination', type=Path, required=True)
+    fetch.add_argument('--output', type=Path, required=True)
     args = parser.parse_args()
     if args.command == 'identity':
         installed(args.wheel, args.output, args.kind, args.sdist)
     elif args.command == 'extract':
         extract(args.sdist, args.destination, args.expected_sha)
+    elif args.command == 'download':
+        download(args.version, args.manifest, args.destination, args.output)
     else:
         manifest(args.directory, args.identities, args.output)
 
