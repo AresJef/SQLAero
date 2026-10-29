@@ -90,7 +90,11 @@ fi
 if [[ "$LINUX_LIBC" == musl ]]; then
   apk add --no-cache ca-certificates curl tzdata nodejs patchelf openssl
 else
-  dnf install -y openssl ca-certificates
+  # Pinned manylinux images already carry these packages. Do not refresh
+  # unrelated repositories when the required tools and trust store are present.
+  if ! rpm --quiet --query openssl ca-certificates; then
+    timeout 180 dnf install -y openssl ca-certificates
+  fi
 fi
 export CARGO_HOME=/tmp/sqlaero-cargo RUSTUP_HOME=/tmp/sqlaero-rustup
 abi="cp${PYTHON_MINOR/./}-cp${PYTHON_MINOR/./}"
