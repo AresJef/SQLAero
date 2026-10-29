@@ -140,10 +140,37 @@ def certificates() -> Path:
 
 def mysql_command(label: str, account: str = 'root') -> list[str]:
     """Build a client command using the instance's private option file."""
-    return [str(program(label, 'mysql')),
+    state: dict[str, Any] = json.loads((ROOT / label / 'state.json').read_text())
+    return [state['mysql'],
             f'--defaults-file={ROOT / label / (account + ".cnf")}',
             '--no-login-paths',
             '--batch', '--raw', '--skip-column-names']
+
+
+def register_clients(clients: dict[str, Path]) -> None:
+    """Verify owned administration bridges before replacing prepared clients.
+
+    Only CI preparation calls this operation. The same stored executable is
+    subsequently used by existing Rust and Python tests; product code never
+    knows whether administration runs on the host or in a client container.
+    """
+    prepared: list[tuple[Path, dict[str, Any]]] = []
+    for label, client in clients.items():
+        client = client.resolve(strict=True)
+        if not client.is_file() or not client.is_relative_to(ROOT.resolve()):
+            raise RuntimeError('Administration bridge must be a file in the owned fixture root')
+        state_path = ROOT / label / 'state.json'
+        state: dict[str, Any] = json.loads(state_path.read_text())
+        identity = run([str(client), '--version']).strip()
+        if f'Ver {VERSIONS[label][0]}.' not in identity:
+            raise RuntimeError(f'Unexpected MySQL {label} administration client version')
+        state['mysql'] = str(client)
+        state['client_identity'] = identity
+        prepared.append((state_path, state))
+    for state_path, state in prepared:
+        write_private(state_path, json.dumps(state))
+    for label in clients:
+        run(mysql_command(label), data='SELECT 1;')
 
 
 def prepare(label: str, tls: Path) -> dict[str, Any]:
@@ -252,8 +279,10 @@ def stop(label: str) -> None:
 def main() -> None:
     """Run the explicitly selected fixture operation."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['prepare', 'stop', 'diagnostics'])
+    parser.add_argument('action', choices=['prepare', 'stop', 'diagnostics', 'clients'])
     parser.add_argument('--output', type=Path)
+    parser.add_argument('--client84', type=Path)
+    parser.add_argument('--client97', type=Path)
     arguments = parser.parse_args()
     if arguments.action == 'diagnostics':
         if arguments.output is None:
@@ -264,6 +293,11 @@ def main() -> None:
     if ROOT.is_symlink() or (os.name == 'posix' and ROOT.stat().st_uid != os.getuid()):
         raise RuntimeError('Fixture root must be owned by the current user and not be a symlink')
     ROOT.chmod(0o700)
+    if arguments.action == 'clients':
+        if arguments.client84 is None or arguments.client97 is None:
+            parser.error('clients requires --client84 and --client97')
+        register_clients({'84': arguments.client84, '97': arguments.client97})
+        return
     if arguments.action == 'stop':
         for label in VERSIONS:
             stop(label)

@@ -151,6 +151,37 @@ jobs:
           set -euo pipefail
           mkdir -p probe-evidence
           python tools/mysql_fixture.py prepare > probe-evidence/mysql-instances.json
+      - name: Prepare pinned official clients at the shared administration boundary
+        run: |
+          set -euo pipefail
+          # Only this ephemeral job's Docker daemon is shared with its musl
+          # test container. SQLAero itself never calls Docker or this bridge.
+          docker pull mysql:8.4.13
+          docker pull mysql:9.7.4
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+          import shlex
+          import subprocess
+          root = Path(os.environ['SQLAERO_TEST_MYSQL_ROOT'])
+          identities = {}
+          for label, version in [('84', '8.4.13'), ('97', '9.7.4')]:
+              image = subprocess.check_output(
+                  ['docker', 'image', 'inspect', f'mysql:{version}', '--format', '{{index .RepoDigests 0}}'],
+                  text=True).strip()
+              command = ['docker', 'run', '--rm', '-i', '--network', 'host',
+                         '--user', f'{os.getuid()}:{os.getgid()}',
+                         '-v', f'{root}:{root}:ro', '--entrypoint', 'mysql', image]
+              wrapper = root / f'mysql-client-{label}'
+              wrapper.write_text('#!/bin/sh\nexec ' + shlex.join(command) + ' "$@"\n')
+              wrapper.chmod(0o700)
+              identities[label] = image
+          Path('probe-evidence/mysql-client-images.json').write_text(json.dumps(identities, indent=2))
+          PY
+          python tools/mysql_fixture.py clients \
+            --client84 "$SQLAERO_TEST_MYSQL_ROOT/mysql-client-84" \
+            --client97 "$SQLAERO_TEST_MYSQL_ROOT/mysql-client-97"
       - name: Build and exercise the actual musl Python and wheel
         env:
           TARGET: ${{ matrix.architecture }}-unknown-linux-musl
@@ -162,10 +193,12 @@ jobs:
           docker run --rm --network host \
             -v "$GITHUB_WORKSPACE:/work" -w /work \
             -v "$SQLAERO_TEST_MYSQL_ROOT:$SQLAERO_TEST_MYSQL_ROOT" \
-            -e SQLAERO_TEST_MYSQL_ROOT -e TARGET \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -e SQLAERO_TEST_MYSQL_ROOT -e SQLAERO_NATIVE_MYSQL -e TARGET \
+            -e SQLAERO_TEST_TLS="$SQLAERO_TEST_MYSQL_ROOT/tls" \
             -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/work \
             "$IMAGE" bash -euo pipefail -c '
-              apk add --no-cache ca-certificates curl tzdata nodejs patchelf
+              apk add --no-cache ca-certificates curl tzdata nodejs patchelf docker-cli openssl
               export CARGO_HOME=/tmp/sqlaero-cargo RUSTUP_HOME=/tmp/sqlaero-rustup
               export PATH="$CARGO_HOME/bin:/opt/python/cp313-cp313/bin:$PATH"
               curl --proto "=https" --tlsv1.2 --fail --silent --show-error https://sh.rustup.rs -o /tmp/sqlaero-rustup.sh
@@ -185,11 +218,12 @@ jobs:
               maturin build --release --locked --target "$TARGET" --compatibility musllinux_1_2 --interpreter python --out probe-wheels
               python -m pip install --no-deps probe-wheels/*.whl
               python tools/release_artifacts.py identity --kind original --wheel probe-wheels/*.whl --output probe-evidence/installed-identity.json
-              python tests/_native_signal.py --pytest -q \
-                tests/test_scalar_input.py tests/test_buffered_reader.py tests/test_json.py \
-                tests/test_public_connection.py::test_actual_connect_bind_and_independent_buffered_cursors \
-                tests/test_public_connection.py::test_public_tcp_and_unix_tls_share_prepared_materials \
-                --junitxml=probe-evidence/python-tests.xml
+              cargo test -p sqlaero-core --lib explicit_roots_keep_platform_ssl_name_usage_and_time_policy --locked -- --ignored --test-threads=1
+              cargo test -p sqlaero-core --test establish --locked -- --ignored --test-threads=1
+              cargo test -p sqlaero-core --test component_contracts --locked -- --ignored --test-threads=1
+              cargo test -p sqlaero-core --test protocol_wire --locked -- --ignored --test-threads=1
+              python tests/_native_signal.py
+              python tests/_native_signal.py --pytest -q tests --junitxml=probe-evidence/python-tests.xml
               python -m pip check
             '
       - name: Stop only this jobs isolated servers
