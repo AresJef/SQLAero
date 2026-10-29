@@ -159,6 +159,12 @@ def test_totals(path: Path) -> dict[str, int]:
     totals = {name: sum(int(suite.get(name, '0')) for suite in suites)
               for name in ('tests', 'failures', 'errors', 'skipped')}
     assert totals['tests'] > 0 and totals['failures'] == totals['errors'] == 0, (path, totals)
+    for case in root.iter('testcase'):
+        skipped = case.find('skipped')
+        if skipped is not None:
+            assert (case.get('name') == 'test_windows_unix_socket_is_rejected_without_tcp_fallback'
+                    and skipped.get('message') == 'Windows explicitly rejects the Unix-only transport'), (
+                        'Unexpected skipped requirement', path, case.attrib, skipped.attrib)
     return totals
 
 
@@ -188,9 +194,11 @@ def manifest(directory: Path, identities: Path, output: Path) -> None:
             if kind == 'original':
                 match = next(row for row in wheels if (row['platform'], row['python']) == key)
                 assert match['sha256'] == record['sha256'] and match['native_sha256'] == record['native_sha256']
+            totals = test_totals(path.with_name(f'python-{kind}.xml'))
+            assert totals['skipped'] == (0 if key[0].startswith('windows-') else 1), (path, totals)
             evidence.append({'kind': kind, 'platform': key[0], 'python': key[1],
                              'wheel_sha256': record['sha256'],
-                             'tests': test_totals(path.with_name(f'python-{kind}.xml'))})
+                             'tests': totals})
     assert len(commits) == 1, commits
     result = {'version': release_version(), 'source_commit': next(iter(commits)),
               'wheels': wheels, 'sdist': {'file': sdists[0].name, 'sha256': source_hash,

@@ -75,3 +75,16 @@ def test_pypi_download_requires_the_exact_tested_bytes(
         with pytest.raises(AssertionError, match='differs from the tested bundle'):
             release_artifacts.download(version, manifest, destination, output)
         assert not output.exists()
+
+
+@pytest.mark.parametrize('reason', ['explicit isolated native MySQL fixture',
+                                  'requires explicitly selected owned MySQL fixtures'])
+def test_missing_real_database_prerequisites_do_not_pass_release_evidence(
+    tmp_path: Path, reason: str,
+) -> None:
+    junit = tmp_path / 'python-original.xml'
+    junit.write_text('<testsuite tests="1" failures="0" errors="0" skipped="1">'
+                     '<testcase name="test_real_database">'
+                     f'<skipped message="{reason}"/></testcase></testsuite>')
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(junit)
