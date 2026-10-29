@@ -81,7 +81,7 @@ jobs:
           retention-days: 7
 
   build:
-    name: ${{ matrix.platform.name }} / CPython ${{ matrix.python.version }}
+    name: ${{ matrix.platform.name }} / CPython ${{ matrix.python.minor }}
     needs: source
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 70
@@ -341,7 +341,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
 
   pypi-verify:
-    name: PyPI / ${{ matrix.platform.name }} / CPython ${{ matrix.python.version }}
+    name: PyPI / ${{ matrix.platform.name }} / CPython ${{ matrix.python.minor }}
     needs: [source, pypi-publish]
     runs-on: ${{ matrix.platform.runner }}
     timeout-minutes: 45
@@ -410,6 +410,7 @@ jobs:
           python tools/release_artifacts.py identity --kind pypi --wheel pypi-wheels/*.whl --output validation-evidence/pypi-wheel-identity.json
           python tools/mysql_fixture.py prepare > validation-evidence/mysql-instances.json
           python tests/_native_signal.py --pytest -q tests --junitxml=validation-evidence/python-pypi.xml
+          python -c 'from pathlib import Path; from tools.release_artifacts import test_totals; print(test_totals(Path("validation-evidence/python-pypi.xml")))'
           python -m pip check
       - name: Verify the published canonical sdist bytes
         if: matrix.platform.name == 'linux-glibc-x86_64' && matrix.python.minor == '3.13'

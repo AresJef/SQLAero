@@ -6,25 +6,27 @@ are adapted at the boundary; SQL literals are written into the current native
 request rather than generated as per-value Python SQL strings.
 
 The 0.2 Beta targets regular-GIL CPython 3.12–3.15 on macOS arm64 / x86_64,
-Windows x86_64 and glibc Linux x86_64, with MySQL 8.4 / 9.7. The release workflow
-builds and installs all 16 original wheels, independently rebuilds and tests the
-same source distribution in all 16 combinations, then publishes the same 17
-files. A further 16 jobs install the exact version from PyPI and repeat the
+Windows x86_64 / arm64, and glibc / musl Linux x86_64 / aarch64, with MySQL
+8.4 / 9.7. The release workflow builds and installs all 32 original wheels,
+independently rebuilds and tests the same source distribution in all 32
+combinations, then publishes the same 33 files. A further 32 jobs install
+the exact version from PyPI and repeat the
 applicable integration suite. Async and free-threaded Python remain future work.
 
-The macOS 11.0 and manylinux_2_28 wheel tags are build compatibility targets,
-not claims of runtime tests on every older OS release. Native CI runs on macOS
-26 arm64, macOS 15 Intel, Windows Server 2022 and Ubuntu 24.04. Linux musl and
-other CPU architectures are outside this release matrix.
+The macOS 11.0, manylinux_2_28 and musllinux_1_2 tags are build compatibility
+targets, not claims of runtime tests on every older OS release. Native CI runs
+on macOS 26 arm64, macOS 15 Intel, Windows Server 2022 x86_64 and Windows 11
+ARM64. Linux installation tests run inside pinned native PyPA containers on
+x86_64 / ARM64 Ubuntu hosts; MySQL servers remain owned loopback processes.
 
 ## Install
 
 ```sh
-python -m pip install --pre 'sqlaero==0.2.0b1'
+python -m pip install --pre 'sqlaero==0.2.0b2'
 ```
 
 This Beta is a new Rust client. It is not an API-compatible update to the old
-Cython 0.1 alpha. See the [release notes](docs/releases/v0.2.0b1.md) for scope,
+Cython 0.1 alpha. See the [release notes](docs/releases/v0.2.0b2.md) for scope,
 validation boundaries and migration cautions.
 
 ## Build from source
@@ -138,7 +140,7 @@ implicitly.
 ## Performance and development
 
 The following figures belong to the original alpha evidence and do not describe
-the later repair artifacts or this Beta. The [Beta release notes](docs/releases/v0.2.0b1.md)
+the later repair artifacts or this Beta. The [Beta release notes](docs/releases/v0.2.0b2.md)
 explain those boundaries. Native build, installed-package and source-rebuild
 checks are available in the [release workflow runs](https://github.com/AresJef/SQLAero/actions/workflows/release.yml);
 local formal performance measurements are kept separate from CI observations.
