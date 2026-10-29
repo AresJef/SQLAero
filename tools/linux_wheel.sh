@@ -32,9 +32,20 @@ if [[ "$side" == host ]]; then
   export LINUX_IMAGE_DIGEST
   LINUX_IMAGE_DIGEST=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
   docker image inspect "$image" --format '{{json .RepoDigests}}' > "$evidence/container-image.json"
-  # The runner's Docker CLI is a self-contained Go binary. Verify it actually
-  # executes inside the target libc below; do not install a second CLI stack.
-  cp "$(command -v docker)" "$SQLAERO_TEST_MYSQL_ROOT/docker-cli"
+  # The runner's packaged CLI requires newer glibc. Use Docker's documented
+  # static test distribution without installing a daemon or changing the host.
+  # Source: https://docs.docker.com/engine/install/binaries/
+  case "$architecture" in
+    x86_64) client_sha=4422c550a6583fedfa790e00e7d51c1ee494e5c3f2dffc0a74145417fb9a7a6f ;;
+    aarch64) client_sha=916d1a8f6257a26142fe139ed6e4bf18f52d67259e72577b54368202033ee90a ;;
+  esac
+  client_archive="$SQLAERO_TEST_MYSQL_ROOT/docker-client.tgz"
+  curl --fail --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 180 \
+    "https://download.docker.com/linux/static/stable/$architecture/docker-29.1.2.tgz" -o "$client_archive"
+  printf '%s  %s\n' "$client_sha" "$client_archive" | sha256sum --check
+  tar -xzf "$client_archive" -O docker/docker > "$SQLAERO_TEST_MYSQL_ROOT/docker-cli"
+  chmod 700 "$SQLAERO_TEST_MYSQL_ROOT/docker-cli"
+  sha256sum "$client_archive" "$SQLAERO_TEST_MYSQL_ROOT/docker-cli" > "$evidence/docker-client-sha256.txt"
   docker pull mysql:8.4.13
   docker pull mysql:9.7.4
   EVIDENCE_DIR="$evidence" python - <<'PY'
