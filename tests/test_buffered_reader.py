@@ -189,9 +189,11 @@ def test_single_large_json_checks_signals_before_finishing_the_field(shape: str,
             raise original
 
     alarm = NativeAlarm(check_progress)
+    # Sender construction is preparation, not allocation progress in the field.
+    baseline = sys.getallocatedblocks()
     result: tuple[Any, ...] | None = None
     try:
-        alarm.start(0.001, 0.001)
+        alarm.start(0.001, 0.001, wait_ready=True)
         if interrupt:
             with pytest.raises(Interrupted) as caught:
                 value.fetchone()
