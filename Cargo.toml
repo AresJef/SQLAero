@@ -1,9 +1,10 @@
 [workspace]
 members = ["crates/sqlaero-core", "crates/sqlaero-python"]
 resolver = "3"
+exclude = ["third-party/jiter"]
 
 [workspace.package]
-version = "0.2.0-alpha.1"
+version = "0.2.0-beta.1"
 edition = "2024"
 rust-version = "1.99.1"
 license = "MIT"
@@ -49,3 +50,6 @@ lto = "thin"
 codegen-units = 1
 panic = "unwind"
 overflow-checks = true
+
+[patch.crates-io]
+jiter = { path = "third-party/jiter" }

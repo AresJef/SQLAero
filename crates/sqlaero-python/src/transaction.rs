@@ -245,23 +245,30 @@ impl Transaction {
             .take();
         let business = (!value.is_none()).then(|| PyErr::from_value(value.clone()));
         let mut primary = business.as_ref().map(|error| error.clone_ref(py));
+        let mut commit_confirmed = false;
+        let mut acquired = false;
+        let mut unattempted = None;
+        let mut cleanup_detail = String::new();
         let finish = (|| {
             let mut budget = connection.runtime(py)?.timeouts.operation();
             let mut lease = connection
                 .native
                 .try_command()
                 .map_err(|error| errors::access(py, error))?;
+            acquired = true;
             if let Some(primary) = &primary {
                 Self::rollback_after_error(&connection, py, &mut lease, &mut budget, primary);
             } else {
                 let mut commit = ControlAttempt::default();
-                if let Err(error) = connection.control_recorded(
+                let result = connection.control_recorded(
                     py,
                     &mut lease,
                     b"COMMIT AND NO CHAIN NO RELEASE",
                     &mut budget,
                     &mut commit,
-                ) {
+                );
+                commit_confirmed = commit.confirmed;
+                if let Err(error) = result {
                     let error = errors::at(py, error, "transaction.commit");
                     if commit.confirmed {
                         Self::note(
@@ -290,8 +297,15 @@ impl Transaction {
             Ok(())
         })();
         if let Err(error) = finish {
+            if !acquired {
+                unattempted = Some(error.to_string());
+            }
             if let Some(existing) = &primary {
-                errors::additional(py, existing, error, "transaction.exit");
+                if acquired {
+                    errors::additional(py, existing, error, "transaction.exit");
+                } else {
+                    errors::additional_detail(py, existing, error, "transaction.exit", None);
+                }
             } else {
                 primary = Some(errors::at(py, error, "transaction.exit"));
             }
@@ -299,13 +313,49 @@ impl Transaction {
         if let Some(cursor) = cursor
             && let Err(error) = cursor.borrow(py).close(py)
         {
+            // This mandatory cleanup differs from an ordinary busy close:
+            // the completed context must not leave its Cursor reusable.
+            cursor.borrow(py).retire();
+            if unattempted.is_some() {
+                cleanup_detail = format!(" Cleanup also failed: {error}.");
+            }
             if let Some(existing) = &primary {
-                errors::additional(py, existing, error, "cursor.close");
+                if unattempted.is_some() {
+                    errors::additional_detail(py, existing, error, "cursor.close", None);
+                } else {
+                    errors::additional(py, existing, error, "cursor.close");
+                }
             } else {
+                if commit_confirmed {
+                    Self::note(
+                        py,
+                        &error,
+                        "COMMIT was fully confirmed; subsequent Cursor cleanup failed. No rollback or repeated commit was sent.",
+                    );
+                }
                 primary = Some(error);
             }
         }
         self.release();
+        if let (Some(reason), Some(error)) = (unattempted, primary.as_ref()) {
+            let action = if business.is_some() {
+                "ROLLBACK"
+            } else {
+                "COMMIT"
+            };
+            let lifecycle = if connection.native.is_closed() {
+                "The connection is locally retired."
+            } else {
+                "This exit did not close the connection or cancel the in-flight command."
+            };
+            Self::note(
+                py,
+                error,
+                format!(
+                    "SQLAero context:\nTransaction: {action} was not attempted: {reason}. No transaction-control command was sent by this exit; no new confirmation of server transaction state was obtained.\nCleanup: This scope's Cursor was closed or retired and its local scope was released.{cleanup_detail}\nConnection: {lifecycle}"
+                ),
+            );
+        }
         if business.is_some() {
             Ok(false)
         } else {

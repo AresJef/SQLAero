@@ -5,34 +5,116 @@ on:
     branches: [main, codex/rust-sync-kernel]
   pull_request:
   workflow_dispatch:
+    inputs:
+      platform:
+        description: Native probe target; use all for the four-platform preflight.
+        type: choice
+        default: all
+        options: [all, macos-arm64, macos-x86_64, windows-x86_64, linux-x86_64]
 
 permissions:
   contents: read
 
 jobs:
   native-smoke:
-    runs-on: macos-14
-    timeout-minutes: 20
+    name: Native probe / ${{ matrix.platform }} / CPython 3.13
+    runs-on: ${{ fromJSON('{"macos-arm64":"macos-26","macos-x86_64":"macos-15-intel","windows-x86_64":"windows-2022","linux-x86_64":"ubuntu-24.04"}')[matrix.platform] }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-arm64","macos-x86_64","windows-x86_64","linux-x86_64"]') }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      SQLAERO_NATIVE_MYSQL: "1"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.13.3"
-          architecture: arm64
-      - name: Install the fixed native toolchain
-        run: rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
-      - name: Build and verify the current implementation slice
+          python-version: "3.13.17"
+          architecture: ${{ matrix.platform == 'macos-arm64' && 'arm64' || 'x64' }}
+      - name: Prepare the shared native test environment
+        uses: ./.github/actions/native-environment
+      - name: Verify native sources
         run: |
-          python -m venv .venv
-          source .venv/bin/activate
-          python -m pip install --disable-pip-version-check -r requirements-dev.txt
+          set -euo pipefail
           rustc --version
           python --version
           cargo fmt --all --check
           cargo test -p sqlaero-core --locked
           cargo clippy --workspace --locked -- -D warnings
-          maturin develop --release --locked -m crates/sqlaero-python/Cargo.toml
-          python -m pytest -q
+          python tools/error_catalog.py --check
           pyright
+      - name: Build the native probe wheel
+        if: runner.os != 'Linux'
+        run: |
+          maturin build --release --locked --interpreter python --out probe-wheels
+      - name: Build the manylinux probe wheel
+        if: runner.os == 'Linux'
+        uses: PyO3/maturin-action@e83996d129638aa358a18fbd1dfb82f0b0fb5d3b # v1.51.0
+        with:
+          maturin-version: '1.15.0'
+          rust-toolchain: '1.99.1'
+          target: x86_64-unknown-linux-gnu
+          manylinux: '2_28'
+          args: --release --locked --interpreter python3.13 --out probe-wheels
+      - name: Install the actual probe wheel
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import subprocess
+          import sys
+          wheels: list[Path] = list(Path('probe-wheels').glob('*.whl'))
+          assert len(wheels) == 1, wheels
+          subprocess.run([sys.executable, '-m', 'pip', 'install', '--no-deps', str(wheels[0])], check=True)
+          PY
+      - name: Verify the installed wheel and real MySQL behavior
+        run: |
+          set -euo pipefail
+          mkdir -p probe-evidence
+          python - <<'PY'
+          import hashlib
+          from importlib.metadata import version
+          import json
+          from pathlib import Path
+          import sqlaero
+          from sqlaero import _sqlaero
+          import sys
+          import zipfile
+          wheel: Path = next(Path('probe-wheels').glob('*.whl'))
+          native: Path = Path(_sqlaero.__file__).resolve()
+          assert native.is_relative_to(Path(sys.prefix).resolve()), native
+          with zipfile.ZipFile(wheel) as archive:
+              members: list[str] = [name for name in archive.namelist() if name.endswith(('.so', '.pyd'))]
+              assert len(members) == 1, members
+              assert hashlib.sha256(archive.read(members[0])).hexdigest() == hashlib.sha256(native.read_bytes()).hexdigest()
+          Path('probe-evidence/installed-identity.json').write_text(json.dumps({'wheel': wheel.name, 'version': version('sqlaero'), 'package': sqlaero.__file__, 'native': str(native), 'native_sha256': hashlib.sha256(native.read_bytes()).hexdigest()}, indent=2) + '\n')
+          PY
+          python tools/mysql_fixture.py prepare > probe-evidence/mysql-instances.json
+          cargo test -p sqlaero-core --lib explicit_roots_keep_platform_ssl_name_usage_and_time_policy --locked -- --ignored --test-threads=1
+          cargo test -p sqlaero-core --test establish --locked -- --ignored --test-threads=1
+          cargo test -p sqlaero-core --test component_contracts --locked -- --ignored --test-threads=1
+          cargo test -p sqlaero-core --test protocol_wire --locked -- --ignored --test-threads=1
+          python tests/_native_signal.py
+          python tests/_native_signal.py --pytest -q tests --junitxml=probe-evidence/python-tests.xml
+          python -m pip check
+      - name: Stop only this job's isolated servers
+        if: always()
+        run: python tools/mysql_fixture.py stop
+      - name: Collect redacted native server diagnostics
+        if: always()
+        run: python tools/mysql_fixture.py diagnostics --output probe-evidence
+      - name: Preserve probe evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: native-probe-${{ matrix.platform }}-cp313
+          path: probe-evidence/
+          if-no-files-found: warn
+          retention-days: 7

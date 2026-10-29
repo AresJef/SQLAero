@@ -5,21 +5,26 @@ connection, parameter binding, result buffering and decoding core. Python values
 are adapted at the boundary; SQL literals are written into the current native
 request rather than generated as per-value Python SQL strings.
 
-The 0.2 alpha release targets macOS arm64, regular-GIL CPython 3.12–3.15,
-and MySQL 8.4 / 9.7. The release workflow builds and installs each actual wheel,
-tests it against both dedicated server lines, and reconstructs a wheel from the
-source distribution before publishing. The macOS 11.0 wheel deployment tag is
-a build target, not evidence that every older macOS release was tested.
-Async, free-threaded Python, Intel, Linux and Windows remain future work.
+The 0.2 Beta targets regular-GIL CPython 3.12–3.15 on macOS arm64 / x86_64,
+Windows x86_64 and glibc Linux x86_64, with MySQL 8.4 / 9.7. The release workflow
+builds and installs all 16 original wheels, independently rebuilds and tests the
+same source distribution in all 16 combinations, then publishes the same 17
+files. A further 16 jobs install the exact version from PyPI and repeat the
+applicable integration suite. Async and free-threaded Python remain future work.
+
+The macOS 11.0 and manylinux_2_28 wheel tags are build compatibility targets,
+not claims of runtime tests on every older OS release. Native CI runs on macOS
+26 arm64, macOS 15 Intel, Windows Server 2022 and Ubuntu 24.04. Linux musl and
+other CPU architectures are outside this release matrix.
 
 ## Install
 
 ```sh
-python -m pip install --pre 'sqlaero==0.2.0a1'
+python -m pip install --pre 'sqlaero==0.2.0b1'
 ```
 
-This alpha is a new Rust client. It is not an API-compatible update to the old
-Cython 0.1 alpha. See the [release notes](docs/releases/v0.2.0a1.md) for scope,
+This Beta is a new Rust client. It is not an API-compatible update to the old
+Cython 0.1 alpha. See the [release notes](docs/releases/v0.2.0b1.md) for scope,
 validation boundaries and migration cautions.
 
 ## Build from source
@@ -36,12 +41,21 @@ python -m pytest -q
 pyright
 ```
 
-Running the full integration suite also requires the two isolated local MySQL
-fixtures. On a macOS arm64 development machine with `mysql@8.4`, `mysql@9.7`
-and `openssl@4` installed through Homebrew, run `python tools/mysql_fixture.py
-prepare` before the tests and `python tools/mysql_fixture.py stop` afterward.
-The utility uses its own loopback ports and private temporary data directories;
-it does not start Homebrew services or use their default database directories.
+Running the full integration suite also requires two isolated MySQL fixtures.
+On a macOS development machine, install `mysql@8.4`, `mysql@9.7` and `openssl@4`
+through Homebrew. Explicitly set `SQLAERO_TEST_MYSQL_ROOT` to an owned temporary
+directory and `SQLAERO_NATIVE_MYSQL=1`, then run `python tools/mysql_fixture.py
+prepare` before tests and `python tools/mysql_fixture.py stop` afterward. Tests
+that require a real database refuse to select an implicit user database.
+Linux and Windows use the official MySQL installations selected with
+`SQLAERO_MYSQL_84_ROOT` and `SQLAERO_MYSQL_97_ROOT`; `SQLAERO_OPENSSL` can select
+the OpenSSL executable. CI uses the shared native-environment action for this
+preparation. The utility uses loopback ports and private temporary data, never
+Homebrew services or their default database directories.
+For Windows signal coverage, run `python tests/_native_signal.py --pytest -q
+tests`; the launcher creates a private console before Python starts so real
+control events cannot reach the shell or Actions runner. On POSIX this same
+launcher executes the ordinary pytest command.
 
 ## Query and fetch
 
@@ -60,8 +74,10 @@ with connect(
         assert cursor.columns.names == ('n', 'label')
 ```
 
-Default TCP uses certificate/hostname verification; explicit Unix sockets use
-local plain transport unless TLS is explicitly configured. Initialization
+Default TCP uses certificate/hostname verification; explicit Unix sockets on
+macOS/Linux use local plain transport unless TLS is explicitly configured.
+Windows uses TCP and clearly rejects `unix_socket` without a transport fallback.
+Initialization
 confirms UTC, character encoding, autocommit and the server session timeouts
 before returning a usable connection. Paths accept str and os.PathLike values.
 Memory-size settings accept byte integers or forms such as `64MB` / `64MiB`.
@@ -74,6 +90,9 @@ exact list/tuple provide positional, nested and batch structure. Third-party
 arrays/tables, arbitrary subclasses and memoryview are outside this first version.
 Nonfinite float/Decimal values become NULL. Aware datetime inputs normalize to
 UTC and require a reliably confirmed UTC session.
+`datetime.time` inputs preserve their clock fields and microseconds, ignore
+`tzinfo`, and never call timezone methods. For example, `00:30+01:00` is written
+as `'00:30:00'`; unlike aware `datetime`, it is not converted to UTC.
 
 `executemany(sql, rows)` is the same native `many=True, itemize=True` path.
 Approved INSERT/REPLACE VALUES forms merge complete rows within the actual
@@ -118,7 +137,13 @@ implicitly.
 
 ## Performance and development
 
-On the measured macOS arm64 / CPython 3.13.3 machine, the final native combination
+The following figures belong to the original alpha evidence and do not describe
+the later repair artifacts or this Beta. The [Beta release notes](docs/releases/v0.2.0b1.md)
+explain those boundaries. Native build, installed-package and source-rebuild
+checks are available in the [release workflow runs](https://github.com/AresJef/SQLAero/actions/workflows/release.yml);
+local formal performance measurements are kept separate from CI observations.
+
+On the measured macOS arm64 / CPython 3.13.3 machine, the original frozen W06 combination
 passed 480 main and 204 independent protection scenarios against its initial
 functional Rust baseline. Representative improvements included 1.61× for a
 1,000-element string list, 1.58× for binding 1,000 INSERT rows, and 1.16–1.19×

@@ -57,7 +57,7 @@ pyo3::create_exception!(
     sqlaero.errors,
     InternalError,
     DatabaseError,
-    "An internal protocol or driver invariant failed."
+    "A reliably identified internal driver or server condition failed."
 );
 pyo3::create_exception!(
     sqlaero.errors,
@@ -358,8 +358,7 @@ impl SQLAeroError {
     }
 }
 
-/// Register the native root. Detailed categories and diagnostics are added at
-/// their implementation step; this is not a completed public errors module.
+/// Register all public native exceptions, immutable diagnostics and code enums.
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<SQLAeroError>()?;
     module.add_class::<ErrorInfo>()?;
@@ -473,9 +472,24 @@ fn server_with_codec(
         },
         None => {
             raw_text = true;
-            match escaped_error_text(py, message) {
-                Ok(value) => value,
-                Err(error) => return error,
+            // ASCII bytes are already a reversible representation; preserve
+            // normal server punctuation instead of needlessly escaping it.
+            if message.is_ascii() {
+                match crate::output::text(
+                    py,
+                    message,
+                    sqlaero_core::charset::output::OutputCodec::for_collation(255),
+                    true,
+                    None,
+                ) {
+                    Ok(value) => value,
+                    Err(error) => return error,
+                }
+            } else {
+                match escaped_error_text(py, message) {
+                    Ok(value) => value,
+                    Err(error) => return error,
+                }
             }
         }
     };
@@ -483,7 +497,7 @@ fn server_with_codec(
         Ok(value) => {
             let error = PyErr::from_value(value);
             if raw_text {
-                let _ = error.add_note(py, "MySQL ERR text has an unknown encoding or invalid/incomplete byte sequence; message preserves the received bytes as ASCII escapes.");
+                let _ = error.add_note(py, "MySQL ERR text has an unconfirmed encoding or invalid/incomplete byte sequence; message preserves the received bytes as ASCII with lossless byte escapes where needed.");
             }
             if let Some(state) = state {
                 let state: String = state
@@ -552,7 +566,9 @@ pub(crate) fn establish(
     error: sqlaero_core::session::connect::ConnectError,
 ) -> PyErr {
     use sqlaero_core::{protocol::auth::AuthError, session::connect::ConnectError};
-    match error {
+    let detail =
+        diagnostics::Native::capture(&error, Some("sqlaero_core::session::connect::ConnectError"));
+    let mapped = match error {
         ConnectError::Wire(error) | ConnectError::Auth(AuthError::Wire(error)) => wire(py, error),
         ConnectError::Channel(error) => channel(py, error),
         ConnectError::Timeout(error) => timeout(py, error),
@@ -563,7 +579,7 @@ pub(crate) fn establish(
             error.message_ref(),
         ),
         error @ (ConnectError::Unsupported(_)
-        | ConnectError::Auth(AuthError::UnsupportedPlugin)) => client(
+        | ConnectError::Auth(AuthError::UnsupportedPlugin(_))) => client(
             py,
             ClientErrorCode::UnsupportedCapability,
             error.to_string(),
@@ -572,7 +588,9 @@ pub(crate) fn establish(
             client(py, ClientErrorCode::Authentication, error.to_string())
         }
         error => client(py, ClientErrorCode::Transport, error.to_string()),
-    }
+    };
+    native(py, &mapped, detail);
+    mapped
 }
 pub(crate) fn initialize(
     py: Python<'_>,
@@ -590,12 +608,23 @@ pub(crate) fn initialize(
 /// Preserve the same primary exception while recording a real independent
 /// cleanup failure. Diagnostic snapshot publication is implemented in P05.3.
 pub(crate) fn additional(py: Python<'_>, primary: &PyErr, secondary: PyErr, stage: &str) {
+    let message = format!("Additional failure at {stage}: {secondary}");
+    additional_detail(py, primary, secondary, stage, Some(message));
+}
+
+/// Record an independent failure while letting its owner compose one fact block.
+/// A deferred note must be supplied by that boundary after its cleanup finishes.
+pub(crate) fn additional_detail(
+    py: Python<'_>,
+    primary: &PyErr,
+    secondary: PyErr,
+    stage: &str,
+    message: Option<String>,
+) {
     let captured = diagnostics::capture(py, &secondary, Some(stage));
-    note(
-        py,
-        primary,
-        format!("Additional failure at {stage}: {secondary}"),
-    );
+    if let Some(message) = message {
+        note(py, primary, message);
+    }
     if let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
         && let Ok(mut state) = error.diagnostics.lock()
         && let Ok(captured) = captured

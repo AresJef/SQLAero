@@ -186,6 +186,15 @@ impl Facts {
         self.connection_collation = None;
         self.server_timeouts = [None; 4];
     }
+    /// A request may have changed the session without delivering its final
+    /// confirmation. Retiring the socket cannot make older mutable facts true.
+    /// Connection identity, the fixed server packet limit and owned results
+    /// remain independent of this invalidated knowledge.
+    pub fn invalidate_unconfirmed(&mut self) {
+        self.invalidate_status();
+        self.invalidate_settings();
+        self.database = None;
+    }
 }
 
 impl Facts {

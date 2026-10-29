@@ -56,13 +56,14 @@ impl ScalarTypes {
             return Ok(binary_diagnostic(
                 &name,
                 value.cast::<PyBytes>()?.as_bytes(),
+                32,
             ));
         }
         if value.is_exact_instance_of::<PyByteArray>() {
             let array = value.cast::<PyByteArray>()?;
             // SAFETY: the exact owned bytearray is protected by the GIL, with
             // no Python callback or detach during this bounded native preview.
-            return Ok(unsafe { binary_diagnostic(&name, array.as_bytes()) });
+            return Ok(unsafe { binary_diagnostic(&name, array.as_bytes(), 32) });
         }
         if value.is_exact_instance_of::<PyInt>() {
             let bits = value.call_method0("bit_length")?.extract::<u64>()?;
@@ -279,16 +280,21 @@ impl ScalarTypes {
     }
 }
 
-fn binary_diagnostic(name: &str, value: &[u8]) -> String {
+/// Format a bounded raw-byte preview without callbacks or scanning the value.
+pub(crate) fn binary_diagnostic(name: &str, value: &[u8], maximum: usize) -> String {
     let escaped: String = value
         .iter()
-        .take(32)
+        .take(maximum)
         .flat_map(|byte| std::ascii::escape_default(*byte))
         .map(char::from)
         .collect();
     format!(
         "{name} b'{escaped}'{} (original length {})",
-        if value.len() > 32 { " [truncated]" } else { "" },
+        if value.len() > maximum {
+            " [truncated]"
+        } else {
+            ""
+        },
         value.len()
     )
 }
@@ -394,11 +400,12 @@ fn codec_error(
 const WORK_BYTES: usize = 256 * 1024;
 
 /// Check the original whole-operation budget and actual pending Python signal.
+// Keep the Python-error path out of the recursive value visitor's stack frame.
+// This boundary remains checked at every existing signal/deadline checkpoint.
+#[inline(never)]
 pub(crate) fn check(py: Python<'_>, budget: &IoBudget) -> PyResult<()> {
     py.check_signals()?;
-    budget
-        .check()
-        .map_err(|error| errors::client(py, ClientErrorCode::OperationDeadline, error.to_string()))
+    budget.check().map_err(|error| errors::timeout(py, error))
 }
 fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
     match budget {

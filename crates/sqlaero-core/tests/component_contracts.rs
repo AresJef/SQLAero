@@ -48,9 +48,9 @@ fn declared_pem_formats_and_modern_encryption_are_decoded_natively() {
     let directory = fixture();
     let output = directory.join(format!("key-formats-{}", std::process::id()));
     std::fs::create_dir(&output).unwrap();
-    let openssl = "/opt/homebrew/opt/openssl@4/bin/openssl";
+    let openssl = std::env::var_os("SQLAERO_OPENSSL").unwrap_or_else(|| "openssl".into());
     let run = |arguments: &[&str]| {
-        let result = Command::new(openssl)
+        let result = Command::new(&openssl)
             .current_dir(&output)
             .args(arguments)
             .output()

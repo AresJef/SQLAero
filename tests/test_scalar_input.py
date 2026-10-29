@@ -76,6 +76,7 @@ class BrokenZone(tzinfo):
 def test_time_ignores_timezone_but_datetime_preserves_callback_failure() -> None:
     zone = BrokenZone()
     assert _sqlaero._encode_scalar(time(3, 4, 5, tzinfo=zone)) == b"'03:04:05'"
+    assert _sqlaero._encode_scalar(time(3, 4, 5, 123456, tzinfo=zone)) == b"'03:04:05.123456'"
     with pytest.raises(ValueError, match="original zone callback"):
         _sqlaero._encode_scalar(datetime(2024, 1, 1, tzinfo=zone))
 

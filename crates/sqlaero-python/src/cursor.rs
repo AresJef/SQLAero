@@ -118,6 +118,12 @@ pub(crate) struct Cursor {
     counts: Mutex<Option<Counts>>,
 }
 impl Cursor {
+    /// Stop future operations after mandatory transaction cleanup failed. Any
+    /// already active Reader operation retains and releases its own data.
+    pub(crate) fn retire(&self) {
+        self.reader.retire();
+    }
+
     pub(crate) fn new(
         connection: Py<Connection>,
         types: Py<ScalarTypes>,
@@ -370,10 +376,14 @@ macro_rules! cursor_api {
             /// Omitted args sends original SQL; explicit None binds one NULL.
             /// many/itemize are exact bool and keyword-only. All request chunks
             /// share one deadline. Confirmed prefixes never imply a commit.
+            /// datetime.time keeps its clock fields and microseconds, ignores
+            /// tzinfo and never calls timezone methods; 00:30+01:00 remains
+            /// 00:30:00. Aware datetime, in contrast, is normalized to UTC.
             #[pyo3(signature=(sql,args=Argument::default(),*,many=Argument::default(),itemize=Argument::default()))]
             #[pyo3(text_signature="($self, sql, args=..., *, many=False, itemize=True)")]
             fn execute<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:Argument<'_>,many:Argument<'_>,itemize:Argument<'_>)->PyResult<Bound<'py,PyAny>> {self.run(py,sql,args,&many,&itemize).map_err(|error|errors::at(py,error,"cursor.execute"))}
             /// Execute using the same native many=True,itemize=True operation.
+            /// Input value and timezone rules are the same as execute().
             fn executemany<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:&Bound<'_,PyAny>)->PyResult<Bound<'py,PyAny>> {
                 let many=true.into_pyobject(py)?.to_owned().into_any();
                 self.run(py,sql,Argument(Some(args.clone())),&Argument(Some(many.clone())),&Argument(Some(many)))
@@ -443,11 +453,11 @@ macro_rules! cursor_api {
     }
 }
 cursor_api! {
-    (decode_json,set_decode_json,"Decode JSON through the native parser. Default copied from Connection. Exact bool assignment sends no SQL and applies only to subsequent executions; old results keep their snapshot. Modification fails after Cursor.close; saved values stay readable."),
-    (decode_set,set_decode_set,"Decode MySQL SET as ordered tuple[str,...] instead of text. Default copied from Connection. Exact bool assignment affects only subsequent executions and sends no SQL. Existing results stay unchanged; modification fails after Cursor.close."),
-    (decode_bit,set_decode_bit,"Decode MySQL BIT as unsigned int instead of bytes. Default copied from Connection. Exact bool assignment affects only subsequent executions, sends no SQL and fails after Cursor.close. Existing result policy and saved values remain readable."),
-    (use_decimal,set_use_decimal,"Use exact decimal.Decimal for DECIMAL when True, binary64 float when False. Default copied from Connection. Exact bool assignment affects only subsequent executions, sends no SQL and fails after Cursor.close; old results retain their policy."),
-    (use_timedelta,set_use_timedelta,"Use timedelta for MySQL TIME when True, time when False. Values outside clock range fail in time mode. Default copied from Connection. Exact bool assignment affects only subsequent executions, sends no SQL and fails after Cursor.close."),
-    (decode_text_strict,set_decode_text_strict,"Reject invalid text when True, preserve invalid bytes with surrogateescape when False. Default copied from Connection. Exact bool assignment affects only subsequent executions and sends no SQL. Old results retain their policy; modification fails after Cursor.close."),
-    (decode_date_strict,set_decode_date_strict,"Reject invalid calendar dates when True, return their complete original text when False. Default copied from Connection. Exact bool assignment affects only subsequent executions, sends no SQL and fails after Cursor.close; old results retain their policy."),
+    (decode_json,set_decode_json,"Default False. False returns the original JSON text as str. True parses the complete JSON into Python values; malformed, incomplete or out-of-range content raises DataError without text fallback. This applies to JSON fields, not JSON-looking TEXT. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_set,set_decode_set,"Default False. False returns SET text as str. True returns an ordered tuple[str, ...]; the empty SET is (), and an empty member is preserved. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_bit,set_decode_bit,"Default False. False returns the exact BIT bytes, including leading zero bytes. True returns an unsigned big-endian int, never a bool. Invalid BIT contents raise DataError. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (use_decimal,set_use_decimal,"Default True. True returns exact decimal.Decimal values for DECIMAL. False uses the native correctly rounded binary64 parser and returns float, potentially losing decimal precision; invalid or non-finite results raise DataError. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (use_timedelta,set_use_timedelta,"Default True. True returns datetime.timedelta for MySQL TIME, including negative and multi-day durations. False returns datetime.time and raises DataError for negative values or durations at least 24 hours. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_text_strict,set_decode_text_strict,"Default True. True raises UnicodeDecodeError for invalid text bytes. False preserves undecodable bytes through surrogateescape, without replacement characters. Binary fields remain bytes and input encoding is unaffected. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_date_strict,set_decode_date_strict,"Default True. True raises DataError for zero or otherwise unrepresentable DATE/DATETIME values. False returns their original calendar text as str. Valid values retain date/datetime output in both modes. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
 }

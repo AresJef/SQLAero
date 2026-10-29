@@ -7,6 +7,80 @@ use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::sync::Arc;
 
+// Keep native platform trust objects in this transport boundary. The supported
+// Apple wrapper owns its certificates and implements Send + Sync upstream.
+#[cfg(target_vendor = "apple")]
+type TrustAnchor = security_framework::certificate::SecCertificate;
+#[cfg(target_vendor = "apple")]
+type PreparedRoots = Vec<TrustAnchor>;
+#[cfg(windows)]
+type PreparedRoots = Vec<CertificateDer<'static>>;
+#[cfg(not(any(target_vendor = "apple", windows)))]
+type PreparedRoots = rustls::RootCertStore;
+
+#[cfg(windows)]
+mod windows;
+
+fn prepare_anchors(
+    certificates: Vec<CertificateDer<'static>>,
+) -> Result<PreparedRoots, ConfigError> {
+    if certificates.is_empty() {
+        return Err(ConfigError::Invalid("ca_file contains no trust anchors"));
+    }
+    #[cfg(target_vendor = "apple")]
+    {
+        certificates
+            .iter()
+            .map(|certificate| {
+                TrustAnchor::from_der(certificate.as_ref()).map_err(|_| {
+                    ConfigError::Invalid("ca_file contains an invalid X.509 certificate")
+                })
+            })
+            .collect()
+    }
+    #[cfg(not(target_vendor = "apple"))]
+    {
+        // Validate and prepare DER at the configuration boundary. The Linux
+        // verifier borrows this store; it does not reload or reparse CA files
+        // while advancing the connection state machine.
+        let mut store = rustls::RootCertStore::empty();
+        for certificate in &certificates {
+            store.add(certificate.clone()).map_err(|_| {
+                ConfigError::Invalid("ca_file contains an invalid X.509 certificate")
+            })?;
+        }
+        #[cfg(windows)]
+        return Ok(certificates);
+        #[cfg(not(windows))]
+        return Ok(store);
+    }
+}
+
+fn system_ca_policy() -> Result<Policy, ConfigError> {
+    #[cfg(any(target_vendor = "apple", windows))]
+    {
+        Ok(Policy::SystemCa)
+    }
+    #[cfg(not(any(target_vendor = "apple", windows)))]
+    {
+        // This is the same native-root loader used by the existing default
+        // rustls-platform-verifier on these targets. Partial loader errors do
+        // not discard other usable roots, but an empty store is never trusted.
+        let loaded = rustls_native_certs::load_native_certs();
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add_parsable_certificates(loaded.certs);
+        if roots.is_empty() {
+            return Err(ConfigError::Invalid(
+                "the system trust store contains no usable trust anchors",
+            ));
+        }
+        Ok(Policy::Explicit {
+            roots,
+            check_name: false,
+        })
+    }
+}
+
 /// A non-secret explanation of invalid TLS configuration material.
 #[derive(Debug, thiserror::Error)]
 pub enum MaterialError {
@@ -228,24 +302,15 @@ pub fn client_config(
         }),
         (Mode::VerifyCa, None) => Arc::new(PolicyVerifier {
             provider: Arc::clone(&provider),
-            policy: Policy::SystemCa,
+            policy: system_ca_policy()?,
         }),
-        (_, Some(certificates)) => {
-            let mut roots = rustls::RootCertStore::empty();
-            for certificate in certificates {
-                roots.add(certificate)?;
-            }
-            if roots.is_empty() {
-                return Err(ConfigError::Invalid("ca_file contains no trust anchors"));
-            }
-            Arc::new(PolicyVerifier {
-                provider: Arc::clone(&provider),
-                policy: Policy::Explicit {
-                    roots,
-                    check_name: mode == Mode::VerifyIdentity,
-                },
-            })
-        }
+        (_, Some(certificates)) => Arc::new(PolicyVerifier {
+            provider: Arc::clone(&provider),
+            policy: Policy::Explicit {
+                roots: prepare_anchors(certificates)?,
+                check_name: mode == Mode::VerifyIdentity,
+            },
+        }),
         _ => {
             return Err(ConfigError::Invalid(
                 "invalid TLS mode/material combination",
@@ -272,9 +337,10 @@ pub fn client_config(
 enum Policy {
     Required,
     Explicit {
-        roots: rustls::RootCertStore,
+        roots: PreparedRoots,
         check_name: bool,
     },
+    #[cfg(any(target_vendor = "apple", windows))]
     SystemCa,
 }
 
@@ -293,23 +359,22 @@ impl rustls::client::danger::ServerCertVerifier for PolicyVerifier {
         ocsp: &[u8],
         now: rustls_pki_types::UnixTime,
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        use rustls::client::{verify_server_cert_signed_by_trust_anchor, verify_server_name};
         match &self.policy {
             Policy::Required => (),
             Policy::Explicit { roots, check_name } => {
-                let parsed = rustls::server::ParsedCertificate::try_from(end)?;
-                verify_server_cert_signed_by_trust_anchor(
-                    &parsed,
-                    roots,
+                verify_platform_trust(
+                    end,
                     intermediates,
+                    check_name.then_some(name),
+                    Some(roots),
+                    ocsp,
                     now,
-                    self.provider.signature_verification_algorithms.all,
                 )?;
-                if *check_name {
-                    verify_server_name(&parsed, name)?;
-                }
             }
-            Policy::SystemCa => verify_system_ca(end, intermediates, ocsp, now)?,
+            #[cfg(any(target_vendor = "apple", windows))]
+            Policy::SystemCa => {
+                verify_platform_trust(end, intermediates, None, None, ocsp, now)?;
+            }
         }
         Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
@@ -347,9 +412,11 @@ impl rustls::client::danger::ServerCertVerifier for PolicyVerifier {
 }
 
 #[cfg(target_vendor = "apple")]
-fn verify_system_ca(
+fn verify_platform_trust(
     end: &CertificateDer<'_>,
     intermediates: &[CertificateDer<'_>],
+    name: Option<&rustls_pki_types::ServerName<'_>>,
+    anchors: Option<&PreparedRoots>,
     ocsp: &[u8],
     now: rustls_pki_types::UnixTime,
 ) -> Result<(), rustls::Error> {
@@ -367,9 +434,20 @@ fn verify_system_ca(
     // SAFETY: CoreFoundation owns this immutable, exported epoch constant.
     let epoch = unsafe { kCFAbsoluteTimeIntervalSince1970 };
     let date = CFDate::new(now.as_secs() as f64 - epoch);
-    let policy = SecPolicy::create_ssl(SslProtocolSide::SERVER, None);
+    let hostname = name.map(rustls_pki_types::ServerName::to_str);
+    let policy = SecPolicy::create_ssl(SslProtocolSide::SERVER, hostname.as_deref());
     let mut trust = SecTrust::create_with_certificates(&certificates, &[policy])
         .map_err(|error| rustls::Error::General(error.to_string()))?;
+    if let Some(anchors) = anchors {
+        trust
+            .set_anchor_certificates(anchors)
+            .map_err(|error| rustls::Error::General(error.to_string()))?;
+        // The explicit bundle replaces system roots without replacing the
+        // operating system's SSL policy, including applicable revocation rules.
+        trust
+            .set_trust_anchor_certificates_only(true)
+            .map_err(|error| rustls::Error::General(error.to_string()))?;
+    }
     trust
         .set_trust_verify_date(&date)
         .map_err(|error| rustls::Error::General(error.to_string()))?;
@@ -386,21 +464,132 @@ fn verify_system_ca(
         .map_err(|error| rustls::Error::General(error.to_string()))
 }
 
-#[cfg(not(target_vendor = "apple"))]
-fn verify_system_ca(
-    _end: &CertificateDer<'_>,
-    _intermediates: &[CertificateDer<'_>],
+#[cfg(not(any(target_vendor = "apple", windows)))]
+fn verify_platform_trust(
+    end: &CertificateDer<'_>,
+    intermediates: &[CertificateDer<'_>],
+    name: Option<&rustls_pki_types::ServerName<'_>>,
+    anchors: Option<&PreparedRoots>,
     _ocsp: &[u8],
-    _now: rustls_pki_types::UnixTime,
+    now: rustls_pki_types::UnixTime,
 ) -> Result<(), rustls::Error> {
-    Err(rustls::Error::General(
-        "system CA-only validation requires the supported Apple transport adapter".to_owned(),
-    ))
+    let roots = anchors.ok_or_else(|| {
+        rustls::Error::General("system trust anchors were not prepared".to_owned())
+    })?;
+    let certificate = rustls::server::ParsedCertificate::try_from(end)?;
+    rustls::client::verify_server_cert_signed_by_trust_anchor(
+        &certificate,
+        roots,
+        intermediates,
+        now,
+        provider().signature_verification_algorithms.all,
+    )?;
+    if let Some(name) = name {
+        rustls::client::verify_server_name(&certificate, name)?;
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn verify_platform_trust(
+    end: &CertificateDer<'_>,
+    intermediates: &[CertificateDer<'_>],
+    name: Option<&rustls_pki_types::ServerName<'_>>,
+    anchors: Option<&PreparedRoots>,
+    ocsp: &[u8],
+    now: rustls_pki_types::UnixTime,
+) -> Result<(), rustls::Error> {
+    windows::verify(
+        end,
+        intermediates,
+        name,
+        anchors.map(Vec::as_slice),
+        ocsp,
+        now,
+    )
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[ignore = "requires the owned MySQL fixture certificate material"]
+    fn explicit_roots_keep_platform_ssl_name_usage_and_time_policy() {
+        use rustls::client::danger::ServerCertVerifier;
+        use std::time::Duration;
+
+        let root = std::path::PathBuf::from(
+            std::env::var_os("SQLAERO_TEST_MYSQL_ROOT").expect("owned fixture root"),
+        );
+        let chain = certificates(&std::fs::read(root.join("tls/server.pem")).unwrap()).unwrap();
+        let ca = certificates(&std::fs::read(root.join("tls/ca.pem")).unwrap()).unwrap();
+        let client = certificates(&std::fs::read(root.join("tls/client.pem")).unwrap()).unwrap();
+        let now = rustls_pki_types::UnixTime::now();
+        let name = rustls_pki_types::ServerName::try_from("localhost").unwrap();
+        let wrong = rustls_pki_types::ServerName::try_from("unrelated.invalid").unwrap();
+        let identity = PolicyVerifier {
+            provider: provider(),
+            policy: Policy::Explicit {
+                roots: prepare_anchors(ca.clone()).unwrap(),
+                check_name: true,
+            },
+        };
+        assert!(
+            identity
+                .verify_server_cert(&chain[0], &[], &name, &[], now)
+                .is_ok()
+        );
+        let absolute = rustls_pki_types::ServerName::try_from("localhost.").unwrap();
+        assert!(
+            identity
+                .verify_server_cert(&chain[0], &[], &absolute, &[], now)
+                .is_ok()
+        );
+        assert!(
+            identity
+                .verify_server_cert(&chain[0], &[], &wrong, &[], now)
+                .is_err()
+        );
+        assert!(
+            identity
+                .verify_server_cert(&client[0], &[], &name, &[], now)
+                .is_err()
+        );
+        let future = rustls_pki_types::UnixTime::since_unix_epoch(Duration::from_secs(
+            now.as_secs() + 30 * 86400,
+        ));
+        assert!(
+            identity
+                .verify_server_cert(&chain[0], &[], &name, &[], future)
+                .is_err()
+        );
+        let ca_only = PolicyVerifier {
+            provider: provider(),
+            policy: Policy::Explicit {
+                roots: prepare_anchors(ca).unwrap(),
+                check_name: false,
+            },
+        };
+        assert!(
+            ca_only
+                .verify_server_cert(&chain[0], &[], &wrong, &[], now)
+                .is_ok()
+        );
+        let wrong_root = PolicyVerifier {
+            provider: provider(),
+            policy: Policy::Explicit {
+                roots: prepare_anchors(client).unwrap(),
+                check_name: false,
+            },
+        };
+        assert!(
+            wrong_root
+                .verify_server_cert(&chain[0], &[], &name, &[], now)
+                .is_err()
+        );
+    }
+
     #[test]
     fn mode_and_minimum_version_tokens_are_parsed_once_and_strictly() {
         assert_eq!(

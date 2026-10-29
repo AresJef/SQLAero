@@ -1,7 +1,7 @@
 //! Final Python values from prepared native fields; no Python decoder loops.
 
 use crate::{errors, input::ScalarTypes, json};
-use pyo3::exceptions::{PyUnicodeDecodeError, PyValueError};
+use pyo3::exceptions::PyUnicodeDecodeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateTime, PyDelta, PyString, PyTime, PyTuple};
 use sqlaero_core::charset::{codec::CodecError, output::OutputCodec};
@@ -9,6 +9,82 @@ use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::memory::{Buffer, MemoryError, Scope};
 use sqlaero_core::result::decode::{self, ContentError, Integer, Kind, Plan};
 use std::sync::Arc;
+
+/// Construct a final tuple from already decoded stack values. Array iteration
+/// only transfers owned references, so no callback can see unfinished slots.
+pub(crate) fn tuple_from_ready<'py, const N: usize>(
+    py: Python<'py>,
+    values: [Bound<'py, PyAny>; N],
+) -> PyResult<Bound<'py, PyTuple>> {
+    let length = isize::try_from(N).map_err(|_| {
+        pyo3::exceptions::PyOverflowError::new_err("tuple length exceeds Py_ssize_t")
+    })?;
+    // SAFETY: supported builds hold the GIL. The constructor returns an exact
+    // owned tuple or its original error; every following operation just moves
+    // an initialized array element into a distinct in-bounds slot. No Python
+    // allocation, conversion or signal check occurs while the slots are empty.
+    unsafe {
+        let tuple = Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyTuple_New(length))?
+            .cast_into_unchecked::<PyTuple>();
+        for (index, value) in values.into_iter().enumerate() {
+            pyo3::ffi::PyTuple_SET_ITEM(tuple.as_ptr(), index as isize, value.into_ptr());
+        }
+        Ok(tuple)
+    }
+}
+
+/// Fill one final tuple without exposing its unfinished slots to Python GC.
+/// The iterator may decode values or check signals. Keep the tuple untracked
+/// until all slots are valid; already completed children remain normal values.
+/// The sole owned reference also cleans up initialized slots on any exception.
+/// Supported GIL builds protect allocation through immediate untracking; a
+/// future free-threaded adapter must preserve that same unpublished ownership.
+pub(crate) fn tuple_from_values<'py>(
+    py: Python<'py>,
+    mut values: impl ExactSizeIterator<Item = PyResult<Bound<'py, PyAny>>>,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let length = isize::try_from(values.len()).map_err(|_| {
+        pyo3::exceptions::PyOverflowError::new_err("tuple length exceeds Py_ssize_t")
+    })?;
+    // SAFETY: attached CPython returns an owned exact tuple or NULL with its
+    // original allocation error. No Python callback runs between this return
+    // and untracking. The empty tuple is shared and must not be re-tracked.
+    let tuple = unsafe {
+        let tuple = Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyTuple_New(length))?
+            .cast_into_unchecked::<PyTuple>();
+        if length != 0 {
+            pyo3::ffi::PyObject_GC_UnTrack(tuple.as_ptr().cast());
+        }
+        tuple
+    };
+    for index in 0..length {
+        let value = values.next().ok_or_else(|| {
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "native tuple iterator ended early",
+            )
+        })??;
+        // SAFETY: this private tuple has one owner, is hidden from GC, and
+        // index is within its allocated length. Each new slot steals exactly
+        // one owned final value; no initialized slot is overwritten.
+        unsafe { pyo3::ffi::PyTuple_SET_ITEM(tuple.as_ptr(), index, value.into_ptr()) };
+    }
+    if let Some(extra) = values.next() {
+        extra?;
+        return Err(errors::client(
+            py,
+            ClientErrorCode::InternalState,
+            "native tuple iterator exceeded its declared length",
+        ));
+    }
+    if length != 0 {
+        // SAFETY: every slot is initialized and the tuple is still untracked.
+        // It may now safely become visible to ordinary GC and user callbacks.
+        unsafe { pyo3::ffi::PyObject_GC_Track(tuple.as_ptr().cast()) };
+    }
+    Ok(tuple)
+}
 
 pub(crate) fn memory(py: Python<'_>, error: MemoryError) -> PyErr {
     match error {
@@ -198,7 +274,7 @@ fn json_value<'py>(
         converted.as_slice()
     };
     match json::decode(py, input) {
-        Err(error) if error.is_instance_of::<PyValueError>(py) => {
+        Err(json::DecodeFailure::Invalid(error)) => {
             let main = errors::client(
                 py,
                 ClientErrorCode::DecodeContent,
@@ -207,7 +283,8 @@ fn json_value<'py>(
             main.set_cause(py, Some(error));
             Err(main)
         }
-        result => result,
+        Err(json::DecodeFailure::Python(error)) => Err(error),
+        Ok(result) => Ok(result),
     }
 }
 

@@ -36,5 +36,11 @@ core-foundation-sys.workspace = true
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true
 
+[target.'cfg(not(any(target_vendor = "apple", windows)))'.dependencies]
+rustls-native-certs = "=0.8.5"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "=0.61.2", features = ["Win32_Foundation", "Win32_Security_Cryptography"] }
+
 [lints]
 workspace = true

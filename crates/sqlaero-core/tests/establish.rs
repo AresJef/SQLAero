@@ -20,8 +20,11 @@ fn root() -> PathBuf {
 }
 
 fn root_sql(root: &Path, label: &str, sql: &str) {
-    let line = if label == "84" { "8.4" } else { "9.7" };
-    let mut child = Command::new(format!("/opt/homebrew/opt/mysql@{line}/bin/mysql"))
+    let state: mysql_common::serde_json::Value = mysql_common::serde_json::from_slice(
+        &std::fs::read(root.join(label).join("state.json")).unwrap(),
+    )
+    .unwrap();
+    let mut child = Command::new(state["mysql"].as_str().unwrap())
         .arg(format!(
             "--defaults-file={}",
             root.join(label).join("root.cnf").display()
@@ -53,6 +56,14 @@ fn configuration(
     mode: Option<Mode>,
     name: &str,
 ) -> ConnectParams {
+    // Command/state tests need the fixture's supported local channel. On
+    // Windows use verified loopback TLS; explicit Unix rejection is covered
+    // separately at the public connection boundary.
+    let (local, mode) = if local && !cfg!(unix) {
+        (false, mode.or(Some(Mode::VerifyIdentity)))
+    } else {
+        (local, mode)
+    };
     let values: mysql_common::serde_json::Value = mysql_common::serde_json::from_slice(
         &std::fs::read(root.join(label).join("state.json")).unwrap(),
     )
@@ -81,7 +92,7 @@ fn configuration(
         } else {
             Endpoint::Tcp {
                 host: "127.0.0.1".to_owned(),
-                port: if label == "84" { 13384 } else { 13397 },
+                port: values["port"].as_str().unwrap().parse().unwrap(),
             }
         },
         user: "sqlaero".to_owned(),
@@ -125,6 +136,11 @@ fn real_cold_and_warm_authentication_uses_the_same_native_path() {
             (false, Some(Mode::VerifyCa), "deliberately-wrong.example"),
             (false, Some(Mode::Required), "deliberately-wrong.example"),
         ] {
+            if local && !cfg!(unix) {
+                // Unix-only channel cases have no Windows counterpart. The
+                // TCP authentication and all applicable TLS modes still run.
+                continue;
+            }
             root_sql(&root, label, "FLUSH PRIVILEGES;");
             let cold = establish(configuration(&root, label, local, mode, name)).unwrap();
             assert_eq!(cold.metadata.auth_path, AuthPath::Full);

@@ -1,3 +1,4 @@
 maturin==1.15.0
 pyright==1.1.414
 pytest==9.1.1
+tzdata==2026.6; sys_platform == 'win32'

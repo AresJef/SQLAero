@@ -131,9 +131,13 @@ impl Transport {
         }
         match peer {
             Ok(()) => {
-                if let Socket::Tcp(socket) = &self.socket {
-                    socket.set_nodelay(true)?;
-                    SockRef::from(socket).set_keepalive(true)?;
+                match &self.socket {
+                    Socket::Tcp(socket) => {
+                        socket.set_nodelay(true)?;
+                        SockRef::from(socket).set_keepalive(true)?;
+                    }
+                    #[cfg(unix)]
+                    Socket::Unix(_) => {}
                 }
                 self.connected = true;
                 Ok(true)
