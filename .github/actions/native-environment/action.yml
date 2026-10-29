@@ -76,7 +76,7 @@ runs:
                 *) echo "Unsupported MySQL fixture architecture" >&2; exit 1 ;;
               esac
             fi
-            curl --fail --location --proto '=https' --proto-redir '=https' --retry 2 --max-time 240 \
+            curl --fail --location --proto '=https' --proto-redir '=https' --retry 2 --retry-all-errors --max-time 240 \
               "https://dev.mysql.com/get/Downloads/MySQL-$line/$archive" -o "$RUNNER_TEMP/$archive"
             if [ "$RUNNER_OS" = Windows ]; then
               python -m zipfile -e "$RUNNER_TEMP/$archive" "$destination"

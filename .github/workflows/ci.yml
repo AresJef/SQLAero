@@ -11,6 +11,15 @@ on:
         type: choice
         default: all
         options: [all, macos-arm64, macos-x86_64, windows-x86_64, windows-arm64, linux-glibc-x86_64, linux-glibc-aarch64, linux-musl-x86_64, linux-musl-aarch64]
+      python:
+        description: Ordinary-GIL CPython minor for the selected native check.
+        type: choice
+        default: '3.13'
+        options: ['3.12', '3.13', '3.14', '3.15']
+      published:
+        description: Verify the current project version from PyPI instead of building its wheel.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -18,7 +27,7 @@ permissions:
 jobs:
   native-smoke:
     if: ${{ !startsWith(inputs.platform, 'linux-') }}
-    name: Native probe / ${{ matrix.platform }} / CPython 3.13
+    name: Native probe / ${{ matrix.platform }} / CPython ${{ inputs.python || '3.13' }}
     runs-on: ${{ fromJSON('{"macos-arm64":"macos-26","macos-x86_64":"macos-15-intel","windows-x86_64":"windows-2022","windows-arm64":"windows-11-arm"}')[matrix.platform] }}
     timeout-minutes: 45
     strategy:
@@ -38,7 +47,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: "3.13.17"
+          python-version: ${{ fromJSON('{"3.12":"3.12.10","3.13":"3.13.17","3.14":"3.14.9","3.15":"3.15.1"}')[inputs.python || '3.13'] }}
           architecture: ${{ (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-arm64') && 'arm64' || 'x64' }}
       - name: Prepare the shared native test environment
         uses: ./.github/actions/native-environment
@@ -53,8 +62,18 @@ jobs:
           python tools/error_catalog.py --check
           pyright
       - name: Build the native probe wheel
+        if: ${{ !inputs.published }}
         run: |
           maturin build --release --locked --interpreter python --out probe-wheels
+      - name: Download the exact published project version
+        if: inputs.published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          gh release download "v$version" --repo "$GITHUB_REPOSITORY" --pattern release-manifest.json
+          python tools/release_artifacts.py download --version "$version" --manifest release-manifest.json --destination probe-wheels --output probe-evidence/pypi-download.json
       - name: Install the actual probe wheel
         run: |
           python - <<'PY'
@@ -69,26 +88,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p probe-evidence
-          python - <<'PY'
-          import hashlib
-          from importlib.metadata import version
-          import json
-          from pathlib import Path
-          import platform
-          import sqlaero
-          from sqlaero import _sqlaero
-          import sys
-          import sysconfig
-          import zipfile
-          wheel: Path = next(Path('probe-wheels').glob('*.whl'))
-          native: Path = Path(_sqlaero.__file__).resolve()
-          assert native.is_relative_to(Path(sys.prefix).resolve()), native
-          with zipfile.ZipFile(wheel) as archive:
-              members: list[str] = [name for name in archive.namelist() if name.endswith(('.so', '.pyd'))]
-              assert len(members) == 1, members
-              assert hashlib.sha256(archive.read(members[0])).hexdigest() == hashlib.sha256(native.read_bytes()).hexdigest()
-          Path('probe-evidence/installed-identity.json').write_text(json.dumps({'wheel': wheel.name, 'version': version('sqlaero'), 'package': sqlaero.__file__, 'native': str(native), 'native_sha256': hashlib.sha256(native.read_bytes()).hexdigest(), 'python_platform': sysconfig.get_platform(), 'machine': platform.machine(), 'python': sys.version}, indent=2) + '\n')
-          PY
+          python tools/release_artifacts.py identity --kind "${{ inputs.published && 'pypi' || 'original' }}" --wheel probe-wheels/*.whl --output probe-evidence/installed-identity.json
           python tools/mysql_fixture.py prepare > probe-evidence/mysql-instances.json
           cargo test -p sqlaero-core --lib explicit_roots_keep_platform_ssl_name_usage_and_time_policy --locked -- --ignored --test-threads=1
           cargo test -p sqlaero-core --test establish --locked -- --ignored --test-threads=1
@@ -107,14 +107,14 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: native-probe-${{ matrix.platform }}-cp313
+          name: native-probe-${{ matrix.platform }}-cp${{ inputs.python || '3.13' }}
           path: probe-evidence/
           if-no-files-found: warn
           retention-days: 7
 
   linux-smoke:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || startsWith(inputs.platform, 'linux-') }}
-    name: Linux probe / ${{ matrix.platform }} / CPython 3.13
+    name: Linux probe / ${{ matrix.platform }} / CPython ${{ inputs.python || '3.13' }}
     runs-on: ${{ endsWith(matrix.platform, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     strategy:
@@ -132,10 +132,19 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
-          python-version: '3.13.17'
+          python-version: ${{ fromJSON('{"3.12":"3.12.10","3.13":"3.13.17","3.14":"3.14.9","3.15":"3.15.1"}')[inputs.python || '3.13'] }}
           architecture: ${{ endsWith(matrix.platform, 'aarch64') && 'arm64' || 'x64' }}
       - name: Prepare the shared native server environment
         uses: ./.github/actions/native-environment
+      - name: Read the published project manifest
+        if: inputs.published
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version=$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')
+          gh release download "v$version" --repo "$GITHUB_REPOSITORY" --pattern release-manifest.json
+          echo "RELEASE_VERSION=$version" >> "$GITHUB_ENV"
       - name: Prepare the owned loopback servers outside the target libc
         run: |
           set -euo pipefail
@@ -144,10 +153,10 @@ jobs:
       - name: Build, install and run the complete suite in the real target libc
         env:
           LINUX_LIBC: ${{ contains(matrix.platform, '-musl-') && 'musl' || 'glibc' }}
-          PYTHON_MINOR: '3.13'
+          PYTHON_MINOR: ${{ inputs.python || '3.13' }}
           EVIDENCE_DIR: probe-evidence
           WHEEL_DIR: probe-wheels
-        run: bash tools/linux_wheel.sh host probe
+        run: bash tools/linux_wheel.sh host "${{ inputs.published && 'pypi' || 'probe' }}"
       - name: Stop only this jobs isolated servers
         if: always()
         run: python tools/mysql_fixture.py stop
@@ -158,7 +167,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: native-probe-${{ matrix.platform }}-cp313
+          name: native-probe-${{ matrix.platform }}-cp${{ inputs.python || '3.13' }}
           path: probe-evidence/
           if-no-files-found: warn
           retention-days: 7
