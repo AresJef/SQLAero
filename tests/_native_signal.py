@@ -91,7 +91,22 @@ class NativeAlarm:
                 raise AssertionError(f'Windows signal sender failed: {message!r}')
         else:
             self.number = signal.SIGINT if sigint else signal.SIGALRM
-        self.previous = signal.signal(self.number, handler)
+        # A periodic OS source can reenter a Python handler while it inspects
+        # GC state. Coalesce nested fixture deliveries so one progress probe
+        # cannot duplicate its own observation; library reentry remains tested.
+        handling = False
+
+        def dispatch(number: int, frame: FrameType | None) -> None:
+            nonlocal handling
+            if handling:
+                return
+            handling = True
+            try:
+                handler(number, frame)
+            finally:
+                handling = False
+
+        self.previous = signal.signal(self.number, dispatch)
 
     def start(self, delay: float, interval: float = 0, *, wait_ready: bool = False) -> None:
         """Arm the sender, optionally confirming it accepted the timer command.
@@ -213,7 +228,15 @@ if __name__ == '__main__':
     else:
         for sigint in ((False, True) if os.name == 'nt' else (False,)):
             hits: list[int] = []
-            alarm = NativeAlarm(lambda number, _frame: hits.append(number), sigint=sigint)
+
+            def receive(number: int, frame: FrameType | None) -> None:
+                hits.append(number)
+                if len(hits) == 1:
+                    nested = signal.getsignal(number)
+                    assert callable(nested)
+                    nested(number, frame)
+
+            alarm = NativeAlarm(receive, sigint=sigint)
             try:
                 alarm.start(0.02)
                 end = time.monotonic() + 3
