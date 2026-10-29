@@ -67,13 +67,12 @@ def test_json_bigint_keeps_its_bound_independent_of_python_text_conversion_limit
 def test_json_checks_signals_before_a_single_large_value_completes(escaped: bool) -> None:
     """Observe a real handler inside one value, without a timing-based SLA."""
     import gc
-    import os
     from types import FrameType
 
     marker = 8712394560123 + int(escaped)
-    # Windows console delivery has a coarser wake-up window than setitimer.
-    # Keep the same inside-value assertion, with enough work for the real event.
-    ascii_size = 64 * 1024 * 1024 if os.name == 'nt' else 16 * 1024 * 1024
+    # Use the same substantial work window on fast native runners. No handler
+    # observation is evidence only about delivery, not proof of a missing check.
+    ascii_size = 64 * 1024 * 1024
     text = b'\\u0001' * (1024 * 1024) if escaped else b'x' * ascii_size
     payload = b'[' + str(marker).encode() + b',"' + text + b'"]'
     original = ValueError('original single-value signal')
@@ -91,12 +90,12 @@ def test_json_checks_signals_before_a_single_large_value_completes(escaped: bool
                 observed.append(len(candidate))
                 alarm.start(0)
                 raise original
-        alarm.start(0.0001)
+        alarm.start(0.0001, 0.0001)
 
     alarm = NativeAlarm(inspect_progress)
     try:
         with pytest.raises(ValueError) as caught:
-            alarm.start(0.0001)
+            alarm.start(0.0001, 0.0001, wait_ready=True)
             decode(payload)
         assert caught.value is original
         assert observed == [1], 'the handler ran only after the whole value was constructed'

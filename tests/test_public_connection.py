@@ -1053,16 +1053,22 @@ def test_transaction_busy_exit_reports_unattempted_action_on_final_primary(
     future: Future[int] | None = None
     with live(label) as observer, ThreadPoolExecutor(max_workers=1) as executor:
         check = observer.cursor()
+        lock_name = f'sqlaero_busy_exit_{connection.connection_id}'
+        check.execute('SELECT GET_LOCK(%s, 0)', lock_name)
+        assert check.fetchone() == (1,)
+        statement = f"SELECT GET_LOCK('{lock_name}', 30)"
         try:
             with connection.transaction() as current:
                 scoped = current
                 worker = current if scope_worker else connection.cursor()
-                future = executor.submit(worker.execute, 'SELECT SLEEP(0.3)')
+                # The observer releases this lock only after transaction exit,
+                # so the worker cannot finish between observation and cleanup.
+                future = executor.submit(worker.execute, statement)
                 deadline = clock_time.monotonic() + 2
                 while True:
                     check.execute('SELECT INFO FROM information_schema.PROCESSLIST WHERE ID=%s', connection.connection_id)
                     row = check.fetchone()
-                    if row and row[0] == 'SELECT SLEEP(0.3)':
+                    if row and row[0] == statement:
                         break
                     assert clock_time.monotonic() < deadline, 'no real in-flight command observed'
                     clock_time.sleep(0.001)
@@ -1070,6 +1076,9 @@ def test_transaction_busy_exit_reports_unattempted_action_on_final_primary(
                     raise original
         except BaseException as error:
             caught = error
+        finally:
+            check.execute('SELECT RELEASE_LOCK(%s)', lock_name)
+            assert check.fetchone() == (1,)
         assert caught is not None and scoped is not None
         assert future is not None
         assert future.result(timeout=3) == 1

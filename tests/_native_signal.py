@@ -59,7 +59,9 @@ class NativeAlarm:
 
     def __init__(self, handler: Callable[[int, FrameType | None], None], *, sigint: bool = False) -> None:
         self.sender: subprocess.Popen[str] | None = None
+        self.reader: Thread | None = None
         self.closed: bool = False
+        self.messages: Queue[str] = Queue()
         if os.name == 'nt':
             _private_console()
             self.number: int = signal.SIGINT if sigint else signal.SIGBREAK
@@ -68,13 +70,19 @@ class NativeAlarm:
                  '0' if sigint else '1'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW,
             )
-            ready: Queue[str] = Queue()
             sender = self.sender
             assert sender.stdout is not None
             stream = sender.stdout
-            Thread(target=lambda: ready.put(stream.readline()), daemon=True).start()
+
+            def read_messages() -> None:
+                for line in stream:
+                    self.messages.put(line)
+                self.messages.put('')
+
+            self.reader = Thread(target=read_messages, daemon=True)
+            self.reader.start()
             try:
-                message = ready.get(timeout=5)
+                message = self.messages.get(timeout=5)
             except Empty:
                 self._stop_sender()
                 raise AssertionError('Windows signal sender did not become ready') from None
@@ -85,15 +93,25 @@ class NativeAlarm:
             self.number = signal.SIGINT if sigint else signal.SIGALRM
         self.previous = signal.signal(self.number, handler)
 
-    def start(self, delay: float, interval: float = 0) -> None:
-        """Arm an already ready sender; no new Python thread needs the target GIL."""
+    def start(self, delay: float, interval: float = 0, *, wait_ready: bool = False) -> None:
+        """Arm the sender, optionally confirming it accepted the timer command.
+
+        Progress-sensitive tests can wait before entering native work; their
+        handler ignores pre-work signals. Other tests retain nonblocking arming.
+        """
         if os.name != 'nt':
             signal.setitimer(signal.ITIMER_REAL, delay, interval)
         else:
             assert self.sender is not None
             assert self.sender.stdin is not None
-            self.sender.stdin.write(f'{delay} {interval}\n')
+            self.sender.stdin.write(f'{delay} {interval} {int(wait_ready)}\n')
             self.sender.stdin.flush()
+            if wait_ready:
+                try:
+                    message = self.messages.get(timeout=5)
+                except Empty:
+                    raise AssertionError('Windows signal sender did not acknowledge arming') from None
+                assert message.strip() == 'armed', message
 
     def cancel(self) -> None:
         """Disarm future signals while leaving the installed handler in place."""
@@ -103,6 +121,9 @@ class NativeAlarm:
         if self.sender is not None:
             self.sender.terminate()
             self.sender.wait(timeout=5)
+            if self.reader is not None:
+                self.reader.join(timeout=5)
+                assert not self.reader.is_alive(), 'Windows signal message reader did not stop'
             for stream in (self.sender.stdin, self.sender.stdout, self.sender.stderr):
                 if stream is not None:
                     stream.close()
@@ -133,12 +154,12 @@ def _send(parent: int, event: int) -> None:
     ignore = callback_type(ignore_event)
     if not kernel.SetConsoleCtrlHandler(ctypes.cast(ignore, ctypes.c_void_p), True):
         raise _win.WinError(_win.get_last_error())
-    commands: Queue[tuple[float, float] | None] = Queue()
+    commands: Queue[tuple[float, float, bool] | None] = Queue()
 
     def read_commands() -> None:
         for line in sys.stdin:
-            delay, interval = map(float, line.split())
-            commands.put((delay, interval))
+            delay, interval, acknowledge = line.split()
+            commands.put((float(delay), float(interval), acknowledge == '1'))
         commands.put(None)
 
     Thread(target=read_commands, daemon=True).start()
@@ -165,7 +186,9 @@ def _send(parent: int, event: int) -> None:
                 continue
         if command is None:
             return
-        delay, repeat = command
+        delay, repeat, acknowledge = command
+        if acknowledge:
+            print('armed', flush=True)
         deadline = time.monotonic() + delay if delay else None
 
 
