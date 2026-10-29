@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       platform:
-        description: Native probe target; use all for the four-platform preflight.
+        description: Native probe target; use all for the supported native preflight.
         type: choice
         default: all
-        options: [all, macos-arm64, macos-x86_64, windows-x86_64, linux-x86_64]
+        options: [all, macos-arm64, macos-x86_64, windows-x86_64, windows-arm64, linux-x86_64, linux-glibc-aarch64]
 
 permissions:
   contents: read
@@ -18,12 +18,12 @@ permissions:
 jobs:
   native-smoke:
     name: Native probe / ${{ matrix.platform }} / CPython 3.13
-    runs-on: ${{ fromJSON('{"macos-arm64":"macos-26","macos-x86_64":"macos-15-intel","windows-x86_64":"windows-2022","linux-x86_64":"ubuntu-24.04"}')[matrix.platform] }}
+    runs-on: ${{ fromJSON('{"macos-arm64":"macos-26","macos-x86_64":"macos-15-intel","windows-x86_64":"windows-2022","windows-arm64":"windows-11-arm","linux-x86_64":"ubuntu-24.04","linux-glibc-aarch64":"ubuntu-24.04-arm"}')[matrix.platform] }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-arm64","macos-x86_64","windows-x86_64","linux-x86_64"]') }}
+        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-arm64","macos-x86_64","windows-x86_64","windows-arm64","linux-x86_64","linux-glibc-aarch64"]') }}
     defaults:
       run:
         shell: bash
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: "3.13.17"
-          architecture: ${{ matrix.platform == 'macos-arm64' && 'arm64' || 'x64' }}
+          architecture: ${{ (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-arm64' || matrix.platform == 'linux-glibc-aarch64') && 'arm64' || 'x64' }}
       - name: Prepare the shared native test environment
         uses: ./.github/actions/native-environment
       - name: Verify native sources
@@ -61,7 +61,7 @@ jobs:
         with:
           maturin-version: '1.15.0'
           rust-toolchain: '1.99.1'
-          target: x86_64-unknown-linux-gnu
+          target: ${{ matrix.platform == 'linux-glibc-aarch64' && 'aarch64-unknown-linux-gnu' || 'x86_64-unknown-linux-gnu' }}
           manylinux: '2_28'
           args: --release --locked --interpreter python3.13 --out probe-wheels
       - name: Install the actual probe wheel
@@ -83,9 +83,11 @@ jobs:
           from importlib.metadata import version
           import json
           from pathlib import Path
+          import platform
           import sqlaero
           from sqlaero import _sqlaero
           import sys
+          import sysconfig
           import zipfile
           wheel: Path = next(Path('probe-wheels').glob('*.whl'))
           native: Path = Path(_sqlaero.__file__).resolve()
@@ -94,7 +96,7 @@ jobs:
               members: list[str] = [name for name in archive.namelist() if name.endswith(('.so', '.pyd'))]
               assert len(members) == 1, members
               assert hashlib.sha256(archive.read(members[0])).hexdigest() == hashlib.sha256(native.read_bytes()).hexdigest()
-          Path('probe-evidence/installed-identity.json').write_text(json.dumps({'wheel': wheel.name, 'version': version('sqlaero'), 'package': sqlaero.__file__, 'native': str(native), 'native_sha256': hashlib.sha256(native.read_bytes()).hexdigest()}, indent=2) + '\n')
+          Path('probe-evidence/installed-identity.json').write_text(json.dumps({'wheel': wheel.name, 'version': version('sqlaero'), 'package': sqlaero.__file__, 'native': str(native), 'native_sha256': hashlib.sha256(native.read_bytes()).hexdigest(), 'python_platform': sysconfig.get_platform(), 'machine': platform.machine(), 'python': sys.version}, indent=2) + '\n')
           PY
           python tools/mysql_fixture.py prepare > probe-evidence/mysql-instances.json
           cargo test -p sqlaero-core --lib explicit_roots_keep_platform_ssl_name_usage_and_time_policy --locked -- --ignored --test-threads=1
