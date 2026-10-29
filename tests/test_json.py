@@ -73,7 +73,7 @@ def test_json_checks_signals_before_a_single_large_value_completes(escaped: bool
     # Use the same substantial work window on fast native runners. No handler
     # observation is evidence only about delivery, not proof of a missing check.
     ascii_size = 64 * 1024 * 1024
-    text = b'\\u0001' * (1024 * 1024) if escaped else b'x' * ascii_size
+    text = b'\\u0001' * (4 * 1024 * 1024) if escaped else b'x' * ascii_size
     payload = b'[' + str(marker).encode() + b',"' + text + b'"]'
     original = ValueError('original single-value signal')
     observed: list[int] = []

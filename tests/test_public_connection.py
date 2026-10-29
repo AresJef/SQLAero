@@ -1162,7 +1162,8 @@ def test_large_json_signal_preserves_real_fetch_state(
     cursor = connection.cursor()
     cursor.decode_json = True
     marker = next(_JSON_SIGNAL_IDS)
-    size = 1024 * 1024
+    # Give real asynchronous console delivery a substantial escaped-value window.
+    size = 4 * 1024 * 1024
     cursor.execute('SELECT JSON_ARRAY(%s+n, CASE WHEN n=0 THEN \'short\' ELSE '
                    'REPEAT(CONVERT(CHAR(1) USING utf8mb4), %s) END) AS payload '
                    'FROM (SELECT 0 AS n UNION ALL SELECT 1) AS input_rows ORDER BY n', (marker, size))
@@ -1201,13 +1202,13 @@ def test_large_json_signal_preserves_real_fetch_state(
                 if handler_mode in ('raise', 'custom', 'keyboard', 'memory'):
                     raise original
                 return
-        alarm.start(0.0001)
+        alarm.start(0.0001, 0.0001)
 
     alarm = NativeAlarm(handler)
     result: object = None
     try:
         try:
-            alarm.start(0.0001)
+            alarm.start(0.0001, 0.0001, wait_ready=True)
             if method == 'fetchone': result = cursor.fetchone()
             elif method == 'fetchmany': result = cursor.fetchmany(2)
             elif method == 'fetchall': result = cursor.fetchall()
