@@ -39,7 +39,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rustup toolchain install 1.99.1 --profile minimal
+          rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
           python -m venv .source-venv
           .source-venv/bin/python -m pip install --disable-pip-version-check maturin==1.15.0
           .source-venv/bin/maturin sdist --out source-dist
