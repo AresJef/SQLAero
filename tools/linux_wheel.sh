@@ -14,6 +14,14 @@ esac
 architecture=$(uname -m)
 case "$architecture" in x86_64|aarch64) ;; *) exit 2 ;; esac
 case "${PYTHON_MINOR:?normal CPython minor}" in 3.12|3.13|3.14|3.15) ;; *) exit 2 ;; esac
+PYTHON_FLAVOR=${PYTHON_FLAVOR:-gil}
+case "$PYTHON_FLAVOR" in
+  gil) abi_suffix= ;;
+  freethreaded)
+    case "$PYTHON_MINOR" in 3.14|3.15) ;; *) echo 'Unsupported free-threaded CPython minor' >&2; exit 2 ;; esac
+    abi_suffix=t ;;
+  *) echo 'PYTHON_FLAVOR must be gil or freethreaded' >&2; exit 2 ;;
+esac
 evidence=${EVIDENCE_DIR:-validation-evidence}
 wheels=${WHEEL_DIR:-dist}
 mkdir -p "$evidence"
@@ -78,7 +86,7 @@ PY
     -v /var/run/docker.sock:/var/run/docker.sock \
     -e SQLAERO_TEST_MYSQL_ROOT -e SQLAERO_NATIVE_MYSQL=1 \
     -e SQLAERO_TEST_TLS="$SQLAERO_TEST_MYSQL_ROOT/tls" \
-    -e LINUX_LIBC -e PYTHON_MINOR -e LINUX_IMAGE_DIGEST \
+    -e LINUX_LIBC -e PYTHON_MINOR -e PYTHON_FLAVOR -e LINUX_IMAGE_DIGEST \
     -e EVIDENCE_DIR="$evidence" -e WHEEL_DIR="$wheels" \
     -e EXPECTED_SDIST_SHA -e RELEASE_VERSION \
     -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/work \
@@ -97,7 +105,8 @@ else
   fi
 fi
 export CARGO_HOME=/tmp/sqlaero-cargo RUSTUP_HOME=/tmp/sqlaero-rustup
-abi="cp${PYTHON_MINOR/./}-cp${PYTHON_MINOR/./}"
+abi="cp${PYTHON_MINOR/./}-cp${PYTHON_MINOR/./}${abi_suffix}"
+test -x "/opt/python/$abi/bin/python"
 export PATH="$CARGO_HOME/bin:/opt/python/$abi/bin:$PATH"
 curl --proto '=https' --tlsv1.2 --fail --silent --show-error https://sh.rustup.rs -o /tmp/sqlaero-rustup.sh
 sh /tmp/sqlaero-rustup.sh -y --profile minimal --default-toolchain 1.99.1 --component clippy,rustfmt --no-modify-path
@@ -113,9 +122,9 @@ import os
 from pathlib import Path
 import subprocess
 versions = {}
-for minor in ['312', '313', '314', '315']:
-    executable = f'/opt/python/cp{minor}-cp{minor}/bin/python'
-    versions[minor] = subprocess.check_output([executable, '-c', 'import sys; print(sys.version)'], text=True).strip()
+for minor, suffix in [('312', ''), ('313', ''), ('314', ''), ('315', ''), ('314', 't'), ('315', 't')]:
+    executable = f'/opt/python/cp{minor}-cp{minor}{suffix}/bin/python'
+    versions[minor + suffix] = subprocess.check_output([executable, '-c', 'import sys; print(sys.version)'], text=True).strip()
 Path(os.environ['EVIDENCE_DIR'], 'python-toolchains.json').write_text(json.dumps(versions, indent=2))
 PY
 rustc -vV > "$evidence/toolchain.txt"

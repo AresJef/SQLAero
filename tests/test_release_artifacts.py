@@ -15,7 +15,10 @@ import pytest
 from tools import release_artifacts
 
 
-@pytest.mark.parametrize('python', ['cp312', 'cp313', 'cp314', 'cp315'])
+@pytest.mark.parametrize(('python', 'abi'), [
+    ('cp312', 'cp312'), ('cp313', 'cp313'), ('cp314', 'cp314'), ('cp315', 'cp315'),
+    ('cp314', 'cp314t'), ('cp315', 'cp315t'),
+])
 @pytest.mark.parametrize(('tag', 'platform'), [
     ('macosx_11_0_arm64', 'macos-arm64'),
     ('macosx_11_0_x86_64', 'macos-x86_64'),
@@ -27,17 +30,30 @@ from tools import release_artifacts
     ('musllinux_1_2_aarch64', 'linux-musl-aarch64'),
 ])
 def test_requested_wheel_tag_maps_to_one_platform(
-    tmp_path: Path, python: str, tag: str, platform: str,
+    tmp_path: Path, python: str, abi: str, tag: str, platform: str,
 ) -> None:
     version = release_artifacts.release_version()
-    wheel = tmp_path / f'sqlaero-{version}-{python}-{python}-{tag}.whl'
+    wheel = tmp_path / f'sqlaero-{version}-{python}-{abi}-{tag}.whl'
     with ZipFile(wheel, 'w') as archive:
         archive.writestr('sqlaero/_sqlaero.pyd' if tag.startswith('win_')
                          else 'sqlaero/_sqlaero.so', b'metadata fixture, not executable code')
         archive.writestr(f'sqlaero-{version}.dist-info/METADATA',
                          f'Metadata-Version: 2.4\nName: sqlaero\nVersion: {version}\n')
     record = release_artifacts.wheel_record(wheel)
-    assert (record['platform'], record['python']) == (platform, python)
+    assert (record['platform'], record['python'], record['abi']) == (platform, python, abi)
+
+
+@pytest.mark.parametrize(('python', 'abi'), [
+    ('cp313', 'cp313t'), ('cp314', 'cp315t'), ('cp315t', 'cp315t'),
+    ('cp314', 'abi3t'), ('cp315', 'cp315td'),
+])
+def test_unapproved_or_mismatched_python_abis_are_rejected(
+    tmp_path: Path, python: str, abi: str,
+) -> None:
+    version = release_artifacts.release_version()
+    with pytest.raises(AssertionError):
+        release_artifacts.wheel_record(
+            tmp_path / f'sqlaero-{version}-{python}-{abi}-macosx_11_0_arm64.whl')
 
 
 @pytest.mark.parametrize('tag', ['win32', 'manylinux_2_17_aarch64',

@@ -20,13 +20,28 @@ on:
         description: Verify the current project version from PyPI instead of building its wheel.
         type: boolean
         default: false
+      full_validation:
+        description: Validate the selected part of the GIL and NoGIL artifact matrix, without publishing.
+        type: boolean
+        default: false
+      validation_runtime:
+        description: Runtime for full artifact validation; all includes the six approved runtimes.
+        type: choice
+        default: all
+        options: [all, '3.12', '3.13', '3.14', '3.15', '3.14t', '3.15t']
 
 permissions:
   contents: read
 
 jobs:
+  gil-nogil-validation:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.full_validation }}
+    uses: ./.github/workflows/gil-nogil-validation.yml
+    with:
+      platform: ${{ inputs.platform }}
+      runtime: ${{ inputs.validation_runtime }}
   native-smoke:
-    if: ${{ !startsWith(inputs.platform, 'linux-') }}
+    if: ${{ !inputs.full_validation && !startsWith(inputs.platform, 'linux-') }}
     name: Native probe / ${{ matrix.platform }} / CPython ${{ inputs.python || '3.13' }}
     runs-on: ${{ fromJSON('{"macos-arm64":"macos-26","macos-x86_64":"macos-15-intel","windows-x86_64":"windows-2022","windows-arm64":"windows-11-arm"}')[matrix.platform] }}
     timeout-minutes: 45
@@ -113,7 +128,7 @@ jobs:
           retention-days: 7
 
   linux-smoke:
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || startsWith(inputs.platform, 'linux-') }}
+    if: ${{ !inputs.full_validation && (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || startsWith(inputs.platform, 'linux-')) }}
     name: Linux probe / ${{ matrix.platform }} / CPython ${{ inputs.python || '3.13' }}
     runs-on: ${{ endsWith(matrix.platform, 'aarch64') && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 60

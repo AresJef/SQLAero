@@ -50,6 +50,10 @@ def fingerprint(value: object) -> dict[str, object]:
     if original_type == "Connection":
         connection = cast(Any, value)
         value = (connection.server_version, connection.tls_version)
+    if original_type == "ErrorInfo":
+        info = cast(Any, value)
+        value = (info.stage, info.message, info.code, info.is_server_error,
+                 info.notes, len(info.additional_errors))
     payload = pickle.dumps(value, protocol=5)
     result: dict[str, object] = {"type": original_type, "sha256": hashlib.sha256(payload).hexdigest(),
                                  "size": len(payload)}
@@ -181,6 +185,14 @@ def cases() -> list[Case]:
         ("later-key", b'{"first":0,"' + b'k' * 32768 + b'":1}'),
     ):
         result.append(Case(f"decode-json/{name}", payload, "decode-json"))
+    # The new snapshot/GC boundary needs both cold construction and reused
+    # properties. These public calls use the same timer, pairing and quality
+    # rules as every other CPU-bound task; no separate sampler is introduced.
+    for mode in ("snapshot-cold", "snapshot-cached", "notes-cached", "additional-cached",
+                 "code-small", "code-large"):
+        result.append(Case(f"diagnostic/{mode}", mode, "diagnostic"))
+    for size in (262145, 1048576):
+        result.append(Case(f"escape/bytearray/snapshot/bytes{size}", bytearray(b"a" * size)))
     return result
 
 
@@ -215,6 +227,21 @@ def target(case: Case, native: Any, legacy: Any | None, sessions: dict[str, Any]
     if case.family == "decode-json":
         decode = native._decode_json
         return Task(lambda: decode(case.value))
+    if case.family == "diagnostic":
+        error_type = native.SQLAeroError
+        if case.value == "snapshot-cold":
+            return Task(lambda: error_type("benchmark diagnostic").error_info)
+        code = 1 << 200 if case.value == "code-large" else 65537
+        error = error_type("benchmark diagnostic", code=code, is_server_error=False)
+        info = error.error_info
+        if case.value == "snapshot-cached":
+            return Task(lambda: error.error_info)
+        if case.value == "notes-cached":
+            return Task(lambda: info.notes)
+        if case.value == "additional-cached":
+            info.additional_errors
+            return Task(lambda: info.additional_errors)
+        return Task(lambda: error.code)
     return network_target(case, native, sessions)
 
 
@@ -487,7 +514,7 @@ def worker(package: str | None, with_legacy: bool, warmup_calls: int = 16) -> No
                            "output": outputs["/".join(key)], "clock": calibration})
             result["untimed_preparation"] = preparations.get(key)
             result["warmup"] = warmups[key]
-            result["cpu_quality"] = collection[case_id].family in {"escape", "bind", "fetch", "decode-json"}
+            result["cpu_quality"] = collection[case_id].family in {"escape", "bind", "fetch", "decode-json", "diagnostic"}
             print(json.dumps(result), flush=True)
         except BaseException as error:
             print(json.dumps({"error": type(error).__name__, "message": str(error),

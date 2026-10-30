@@ -39,6 +39,9 @@ PLATFORM_TAGS = {
 PLATFORMS = tuple(PLATFORM_TAGS)
 TAG_PLATFORMS = {tag: target for target, tag in PLATFORM_TAGS.items()}
 PYTHONS = ('cp312', 'cp313', 'cp314', 'cp315')
+RUNTIMES = tuple((python, python) for python in PYTHONS) + (
+    ('cp314', 'cp314t'), ('cp315', 'cp315t'),
+)
 
 
 def digest(path: Path) -> str:
@@ -56,7 +59,7 @@ def wheel_record(path: Path) -> dict[str, Any]:
     """Check ABI, platform, metadata and the single native member of a wheel."""
     name, package_version, python, abi, tag = path.stem.split('-')
     assert name == 'sqlaero' and package_version == release_version(), path.name
-    assert python in PYTHONS and abi == python, (python, abi)
+    assert (python, abi) in RUNTIMES, (python, abi)
     assert tag in TAG_PLATFORMS, tag
     target = TAG_PLATFORMS[tag]
     with zipfile.ZipFile(path) as archive:
@@ -68,7 +71,7 @@ def wheel_record(path: Path) -> dict[str, Any]:
         assert parsed['Name'] == 'sqlaero' and parsed['Version'] == package_version
         native_hash = hashlib.sha256(archive.read(native[0])).hexdigest()
     return {'file': path.name, 'sha256': digest(path), 'bytes': path.stat().st_size,
-            'version': package_version, 'python': python, 'platform': target,
+            'version': package_version, 'python': python, 'abi': abi, 'platform': target,
             'native_member': native[0], 'native_sha256': native_hash}
 
 
@@ -80,10 +83,16 @@ def installed(wheel: Path, output: Path, kind: str, sdist: Path | None) -> None:
     from packaging.tags import Tag, sys_tags
 
     record = wheel_record(wheel)
-    assert Tag(str(record['python']), str(record['python']),
+    assert Tag(str(record['python']), str(record['abi']),
                PLATFORM_TAGS[str(record['platform'])]) in sys_tags(), wheel.name
+    free_threaded = bool(sysconfig.get_config_var('Py_GIL_DISABLED'))
+    assert str(record['abi']).endswith('t') == free_threaded, record
+    gil_enabled = getattr(sys, '_is_gil_enabled', lambda: True)
+    before_import = bool(gil_enabled())
+    assert before_import is not free_threaded, 'Interpreter has an unexpected GIL mode'
     package = import_module('sqlaero')
     native = import_module('sqlaero._sqlaero')
+    assert bool(gil_enabled()) == before_import, 'Extension import changed the GIL mode'
     location = Path(cast(str, native.__file__)).resolve()
     package_location = Path(cast(str, package.__file__)).resolve()
     prefix = Path(sys.prefix).resolve()
@@ -98,6 +107,7 @@ def installed(wheel: Path, output: Path, kind: str, sdist: Path | None) -> None:
                   package=str(package_location), native=str(location), python_version=sys.version,
                   machine=machine, operating_system=platform.platform(),
                   python_platform=sysconfig.get_platform(), libc=platform.libc_ver(),
+                  free_threaded=free_threaded, gil_enabled=bool(gil_enabled()),
                   source_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                   cargo_lock_sha256=digest(ROOT / 'Cargo.lock'))
     if sdist is not None:
@@ -168,35 +178,38 @@ def test_totals(path: Path) -> dict[str, int]:
     return totals
 
 
-def manifest(directory: Path, identities: Path, output: Path) -> None:
-    """Gate the exact 32-wheel cross product and its independent sdist evidence."""
-    expected = {(target, python) for target in PLATFORMS for python in PYTHONS}
+def manifest(directory: Path, identities: Path, output: Path, free_threaded: bool = False) -> None:
+    """Gate the selected exact runtime matrix and independent sdist evidence."""
+    runtimes = RUNTIMES if free_threaded else tuple((python, python) for python in PYTHONS)
+    expected = {(target, python, abi) for target in PLATFORMS for python, abi in runtimes}
     files = sorted(path for path in directory.iterdir() if path.is_file())
     wheels = [wheel_record(path) for path in files if path.suffix == '.whl']
     sdists = [path for path in files if path.name.endswith('.tar.gz')]
     assert len(files) == len(expected) + 1 and len(wheels) == len(expected) and len(sdists) == 1, [p.name for p in files]
     assert sdists[0].name == f'sqlaero-{release_version()}.tar.gz'
-    assert {(str(row['platform']), str(row['python'])) for row in wheels} == expected
+    assert {(str(row['platform']), str(row['python']), str(row['abi'])) for row in wheels} == expected
     source_hash = digest(sdists[0])
     evidence: list[dict[str, Any]] = []
     commits: set[str] = set()
     for kind in ('original', 'sdist'):
         paths = list(identities.rglob(f'{kind}-wheel-identity.json'))
         assert len(paths) == len(expected), (kind, paths)
-        seen: set[tuple[str, str]] = set()
+        seen: set[tuple[str, str, str]] = set()
         for path in paths:
             record: dict[str, Any] = json.loads(path.read_text(encoding='utf-8'))
-            key = (str(record['platform']), str(record['python']))
+            key = (str(record['platform']), str(record['python']), str(record['abi']))
             assert key not in seen and key in expected and record['kind'] == kind
             seen.add(key)
             commits.add(str(record['source_commit']))
             assert record['sdist_sha256'] == source_hash, path
             if kind == 'original':
-                match = next(row for row in wheels if (row['platform'], row['python']) == key)
+                match = next(row for row in wheels if (row['platform'], row['python'], row['abi']) == key)
                 assert match['sha256'] == record['sha256'] and match['native_sha256'] == record['native_sha256']
             totals = test_totals(path.with_name(f'python-{kind}.xml'))
             assert totals['skipped'] == (0 if key[0].startswith('windows-') else 1), (path, totals)
-            evidence.append({'kind': kind, 'platform': key[0], 'python': key[1],
+            assert bool(record['free_threaded']) == key[2].endswith('t')
+            assert bool(record['gil_enabled']) is not bool(record['free_threaded'])
+            evidence.append({'kind': kind, 'platform': key[0], 'python': key[1], 'abi': key[2],
                              'wheel_sha256': record['sha256'],
                              'tests': totals})
     assert len(commits) == 1, commits
@@ -225,6 +238,8 @@ def main() -> None:
     bundle.add_argument('--directory', type=Path, required=True)
     bundle.add_argument('--identities', type=Path, required=True)
     bundle.add_argument('--output', type=Path, required=True)
+    bundle.add_argument('--free-threaded', action='store_true',
+                        help='Require both approved free-threaded runtimes as well as ordinary GIL')
     fetch = commands.add_parser('download')
     fetch.add_argument('--version', required=True)
     fetch.add_argument('--manifest', type=Path, required=True)
@@ -238,7 +253,7 @@ def main() -> None:
     elif args.command == 'download':
         download(args.version, args.manifest, args.destination, args.output)
     else:
-        manifest(args.directory, args.identities, args.output)
+        manifest(args.directory, args.identities, args.output, args.free_threaded)
 
 
 if __name__ == '__main__':

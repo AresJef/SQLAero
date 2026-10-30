@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from sqlaero import _sqlaero
-from tools.benchmark import collect, quality
+from tools.benchmark import Case, collect, fingerprint, quality, target
 
 
 def test_mixed_valid_and_misspelled_case_ids_do_not_silently_reduce_coverage(tmp_path: Path) -> None:
@@ -56,3 +56,21 @@ def test_cpu_snapshot_allowance_is_not_wall_timer_precision() -> None:
     assert quality(sample, 1_000_000) is None
     sample["cpu_ns"] = 1_500_000
     assert quality(sample, 1_000_000) == "off_cpu_proxy"
+
+
+@pytest.mark.parametrize('mode', [
+    'snapshot-cold', 'snapshot-cached', 'notes-cached', 'additional-cached',
+    'code-small', 'code-large',
+])
+def test_diagnostic_measurements_use_the_public_snapshot_and_code_contract(mode: str) -> None:
+    task = target(Case('diagnostic/' + mode, mode, 'diagnostic'), _sqlaero, None, {})
+    first, second = task.call(), task.call()
+    assert fingerprint(first) == fingerprint(second)
+    if mode == 'snapshot-cold':
+        assert first is not second and getattr(first, 'message') == 'benchmark diagnostic'
+    elif mode == 'snapshot-cached':
+        assert first is second and getattr(first, 'code') == 65537
+    elif mode in ('notes-cached', 'additional-cached'):
+        assert first == () and first is second
+    else:
+        assert type(first) is int and first == (1 << 200 if mode == 'code-large' else 65537)

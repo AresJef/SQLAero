@@ -32,6 +32,7 @@ runs:
             output.write(str(Path(sys.executable).parent) + '\n')
         with Path(os.environ['GITHUB_ENV']).open('a', encoding='utf-8') as output:
             root: Path = Path(os.environ['RUNNER_TEMP']) / 'sqlaero-mysql'
+            output.write('PYO3_PYTHON=' + sys.executable + '\n')
             output.write('SQLAERO_TEST_MYSQL_ROOT=' + str(root) + '\n')
             output.write('SQLAERO_TEST_TLS=' + str(root / 'tls') + '\n')
         PY
