@@ -46,6 +46,24 @@ impl<'py> Sequence<'py> {
             Self::Tuple(value) => value.get_item(index),
         }
     }
+    /// Consume an item while its list strong reference or tuple borrow lives.
+    /// Deliver indexing errors to the same caller that records their position.
+    fn with_item(
+        &self,
+        index: usize,
+        visit: impl FnOnce(PyResult<&Bound<'py, PyAny>>) -> PyResult<()>,
+    ) -> PyResult<()> {
+        match self {
+            Self::List(value) => match value.get_item(index) {
+                Ok(item) => visit(Ok(&item)),
+                Err(error) => visit(Err(error)),
+            },
+            Self::Tuple(value) => match value.get_borrowed_item(index) {
+                Ok(item) => visit(Ok(&item)),
+                Err(error) => visit(Err(error)),
+            },
+        }
+    }
     fn identity(&self) -> usize {
         match self {
             Self::List(value) => value.as_ptr() as usize,
@@ -368,10 +386,12 @@ impl Visit<'_> {
                     writer::append(output, b",", self.context.limit)
                         .map_err(|error| errors::wire(py, error))?;
                 }
-                let value = sequence.get(index).inspect_err(|_| {
-                    self.path.push(index);
+                sequence.with_item(index, |value| {
+                    let value = value.inspect_err(|_| {
+                        self.path.push(index);
+                    })?;
+                    self.value(value, output, Some(index))
                 })?;
-                self.value(&value, output, Some(index))?;
             }
             writer::append(output, b")", self.context.limit)
                 .map_err(|error| errors::wire(py, error))
