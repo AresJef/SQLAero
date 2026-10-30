@@ -63,7 +63,10 @@ def test_parallel_cli_rejects_invalid_requests_before_import_or_output(
 def test_free_threaded_entry_rejects_enabled_gil_before_loading_package(
     runner: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(runner.sysconfig, 'get_config_var', lambda name: 1)
+    def free_threaded_flag(_name: str) -> int:
+        return 1
+
+    monkeypatch.setattr(runner.sysconfig, 'get_config_var', free_threaded_flag)
     monkeypatch.setattr(runner.sys, '_is_gil_enabled', lambda: True, raising=False)
 
     def unexpected_import(package: str | None) -> None:
