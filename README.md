@@ -14,10 +14,14 @@ the exact version from PyPI and repeat the
 applicable integration suite. Async remains future work.
 
 The development branch adds CPython 3.14t and 3.15t with the same API and Rust
-core. Its build-only GIL/NoGIL workflow targets 48 platform/runtime combinations,
-including independent wheel and source-distribution installation tests. This
-work does not publish a new PyPI release; validation status and package identity
-are recorded in the [execution plan](tasks/gil-nogil-support/plan.md).
+core. Source `296f6e4` passed build-only validation in all 48 platform/runtime
+combinations, including 96 actual wheel and independently rebuilt
+source-distribution installations. The [CI run](https://github.com/AresJef/SQLAero/actions/runs/41115846043)
+records the final source and install checks. This work does not publish a new
+PyPI release. Local GIL performance costs and statistical uncertainty are
+recorded separately in the [execution plan](tasks/gil-nogil-support/plan.md)
+and its final reports; successful functional validation does not mean every
+performance guard passed.
 The [Python boundary contracts](docs/python-boundary-extension-contracts.md)
 define ownership, mutable input, GC and future Escape/Decode extension rules.
 

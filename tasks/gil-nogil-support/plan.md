@@ -1,6 +1,6 @@
 # SQLAero 同源 GIL／NoGIL 接入、性能保护与并行验收计划
 
-状态：**已获批准，实施中**。2026-10-30，Asia/Shanghai。实施活动从 `2026-10-30T04:23:54Z` 恢复计时，沿用原 T0 和已记用时。
+状态：**本轮已完成交付验收；C_best12采用，具体性能成本和U按C12保留**。2026-10-30，Asia/Shanghai。实施活动从 `2026-10-30T04:23:54Z` 恢复计时，沿用原 T0 和已记用时。
 
 工作树：`/Users/jef/.codex/worktrees/beta-native-integration/SQLAero`。基线 HEAD：`22b13878cb944df2c0e0dda842bc000549a86325`，当前版本 `0.2.0b2`，规划核查时工作树干净。原项目中的规格、AGENTS 和历史证据保持原位，不重置原目录。
 
@@ -47,7 +47,7 @@
 
 ### 2.1 平台矩阵
 
-下表每行包含普通 3.12／3.13／3.14／3.15 四格和 3.14t／3.15t 两格，共 8×6=48。全部是目标，**不是已经通过**。
+下表每行包含普通 3.12／3.13／3.14／3.15 四格和 3.14t／3.15t 两格，共 8×6=48。启动时为目标；现48格实际安装均已完成，证据以第8.1执行记录和最终报告为准，不改写启动前状态。
 
 | 平台 | 架构 | 本库 wheel 基线 |
 | --- | --- | --- |
@@ -257,7 +257,7 @@ O01–O07当前合计1,500分钟（25小时），为P04子项，不另加父预�
 | P00 | 规划完成，实施已获批准 | 原记录至2026-10-30T04:12:33Z保守已用24分钟；本次实际修订04:14:35Z至2026-10-30T04:19:16Z共281秒，向上取整后累计保守已用29分钟／72小时余额4291分钟；交付后的等待不计，原T0不变 | C01–C11明确；72小时原位重分配、完整GIL报告、局部失败不停整体规则、预算和引用读回通过；没有实施／构建／测试 |
 | P01 | 已完成本机三运行环境先导 | 实施04:23:54Z–05:25:45Z共3,711秒；加既有保守1,740秒共5,451秒，余额253,749秒（70小时29分09秒）；并行区间只计一次 | B0源码95哈希核实、独立B0已安装；C_safe02三ABI真实构建安装均通过，普通GIL与两t状态正确；SDK官方包哈希实核并保存local-sdk-provenance.json，GitHub凭据有效 |
 | P02 | 三板块最小安全实现通过本机组合测试 | 截至05:38:23Z：总保守6,209秒（1小时43分29秒），余额252,991秒（70小时16分31秒），P01/P02重叠只计一次 | C_safe04普通3.13、3.14t、3.15t各715 PASS、1明确平台NA、0失败；C_safe04三包身份与GIL模式通过；Clippy全target通过、writer3项通过；源码交叉review通过。B0/C_safe03对应RED保留，尚未完成正式性能和48组合验收 |
-| P03/O01-O14/P04-P09/R01 | C10 necessary source-identity fix; final validation reordered | 2026-10-30T16:48:24.174520+00:00; conservatively used 46410s; remaining 212790s | C09 full510 both24cycles24480groups each complete;1%257P/80F/173U, no originalwitness reliably5%. C09 CI48/96 success and metadata96 checked, but a new single-thread dynamiccause temporary-address reuse reproduced through publicAPI inB0 andC09: C message incorrectlyA. Permanentregression oldC09 RED at exactmessageassertion (initialconstructor testsetup error separately kept). C10 d4ec264 keeps sourceowner in seen untilcapture finishes; no finalsnapshotretention, no type-specificadapter.3ABI diagnostics36PASS each and32probe cases eachcorrect; no source leaks. D11 rule integrated. Necessarycorrectnessfix changes finalartifact, soC09 normalproof retained/history, not finalC10 performance. Next full6ABI/static and CI48/96, then frontload22 CP312 and180 N03 before finalC10 fullB0 comparison; no optionalnewroutes. Reserve evidence/timings/reports/delivery; no totalGoalstop. Next self-check16:54:54Z; Goal active |
+| P03/O01-O17/P04-P09/R01 | 已完成：C_best12交付，C12具体性能取舍保留原结论 | 截至2026-10-30T20:59:50.422742+00:00，保守累计61496秒，余额197704秒／72小时；规划1740秒＋04:23:54Z起连续活动，并行一次计入；最终提交／交付截止见报告 | 运行时296f6e4/source453冻结；六ABI各796P/1NA、fmt/Clippy通过。B0直接510主/独各24周期/24480合格组，原1%320P/52F/138U；C12接受逐ID52F/138U及CP312 6F/5U，decision JSON和完整GIL报告保留原数据。180组NoGIL当前源完成。CI41115846043全部48格/96身份/同797IDs/75960P+552精确NA/0F/E；49文件/48native实际哈希、96身份和48行实际时间通过。P09源码/包/报告/24规则/回退读回完成，无必要覆盖或产品阻碍；O17已撤、仅C_best12。任务独占MySQL已正常关闭并保留数据。交付证据：evidence/gil-nogil-support/run-20261030T042354Z/final/REPORT.md 与 GIL-performance-comparison.md。只提交本次3份文档，不发行。 |
 
 ## 9. 授权、停止与回退
 
