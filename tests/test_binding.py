@@ -153,20 +153,43 @@ class InterruptedBinding(Exception):
 
 @pytest.mark.parametrize("kind", ["text", "bytes", "bytearray"])
 def test_large_binding_returns_to_python_signal_checks(kind: str) -> None:
-    source: str | bytes | bytearray = "'" * (16 * 1024 * 1024)
+    """Arm inside binding and require interruption at the following large leaf."""
+    source: str | bytes | bytearray = "'" * (31 * 1024 * 1024)
     if kind != "text":
         source = source.encode()
         if kind == "bytearray":
             source = bytearray(source)
+    # All three encodings, the first datetime, and the SQL prefix fit the
+    # existing 64 MiB request bound; no resource failure substitutes for a signal.
+    assert 2 * len(source) + 128 < 64 * 1024 * 1024
+    original = InterruptedBinding("original signal handler")
+    zero = timedelta(0)
+    interrupted = False
 
     def interrupt(signum: int, frame: FrameType | None) -> None:
-        raise InterruptedBinding("original signal handler")
+        nonlocal interrupted
+        # Windows may deliver while its sender is being armed, and POSIX may
+        # deliver before the tzinfo callback returns. Leave those pending work
+        # windows to the periodic sender; only the native caller may raise.
+        if interrupted or frame is None or frame.f_code is not test_large_binding_returns_to_python_signal_checks.__code__:
+            return
+        interrupted = True
+        alarm.cancel()
+        raise original
+
+    class ArmingZone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta:
+            alarm.start(0.0001, 0.0001, wait_ready=True)
+            return zero
 
     alarm = NativeAlarm(interrupt)
     try:
-        alarm.start(0.005)
-        with pytest.raises(InterruptedBinding, match="original signal handler"):
-            _sqlaero._bind_sql("SELECT %s", [source])
+        with pytest.raises(InterruptedBinding, match="original signal handler") as caught:
+            _sqlaero._bind_sql("SELECT %s,%s", [datetime(2024, 1, 1, tzinfo=ArmingZone()), source])
+        assert caught.value is original
+        assert "while binding args[1]; current request was not sent" in "\n".join(
+            getattr(caught.value, "__notes__", [])
+        )
     finally:
         alarm.close()
 
