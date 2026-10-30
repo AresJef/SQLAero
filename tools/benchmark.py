@@ -36,6 +36,7 @@ resource: Any = None if os.name == 'nt' else importlib.import_module('resource')
 ROOT = Path(__file__).resolve().parents[1]
 FROZEN = ROOT / "experimental/rust/list_rust.so"
 Call = Callable[[], object]
+CPU_FAMILIES = frozenset({"escape", "bind", "fetch", "decode-json", "diagnostic"})
 
 
 def digest(path: Path) -> str:
@@ -514,7 +515,7 @@ def worker(package: str | None, with_legacy: bool, warmup_calls: int = 16) -> No
                            "output": outputs["/".join(key)], "clock": calibration})
             result["untimed_preparation"] = preparations.get(key)
             result["warmup"] = warmups[key]
-            result["cpu_quality"] = collection[case_id].family in {"escape", "bind", "fetch", "decode-json", "diagnostic"}
+            result["cpu_quality"] = collection[case_id].family in CPU_FAMILIES
             print(json.dumps(result), flush=True)
         except BaseException as error:
             print(json.dumps({"error": type(error).__name__, "message": str(error),
@@ -761,7 +762,7 @@ def collect(args: argparse.Namespace) -> None:
                             sb = calibrated_sample(b, case, n, "native")
                             probes.extend((sa, sb))
                             fastest = min(int(sa["wall_ns"]), int(sb["wall_ns"]))
-                            if case.family not in {"escape", "bind", "fetch", "decode-json"} or fastest >= args.target_ms * 1e6 or n >= 10_000_000:
+                            if case.family not in CPU_FAMILIES or fastest >= args.target_ms * 1e6 or n >= 10_000_000:
                                 break
                             n = min(10_000_000, max(n + 1, math.ceil(n * args.target_ms * 1e6 / max(fastest, 1))))
                         parameters[case.id] = n
@@ -772,7 +773,7 @@ def collect(args: argparse.Namespace) -> None:
                             "minimum_ms": args.minimum_ms, "runner_sha256": metadata["runner_sha256"],
                             "cases": metadata["cases"]}, indent=2))
                     n = parameters[case.id]
-                    if args.command == "calibrate" and cycle == 0 and case.family in {"escape", "bind", "fetch", "decode-json"}:
+                    if args.command == "calibrate" and cycle == 0 and case.family in CPU_FAMILIES:
                         # A supplied call count can be reused, but its control
                         # evidence cannot be reused for a new native artifact.
                         controls = [control(a, case, n, role_a), control(b, case, n, "native")]
