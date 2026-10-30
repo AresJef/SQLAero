@@ -70,52 +70,60 @@ pub(crate) fn integer_value(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
         // an infallible constructor. Keep its method/subclass semantics with
         // a fallible name, then use the same signed native-byte conversion.
         let bits = integer_bit_length(value.as_any())?.extract::<usize>()?;
-        if bits == 0 {
-            return Ok(BigInt::from(0u8));
-        }
-        let digits = bits / 32 + 1;
-        let mut buffer = Vec::<u32>::new();
-        buffer
-            .try_reserve_exact(digits)
-            .map_err(|_| memory_error(value.py()))?;
-        // SAFETY: value is a live int and Python remains attached. The native
-        // reservation proves the full u32 byte count fits its allocation
-        // layout. On success CPython writes every byte in signed little-endian
-        // form; on error len stays zero.
-        // This is the pinned PyO3's 3.12 fallback, without private layout reads.
-        unsafe {
-            if pyo3::ffi::_PyLong_AsByteArray(
-                value.as_ptr().cast(),
-                buffer.as_mut_ptr().cast(),
-                digits * std::mem::size_of::<u32>(),
-                1,
-                1,
-            ) == -1
-            {
-                return Err(PyErr::fetch(value.py()));
-            }
-            buffer.set_len(digits);
-        }
-        for word in &mut buffer {
-            *word = u32::from_le(*word);
-        }
-        let sign = if buffer.last().is_some_and(|word| word >> 31 != 0) {
-            let mut words = buffer.iter_mut();
-            for word in words.by_ref() {
-                *word = (!*word).wrapping_add(1);
-                if *word != 0 {
-                    break;
-                }
-            }
-            for word in words {
-                *word = !*word;
-            }
-            num_bigint::Sign::Minus
-        } else {
-            num_bigint::Sign::Plus
-        };
-        Ok(BigInt::new(sign, buffer))
+        integer_value_with_bits(value, bits)
     }
+}
+
+/// Read an int using the bit count already obtained by its caller.
+/// The shared conversion preserves the original signed-byte and error rules.
+#[cfg(not(Py_3_13))]
+#[inline]
+pub(crate) fn integer_value_with_bits(value: &Bound<'_, PyInt>, bits: usize) -> PyResult<BigInt> {
+    if bits == 0 {
+        return Ok(BigInt::from(0u8));
+    }
+    let digits = bits / 32 + 1;
+    let mut buffer = Vec::<u32>::new();
+    buffer
+        .try_reserve_exact(digits)
+        .map_err(|_| memory_error(value.py()))?;
+    // SAFETY: value is a live int and Python remains attached. The native
+    // reservation proves the full u32 byte count fits its allocation
+    // layout. On success CPython writes every byte in signed little-endian
+    // form; on error len stays zero.
+    // This is the pinned PyO3's 3.12 fallback, without private layout reads.
+    unsafe {
+        if pyo3::ffi::_PyLong_AsByteArray(
+            value.as_ptr().cast(),
+            buffer.as_mut_ptr().cast(),
+            digits * std::mem::size_of::<u32>(),
+            1,
+            1,
+        ) == -1
+        {
+            return Err(PyErr::fetch(value.py()));
+        }
+        buffer.set_len(digits);
+    }
+    for word in &mut buffer {
+        *word = u32::from_le(*word);
+    }
+    let sign = if buffer.last().is_some_and(|word| word >> 31 != 0) {
+        let mut words = buffer.iter_mut();
+        for word in words.by_ref() {
+            *word = (!*word).wrapping_add(1);
+            if *word != 0 {
+                break;
+            }
+        }
+        for word in words {
+            *word = !*word;
+        }
+        num_bigint::Sign::Minus
+    } else {
+        num_bigint::Sign::Plus
+    };
+    Ok(BigInt::new(sign, buffer))
 }
 
 /// Materialize an exact code with fallible CPython constructors at every size.

@@ -304,14 +304,19 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
     }
     // Exact int's public constant-time size query avoids copying a huge,
     // already out-of-policy integer merely to discover its native bit count.
-    if errors::integer_bit_length(value)?.extract::<u64>()? > scalar::MAX_INTEGER_BITS {
+    let bits = errors::integer_bit_length(value)?.extract::<u64>()?;
+    if bits > scalar::MAX_INTEGER_BITS {
         return Err(errors::client(
             py,
             ClientErrorCode::NumericRange,
             "integer exceeds the 65-digit exact SQL range",
         ));
     }
+    #[cfg(Py_3_13)]
     let value = errors::integer_value(value)?;
+    // The validated count is at most 216, so it fits every supported usize.
+    #[cfg(not(Py_3_13))]
+    let value = errors::integer_value_with_bits(value.cast::<PyInt>()?, bits as usize)?;
     scalar::large_integer(output, &value, limit).map_err(|e| scalar_error(py, e))
 }
 
