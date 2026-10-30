@@ -75,17 +75,19 @@ def test_shared_stable_nested_input_can_use_one_encoder_concurrently() -> None:
             future.result(timeout=20)
 
 
-def test_concurrent_bytearray_resize_cannot_invalidate_a_native_read() -> None:
+@pytest.mark.parametrize('sizes', [(31, 33), (262175, 524305)], ids=['inline-spill', 'work-windows'])
+def test_concurrent_bytearray_resize_cannot_invalidate_a_native_read(sizes: tuple[int, int]) -> None:
     """Isolate contract-violating input; only safety and valid bytes are asserted."""
     import subprocess
     import sys
     import textwrap
 
     code = textwrap.dedent("""
+        import sys
         from threading import Event, Thread
         from sqlaero import _sqlaero
 
-        sizes = (262175, 524305)
+        sizes = (int(sys.argv[1]), int(sys.argv[2]))
         variants = (b'a' * sizes[0], b'b' * sizes[1])
         source = bytearray(variants[0])
         encoder = _sqlaero._prepare_encoder()
@@ -116,7 +118,7 @@ def test_concurrent_bytearray_resize_cannot_invalidate_a_native_read() -> None:
             worker.join(10)
             assert not worker.is_alive()
     """)
-    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+    result = subprocess.run([sys.executable, "-c", code, *(str(size) for size in sizes)], capture_output=True, text=True,
                             timeout=30, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
 

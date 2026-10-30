@@ -5,13 +5,32 @@ connection, parameter binding, result buffering and decoding core. Python values
 are adapted at the boundary; SQL literals are written into the current native
 request rather than generated as per-value Python SQL strings.
 
-The 0.2 Beta targets regular-GIL CPython 3.12–3.15 on macOS arm64 / x86_64,
+The published 0.2.0b2 Beta targets regular-GIL CPython 3.12–3.15 on macOS arm64 / x86_64,
 Windows x86_64 / arm64, and glibc / musl Linux x86_64 / aarch64, with MySQL
 8.4 / 9.7. The release workflow builds and installs all 32 original wheels,
 independently rebuilds and tests the same source distribution in all 32
 combinations, then publishes the same 33 files. A further 32 jobs install
 the exact version from PyPI and repeat the
-applicable integration suite. Async and free-threaded Python remain future work.
+applicable integration suite. Async remains future work.
+
+The development branch adds CPython 3.14t and 3.15t with the same API and Rust
+core. Its build-only GIL/NoGIL workflow targets 48 platform/runtime combinations,
+including independent wheel and source-distribution installation tests. This
+work does not publish a new PyPI release; validation status and package identity
+are recorded in the [execution plan](tasks/gil-nogil-support/plan.md).
+The [Python boundary contracts](docs/python-boundary-extension-contracts.md)
+define ownership, mutable input, GC and future Escape/Decode extension rules.
+
+Use a matching free-threaded interpreter and wheel without forcing the GIL off
+to bypass an unsupported extension. `sysconfig.get_config_var('Py_GIL_DISABLED')`
+identifies the build; `sys._is_gil_enabled()` must remain false after import and
+work. Ordinary Python builds use the same public interfaces. Independent
+connections can execute concurrently through `ThreadPoolExecutor`; concurrent
+commands on one connection fail immediately with `InterfaceBusyError`. Separate
+already-buffered Cursors can decode their own results independently. Keep input
+containers and mutable nested values stable until the call returns. Threading
+does not imply linear scaling, and network waiting already releases the GIL in
+ordinary builds.
 
 The macOS 11.0, manylinux_2_28 and musllinux_1_2 tags are build compatibility
 targets, not claims of runtime tests on every older OS release. Native CI runs

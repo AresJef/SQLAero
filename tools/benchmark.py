@@ -26,6 +26,8 @@ import platform
 import statistics
 import subprocess
 import sys
+import sysconfig
+import threading
 import time
 from typing import Any, Callable, TextIO, cast
 
@@ -194,6 +196,16 @@ def cases() -> list[Case]:
         result.append(Case(f"diagnostic/{mode}", mode, "diagnostic"))
     for size in (262145, 1048576):
         result.append(Case(f"escape/bytearray/snapshot/bytes{size}", bytearray(b"a" * size)))
+    for size in (0, 31, 32, 33):
+        result.append(Case(f"escape/bytearray/inline/bytes{size}", bytearray(b"a" * size)))
+    # Widths immediately beyond the existing stack specialization need direct
+    # comparisons too; the original 32-column and all older cases stay intact.
+    for server in ("84", "97"):
+        for width in (5, 8):
+            for method, size in (("fetchone", 1), ("fetchmany", 1000), ("fetchall", 1000)):
+                result.append(Case(f"fetch/{server}/wide{width}/{method}/R{size}",
+                    {"server": server, "transport": "unix", "rows": size,
+                     "schema": "wide", "width": width, "method": method}, "fetch"))
     return result
 
 
@@ -322,7 +334,8 @@ def network_target(case: Case, native: Any, sessions: dict[str, Any]) -> Task:
         return Task(lambda: cursor.execute(sql, args, many=True), reset_write)
     schema = str(spec.get("schema", "mixed"))
     projections = {"numeric": "n,d", "text": "s", "mixed": "n,s,d,DATE'2024-02-29'",
-                   "wide": ",".join(f"{('n', 'd', 's')[i % 3]} AS c{i}" for i in range(32)),
+                   "wide": ",".join(f"{('n', 'd', 's')[i % 3]} AS c{i}"
+                                    for i in range(int(spec.get("width", 32)))),
                    "json": "JSON_OBJECT('n',n,'s',s)",
                    "decimal": "CAST(d AS DECIMAL(20,4))", "decimal-float": "CAST(d AS DECIMAL(20,4)),d",
                    "temporal": "DATE'2024-02-29',TIMESTAMP'2024-02-29 12:34:56.123456',CAST('12:34:56.123456' AS TIME(6))",
@@ -964,9 +977,237 @@ def smoke(directory: Path, seconds: float) -> None:
     print(json.dumps(output))
 
 
+def gil_state() -> dict[str, object]:
+    """Read the build flag and actual runtime state without forcing either."""
+    free_threaded = bool(int(sysconfig.get_config_var('Py_GIL_DISABLED') or 0))
+    enabled = getattr(sys, '_is_gil_enabled', None)
+    if free_threaded and enabled is None:
+        raise RuntimeError('The free-threaded interpreter cannot report its GIL state')
+    return {'free_threaded_build': free_threaded,
+            'gil_enabled': bool(enabled()) if enabled is not None else True}
+
+
+def parallel_trial(case: Case, native: Any, threads: int, calls: int, python_work: int,
+                   warmup_calls: int, deadline: float) -> dict[str, Any]:
+    """Observe one fixed batch with private tasks and untimed preparation/close."""
+    samples: list[dict[str, Any]] = [{} for _ in range(threads)]
+    errors: list[list[dict[str, object]]] = [[] for _ in range(threads)]
+    bounds: dict[str, int] = {}
+    release_cleanup = threading.Event()
+
+    def remaining() -> float:
+        return max(0.0, deadline - time.monotonic())
+
+    def start() -> None:
+        expected = samples[0]['output_before']
+        if any(sample['output_before'] != expected for sample in samples):
+            raise AssertionError('Independent threads produced different outputs before timing')
+        bounds['process_cpu_start_ns'] = time.process_time_ns()
+        bounds['wall_start_ns'] = time.perf_counter_ns()
+
+    def stop() -> None:
+        bounds['wall_end_ns'] = time.perf_counter_ns()
+        bounds['process_cpu_end_ns'] = time.process_time_ns()
+        bounds['process_maxrss_raw'] = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
+    ready = threading.Barrier(threads + 1, action=start)
+    done = threading.Barrier(threads + 1, action=stop)
+
+    def run(index: int) -> None:
+        sessions: dict[str, Any] = {}
+        task: Task | None = None
+        sample = samples[index]
+        sample.update(index=index, ident=threading.get_ident())
+        try:
+            task = target(case, native, None, sessions)
+
+            def checked(current: Task) -> dict[str, object]:
+                if current.prepare:
+                    current.prepare(1)
+                actual = current.call()
+                checked_output = fingerprint(actual)
+                if case.family == 'escape':
+                    expected = native._bind_sql('SELECT %s', case.value, itemize=False,
+                                                no_backslash=case.no_backslash)[0][8:]
+                    if cast(Any, actual).to_bytes() != expected:
+                        raise AssertionError('Measurement and production binding disagree')
+                del actual
+                if current.finish:
+                    current.finish()
+                return checked_output
+
+            sample['output_before'] = checked(task)
+            warmup_start = time.perf_counter_ns()
+            for _ in range(warmup_calls):
+                if task.prepare:
+                    task.prepare(1)
+                task.call()
+                if task.finish:
+                    task.finish()
+            sample['warmup'] = {'calls': warmup_calls,
+                                'elapsed_ns': time.perf_counter_ns() - warmup_start}
+            if task.prepare:
+                task.prepare(calls)
+            ready.wait(timeout=remaining())
+            cpu0 = time.thread_time_ns()
+            wall0 = time.perf_counter_ns()
+            checksum = 0
+            if python_work:
+                for _ in range(calls):
+                    checksum = 0
+                    for number in range(python_work):
+                        checksum += number
+                    task.call()
+            else:
+                for _ in range(calls):
+                    task.call()
+            wall1 = time.perf_counter_ns()
+            cpu1 = time.thread_time_ns()
+            sample.update(calls=calls, wall_start_ns=wall0, wall_end_ns=wall1,
+                          wall_ns=wall1 - wall0, cpu_ns=cpu1 - cpu0,
+                          mean_call_wall_ns=(wall1 - wall0) / calls,
+                          python_work_checksum=checksum)
+            done.wait(timeout=remaining())
+            if not release_cleanup.wait(timeout=remaining()):
+                raise TimeoutError('Parallel cleanup release timed out')
+            if task.finish:
+                task.finish()
+            sample['output_after'] = checked(task)
+            if sample['output_after'] != sample['output_before']:
+                raise AssertionError('Output changed between the pre- and post-batch checks')
+        except BaseException as error:
+            errors[index].append({'phase': 'work', 'type': type(error).__name__,
+                                  'message': str(error)})
+            ready.abort()
+            done.abort()
+            release_cleanup.set()
+        finally:
+            if task is not None and task.finish:
+                try:
+                    task.finish()
+                except BaseException as error:
+                    errors[index].append({'phase': 'finish', 'type': type(error).__name__,
+                                          'message': str(error)})
+            for connection in sessions.values():
+                try:
+                    connection.close()
+                except BaseException as error:
+                    errors[index].append({'phase': 'close', 'type': type(error).__name__,
+                                          'message': str(error)})
+
+    workers = [threading.Thread(target=run, args=(index,), daemon=True,
+                                name=f'sqlaero-parallel-{index}') for index in range(threads)]
+    main_errors: list[dict[str, object]] = []
+    try:
+        for worker_thread in workers:
+            worker_thread.start()
+        ready.wait(timeout=remaining())
+        done.wait(timeout=remaining())
+    except BaseException as error:
+        main_errors.append({'phase': 'barrier', 'type': type(error).__name__,
+                            'message': str(error) or 'Parallel preparation/work barrier aborted'})
+    finally:
+        if main_errors:
+            ready.abort()
+            done.abort()
+        release_cleanup.set()
+        for worker_thread in workers:
+            if worker_thread.ident is not None:
+                worker_thread.join(timeout=remaining())
+    alive = [index for index, worker_thread in enumerate(workers) if worker_thread.is_alive()]
+    if alive:
+        main_errors.append({'phase': 'join', 'type': 'TimeoutError',
+                            'message': f'In-flight workers did not stop before the deadline: {alive}'})
+    all_errors = [*main_errors, *(error for index, items in enumerate(errors)
+                                if index not in alive for error in items)]
+    result: dict[str, Any] = {
+        **bounds, 'complete': not all_errors and not alive, 'errors': all_errors,
+        'alive_workers': alive, 'workers': [sample for index, sample in enumerate(samples)
+                                          if index not in alive],
+        'requested_total_calls': threads * calls,
+        'rss_scope': 'cumulative process high-water since process start, including untimed preparation; not a trial peak',
+        'process_maxrss_unit': 'bytes' if sys.platform == 'darwin' else 'KiB',
+    }
+    if 'wall_end_ns' in bounds:
+        wall = bounds['wall_end_ns'] - bounds['wall_start_ns']
+        cpu = bounds['process_cpu_end_ns'] - bounds['process_cpu_start_ns']
+        result.update(total_calls=threads * calls, wall_ns=wall, process_cpu_ns=cpu,
+                      throughput_calls_per_second=threads * calls * 1e9 / wall,
+                      process_cpu_per_wall=cpu / wall,
+                      mean_call_wall_ns=sum(sample['wall_ns'] for sample in samples) / (threads * calls))
+    return result
+
+
+def parallel(args: argparse.Namespace) -> None:
+    """Record every fixed-work parallel cycle without quality filtering."""
+    if len(args.case) != 1 or args.prefix:
+        raise ValueError('Parallel requires exactly one existing --case and no --prefix')
+    if args.legacy or args.reference or args.candidate or args.config:
+        raise ValueError('Parallel uses one --package; legacy, reference, candidate and config are inapplicable')
+    if type(args.threads) is not int or args.threads not in (1, 2, 4):
+        raise ValueError('Parallel requires --threads=1, 2 or 4')
+    if (type(args.calls) is not int or args.calls <= 0 or type(args.cycles) is not int
+            or args.cycles <= 0 or type(args.python_work) is not int or args.python_work < 0
+            or not math.isfinite(args.seconds) or args.seconds <= 0):
+        raise ValueError('Positive calls/cycles/budget and nonnegative integer python-work are required')
+    collection = {case.id: case for case in cases()}
+    if args.case[0] not in collection:
+        raise ValueError(f'Unknown case ID: {args.case[0]}')
+    case = collection[args.case[0]]
+    if case.family not in {'escape', 'bind', 'fetch', 'batch', 'roundtrip'}:
+        raise ValueError(f'Parallel does not support task family {case.family}')
+    before_import = gil_state()
+    if not gc.isenabled():
+        raise RuntimeError('Parallel measurement requires normal automatic GC to remain enabled')
+    if before_import['free_threaded_build'] and before_import['gil_enabled']:
+        raise RuntimeError('Free-threaded parallel measurement requires the GIL disabled before import')
+    native = load_native(args.package)
+    after_import = gil_state()
+    if after_import['free_threaded_build'] and after_import['gil_enabled']:
+        raise RuntimeError('Import enabled the GIL in a free-threaded parallel measurement')
+    package = package_identity(args.package or str(Path(native.__file__).resolve().parent.parent))
+    if Path(native.__file__).resolve() != Path(str(package['artifact'])).resolve():
+        raise RuntimeError('The loaded extension differs from the requested package identity')
+    directory = Path(args.output).resolve()
+    if (directory / 'parallel-contract.json').exists() or (directory / 'parallel-trials.jsonl').exists():
+        raise ValueError('Preserve this parallel run and use a new output directory')
+    directory.mkdir(parents=True, exist_ok=True)
+    contract = {
+        'command': 'parallel', 'purpose': 'representative fixed-work observation; no performance verdict',
+        'runner_sha256': digest(Path(__file__)), 'package': package, 'case': case.identity(),
+        'python': sys.version, 'executable': sys.executable, 'machine': platform.machine(),
+        'platform': platform.platform(), 'pid': os.getpid(), 'start_unix_ns': time.time_ns(),
+        'gc_enabled': gc.isenabled(), 'before_import': before_import, 'after_import': after_import,
+        'threads': args.threads, 'calls_per_thread': args.calls, 'cycles': args.cycles,
+        'python_work_per_call': args.python_work, 'warmup_calls': args.warmup_calls,
+        'seconds_budget': args.seconds,
+        'timing_scope': 'start-barrier release through all fixed batches reaching the stop barrier; excludes preparation, checks and close',
+    }
+    (directory / 'parallel-contract.json').write_text(json.dumps(contract, indent=2) + '\n')
+    deadline = time.monotonic() + args.seconds
+    for cycle in range(args.cycles):
+        trial = parallel_trial(case, native, args.threads, args.calls, args.python_work,
+                               args.warmup_calls, deadline)
+        trial.update(cycle=cycle, case=case.id, runner_sha256=contract['runner_sha256'],
+                     after_work=gil_state(), gc_enabled=gc.isenabled())
+        if case.identity() != contract['case']:
+            trial['errors'].append({'type': 'AssertionError', 'message': 'The read-only case input changed'})
+            trial['complete'] = False
+        if trial['after_work']['free_threaded_build'] and trial['after_work']['gil_enabled']:
+            trial['errors'].append({'type': 'RuntimeError', 'message': 'Work enabled the free-threaded GIL'})
+            trial['complete'] = False
+        if not trial['gc_enabled']:
+            trial['errors'].append({'type': 'RuntimeError', 'message': 'Work disabled automatic GC'})
+            trial['complete'] = False
+        append(directory / 'parallel-trials.jsonl', trial)
+        print(json.dumps({'cycle': cycle, 'complete': trial['complete'], 'output': str(directory)}), flush=True)
+        if not trial['complete']:
+            raise RuntimeError(f'Parallel cycle {cycle} failed; preserve its unfiltered trial record')
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=("worker", "list", "calibrate", "run", "summarize", "smoke"))
+    parser.add_argument("command", choices=("worker", "list", "calibrate", "run", "summarize", "smoke", "parallel"))
     parser.add_argument("--output", default="evidence/rust-sync-kernel/performance/preflight")
     parser.add_argument("--package")
     parser.add_argument("--reference")
@@ -981,10 +1222,16 @@ def main() -> None:
     parser.add_argument("--minimum-ms", type=float, default=1)
     parser.add_argument("--warmup-calls", type=int, choices=range(1, 17), default=16,
                         help="Maximum warmup calls per scene; use 1 for equal fixed work before timed GC")
+    parser.add_argument("--threads", type=int, choices=(1, 2, 4))
+    parser.add_argument("--calls", type=int, help="Fixed calls per thread for parallel")
+    parser.add_argument("--python-work", type=int, default=0,
+                        help="Pure Python integer additions before each parallel task call")
     args = parser.parse_args()
     if resource is None and args.command not in ('list', 'smoke'):
         raise RuntimeError('Formal resource-based performance measurement is supported on the macOS development host')
-    if args.command == 'smoke':
+    if args.command == "parallel":
+        parallel(args)
+    elif args.command == 'smoke':
         if not 0 < args.seconds <= 180:
             raise ValueError('CI smoke requires a positive budget of at most 180 seconds')
         smoke(Path(args.output), args.seconds)

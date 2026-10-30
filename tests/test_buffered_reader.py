@@ -278,3 +278,242 @@ def test_failed_decode_reuses_prepared_unique_key_without_advancing_position() -
     notes = '\n'.join(getattr(caught.value, '__notes__', []))
     assert 'row 0, column 1' in notes and "key='duration.2'" in notes
     assert value.position == 0 and caught.value.error_info.stage == 'cursor.fetchone'
+
+
+@pytest.mark.parametrize('width', [5, 8, 32])
+def test_wide_mixed_rows_preserve_fetch_shapes_and_atomic_failure(width: int) -> None:
+    import json
+
+    columns = [column(f'v{index}', 3 if index == width - 1 or index % 3 == 0
+                      else 253 if index % 3 == 1 else 245,
+                      63 if index == width - 1 or index % 3 == 0 else 255)
+               for index in range(width)]
+    encoded: list[tuple[bytes | None, ...]] = []
+    expected: list[tuple[object, ...]] = []
+    for row_index in range(4):
+        raw: list[bytes | None] = []
+        final: list[object] = []
+        for index in range(width):
+            if index == width - 1 or index % 3 == 0:
+                number = 1000 + row_index * width + index
+                raw.append(str(number).encode())
+                final.append(number)
+            elif row_index == 1 and index == 1:
+                raw.append(None)
+                final.append(None)
+            elif index % 3 == 1:
+                text = f'row {row_index}, column {index} 中'
+                raw.append(text.encode())
+                final.append(text)
+            else:
+                document = {'row': row_index, 'column': index, 'values': [None, row_index]}
+                raw.append(json.dumps(document).encode())
+                final.append(document)
+        encoded.append(tuple(raw))
+        expected.append(tuple(final))
+    source = packets(columns, encoded)
+
+    value = _rows_from_packets(source, decode_json=True)
+    assert value.fetchmany(0) == () and value.position == 0
+    assert value.fetchone() == expected[0] and value.position == 1
+    assert value.fetchmany(1) == (expected[1],) and value.position == 2
+    assert value.fetchall() == tuple(expected[2:]) and value.position == 4
+    assert value.fetchone() is None
+
+    value = _rows_from_packets(source, decode_json=True)
+    assert value.fetchmany(3) == tuple(expected[:3]) and value.position == 3
+    assert value.fetchall() == (expected[3],) and value.position == 4
+    whole = _rows_from_packets(source, decode_json=True).fetchall()
+    assert whole == tuple(expected)
+    for actual_row, expected_row in zip(whole, expected):
+        assert type(actual_row) is tuple
+        assert all(type(actual) is type(wanted) for actual, wanted in zip(actual_row, expected_row))
+
+    broken = list(encoded)
+    broken[2] = (*broken[2][:-1], b'invalid integer')
+    value = _rows_from_packets(packets(columns, broken), decode_json=True)
+    assert value.fetchone() == expected[0] and value.position == 1
+    with pytest.raises(DataError) as caught:
+        value.fetchmany(2)
+    assert value.position == 1
+    assert f'row 2, column {width - 1}' in '\n'.join(getattr(caught.value, '__notes__', []))
+    assert value.fetchone() == expected[1] and value.position == 2
+    with pytest.raises(DataError):
+        value.fetchone()
+    assert value.position == 2
+
+
+def test_wide_nested_tuple_allocation_failure_keeps_the_original_start() -> None:
+    """Fail while inner and outer final tuples contain completed values."""
+    from pathlib import Path
+    import subprocess
+
+    source = r'''
+import _testcapi
+import sys
+from collections.abc import Callable
+sys.path.insert(0, sys.argv[1])
+from test_buffered_reader import column, packets
+from sqlaero._sqlaero import _Rows, _rows_from_packets
+
+width: int = 32
+count: int = 32
+expected: tuple[tuple[int, ...], ...] = tuple(
+    tuple(1000 + row * width + index for index in range(width)) for row in range(count))
+source: list[bytes] = packets([column(f'v{index}') for index in range(width)],
+    [tuple(str(value).encode() for value in row) for row in expected])
+enable, disable = _testcapi.set_nomemory, _testcapi.remove_mem_hooks
+
+def probe(offset: int) -> tuple[bool, bool, bool]:
+    value: _Rows = _rows_from_packets(source)
+    fetch: Callable[[], object] = value.fetchall
+    partial_inner = partial_outer = False
+    try:
+        enable(offset, offset + 1)
+        try:
+            result: object = fetch()
+        finally:
+            disable()
+    except MemoryError as error:
+        assert not hasattr(error, 'error_info')
+        assert value.position == 0
+        notes = '\n'.join(getattr(error, '__notes__', []))
+        partial_inner = any(f'row 0, column {index};' in notes for index in range(1, width))
+        partial_outer = any(f'row {row}, column ' in notes for row in range(1, count))
+        assert fetch() == expected
+        failed = True
+    else:
+        assert result == expected
+        failed = False
+    assert value.position == count
+    return failed, partial_inner, partial_outer
+
+observed: list[tuple[bool, bool, bool]] = [probe(offset) for offset in range(96)]
+assert any(failed for failed, _, _ in observed)
+assert any(inner for _, inner, _ in observed), 'no failure inside the first wide row'
+assert any(outer for _, _, outer in observed), 'no failure after an earlier row completed'
+print('wide inner and outer allocation failures preserved position and recovered')
+'''
+    result = subprocess.run([sys.executable, '-', str(Path(__file__).resolve().parent)],
+                            input=source, text=True, capture_output=True, timeout=20, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'allocation failures preserved position and recovered' in result.stdout
+
+
+def test_wide_partial_row_and_batch_stay_private_during_signal_and_parallel_gc() -> None:
+    """Inspect from another thread while JSON is still inside a wide row."""
+    from pathlib import Path
+    import os
+    import subprocess
+
+    source = r'''
+import gc
+import sys
+from threading import Event, Thread
+from types import FrameType
+from typing import Any, cast
+
+def gil_enabled() -> bool:
+    check = getattr(sys, '_is_gil_enabled', None)
+    return True if check is None else bool(check())
+
+initial_gil: bool = gil_enabled()
+sys.path.insert(0, sys.argv[1])
+from _native_signal import NativeAlarm
+from test_buffered_reader import Interrupted, column, packets
+from sqlaero._sqlaero import _rows_from_packets
+assert gil_enabled() is initial_gil, 'extension import changed the GIL state'
+
+width: int = 5
+count: int = 1_000_000
+marker: int = 8712394560432
+document: bytes = (b'[' + str(marker).encode() + b','
+                   + b'123456789,' * (count - 2) + b'123456789]')
+columns: list[bytes] = [column('id'), column('label', 253, 255),
+                       column('payload', 245, 255), column('left'), column('right')]
+value = _rows_from_packets(packets(columns, [
+    (b'1001', b'first', b'[0]', b'2001', b'3001'),
+    (b'1002', b'second', document, b'2002', b'3002'),
+]), decode_json=True)
+inspect_now, inspected, ready = Event(), Event(), Event()
+failures: list[BaseException] = []
+observed: list[int] = []
+completed_rows: list[bool] = []
+original = Interrupted('stop inside a wide row and unfinished batch')
+
+def inspect_gc() -> None:
+    ready.set()
+    try:
+        assert inspect_now.wait(15), 'no in-field signal observation'
+        gc.collect()
+        for temporary in gc.get_objects():
+            if type(temporary) is tuple:
+                candidate = cast(tuple[object, ...], temporary)
+                if len(candidate) in (2, width):
+                    for index in range(len(candidate)):
+                        _ = candidate[index]
+                if len(candidate) == width and type(candidate[0]) is int:
+                    assert candidate[0] != 1002, 'GC exposed an unfinished wide row'
+                    if candidate[0] == 1001:
+                        assert candidate == (1001, 'first', [0], 2001, 3001)
+                        completed_rows.append(True)
+    except BaseException as error:
+        failures.append(error)
+    finally:
+        inspected.set()
+
+def interrupt(_signum: int, _frame: FrameType | None) -> None:
+    if observed:
+        return
+    for temporary in gc.get_objects():
+        if type(temporary) is list:
+            candidate = cast(list[object], temporary)
+            length = len(candidate)
+            if 1024 <= length < count // 2 and type(candidate[0]) is int and candidate[0] == marker:
+                observed.append(length)
+                alarm.start(0)
+                del candidate, temporary
+                inspect_now.set()
+                assert inspected.wait(10), 'parallel GC did not finish'
+                if failures:
+                    raise failures[0]
+                raise original
+
+inspector = Thread(target=inspect_gc, daemon=True)
+inspector.start()
+assert ready.wait(5)
+alarm = NativeAlarm(interrupt)
+caught: BaseException | None = None
+try:
+    alarm.start(0.001, 0.001, wait_ready=True)
+    try:
+        value.fetchall()
+    except BaseException as error:
+        caught = error
+finally:
+    alarm.close()
+    inspect_now.set()
+    inspector.join(15)
+assert observed and not failures and completed_rows
+assert caught is original and not hasattr(original, 'error_info')
+assert value.position == 0
+rows = value.fetchall()
+assert len(rows) == 2 and rows[0] == (1001, 'first', [0], 2001, 3001)
+assert rows[1][:2] == (1002, 'second') and rows[1][3:] == (2002, 3002)
+payload = cast(list[Any], rows[1][2])
+assert len(payload) == count and payload[0] == marker and payload[-1] == 123456789
+assert value.position == 2 and gil_enabled() is initial_gil
+print('wide partial row and batch survived signal and parallel GC inspection')
+'''
+    environment = dict(os.environ)
+    creationflags = 0
+    if os.name == 'nt':
+        # Give this signal child its own console, as the existing fixture does;
+        # sharing the pytest console would deliver its event to the parent too.
+        environment['SQLAERO_TEST_PRIVATE_CONSOLE'] = '1'
+        creationflags = subprocess.CREATE_NEW_CONSOLE
+    result = subprocess.run([sys.executable, '-', str(Path(__file__).resolve().parent)],
+                            input=source, text=True, capture_output=True, timeout=45,
+                            env=environment, creationflags=creationflags, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'survived signal and parallel GC inspection' in result.stdout
