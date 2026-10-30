@@ -64,6 +64,9 @@ fn syntax(parser: &Jiter<'_>, error: jiter::JiterError) -> DecodeFailure {
 /// initialized. No hashing, UTF-8 access or reference cloning may occur before
 /// completion. Signal handlers cannot discover this untracked, private object;
 /// failure drops its sole owner without publishing a partly initialized value.
+/// This relies on private ownership, not the GIL: Unicode is not GC-tracked,
+/// progress callbacks receive no reference to the object, and no shared cache
+/// stores it. These are the public PyUnicode_New initialization requirements.
 fn string<'py, F>(
     py: Python<'py>,
     text: &str,

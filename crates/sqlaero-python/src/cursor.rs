@@ -140,7 +140,8 @@ impl Cursor {
         }
     }
     fn settings(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Settings>> {
-        self.settings.lock().map_err(|_| {
+        self.settings.lock().map_err(|error| {
+            drop(error.into_inner());
             errors::client(
                 py,
                 ClientErrorCode::InternalState,
@@ -149,7 +150,8 @@ impl Cursor {
         })
     }
     fn counters(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Option<Counts>>> {
-        self.counts.lock().map_err(|_| {
+        self.counts.lock().map_err(|error| {
+            drop(error.into_inner());
             errors::client(
                 py,
                 ClientErrorCode::InternalState,
@@ -379,11 +381,17 @@ macro_rules! cursor_api {
             /// datetime.time keeps its clock fields and microseconds, ignores
             /// tzinfo and never calls timezone methods; 00:30+01:00 remains
             /// 00:30:00. Aware datetime, in contrast, is normalized to UTC.
+            /// Keep args and all nested mutable values unchanged until this
+            /// call returns. Each constructed Rust request owns stable bytes;
+            /// batch construction does not provide an atomic snapshot of all inputs.
             #[pyo3(signature=(sql,args=Argument::default(),*,many=Argument::default(),itemize=Argument::default()))]
             #[pyo3(text_signature="($self, sql, args=..., *, many=False, itemize=True)")]
             fn execute<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:Argument<'_>,many:Argument<'_>,itemize:Argument<'_>)->PyResult<Bound<'py,PyAny>> {self.run(py,sql,args,&many,&itemize).map_err(|error|errors::at(py,error,"cursor.execute"))}
             /// Execute using the same native many=True,itemize=True operation.
             /// Input value and timezone rules are the same as execute().
+            /// Keep args and all nested mutable values unchanged until this
+            /// call returns. Each constructed Rust request owns stable bytes;
+            /// batch construction does not provide an atomic snapshot of all inputs.
             fn executemany<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:&Bound<'_,PyAny>)->PyResult<Bound<'py,PyAny>> {
                 let many=true.into_pyobject(py)?.to_owned().into_any();
                 self.run(py,sql,Argument(Some(args.clone())),&Argument(Some(many.clone())),&Argument(Some(many)))
@@ -417,9 +425,10 @@ macro_rules! cursor_api {
             }
             /// PEP 249 row count, or -1 if not known. Readable after close.
             #[getter] fn rowcount<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {
-                match self.counters(py)?.as_ref() {
+                let rows=self.counters(py)?.as_ref().map(|value|value.rows);
+                match rows {
                     None=>Ok((-1i32).into_pyobject(py)?.into_any()),
-                    Some(value)=>Ok(value.rows.into_pyobject(py)?.into_any()),
+                    Some(rows)=>Ok(rows.into_pyobject(py)?.into_any()),
                 }
             }
             /// Actual row count, or None if unknown; alias of affected_rows.

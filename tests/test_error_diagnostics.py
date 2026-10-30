@@ -141,3 +141,233 @@ def test_representative_full_traceback_matches_python_and_summary_is_stable() ->
     assert str(plain) == 'SQLAeroError [stage=None, code=None, is_server_error=None]: plain'
     assert repr(plain) == ("ErrorInfo(stage=None, exception_type=sqlaero.errors.SQLAeroError, "
                            "native_type=None, code=None, os_errno=None, is_server_error=None, message='plain')")
+
+
+def test_concurrent_cold_snapshot_reads_return_the_same_published_object() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    capturing = Barrier(2)
+
+    class SharedFailure(SQLAeroError):
+        """Make both readers enter capture before either can publish."""
+
+        def __str__(self) -> str:
+            capturing.wait(timeout=5)
+            return super().__str__()
+
+    error = SharedFailure('shared capture')
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(lambda: error.error_info)
+        second = executor.submit(lambda: error.error_info)
+        first_info = first.result(timeout=10)
+        second_info = second.result(timeout=10)
+    assert first_info is second_info and error.error_info is first_info
+
+
+def test_concurrent_traceback_reads_return_the_same_published_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    import traceback
+
+    info = chained_snapshot()
+    formatting = Barrier(2)
+    original = traceback.StackSummary.format
+
+    def synchronized_format(stack: traceback.StackSummary) -> list[str]:
+        formatting.wait(timeout=5)
+        return original(stack)
+
+    monkeypatch.setattr(traceback.StackSummary, 'format', synchronized_format)
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        first = executor.submit(lambda: info.traceback)
+        second = executor.submit(lambda: info.traceback)
+        first_text = first.result(timeout=10)
+        second_text = second.result(timeout=10)
+    assert first_text is not None and first_text is second_text
+    assert info.traceback is first_text
+
+
+@pytest.mark.parametrize('kind', ['notes', 'metadata', 'retry-rule'])
+def test_shared_boundary_tuple_allocation_failure_preserves_memory_error(kind: str) -> None:
+    """Exercise the shared fallible constructor without exhausting host memory."""
+    from pathlib import Path
+    import subprocess
+    import sys
+
+    source = r'''
+import _testcapi
+from collections.abc import Callable
+import sys
+from typing import Any
+sys.path.insert(0, TEST_HELPERS)
+from test_buffered_reader import column, packets
+from sqlaero._sqlaero import _rows_from_packets
+from sqlaero.errors import SQLAeroError
+from sqlaero.retry import RetryRule
+
+kind: str = KIND
+types: tuple[type[Exception], ...] = (Exception,) * 32
+codes: tuple[int, ...] = (*range(1000, 1030), 1 << 200, -(1 << 200))
+whole: slice = slice(None)
+enable = _testcapi.set_nomemory
+disable = _testcapi.remove_mem_hooks
+
+class ReadyFailure(SQLAeroError):
+    def __str__(self) -> str:
+        return 'ready'
+
+def prepare() -> Callable[[], Any]:
+    if kind == 'notes':
+        error = ReadyFailure('notes')
+        error.__notes__ = ['a'] * 32
+        return lambda: error.error_info
+    if kind == 'metadata':
+        columns = _rows_from_packets(packets([column(f'c{index}') for index in range(32)], [])).columns
+        get = columns.__getitem__
+        return lambda: get(whole)
+    return lambda: RetryRule(error_types=types, error_codes=codes)
+
+def injected(operation: Callable[[], Any], offset: int) -> tuple[bool, Any]:
+    try:
+        enable(offset, offset + 1)
+        try:
+            result = operation()
+        finally:
+            disable()
+    except MemoryError:
+        return True, None
+    return False, result
+
+def verify(result: Any) -> None:
+    if kind == 'notes':
+        assert result.notes == ('a',) * 32
+    elif kind == 'metadata':
+        assert len(result) == 32
+    else:
+        assert result.error_types == types and result.error_codes == codes
+
+failures: int = 0
+for offset in range(96):
+    operation = prepare()
+    failed, result = injected(operation, offset)
+    if not failed:
+        verify(result)
+    failures += int(failed)
+assert failures > 0
+verify(prepare()())
+print('shared boundary allocation failures propagated as MemoryError:', failures)
+'''
+    source = source.replace('KIND', repr(kind)).replace('TEST_HELPERS', repr(str(Path(__file__).resolve().parent)))
+    result = subprocess.run([sys.executable, '-'], input=source, text=True,
+                            capture_output=True, timeout=20, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'propagated as MemoryError' in result.stdout
+
+
+def test_snapshot_graph_stays_private_until_all_relationships_are_complete() -> None:
+    """GC inspection must not expose nodes which capture will still mutate."""
+    import subprocess
+    import sys
+
+    source = r'''
+import gc
+from threading import Event, Thread
+from typing import Any
+from sqlaero.errors import ErrorInfo, SQLAeroError
+
+cause_started, allow_cause = Event(), Event()
+reader_borrowed, allow_reader = Event(), Event()
+capture_done, watch = Event(), Event()
+failures: list[BaseException] = []
+finished: list[ErrorInfo] = []
+
+class RootType(type):
+    def __getattribute__(cls, name: str) -> Any:
+        if name == '__qualname__' and watch.is_set():
+            reader_borrowed.set()
+            assert allow_reader.wait(5), 'diagnostic reader was not released'
+        return super().__getattribute__(name)
+
+class Root(SQLAeroError, metaclass=RootType):
+    pass
+
+class Cause(Exception):
+    def __str__(self) -> str:
+        cause_started.set()
+        assert allow_cause.wait(5), 'cause capture was not released'
+        return 'private cause'
+
+root = Root('construction-private-root')
+root.__cause__ = Cause()
+
+def capture() -> None:
+    try:
+        finished.append(root.error_info)
+    except BaseException as error:
+        failures.append(error)
+    finally:
+        capture_done.set()
+
+thread = Thread(target=capture, daemon=True)
+reader: Thread | None = None
+thread.start()
+try:
+    assert cause_started.wait(5), 'capture did not reach its Python cause boundary'
+    partial = [value for value in gc.get_objects()
+               if type(value) is ErrorInfo and value.message == 'construction-private-root']
+    if partial:
+        watch.set()
+        reader = Thread(target=lambda: repr(partial[0]), daemon=True)
+        reader.start()
+        assert reader_borrowed.wait(5), 'partial diagnostic could not be observed'
+    allow_cause.set()
+    assert capture_done.wait(5), 'capture did not complete'
+finally:
+    allow_cause.set()
+    allow_reader.set()
+    thread.join(5)
+    if reader is not None:
+        reader.join(5)
+assert not partial, 'GC exposed an ErrorInfo whose relationships were still being written'
+assert not failures, [(type(error).__name__, str(error)) for error in failures]
+assert len(finished) == 1 and finished[0].cause is not None
+assert finished[0].cause.message == 'private cause' and finished[0].context is None
+assert gc.is_tracked(finished[0]) and gc.is_tracked(finished[0].cause)
+print('snapshot graph published only after all relationship writes')
+'''
+    result = subprocess.run([sys.executable, '-'], input=source, text=True,
+                            capture_output=True, timeout=20, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'graph published only after all relationship writes' in result.stdout
+
+
+def test_failed_snapshot_capture_releases_a_partly_constructed_cycle() -> None:
+    class CaptureStopped(Exception):
+        """Abort after capture has already formed a root/cause cycle."""
+
+    class BrokenContext(Exception):
+        def __getattribute__(self, name: str) -> object:
+            if name == '__context__':
+                raise CaptureStopped('stop after the first cycle is linked')
+            return super().__getattribute__(name)
+
+    def failed_capture_type() -> weakref.ReferenceType[type[SQLAeroError]]:
+        class Root(SQLAeroError):
+            pass
+
+        root = Root('abandoned cyclic capture')
+        cause = ValueError('cycle cause')
+        root.__cause__ = cause
+        cause.__context__ = root
+        root.__context__ = BrokenContext('last pending branch')
+        with pytest.raises(CaptureStopped):
+            _ = root.error_info
+        return weakref.ref(Root)
+
+    reference = failed_capture_type()
+    # Clearing the diagnostic graph releases its type reference first; the
+    # temporary class's own MRO cycle is eligible in the following collection.
+    gc.collect()
+    gc.collect()
+    assert reference() is None, 'abandoned untracked diagnostic cycle retained its exception type'

@@ -142,3 +142,91 @@ def test_protocol_null_is_independent_of_every_output_policy() -> None:
     assert field(245, None, decode_json=True) is None
     assert field(16, None, length=64, decode_bit=True) is None
     assert field(253, None, collation_id=65535) is None
+
+
+def test_set_tuple_allocation_failure_preserves_memory_error() -> None:
+    """Fail the real SET fetch after preparation and preserve its start."""
+    from pathlib import Path
+    import subprocess
+    import sys
+
+    source = r'''
+import _testcapi
+import sys
+from typing import Callable
+
+sys.path.insert(0, sys.argv[1])
+from test_buffered_reader import column, packets
+from sqlaero import _sqlaero
+from sqlaero._sqlaero import _Rows
+
+# One-character strings can be cached; 32 members exceed the tuple freelist.
+# Prepare the Reader and bound method before injecting allocation failure.
+# Store the result in a fast local so the injected failure cannot hit a new
+# globals entry after native fetch has already committed its position.
+payload: bytes = b'a,' * 31 + b'a'
+expected: tuple[tuple[str, ...]] = (('a',) * 32,)
+source: list[bytes] = packets([column('members', 248, 255)], [(payload,)])
+
+def probe(offset: int) -> bool:
+    reader: _Rows = _sqlaero._rows_from_packets(source, decode_set=True)
+    fetch: Callable[[], object] = reader.fetchone
+    try:
+        _testcapi.set_nomemory(offset, offset + 1)
+        try:
+            result: object = fetch()
+        finally:
+            _testcapi.remove_mem_hooks()
+    except MemoryError as error:
+        assert not hasattr(error, 'error_info')
+        assert reader.position == 0
+        assert fetch() == expected
+        failed = True
+    else:
+        assert result == expected
+        failed = False
+    assert reader.position == 1
+    return failed
+
+failures: int = sum(probe(offset) for offset in range(30))
+assert failures > 0
+print('SET allocation failures propagated as MemoryError:', failures)
+'''
+    result = subprocess.run([sys.executable, '-', str(Path(__file__).resolve().parent)],
+                            input=source, text=True, capture_output=True, timeout=15, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'propagated as MemoryError' in result.stdout
+
+
+def test_private_field_allocation_failure_preserves_memory_error() -> None:
+    """Keep the private field entry fallible before final value construction."""
+    import subprocess
+    import sys
+
+    source = r'''
+import _testcapi
+from sqlaero import _sqlaero
+
+# Cover both private entry preparation and the final SET tuple allocation.
+payload: bytes = b'a,' * 31 + b'a'
+expected: tuple[str, ...] = ('a',) * 32
+failures: int = 0
+for offset in range(30):
+    failed: bool = False
+    try:
+        _testcapi.set_nomemory(offset, offset + 1)
+        try:
+            _sqlaero._decode_field(248, payload, decode_set=True)
+        finally:
+            _testcapi.remove_mem_hooks()
+    except MemoryError:
+        failed = True
+    failures += int(failed)
+assert failures > 0
+assert _sqlaero._decode_field(248, payload, decode_set=True) == expected
+print('private field allocation failures propagated as MemoryError:', failures)
+'''
+    result = subprocess.run([sys.executable, '-'], input=source, text=True,
+                            capture_output=True, timeout=15, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'propagated as MemoryError' in result.stdout

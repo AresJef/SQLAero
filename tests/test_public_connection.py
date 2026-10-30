@@ -761,6 +761,181 @@ def test_transaction_keeps_original_primary_refreshes_snapshot_and_captures_roll
 
 
 @requires_mysql
+def test_capture_overlapping_new_cleanup_diagnostics_does_not_restore_the_old_cache(
+    connection: Connection, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    import time as clock_time
+    import traceback
+    from sqlaero.errors import InterfaceBusyError, SQLAeroError
+
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    primary = SQLAeroError('overlapping cleanup')
+    try:
+        raise primary
+    except SQLAeroError:
+        pass
+    captured, resume = Event(), Event()
+    extract = traceback.StackSummary.extract
+
+    def paused_extract(*args: Any, **kwargs: Any) -> traceback.StackSummary:
+        if not captured.is_set():
+            captured.set()
+            assert resume.wait(5), 'cleanup did not finish while root capture was paused'
+        return extract(*args, **kwargs)
+
+    monkeypatch.setattr(traceback.StackSummary, 'extract', paused_extract)
+    with live(label) as observer, ThreadPoolExecutor(max_workers=2) as executor:
+        check = observer.cursor()
+        name = f'sqlaero_snapshot_overlap_{connection.connection_id}'
+        check.execute('SELECT GET_LOCK(%s, 0)', name)
+        assert check.fetchone() == (1,)
+        statement = f"SELECT GET_LOCK('{name}', 30)"
+        worker = connection.cursor()
+        pending = executor.submit(worker.execute, statement)
+        try:
+            deadline = clock_time.monotonic() + 3
+            while True:
+                check.execute('SELECT INFO FROM information_schema.PROCESSLIST WHERE ID=%s', connection.connection_id)
+                row = check.fetchone()
+                if row and row[0] == statement:
+                    break
+                assert clock_time.monotonic() < deadline, 'no real in-flight command observed'
+                clock_time.sleep(0.001)
+            snapshot = executor.submit(lambda: primary.error_info)
+            assert captured.wait(5), 'root capture did not reach its Python stack boundary'
+            try:
+                assert connection.__exit__(SQLAeroError, primary, primary.__traceback__) is False
+            finally:
+                resume.set()
+            previous = snapshot.result(timeout=5)
+            current = primary.error_info
+            assert previous.additional_errors == ()
+            assert current is not previous and primary.error_info is current
+            assert tuple(item.stage for item in current.additional_errors) == ('connection.close',)
+            assert current.additional_errors[0].exception_type is InterfaceBusyError
+        finally:
+            resume.set()
+            check.execute('SELECT RELEASE_LOCK(%s)', name)
+            assert check.fetchone() == (1,)
+            assert pending.result(timeout=5) == 1
+    assert not connection.closed and connection.ping()
+
+
+@requires_mysql
+def test_cross_thread_transaction_exit_cannot_consume_an_entry_waiting_for_its_ack(
+    connection: Connection,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from select import select
+    import socket
+    from threading import Event
+    from sqlaero.errors import InterfaceBusyError
+
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    secret: dict[str, str] = json.loads((ROOT / label / 'state.json').read_text())
+    armed, paused, resume, stopped = Event(), Event(), Event(), Event()
+    with socket.socket() as listener, ThreadPoolExecutor(max_workers=2) as executor:
+        listener.bind(('127.0.0.1', 0))
+        listener.listen(1)
+        listener.settimeout(10)
+
+        def relay_one_entry() -> None:
+            client, _ = listener.accept()
+            with client, socket.create_connection(('127.0.0.1', int(secret['port'])), timeout=5) as server:
+                while not stopped.is_set():
+                    readable, _, _ = select([client, server], [], [], 0.1)
+                    for source in readable:
+                        data = source.recv(65536)
+                        if not data:
+                            return
+                        if source is server and armed.is_set() and not paused.is_set():
+                            paused.set()
+                            assert resume.wait(5), 'entry response was not released'
+                        destination = client if source is server else server
+                        destination.sendall(data)
+
+        relaying = executor.submit(relay_one_entry)
+        try:
+            with live(label, unix_socket=None, host='127.0.0.1', port=listener.getsockname()[1],
+                      ssl=SSL(ca_file=ROOT / 'tls/ca.pem')) as proxied:
+                scope = proxied.transaction()
+                armed.set()
+                entering = executor.submit(scope.__enter__)
+                try:
+                    assert paused.wait(5), 'entry did not reach a real response wait'
+                    with pytest.raises(InterfaceBusyError):
+                        scope.__exit__(None, None, None)
+                finally:
+                    resume.set()
+                current = entering.result(timeout=5)
+                assert scope.__exit__(None, None, None) is False
+                assert current.closed and proxied.ping()
+        finally:
+            resume.set()
+            stopped.set()
+        relaying.result(timeout=5)
+
+
+@requires_mysql
+def test_retired_diagnostic_weakref_can_reenter_snapshot_capture(connection: Connection) -> None:
+    """Keep a lock regression bounded even when its weakref callback deadlocks."""
+    import subprocess
+
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    source = r'''
+from concurrent.futures import ThreadPoolExecutor
+import sys
+import time
+import weakref
+sys.path.insert(0, TEST_HELPERS)
+from test_public_connection import live
+from sqlaero.errors import ErrorInfo, SQLAeroError
+
+with live(LABEL) as connection, live(LABEL) as observer, ThreadPoolExecutor(max_workers=1) as executor:
+    primary = SQLAeroError('callback keeps the primary')
+    refreshed: list[ErrorInfo] = []
+
+    def retire(reference: weakref.ReferenceType[ErrorInfo]) -> None:
+        refreshed.append(primary.error_info)
+
+    previous = weakref.ref(primary.error_info, retire)
+    check = observer.cursor()
+    name = f'sqlaero_snapshot_weakref_{connection.connection_id}'
+    check.execute('SELECT GET_LOCK(%s, 0)', name)
+    assert check.fetchone() == (1,)
+    statement = f"SELECT GET_LOCK('{name}', 30)"
+    worker = connection.cursor()
+    pending = executor.submit(worker.execute, statement)
+    try:
+        deadline = time.monotonic() + 3
+        while True:
+            check.execute('SELECT INFO FROM information_schema.PROCESSLIST WHERE ID=%s', connection.connection_id)
+            row = check.fetchone()
+            if row and row[0] == statement:
+                break
+            assert time.monotonic() < deadline, 'no real in-flight command observed'
+            time.sleep(0.001)
+        assert connection.__exit__(SQLAeroError, primary, None) is False
+        assert previous() is None and len(refreshed) == 1
+        assert refreshed[0].additional_errors == ()
+        assert any('connection.close' in note for note in refreshed[0].notes)
+        assert tuple(item.stage for item in primary.error_info.additional_errors) == ('connection.close',)
+    finally:
+        check.execute('SELECT RELEASE_LOCK(%s)', name)
+        assert check.fetchone() == (1,)
+        assert pending.result(timeout=5) == 1
+print('retired diagnostic callback completed without holding its state lock')
+'''
+    source = source.replace('LABEL', repr(label)).replace('TEST_HELPERS', repr(str(Path(__file__).resolve().parent)))
+    result = subprocess.run([sys.executable, '-'], input=source, text=True,
+                            capture_output=True, timeout=20, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'callback completed without holding its state lock' in result.stdout
+
+
+@requires_mysql
 def test_external_business_exception_keeps_identity_and_only_receives_notes(connection: Connection) -> None:
     primary = ValueError('user failure')
     caught: pytest.ExceptionInfo[ValueError] | None = None

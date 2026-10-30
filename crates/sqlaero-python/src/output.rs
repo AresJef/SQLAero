@@ -19,10 +19,35 @@ pub(crate) fn tuple_from_ready<'py, const N: usize>(
     let length = isize::try_from(N).map_err(|_| {
         pyo3::exceptions::PyOverflowError::new_err("tuple length exceeds Py_ssize_t")
     })?;
-    // SAFETY: supported builds hold the GIL. The constructor returns an exact
-    // owned tuple or its original error; every following operation just moves
-    // an initialized array element into a distinct in-bounds slot. No Python
-    // allocation, conversion or signal check occurs while the slots are empty.
+    // SAFETY: the attached constructor returns a new exact tuple or its original
+    // error. The array already owns every final value; filling only moves those
+    // references into distinct in-bounds slots. There is no callback, allocation,
+    // detach or blocking operation after allocation and before all slots are
+    // valid. In free-threaded CPython, GC heap inspection stops attached threads
+    // at safepoints; it cannot discover this private tuple inside that interval.
+    unsafe {
+        let tuple = Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyTuple_New(length))?
+            .cast_into_unchecked::<PyTuple>();
+        for (index, value) in values.into_iter().enumerate() {
+            pyo3::ffi::PyTuple_SET_ITEM(tuple.as_ptr(), index as isize, value.into_ptr());
+        }
+        Ok(tuple)
+    }
+}
+
+/// Transfer an existing buffer of final owned values into a fallible tuple.
+/// No element conversion or reference cloning runs while its slots are empty.
+pub(crate) fn tuple_from_ready_vec<'py>(
+    py: Python<'py>,
+    values: Vec<Py<PyAny>>,
+) -> PyResult<Bound<'py, PyTuple>> {
+    let length = isize::try_from(values.len()).map_err(|_| {
+        pyo3::exceptions::PyOverflowError::new_err("tuple length exceeds Py_ssize_t")
+    })?;
+    // SAFETY: the attached constructor returns an owned exact tuple or its
+    // original error. Vec iteration and into_ptr only transfer existing owned
+    // references into distinct in-bounds slots. No callback, allocation, detach
+    // or blocking operation can expose unfinished slots to another thread or GC.
     unsafe {
         let tuple = Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyTuple_New(length))?
             .cast_into_unchecked::<PyTuple>();
@@ -37,8 +62,10 @@ pub(crate) fn tuple_from_ready<'py, const N: usize>(
 /// The iterator may decode values or check signals. Keep the tuple untracked
 /// until all slots are valid; already completed children remain normal values.
 /// The sole owned reference also cleans up initialized slots on any exception.
-/// Supported GIL builds protect allocation through immediate untracking; a
-/// future free-threaded adapter must preserve that same unpublished ownership.
+/// Allocation through immediate untracking stays attached without callbacks,
+/// detach or blocking operations. Free-threaded GC cannot inspect an attached
+/// thread's private heap until it reaches a safepoint. Once untracked, this
+/// private tuple stays invisible to GC while decoding or signal handlers run.
 pub(crate) fn tuple_from_values<'py>(
     py: Python<'py>,
     mut values: impl ExactSizeIterator<Item = PyResult<Bound<'py, PyAny>>>,
@@ -47,8 +74,11 @@ pub(crate) fn tuple_from_values<'py>(
         pyo3::exceptions::PyOverflowError::new_err("tuple length exceeds Py_ssize_t")
     })?;
     // SAFETY: attached CPython returns an owned exact tuple or NULL with its
-    // original allocation error. No Python callback runs between this return
-    // and untracking. The empty tuple is shared and must not be re-tracked.
+    // original allocation error. The only owner is local, and no callback,
+    // detach, blocking operation or safepoint intervenes before untracking.
+    // CPython's free-threaded GC inspections stop the world, and object
+    // enumeration excludes untracked values. The empty tuple is shared and
+    // must not be re-tracked.
     let tuple = unsafe {
         let tuple = Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyTuple_New(length))?
             .cast_into_unchecked::<PyTuple>();
@@ -380,11 +410,11 @@ pub(crate) fn field<'py>(
                     members.try_reserve(1).map_err(|error| {
                         pyo3::exceptions::PyMemoryError::new_err(error.to_string())
                     })?;
-                    members.push(codepoints(py, &values[start..end])?.unbind());
+                    members.push(codepoints(py, &values[start..end])?.into_any().unbind());
                     start = end + 1;
                 }
             }
-            Ok(PyTuple::new(py, members)?.into_any())
+            Ok(tuple_from_ready_vec(py, members)?.into_any())
         }
         Kind::Date { strict } => match decode::date(data) {
             Ok(value) => PyDate::new(py, value.year, value.month, value.day).map(Bound::into_any),

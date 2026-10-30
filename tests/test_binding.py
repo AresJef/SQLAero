@@ -7,7 +7,7 @@ from types import FrameType
 import pytest
 from _native_signal import NativeAlarm
 from sqlaero import _sqlaero
-from sqlaero._sqlaero import DataError, ProgrammingError, OperationalTimeoutError
+from sqlaero._sqlaero import DataError, OperationalError, ProgrammingError, OperationalTimeoutError
 
 
 @pytest.mark.parametrize(("args", "many", "itemize", "sql", "expected"), [
@@ -136,8 +136,13 @@ def test_large_scalar_fragments_keep_exact_contents(source: str | bytes | bytear
     assert _sqlaero._bind_sql("SELECT %s", [source]) == [b"\x03SELECT " + literal]
 
 
-def test_large_binding_checks_the_original_operation_deadline() -> None:
-    source = "'" * (16 * 1024 * 1024)
+@pytest.mark.parametrize("kind", ["text", "bytes", "bytearray"])
+def test_large_binding_checks_the_original_operation_deadline(kind: str) -> None:
+    source: str | bytes | bytearray = "'" * (16 * 1024 * 1024)
+    if kind != "text":
+        source = source.encode()
+        if kind == "bytearray":
+            source = bytearray(source)
     with pytest.raises(OperationalTimeoutError):
         _sqlaero._bind_sql("SELECT %s", [source], timeout_ns=5_000_000)
 
@@ -146,8 +151,13 @@ class InterruptedBinding(Exception):
     """An actual user signal exception, preserved without library wrapping."""
 
 
-def test_large_binding_returns_to_python_signal_checks() -> None:
-    source = "'" * (16 * 1024 * 1024)
+@pytest.mark.parametrize("kind", ["text", "bytes", "bytearray"])
+def test_large_binding_returns_to_python_signal_checks(kind: str) -> None:
+    source: str | bytes | bytearray = "'" * (16 * 1024 * 1024)
+    if kind != "text":
+        source = source.encode()
+        if kind == "bytearray":
+            source = bytearray(source)
 
     def interrupt(signum: int, frame: FrameType | None) -> None:
         raise InterruptedBinding("original signal handler")
@@ -205,3 +215,48 @@ def test_failed_leaf_keeps_its_location_after_successful_siblings(args: object, 
     with pytest.raises(TypeError) as caught:
         _sqlaero._bind_sql("SELECT %s,%s" if itemize else "SELECT %s", args, itemize=itemize)
     assert f"while binding {location};" in "\n".join(caught.value.__notes__)
+
+
+@pytest.mark.parametrize("many", [False, True], ids=["row", "batch"])
+def test_callback_removing_a_later_position_keeps_known_source_location(many: bool) -> None:
+    """An unstable caller may fail indexing, but cannot lose the known index."""
+    source: list[object] = []
+
+    class ClearingZone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta:
+            source.clear()
+            return timedelta(0)
+
+    source.extend([datetime(2024, 1, 1, tzinfo=ClearingZone()), 2])
+    with pytest.raises(IndexError) as caught:
+        _sqlaero._bind_sql("SELECT %s" if many else "SELECT %s,%s", source, many=many)
+    assert "while binding args[1]; current request was not sent" in "\n".join(
+        getattr(caught.value, "__notes__", [])
+    )
+
+
+def test_bytearray_failure_preview_is_bounded_and_keeps_original_length() -> None:
+    source = bytearray(b"\x00\xff'\\" * 1025)
+    with pytest.raises(OperationalError) as caught:
+        _sqlaero._bind_sql("SELECT %s", [source], limit=30)
+    notes = "\n".join(getattr(caught.value, "__notes__", []))
+    assert "failed escape input: bytearray b'" in notes
+    assert f"original length {len(source)}" in notes
+    assert "[truncated]" in notes and "while binding args[0]" in notes
+    assert len(notes) < 500
+
+
+def test_current_tuple_row_keeps_children_alive_after_callback_clears_batch() -> None:
+    """The current row owns a tuple even if its original container changes."""
+    source: list[tuple[object, ...]] = []
+
+    class ClearingZone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta:
+            source.clear()
+            return timedelta(0)
+
+    source.append((datetime(2024, 1, 1, tzinfo=ClearingZone()), bytearray(b"\x00\xff"), (1, "x")))
+    assert _sqlaero._bind_sql("SELECT %s,%s,%s", source, many=True) == [
+        b"\x03SELECT '2024-01-01 00:00:00',CAST(X'00FF' AS BINARY),(1,'x')"
+    ]
+    assert source == []

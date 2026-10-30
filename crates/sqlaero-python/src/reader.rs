@@ -359,7 +359,7 @@ impl Reader {
             for (index, (cell, plan)) in fields.iter().zip(data.plans.iter()).enumerate() {
                 values.push(decode(index, cell, *plan)?.unbind());
             }
-            PyTuple::new(py, values)?.into_any()
+            output::tuple_from_ready_vec(py, values)?.into_any()
         };
         if row_index.is_multiple_of(64) {
             py.check_signals()?;
@@ -418,7 +418,7 @@ impl Reader {
                         )
                     })
             } else {
-                PyTuple::new(py, result).map(Bound::into_any)
+                output::tuple_from_ready_vec(py, result).map(Bound::into_any)
             }
         }
     }
@@ -432,19 +432,21 @@ impl Reader {
         let _operation = self.operation(py)?;
         self.open(py)?;
         py.check_signals()?;
-        let (data, start, end) = {
+        let current = {
             let state = self.lock(py)?;
-            if state.metadata.is_none() {
-                return Err(errors::client(
-                    py,
-                    ClientErrorCode::SessionState,
-                    "Cursor has no current row result",
-                ));
-            }
-            let end = count.map_or(state.total, |count| {
-                state.position.saturating_add(count).min(state.total)
-            });
-            (state.data.clone(), state.position, end)
+            state.metadata.as_ref().map(|_| {
+                let end = count.map_or(state.total, |count| {
+                    state.position.saturating_add(count).min(state.total)
+                });
+                (state.data.clone(), state.position, end)
+            })
+        };
+        let Some((data, start, end)) = current else {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::SessionState,
+                "Cursor has no current row result",
+            ));
         };
         if start == end {
             return Ok(if one {

@@ -617,10 +617,19 @@ class Cursor:
         tzinfo is ignored without calling timezone methods. For example,
         00:30+01:00 is encoded as '00:30:00'. Aware datetime values instead
         follow the documented UTC conversion rule.
+
+        Keep args and all nested mutable values unchanged until this call
+        returns. Each constructed Rust request owns stable bytes; batch
+        construction does not provide an atomic snapshot of all inputs.
         """
         ...
     def executemany(self, sql: str, args: EscapeInput) -> int:
-        """Execute a batch using execute's input and datetime.time rules."""
+        """Execute a batch using execute's input and datetime.time rules.
+
+        Keep args and all nested mutable values unchanged until this call
+        returns. Each constructed Rust request owns stable bytes; batch
+        construction does not provide an atomic snapshot of all inputs.
+        """
         ...
     def fetchone(self) -> tuple[object, ...] | None: ...
     def fetchmany(self, size: int | None = None) -> tuple[tuple[object, ...], ...]: ...

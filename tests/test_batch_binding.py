@@ -74,6 +74,14 @@ def test_normal_rollover_reuses_the_encoded_row_without_timezone_callbacks() -> 
     assert zone.calls == 3
 
 
+def test_binary_snapshot_preserves_complete_rows_across_exact_limit_rollover() -> None:
+    source = bytearray(bytes(range(256)) * 1025)
+    literal = b"CAST(X'" + source.hex().upper().encode("ascii") + b"' AS BINARY)"
+    request = b"\x03INSERT t VALUES (" + literal + b")"
+    assert _sqlaero._bind_sql("INSERT t VALUES (%s)", [source, source, source], many=True,
+                             limit=len(request)) == [request] * 3
+
+
 def test_later_bad_row_aborts_the_probe_instead_of_returning_a_success_prefix() -> None:
     with pytest.raises(TypeError):
         _sqlaero._bind_sql("INSERT t VALUES (%s)", [1, 2, object()], many=True)

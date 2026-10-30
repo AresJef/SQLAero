@@ -1,6 +1,6 @@
 //! Retry configuration and attempt boundaries; no implicit database replay.
 
-use crate::{config::Argument, errors};
+use crate::{config::Argument, errors, output};
 use num_bigint::BigInt;
 use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
@@ -13,13 +13,13 @@ use std::sync::{
 };
 use std::time::{Duration, Instant};
 
-fn entries<'py>(value: &Bound<'py, PyAny>, name: &str) -> PyResult<Vec<Bound<'py, PyAny>>> {
+fn entries(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<Py<PyAny>>> {
     let values = if let Ok(tuple) = value.cast::<PyTuple>() {
-        tuple.iter().collect()
+        tuple.iter().map(Bound::unbind).collect()
     } else if let Ok(list) = value.cast::<PyList>() {
-        list.iter().collect()
+        list.iter().map(Bound::unbind).collect()
     } else {
-        vec![value.clone()]
+        vec![value.clone().unbind()]
     };
     if values.is_empty() {
         return Err(PyValueError::new_err(format!(
@@ -70,11 +70,11 @@ impl RetryRule {
         let types=error_types.map(|value| {
             let values=entries(value,"error_types")?;
             for (index,value) in values.iter().enumerate() {
-                if !value.cast::<PyType>().is_ok_and(|typ| typ.is_subclass_of::<PyException>().unwrap_or(false)) {
+                if !value.bind(py).cast::<PyType>().is_ok_and(|typ| typ.is_subclass_of::<PyException>().unwrap_or(false)) {
                     return Err(PyTypeError::new_err(format!("error_types[{index}] must be an Exception subclass, excluding control-flow BaseException classes")));
                 }
             }
-            PyTuple::new(py,values).map(Bound::unbind)
+            output::tuple_from_ready_vec(py,values).map(Bound::unbind)
         }).transpose()?;
         let numbers = error_codes
             .map(|value| {
@@ -82,6 +82,7 @@ impl RetryRule {
                     .iter()
                     .enumerate()
                     .map(|(index, value)| {
+                        let value = value.bind(py);
                         if !value.is_instance_of::<PyInt>() || value.is_instance_of::<PyBool>() {
                             return Err(PyTypeError::new_err(format!(
                                 "error_codes[{index}] must be int or IntEnum, not bool"
@@ -99,7 +100,15 @@ impl RetryRule {
         }
         let codes = numbers
             .as_ref()
-            .map(|values| PyTuple::new(py, values).map(Bound::unbind))
+            .map(|values| {
+                output::tuple_from_values(
+                    py,
+                    values
+                        .iter()
+                        .map(|value| errors::code_object(py, value).map(Bound::into_any)),
+                )
+                .map(Bound::unbind)
+            })
             .transpose()?;
         Ok(Self {
             types,

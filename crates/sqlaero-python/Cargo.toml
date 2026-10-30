@@ -22,5 +22,8 @@ zeroize.workspace = true
 getrandom.workspace = true
 smallvec.workspace = true
 
+[build-dependencies]
+pyo3-build-config = { version = "=0.29.2", features = ["resolve-config"] }
+
 [lints]
 workspace = true

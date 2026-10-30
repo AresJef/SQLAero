@@ -4,6 +4,7 @@ use crate::errors;
 use num_bigint::BigInt;
 use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
+use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{
     PyBool, PyByteArray, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess,
     PyFloat, PyInt, PyString, PyTime, PyTimeAccess, PyTuple, PyType, PyTzInfoAccess,
@@ -61,9 +62,16 @@ impl ScalarTypes {
         }
         if value.is_exact_instance_of::<PyByteArray>() {
             let array = value.cast::<PyByteArray>()?;
-            // SAFETY: the exact owned bytearray is protected by the GIL, with
-            // no Python callback or detach during this bounded native preview.
-            return Ok(unsafe { binary_diagnostic(&name, array.as_bytes(), 32) });
+            let (preview, copied, length) = with_critical_section(array, || {
+                // SAFETY: the bytearray is protected and stays owned. Only a
+                // bounded native copy occurs before the slice is discarded.
+                let source = unsafe { array.as_bytes() };
+                let mut preview = [0; 32];
+                let copied = source.len().min(preview.len());
+                preview[..copied].copy_from_slice(&source[..copied]);
+                (preview, copied, source.len())
+            });
+            return Ok(binary_preview(&name, &preview[..copied], length));
         }
         if value.is_exact_instance_of::<PyInt>() {
             let bits = value.call_method0("bit_length")?.extract::<u64>()?;
@@ -163,55 +171,18 @@ impl ScalarTypes {
             return text(value.cast::<PyString>()?, output, context, true, budget);
         }
         if value.is_exact_instance_of::<PyBytes>() {
-            let source = value.cast::<PyBytes>()?.as_bytes();
-            if source.len() <= WORK_BYTES {
-                return writer::binary(output, source, limit)
-                    .map_err(|error| errors::wire(py, error));
-            }
-            checkpoint(py, budget)?;
-            writer::binary_start(output, source.len(), limit)
-                .map_err(|error| errors::wire(py, error))?;
-            for chunk in source.chunks(WORK_BYTES) {
-                checkpoint(py, budget)?;
-                writer::binary_fragment(output, chunk, limit)
-                    .map_err(|error| errors::wire(py, error))?;
-            }
-            return writer::binary_end(output, limit).map_err(|error| errors::wire(py, error));
+            return binary(
+                py,
+                value.cast::<PyBytes>()?.as_bytes(),
+                output,
+                limit,
+                budget,
+            );
         }
         if value.is_exact_instance_of::<PyByteArray>() {
             let source = value.cast::<PyByteArray>()?;
-            let length = source.len();
-            if length <= WORK_BYTES {
-                // SAFETY: the exact bytearray stays owned while attached; no
-                // Python callback or GIL release occurs during this borrow.
-                let written = unsafe { writer::binary(output, source.as_bytes(), limit) };
-                return written.map_err(|error| errors::wire(py, error));
-            }
-            checkpoint(py, budget)?;
-            writer::binary_start(output, length, limit).map_err(|error| errors::wire(py, error))?;
-            for start in (0..length).step_by(WORK_BYTES) {
-                checkpoint(py, budget)?;
-                let end = (start + WORK_BYTES).min(length);
-                // SAFETY: reacquire a checked view after each callback. This
-                // borrow ends before error construction or the next callback.
-                // Concurrent external native writes remain outside the input
-                // stability contract, just as for the short protected path.
-                let written = unsafe {
-                    source
-                        .as_bytes()
-                        .get(start..end)
-                        .map(|chunk| writer::binary_fragment(output, chunk, limit))
-                };
-                match written {
-                    Some(result) => result.map_err(|error| errors::wire(py, error))?,
-                    None => {
-                        return Err(pyo3::exceptions::PyValueError::new_err(
-                            "bytearray length changed while binding; current request was not sent",
-                        ));
-                    }
-                }
-            }
-            return writer::binary_end(output, limit).map_err(|error| errors::wire(py, error));
+            let snapshot = bytearray_snapshot(source, output.len(), limit, budget)?;
+            return binary(py, &snapshot, output, limit, budget);
         }
         if value.is_exact_instance_of::<PyDateTime>() {
             let datetime = value.cast::<PyDateTime>()?;
@@ -282,20 +253,23 @@ impl ScalarTypes {
 
 /// Format a bounded raw-byte preview without callbacks or scanning the value.
 pub(crate) fn binary_diagnostic(name: &str, value: &[u8], maximum: usize) -> String {
-    let escaped: String = value
+    binary_preview(name, &value[..value.len().min(maximum)], value.len())
+}
+
+fn binary_preview(name: &str, preview: &[u8], length: usize) -> String {
+    let escaped: String = preview
         .iter()
-        .take(maximum)
         .flat_map(|byte| std::ascii::escape_default(*byte))
         .map(char::from)
         .collect();
     format!(
         "{name} b'{escaped}'{} (original length {})",
-        if value.len() > maximum {
+        if length > preview.len() {
             " [truncated]"
         } else {
             ""
         },
-        value.len()
+        length
     )
 }
 
@@ -398,6 +372,73 @@ fn codec_error(
 }
 
 const WORK_BYTES: usize = 256 * 1024;
+
+/// Copy one mutable scalar without retaining an unprotected Python view.
+/// Callers keep mutable inputs stable; this is not an atomic snapshot across
+/// the short copy windows. The completed Rust buffer is independently owned.
+fn bytearray_snapshot(
+    source: &Bound<'_, PyByteArray>,
+    output_len: usize,
+    limit: usize,
+    budget: Option<&IoBudget>,
+) -> PyResult<Vec<u8>> {
+    let py = source.py();
+    let length = with_critical_section(source, || source.len());
+    if length > WORK_BYTES {
+        checkpoint(py, budget)?;
+    }
+    writer::binary_width(output_len, length, limit).map_err(|error| errors::wire(py, error))?;
+    let mut snapshot = Vec::new();
+    snapshot
+        .try_reserve_exact(length)
+        .map_err(|error| errors::wire(py, error.into()))?;
+    for start in (0..length).step_by(WORK_BYTES) {
+        if length > WORK_BYTES {
+            checkpoint(py, budget)?;
+        }
+        let end = start + (length - start).min(WORK_BYTES);
+        let copied = with_critical_section(source, || {
+            // SAFETY: source remains owned and its object lock (or the GIL)
+            // protects this freshly acquired slice. No Python call, callback,
+            // detach, or reference drop occurs before the native copy ends.
+            let current = unsafe { source.as_bytes() };
+            if current.len() != length {
+                return false;
+            }
+            let Some(chunk) = current.get(start..end) else {
+                return false;
+            };
+            // Reservation above covers every chunk, so this cannot allocate.
+            snapshot.extend_from_slice(chunk);
+            true
+        });
+        if !copied {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "bytearray length changed while binding; current request was not sent",
+            ));
+        }
+    }
+    Ok(snapshot)
+}
+
+fn binary(
+    py: Python<'_>,
+    source: &[u8],
+    output: &mut Vec<u8>,
+    limit: usize,
+    budget: Option<&IoBudget>,
+) -> PyResult<()> {
+    if source.len() <= WORK_BYTES {
+        return writer::binary(output, source, limit).map_err(|error| errors::wire(py, error));
+    }
+    checkpoint(py, budget)?;
+    writer::binary_start(output, source.len(), limit).map_err(|error| errors::wire(py, error))?;
+    for chunk in source.chunks(WORK_BYTES) {
+        checkpoint(py, budget)?;
+        writer::binary_fragment(output, chunk, limit).map_err(|error| errors::wire(py, error))?;
+    }
+    writer::binary_end(output, limit).map_err(|error| errors::wire(py, error))
+}
 
 /// Check the original whole-operation budget and actual pending Python signal.
 // Keep the Python-error path out of the recursive value visitor's stack frame.

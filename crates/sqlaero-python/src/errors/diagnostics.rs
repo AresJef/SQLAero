@@ -4,12 +4,15 @@
 //! readable and collectible. The short-lived capture map only preserves object
 //! identity during capture; it is not a persistent registry or public node ID.
 
-use super::SQLAeroError;
+use super::{SQLAeroError, attribute, code_object};
+use crate::output;
 use num_bigint::BigInt;
 use pyo3::class::{PyTraverseError, PyVisit};
+use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyString, PyTuple, PyType};
+use pyo3::types::{PyInt, PyList, PyString, PyTuple, PyType};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::sync::OnceLock;
 
 /// Native facts copied only on a real failure, before its Rust source is dropped.
 #[derive(Clone)]
@@ -95,8 +98,15 @@ pub(super) struct State {
     pub native: Option<Native>,
     pub additional: Vec<Py<ErrorInfo>>,
     pub cached: Option<Py<ErrorInfo>>,
+    pub generation: u64,
 }
 impl State {
+    /// Retire the current representation after recording a real new fact.
+    /// The caller must release its guard before dropping the returned reference.
+    pub(super) fn invalidate(&mut self) -> Option<Py<ErrorInfo>> {
+        self.generation = self.generation.wrapping_add(1);
+        self.cached.take()
+    }
     pub(super) fn traverse(&self, visit: &PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.cached)?;
         for value in &self.additional {
@@ -131,9 +141,63 @@ pub(crate) struct ErrorInfo {
     stack: Option<Py<PyAny>>,
     notes: Py<PyTuple>,
     additional: Vec<Py<Self>>,
-    additional_tuple: Option<Py<PyTuple>>,
-    formatted: Option<Py<PyString>>,
-    formatted_ready: bool,
+    additional_tuple: OnceLock<Py<PyTuple>>,
+    formatted: OnceLock<Option<Py<PyString>>>,
+}
+
+/// Own only this capture's new nodes until all relationship writes finish.
+struct Construction<'py> {
+    py: Python<'py>,
+    nodes: Vec<Py<ErrorInfo>>,
+    published: bool,
+}
+impl<'py> Construction<'py> {
+    fn new(py: Python<'py>) -> Self {
+        Self {
+            py,
+            nodes: Vec::new(),
+            published: false,
+        }
+    }
+    fn object(&mut self, value: ErrorInfo) -> PyResult<Py<ErrorInfo>> {
+        self.nodes
+            .try_reserve(1)
+            .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+        let value = Py::new(self.py, value)?;
+        // SAFETY: this is a new, attached, privately owned GC object. No
+        // callback, allocation, detach, blocking operation or safepoint occurs
+        // after construction and before hiding it from GC heap enumeration.
+        unsafe { pyo3::ffi::PyObject_GC_UnTrack(value.as_ptr().cast()) };
+        // Capacity was reserved before construction; these operations only
+        // increment and move an owned reference while the node stays private.
+        self.nodes.push(value.clone_ref(self.py));
+        Ok(value)
+    }
+    fn publish(&mut self) {
+        for value in &self.nodes {
+            // SAFETY: every node belongs to this capture, is still untracked,
+            // and all graph fields are now complete and will no longer change.
+            unsafe { pyo3::ffi::PyObject_GC_Track(value.as_ptr().cast()) };
+        }
+        self.published = true;
+    }
+}
+impl Drop for Construction<'_> {
+    fn drop(&mut self) {
+        if !self.published {
+            // Keep all new nodes owned and hidden while breaking partial
+            // cycles. Each edge targets another owned new node, so clearing it
+            // cannot deallocate that node or run a Python callback here.
+            // Previously published additional-error graphs are never modified.
+            for value in &self.nodes {
+                let mut value = value.borrow_mut(self.py);
+                value.cause = None;
+                value.context = None;
+            }
+            // PyO3 deallocation accepts untracked objects. Failed partial
+            // snapshots never become visible just to make them collectible.
+        }
+    }
 }
 
 fn copied_text<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyString>> {
@@ -150,8 +214,12 @@ fn copied_text<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyString>>
 }
 fn notes<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     let py = value.py();
-    let Ok(notes) = value.getattr("__notes__") else {
-        return Ok(PyTuple::empty(py));
+    let notes = match attribute(value, c"__notes__") {
+        Ok(notes) => notes,
+        Err(error) if error.is_instance_of::<PyAttributeError>(py) => {
+            return Ok(PyTuple::empty(py));
+        }
+        Err(error) => return Err(error),
     };
     let Ok(notes) = notes.cast::<PyList>() else {
         return Ok(PyTuple::empty(py));
@@ -159,26 +227,25 @@ fn notes<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     let mut frozen = Vec::new();
     for note in notes.iter() {
         if note.is_instance_of::<PyString>() {
-            frozen.push(copied_text(&note)?.unbind());
+            frozen.push(copied_text(&note)?.into_any().unbind());
         }
     }
-    PyTuple::new(py, frozen)
+    output::tuple_from_ready_vec(py, frozen)
 }
 fn stack(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
-    let traceback = value.getattr("__traceback__")?;
+    let traceback = attribute(value, c"__traceback__")?;
     if traceback.is_none() {
         return Ok(None);
     }
     let module = py.import("traceback")?;
-    let frames = module.getattr("walk_tb")?.call1((traceback,))?;
+    let frames = attribute(module.as_any(), c"walk_tb")?.call1((traceback,))?;
     let keywords = pyo3::types::PyDict::new(py);
     keywords.set_item("capture_locals", false)?;
     keywords.set_item("lookup_lines", false)?;
     // StackSummary consumes walk_tb now. It stores source locations, not the
     // traceback, live frames or their locals; line formatting remains lazy.
     Ok(Some(
-        module
-            .getattr("StackSummary")?
+        attribute(module.as_any(), c"StackSummary")?
             .call_method("extract", (frames,), Some(&keywords))?
             .unbind(),
     ))
@@ -188,6 +255,7 @@ fn fresh(
     value: &Bound<'_, PyAny>,
     stage: Option<&str>,
     include_additional: bool,
+    construction: &mut Construction<'_>,
 ) -> PyResult<Py<ErrorInfo>> {
     let display = copied_text(value.str()?.as_any())?.unbind();
     let (message, code, is_server_error, native, additional, actual_stage) = if let Ok(error) =
@@ -225,40 +293,41 @@ fn fresh(
         )
     };
     let os_errno = if value.is_instance_of::<pyo3::exceptions::PyOSError>() {
-        value.getattr("errno")?.extract::<Option<i32>>()?
+        attribute(value, c"errno")?.extract::<Option<i32>>()?
     } else {
         native.as_ref().and_then(|native| native.os_errno)
     };
-    let result = Py::new(
-        py,
-        ErrorInfo {
-            stage: actual_stage,
-            exception_type: Some(value.get_type().unbind()),
-            native_type: native
-                .as_ref()
-                .and_then(|native| native.name.map(str::to_owned)),
-            message,
-            display,
-            code,
-            os_errno,
-            is_server_error,
-            cause: None,
-            context: None,
-            suppress_context: value.getattr("__suppress_context__")?.extract()?,
-            stack: stack(py, value)?,
-            notes: notes(value)?.unbind(),
-            additional,
-            additional_tuple: None,
-            formatted: None,
-            formatted_ready: false,
-        },
-    )?;
+    let result = construction.object(ErrorInfo {
+        stage: actual_stage,
+        exception_type: Some(value.get_type().unbind()),
+        native_type: native
+            .as_ref()
+            .and_then(|native| native.name.map(str::to_owned)),
+        message,
+        display,
+        code,
+        os_errno,
+        is_server_error,
+        cause: None,
+        context: None,
+        suppress_context: attribute(value, c"__suppress_context__")?.extract()?,
+        stack: stack(py, value)?,
+        notes: notes(value)?.unbind(),
+        additional,
+        additional_tuple: OnceLock::new(),
+        formatted: OnceLock::new(),
+    })?;
     if let Some(cause) = native.as_ref().and_then(|native| native.cause.as_deref()) {
-        result.borrow_mut(py).cause = Some(from_native(py, cause)?);
+        let cause = from_native(py, cause, construction)?;
+        result.borrow_mut(py).cause = Some(cause);
     }
     Ok(result)
 }
-fn from_native(py: Python<'_>, native: &Native) -> PyResult<Py<ErrorInfo>> {
+fn from_native(
+    py: Python<'_>,
+    native: &Native,
+    construction: &mut Construction<'_>,
+) -> PyResult<Py<ErrorInfo>> {
     let message = crate::output::text(
         py,
         native.message.as_bytes(),
@@ -267,32 +336,29 @@ fn from_native(py: Python<'_>, native: &Native) -> PyResult<Py<ErrorInfo>> {
         None,
     )?
     .unbind();
-    Py::new(
-        py,
-        ErrorInfo {
-            stage: None,
-            exception_type: None,
-            native_type: native.name.map(str::to_owned),
-            display: message.clone_ref(py),
-            message,
-            code: None,
-            os_errno: native.os_errno,
-            is_server_error: None,
-            cause: native
-                .cause
-                .as_deref()
-                .map(|cause| from_native(py, cause))
-                .transpose()?,
-            context: None,
-            suppress_context: false,
-            stack: None,
-            notes: PyTuple::empty(py).unbind(),
-            additional: Vec::new(),
-            additional_tuple: None,
-            formatted: None,
-            formatted_ready: false,
-        },
-    )
+    let cause = native
+        .cause
+        .as_deref()
+        .map(|cause| from_native(py, cause, construction))
+        .transpose()?;
+    construction.object(ErrorInfo {
+        stage: None,
+        exception_type: None,
+        native_type: native.name.map(str::to_owned),
+        display: message.clone_ref(py),
+        message,
+        code: None,
+        os_errno: native.os_errno,
+        is_server_error: None,
+        cause,
+        context: None,
+        suppress_context: false,
+        stack: None,
+        notes: PyTuple::empty(py).unbind(),
+        additional: Vec::new(),
+        additional_tuple: OnceLock::new(),
+        formatted: OnceLock::new(),
+    })
 }
 
 /// Capture actual Python relationships iteratively, before the originals leave
@@ -303,12 +369,13 @@ pub(super) fn capture(
     stage: Option<&str>,
 ) -> PyResult<Py<ErrorInfo>> {
     let original = error.value(py).as_any();
-    let root = fresh(py, original, stage, true)?;
+    let mut construction = Construction::new(py);
+    let root = fresh(py, original, stage, true, &mut construction)?;
     let mut seen = HashMap::from([(original.as_ptr() as usize, root.clone_ref(py))]);
     let mut pending = VecDeque::from([(original.clone().unbind(), root.clone_ref(py))]);
     while let Some((original, info)) = pending.pop_front() {
-        for (attribute, is_cause) in [("__cause__", true), ("__context__", false)] {
-            let target = original.bind(py).getattr(attribute)?;
+        for (name, is_cause) in [(c"__cause__", true), (c"__context__", false)] {
+            let target = attribute(original.bind(py), name)?;
             if target.is_none() {
                 continue;
             }
@@ -316,7 +383,7 @@ pub(super) fn capture(
             let node = if let Some(node) = seen.get(&address) {
                 node.clone_ref(py)
             } else {
-                let node = fresh(py, &target, None, false)?;
+                let node = fresh(py, &target, None, false, &mut construction)?;
                 seen.insert(address, node.clone_ref(py));
                 pending.push_back((target.unbind(), node.clone_ref(py)));
                 node
@@ -328,14 +395,15 @@ pub(super) fn capture(
             }
         }
     }
+    construction.publish();
     Ok(root)
 }
 
 fn label(py: Python<'_>, info: &ErrorInfo, qualified: bool) -> PyResult<String> {
     if let Some(typ) = &info.exception_type {
         let typ = typ.bind(py);
-        let name = typ.getattr("__qualname__")?.extract::<String>()?;
-        let module = typ.getattr("__module__")?.extract::<String>()?;
+        let name = attribute(typ.as_any(), c"__qualname__")?.extract::<String>()?;
+        let module = attribute(typ.as_any(), c"__module__")?.extract::<String>()?;
         return Ok(if qualified && module != "builtins" {
             format!("{module}.{name}")
         } else {
@@ -380,14 +448,18 @@ fn format_traceback(py: Python<'_>, root: &Bound<'_, ErrorInfo>) -> PyResult<Opt
     if !has_frames {
         return Ok(None);
     }
-    let mut lines: Vec<Py<PyString>> = Vec::new();
+    let mut lines: Vec<Py<PyAny>> = Vec::new();
     if cyclic {
-        lines.push(PyString::new(py, "[cycle in captured exception chain]\n").unbind());
+        lines.push(
+            PyString::new(py, "[cycle in captured exception chain]\n")
+                .into_any()
+                .unbind(),
+        );
     }
     let mut first = true;
     for (info, relation) in chain.into_iter().rev() {
         if !first && !relation.is_empty() {
-            lines.push(PyString::new(py, relation).unbind());
+            lines.push(PyString::new(py, relation).into_any().unbind());
         }
         first = false;
         let value = info.borrow(py);
@@ -397,15 +469,20 @@ fn format_traceback(py: Python<'_>, root: &Bound<'_, ErrorInfo>) -> PyResult<Opt
         let name = label(py, &value, true)?;
         drop(value);
         if let Some(stack) = stack {
-            lines.push(PyString::new(py, "Traceback (most recent call last):\n").unbind());
+            lines.push(
+                PyString::new(py, "Traceback (most recent call last):\n")
+                    .into_any()
+                    .unbind(),
+            );
             for line in stack.bind(py).call_method0("format")?.try_iter()? {
-                lines.push(copied_text(&line?)?.unbind());
+                lines.push(copied_text(&line?)?.into_any().unbind());
             }
         }
         lines.push(
             PyString::new(py, "{}: {}\n")
                 .call_method1("format", (name, display))?
                 .cast_into::<PyString>()?
+                .into_any()
                 .unbind(),
         );
         for note in notes.bind(py).iter() {
@@ -413,13 +490,14 @@ fn format_traceback(py: Python<'_>, root: &Bound<'_, ErrorInfo>) -> PyResult<Opt
                 PyString::new(py, "{}\n")
                     .call_method1("format", (note,))?
                     .cast_into::<PyString>()?
+                    .into_any()
                     .unbind(),
             );
         }
     }
     Ok(Some(
         PyString::new(py, "")
-            .call_method1("join", (PyList::new(py, lines)?,))?
+            .call_method1("join", (output::tuple_from_ready_vec(py, lines)?,))?
             .cast_into::<PyString>()?
             .unbind(),
     ))
@@ -451,8 +529,11 @@ impl ErrorInfo {
     }
     /// This node's actual library code, or None for an unnumbered node.
     #[getter]
-    fn code(&self) -> Option<&BigInt> {
-        self.code.as_ref()
+    fn code<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyInt>>> {
+        self.code
+            .as_ref()
+            .map(|value| code_object(py, value))
+            .transpose()
     }
     /// Actual OS error number of this node alone, when one was recorded.
     #[getter]
@@ -488,35 +569,49 @@ impl ErrorInfo {
     #[getter]
     fn additional_errors(slf: &Bound<'_, Self>) -> PyResult<Py<PyTuple>> {
         let py = slf.py();
-        if let Some(cached) = &slf.borrow().additional_tuple {
+        let info = slf.borrow();
+        if let Some(cached) = info.additional_tuple.get() {
             return Ok(cached.clone_ref(py));
         }
-        let values: Vec<_> = slf
-            .borrow()
+        let values: Vec<_> = info
             .additional
             .iter()
-            .map(|value| value.clone_ref(py))
+            .map(|value| value.clone_ref(py).into_any())
             .collect();
-        let value = PyTuple::new(py, values)?.unbind();
-        slf.borrow_mut().additional_tuple = Some(value.clone_ref(py));
-        Ok(value)
+        let value = output::tuple_from_ready_vec(py, values)?.unbind();
+        // Construction can call Python. Only the finished reference enters the
+        // publication slot, so concurrent readers can reuse the first winner.
+        let _ = info.additional_tuple.set(value);
+        info.additional_tuple
+            .get()
+            .map(|value| value.clone_ref(py))
+            .ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "diagnostic additional-error publication is unavailable",
+                )
+            })
     }
     /// Captured Python traceback/chain text, formatted once without live frames.
     #[getter]
     fn traceback(slf: &Bound<'_, Self>) -> PyResult<Option<Py<PyString>>> {
         let py = slf.py();
-        if slf.borrow().formatted_ready {
-            return Ok(slf
-                .borrow()
-                .formatted
-                .as_ref()
-                .map(|value| value.clone_ref(py)));
+        {
+            let info = slf.borrow();
+            if let Some(cached) = info.formatted.get() {
+                return Ok(cached.as_ref().map(|value| value.clone_ref(py)));
+            }
         }
         let formatted = format_traceback(py, slf)?;
-        let mut value = slf.borrow_mut();
-        value.formatted_ready = true;
-        value.formatted = formatted.as_ref().map(|value| value.clone_ref(py));
-        Ok(formatted)
+        let info = slf.borrow();
+        let _ = info.formatted.set(formatted);
+        info.formatted
+            .get()
+            .map(|value| value.as_ref().map(|value| value.clone_ref(py)))
+            .ok_or_else(|| {
+                pyo3::exceptions::PyRuntimeError::new_err(
+                    "diagnostic traceback publication is unavailable",
+                )
+            })
     }
     fn __str__(&self, py: Python<'_>) -> PyResult<Py<PyString>> {
         let escaped = self.message.bind(py).repr()?;
@@ -528,7 +623,7 @@ impl ErrorInfo {
                     (
                         label(py, self, false)?,
                         self.stage.as_deref(),
-                        self.code.as_ref(),
+                        self.code(py)?,
                         self.is_server_error,
                         content,
                     ),
@@ -544,7 +639,7 @@ impl ErrorInfo {
             "None".to_owned()
         };
         Ok(PyString::new(py, "ErrorInfo(stage={!r}, exception_type={}, native_type={!r}, code={}, os_errno={}, is_server_error={}, message={!r})")
-            .call_method1("format", (self.stage.as_deref(), exception_type, self.native_type.as_deref(), self.code.as_ref(), self.os_errno, self.is_server_error, self.message.bind(py)))?
+            .call_method1("format", (self.stage.as_deref(), exception_type, self.native_type.as_deref(), self.code(py)?, self.os_errno, self.is_server_error, self.message.bind(py)))?
             .cast_into::<PyString>()?.unbind())
     }
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
@@ -555,8 +650,12 @@ impl ErrorInfo {
         visit.call(&self.context)?;
         visit.call(&self.stack)?;
         visit.call(&self.notes)?;
-        visit.call(&self.additional_tuple)?;
-        visit.call(&self.formatted)?;
+        if let Some(value) = self.additional_tuple.get() {
+            visit.call(value)?;
+        }
+        if let Some(value) = self.formatted.get() {
+            visit.call(value)?;
+        }
         for error in &self.additional {
             visit.call(error)?;
         }
@@ -568,7 +667,7 @@ impl ErrorInfo {
         self.context = None;
         self.stack = None;
         self.additional.clear();
-        self.additional_tuple = None;
-        self.formatted = None;
+        self.additional_tuple.take();
+        self.formatted.take();
     }
 }

@@ -44,7 +44,7 @@ fn _encode_scalar<'py>(
     charset: Option<&str>,
     no_backslash: bool,
 ) -> PyResult<Bound<'py, PyBytes>> {
-    let owner = module.getattr("_scalar_types")?;
+    let owner = module.getattr(PyString::from_bytes(module.py(), b"_scalar_types")?)?;
     let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
     let mut request = Vec::new();
     let encoding = sqlaero_core::charset::resolve(charset, None)
@@ -112,7 +112,7 @@ impl _ValueEncoder {
 #[pyo3(pass_module, signature = (*, no_backslash=false))]
 fn _prepare_encoder(module: &Bound<'_, PyModule>, no_backslash: bool) -> PyResult<_ValueEncoder> {
     let types = module
-        .getattr("_scalar_types")?
+        .getattr(PyString::from_bytes(module.py(), b"_scalar_types")?)?
         .cast_into::<input::ScalarTypes>()?
         .unbind();
     let encoding = sqlaero_core::charset::resolve(None, None)
@@ -197,7 +197,7 @@ fn _bind_sql<'py>(
         None,
     );
     input::check(py, &budget)?;
-    let owner = module.getattr("_scalar_types")?;
+    let owner = module.getattr(PyString::from_bytes(module.py(), b"_scalar_types")?)?;
     let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
     let context = Context {
         codec: Codec::new(
@@ -304,7 +304,7 @@ fn _decode_field<'py>(
     let Some(data) = data else {
         return Ok(py.None().into_bound(py));
     };
-    let owner = module.getattr("_scalar_types")?;
+    let owner = module.getattr(PyString::from_bytes(module.py(), b"_scalar_types")?)?;
     let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
     let options = sqlaero_core::result::decode::Options {
         decode_json,
@@ -364,7 +364,7 @@ fn _rows_from_packets(
     let response =
         complete.ok_or_else(|| PyValueError::new_err("packet fixture has no complete response"))?;
     let types = module
-        .getattr("_scalar_types")?
+        .getattr(PyString::from_bytes(module.py(), b"_scalar_types")?)?
         .cast_into::<input::ScalarTypes>()?
         .unbind();
     let result = reader::Reader::empty(types);
@@ -389,7 +389,7 @@ fn _rows_from_packets(
     Ok(result)
 }
 
-#[pymodule]
+#[pymodule(gil_used = false)]
 fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     errors::register(module)?;
     module.add(

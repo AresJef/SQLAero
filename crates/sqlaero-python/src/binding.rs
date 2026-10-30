@@ -99,7 +99,14 @@ impl<'py> Rows<'py> {
     pub(crate) fn at(&self, index: usize) -> PyResult<Row<'py>> {
         let (value, outer, path) = match &self.outer {
             Some(outer) if !self.empty => {
-                (outer.get(index)?, Some(outer.identity()), smallvec![index])
+                let value = outer.get(index).inspect_err(|error| {
+                    errors::note(
+                        self.root.py(),
+                        error,
+                        format!("while binding args[{index}]; current request was not sent"),
+                    );
+                })?;
+                (value, Some(outer.identity()), smallvec![index])
             }
             _ => (self.root.clone(), None, SmallVec::new()),
         };
@@ -209,7 +216,16 @@ impl Row<'_> {
         let mut cursor = 0;
         for index in 0..width {
             let source = if let Some(row) = &row {
-                row.get(index)?
+                row.get(index).inspect_err(|error| {
+                    errors::note(
+                        py,
+                        error,
+                        format!(
+                            "while binding {}[{index}]; current request was not sent",
+                            path_text(&visit.path)
+                        ),
+                    );
+                })?
             } else {
                 self.value.clone()
             };

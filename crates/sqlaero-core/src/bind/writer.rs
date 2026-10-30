@@ -32,6 +32,17 @@ pub fn binary(output: &mut Vec<u8>, value: &[u8], limit: usize) -> Result<(), Wi
 /// # Errors
 /// Returns size/overflow or allocation failure before modifying the buffer.
 pub fn binary_start(output: &mut Vec<u8>, length: usize, limit: usize) -> Result<(), WireError> {
+    let length = binary_width(output.len(), length, limit)?;
+    output.try_reserve(length)?;
+    output.extend_from_slice(b"CAST(X'");
+    Ok(())
+}
+
+/// Check a binary literal's exact width before allocating or reading its source.
+///
+/// # Errors
+/// Returns the same overflow or request-limit error as `binary_start`.
+pub fn binary_width(output_len: usize, length: usize, limit: usize) -> Result<usize, WireError> {
     let length = length
         .checked_mul(2)
         .and_then(|length| length.checked_add(19))
@@ -39,9 +50,14 @@ pub fn binary_start(output: &mut Vec<u8>, length: usize, limit: usize) -> Result
             required: usize::MAX,
             limit,
         })?;
-    reserve(output, length, limit)?;
-    output.extend_from_slice(b"CAST(X'");
-    Ok(())
+    let required = output_len.checked_add(length).ok_or(WireError::Limit {
+        required: usize::MAX,
+        limit,
+    })?;
+    if required > limit {
+        return Err(WireError::Limit { required, limit });
+    }
+    Ok(length)
 }
 
 /// Append one protected byte fragment to an already started binary literal.
@@ -98,6 +114,32 @@ mod tests {
         let before = output.clone();
         assert!(binary(&mut output, b"x", 24).is_err());
         assert_eq!(output, before);
+    }
+
+    #[test]
+    fn binary_preflight_checks_source_width_and_current_output_without_allocating() {
+        assert_eq!(binary_width(1, 2, 24).unwrap(), 23);
+        assert!(matches!(
+            binary_width(1, 2, 23),
+            Err(WireError::Limit {
+                required: 24,
+                limit: 23
+            })
+        ));
+        assert!(matches!(
+            binary_width(0, usize::MAX, usize::MAX),
+            Err(WireError::Limit {
+                required: usize::MAX,
+                ..
+            })
+        ));
+        assert!(matches!(
+            binary_width(usize::MAX, 0, usize::MAX),
+            Err(WireError::Limit {
+                required: usize::MAX,
+                ..
+            })
+        ));
     }
 
     #[test]

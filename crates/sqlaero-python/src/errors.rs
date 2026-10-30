@@ -1,15 +1,61 @@
 //! Native exception identity and immutable public constructor values.
 
+use crate::output;
 use num_bigint::BigInt;
 use pyo3::exceptions::{PyException, PyTypeError, PyWarning};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyInt, PyString, PyTuple, PyType};
 use sqlaero_core::error::{ClientErrorCode, ExceptionClass};
 use sqlaero_core::protocol::framing::WireError;
+use std::ffi::CStr;
 use std::sync::Mutex;
 
 mod diagnostics;
 pub(crate) use diagnostics::ErrorInfo;
+
+/// Read a named Python attribute without an infallible temporary name object.
+pub(crate) fn attribute<'py>(
+    value: &Bound<'py, PyAny>,
+    name: &CStr,
+) -> PyResult<Bound<'py, PyAny>> {
+    // SAFETY: the attached call receives a live object and a terminated name.
+    // CPython returns a new reference or its original attribute/allocation error.
+    unsafe {
+        Bound::from_owned_ptr_or_err(
+            value.py(),
+            pyo3::ffi::PyObject_GetAttrString(value.as_ptr(), name.as_ptr()),
+        )
+    }
+}
+
+/// Materialize an exact code with fallible CPython constructors at every size.
+pub(crate) fn code_object<'py>(py: Python<'py>, value: &BigInt) -> PyResult<Bound<'py, PyInt>> {
+    // SAFETY: every constructor copies its native input and returns an owned
+    // exact int or NULL with its original error. Common codes use direct scalar
+    // constructors; only arbitrary-precision values need a signed byte buffer.
+    unsafe {
+        let pointer = if let Ok(value) = i64::try_from(value) {
+            pyo3::ffi::PyLong_FromLongLong(value)
+        } else if let Ok(value) = u64::try_from(value) {
+            pyo3::ffi::PyLong_FromUnsignedLongLong(value)
+        } else {
+            let bytes = value.to_signed_bytes_le();
+            #[cfg(Py_3_13)]
+            let pointer = pyo3::ffi::PyLong_FromNativeBytes(
+                bytes.as_ptr().cast(),
+                bytes.len(),
+                pyo3::ffi::Py_ASNATIVEBYTES_LITTLE_ENDIAN,
+            );
+            // CPython 3.12 lacks the public native-byte constructor. This is the
+            // same narrow fallback used by the pinned PyO3, with NULL checked.
+            #[cfg(not(Py_3_13))]
+            let pointer = pyo3::ffi::_PyLong_FromByteArray(bytes.as_ptr(), bytes.len(), 1, 1);
+            pointer
+        };
+        let value = Bound::<PyAny>::from_owned_ptr_or_err(py, pointer)?;
+        Ok(value.cast_into_unchecked())
+    }
+}
 
 pyo3::create_exception!(
     sqlaero.errors,
@@ -142,7 +188,15 @@ pub(crate) struct SQLAeroError {
     code: Option<BigInt>,
     is_server_error: Option<bool>,
     args: Py<PyTuple>,
+    // Ordinary access is attached and guards contain only native work and
+    // increfs. Traversal takes this same lock without attaching, so never
+    // detach or release a final Python reference while holding its guard.
     diagnostics: Mutex<diagnostics::State>,
+}
+impl SQLAeroError {
+    pub(crate) fn code(&self) -> Option<&BigInt> {
+        self.code.as_ref()
+    }
 }
 
 #[pymethods]
@@ -227,7 +281,7 @@ impl SQLAeroError {
         // Normalize a str subclass to plain text: no user-owned objects are
         // retained in this immutable tuple, so it cannot introduce a GC cycle.
         let args = if provided {
-            PyTuple::new(py, [message.clone()])?
+            output::tuple_from_ready(py, [message.clone().into_any()])?
         } else {
             PyTuple::empty(py)
         }
@@ -253,9 +307,12 @@ impl SQLAeroError {
     }
 
     /// Return the declared integer code, or None when manually unspecified.
-    #[getter]
-    pub(crate) fn code(&self) -> Option<&BigInt> {
-        self.code.as_ref()
+    #[getter(code)]
+    fn python_code<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyInt>>> {
+        self.code
+            .as_ref()
+            .map(|value| code_object(py, value))
+            .transpose()
     }
 
     /// Return True for a direct server error, False for a client error, or None.
@@ -278,7 +335,7 @@ impl SQLAeroError {
     #[getter]
     fn error_info(slf: &Bound<'_, Self>) -> PyResult<Py<ErrorInfo>> {
         let py = slf.py();
-        {
+        let generation = {
             let value = slf.borrow();
             let state = value.diagnostics.lock().map_err(|_| {
                 pyo3::exceptions::PyRuntimeError::new_err(
@@ -288,18 +345,28 @@ impl SQLAeroError {
             if let Some(cached) = &state.cached {
                 return Ok(cached.clone_ref(py));
             }
-        }
+            state.generation
+        };
         let snapshot = diagnostics::capture(py, &PyErr::from_value(slf.clone().into_any()), None)?;
-        slf.borrow()
-            .diagnostics
-            .lock()
-            .map_err(|_| {
+        let published = {
+            let value = slf.borrow();
+            let mut state = value.diagnostics.lock().map_err(|_| {
                 pyo3::exceptions::PyRuntimeError::new_err(
                     "error diagnostic ownership is unavailable",
                 )
-            })?
-            .cached = Some(snapshot.clone_ref(py));
-        Ok(snapshot)
+            })?;
+            if let Some(cached) = &state.cached {
+                Some(cached.clone_ref(py))
+            } else {
+                if state.generation == generation {
+                    state.cached = Some(snapshot.clone_ref(py));
+                }
+                None
+            }
+        };
+        // An overlapping update may leave this completed snapshot uncached.
+        // Never restore its older generation after that update retired it.
+        Ok(published.unwrap_or(snapshot))
     }
 
     fn __traverse__(
@@ -625,47 +692,66 @@ pub(crate) fn additional_detail(
     if let Some(message) = message {
         note(py, primary, message);
     }
-    if let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
-        && let Ok(mut state) = error.diagnostics.lock()
-        && let Ok(captured) = captured
-        && state.additional.try_reserve(1).is_ok()
-    {
-        state.additional.push(captured);
-        state.cached = None;
-    }
+    let Ok(captured) = captured else { return };
+    let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>() else {
+        return;
+    };
+    let retired = if let Ok(mut state) = error.diagnostics.lock() {
+        if state.additional.try_reserve(1).is_ok() {
+            state.additional.push(captured);
+            state.invalidate()
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    drop(retired);
 }
 
 /// Record a real new fact without changing the primary object or older views.
 pub(crate) fn note(py: Python<'_>, primary: &PyErr, message: impl Into<String>) {
-    if primary.add_note(py, message.into()).is_ok()
-        && let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
-        && let Ok(mut state) = error.diagnostics.lock()
-    {
-        state.cached = None;
+    if primary.add_note(py, message.into()).is_err() {
+        return;
     }
+    let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>() else {
+        return;
+    };
+    let retired = error
+        .diagnostics
+        .lock()
+        .ok()
+        .and_then(|mut state| state.invalidate());
+    drop(retired);
 }
 
 /// Publish the operation boundary that actually owns this failure. This is
 /// recorded only on failure and never parses a human message to infer state.
 pub(crate) fn at(py: Python<'_>, primary: PyErr, stage: &'static str) -> PyErr {
-    if let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
+    let retired = if let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
         && let Ok(mut state) = error.diagnostics.lock()
         && state.stage != Some(stage)
     {
         state.stage = Some(stage);
-        state.cached = None;
-    }
+        state.invalidate()
+    } else {
+        None
+    };
+    drop(retired);
     primary
 }
 
 /// Attach actual native source facts before consuming the native error value.
 fn native(py: Python<'_>, primary: &PyErr, captured: diagnostics::Native) {
-    if let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
+    let retired = if let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>()
         && let Ok(mut state) = error.diagnostics.lock()
     {
         state.native = Some(captured);
-        state.cached = None;
-    }
+        state.invalidate()
+    } else {
+        None
+    };
+    drop(retired);
 }
 
 /// Materialize standard IntEnum metadata once, from the same native registry

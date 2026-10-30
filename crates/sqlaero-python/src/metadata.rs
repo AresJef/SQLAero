@@ -92,12 +92,16 @@ fn internal(py: Python<'_>, message: &'static str) -> PyErr {
     errors::client(py, ClientErrorCode::InternalState, message)
 }
 fn lock<'a, T>(py: Python<'_>, value: &'a Mutex<T>) -> PyResult<MutexGuard<'a, T>> {
-    value.lock().map_err(|_| {
-        internal(
-            py,
-            "immutable metadata cache was invalidated by a native failure",
-        )
-    })
+    match value.lock() {
+        Ok(value) => Ok(value),
+        Err(error) => {
+            drop(error.into_inner());
+            Err(internal(
+                py,
+                "immutable metadata cache was invalidated by a native failure",
+            ))
+        }
+    }
 }
 fn integer<'py>(py: Python<'py>, value: u64) -> PyResult<Bound<'py, PyAny>> {
     // SAFETY: attached final constructor; it returns a new exact int reference
@@ -223,23 +227,22 @@ impl Snapshot {
             bytes,
             _owner: owner,
         });
-        let mut cache = lock(py, &self.labels)?;
-        match cache.binary_search_by_key(&key, |entry| (entry.column, entry.label)) {
-            Ok(position) => Ok(Some(Arc::clone(&cache[position].value))),
-            Err(position) => {
-                cache
-                    .insert(
-                        position,
-                        LabelCache {
-                            column: index,
-                            label: label as usize,
-                            value: Arc::clone(&value),
-                        },
-                    )
-                    .map_err(|error| output::memory(py, error))?;
-                Ok(Some(value))
+        let inserted = {
+            let mut cache = lock(py, &self.labels)?;
+            match cache.binary_search_by_key(&key, |entry| (entry.column, entry.label)) {
+                Ok(position) => return Ok(Some(Arc::clone(&cache[position].value))),
+                Err(position) => cache.insert(
+                    position,
+                    LabelCache {
+                        column: index,
+                        label: label as usize,
+                        value: Arc::clone(&value),
+                    },
+                ),
             }
-        }
+        };
+        inserted.map_err(|error| output::memory(py, error))?;
+        Ok(Some(value))
     }
     fn prepared_keys(&self, py: Python<'_>) -> PyResult<&Keys> {
         if let Some(keys) = self.keys.get() {
@@ -312,23 +315,22 @@ impl Snapshot {
             }
         }
         let value = self.uncached(py, index, attr)?;
-        let mut cache = lock(py, &self.values)?;
-        match cache.binary_search_by_key(&key, |entry| (entry.column, entry.attr)) {
-            Ok(position) => Ok(cache[position].value.clone_ref(py).into_bound(py)),
-            Err(position) => {
-                cache
-                    .insert(
-                        position,
-                        ValueCache {
-                            column: index,
-                            attr,
-                            value: value.clone().unbind(),
-                        },
-                    )
-                    .map_err(|error| output::memory(py, error))?;
-                Ok(value)
+        let inserted = {
+            let mut cache = lock(py, &self.values)?;
+            match cache.binary_search_by_key(&key, |entry| (entry.column, entry.attr)) {
+                Ok(position) => return Ok(cache[position].value.clone_ref(py).into_bound(py)),
+                Err(position) => cache.insert(
+                    position,
+                    ValueCache {
+                        column: index,
+                        attr,
+                        value: value.clone().unbind(),
+                    },
+                ),
             }
-        }
+        };
+        inserted.map_err(|error| output::memory(py, error))?;
+        Ok(value)
     }
     fn uncached<'py>(
         &self,
@@ -348,7 +350,7 @@ impl Snapshot {
                 let value = match attr {
                     Attr::Names => self.value(py, index, Attr::Name)?,
                     Attr::Keys => self.value(py, index, Attr::Key)?,
-                    _ => PyTuple::new(
+                    _ => output::tuple_from_ready(
                         py,
                         [
                             self.value(py, index, Attr::Name)?,
@@ -364,7 +366,7 @@ impl Snapshot {
                 };
                 values.push(value.unbind());
             }
-            return Ok(PyTuple::new(py, values)?.into_any());
+            return Ok(output::tuple_from_ready_vec(py, values)?.into_any());
         }
         let column = self
             .raw
@@ -488,22 +490,21 @@ impl Columns {
                 index,
             },
         )?;
-        let mut items = lock(py, &self.items)?;
-        match items.binary_search_by_key(&index, |item| item.index) {
-            Ok(position) => Ok(items[position].value.clone_ref(py)),
-            Err(position) => {
-                items
-                    .insert(
-                        position,
-                        ItemCache {
-                            index,
-                            value: value.clone_ref(py),
-                        },
-                    )
-                    .map_err(|error| output::memory(py, error))?;
-                Ok(value)
+        let inserted = {
+            let mut items = lock(py, &self.items)?;
+            match items.binary_search_by_key(&index, |item| item.index) {
+                Ok(position) => return Ok(items[position].value.clone_ref(py)),
+                Err(position) => items.insert(
+                    position,
+                    ItemCache {
+                        index,
+                        value: value.clone_ref(py),
+                    },
+                ),
             }
-        }
+        };
+        inserted.map_err(|error| output::memory(py, error))?;
+        Ok(value)
     }
 }
 #[pymethods]
@@ -542,12 +543,12 @@ impl Columns {
                 .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
             let mut index = slice.start;
             for offset in 0..slice.slicelength {
-                values.push(self.item(py, index as usize)?);
+                values.push(self.item(py, index as usize)?.into_any());
                 if offset + 1 < slice.slicelength {
                     index += slice.step;
                 }
             }
-            return Ok(PyTuple::new(py, values)?.into_any());
+            return Ok(output::tuple_from_ready_vec(py, values)?.into_any());
         }
         if let Ok(key) = key.cast::<PyString>() {
             let keys = self.snapshot.prepared_keys(py)?;

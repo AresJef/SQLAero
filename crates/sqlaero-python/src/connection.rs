@@ -187,7 +187,8 @@ pub(crate) struct Connection {
 }
 impl Connection {
     pub(crate) fn runtime(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Runtime>> {
-        self.runtime.lock().map_err(|_| {
+        self.runtime.lock().map_err(|error| {
+            drop(error.into_inner());
             errors::client(
                 py,
                 ClientErrorCode::InternalState,
@@ -209,6 +210,7 @@ impl Connection {
     fn modify(&self, py: Python<'_>, name: &str) -> PyResult<MutexGuard<'_, Runtime>> {
         let runtime = self.runtime(py)?;
         if self.native.is_closed() {
+            drop(runtime);
             return Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
@@ -270,38 +272,38 @@ impl Connection {
         input::check(py, budget)
     }
     pub(crate) fn context(&self, py: Python<'_>) -> PyResult<(Context, bool, OutputCodec)> {
-        let facts = self.native.facts.lock().map_err(|_| {
-            errors::client(
-                py,
-                ClientErrorCode::InternalState,
-                "confirmed session facts are unavailable",
-            )
-        })?;
-        let codec = facts.client_codec().ok_or_else(|| errors::client(py, ClientErrorCode::UnsupportedCharset, "The actual client charset is unknown or unsupported; it is not reinterpreted as utf8mb4"))?;
-        let mode = facts.sql_mode.as_ref().ok_or_else(|| {
-            errors::client(
-                py,
-                ClientErrorCode::SessionState,
-                "SQL mode is not confirmed; safe binding requires a confirmed session context",
-            )
-        })?;
-        let has_mode = |token: &str| mode.split(',').any(|part| part == token);
-        Ok((
-            Context {
-                codec,
-                no_backslash_escapes: has_mode("NO_BACKSLASH_ESCAPES"),
-                utc_confirmed: facts.utc_confirmed(),
-                limit: self.max_send.min(facts.server_packet_limit),
-            },
-            has_mode("ANSI_QUOTES"),
-            facts.metadata_codec().ok_or_else(|| {
+        let context: Result<_, (ClientErrorCode, &'static str)> = {
+            let facts = self.native.facts.lock().map_err(|error| {
+                drop(error.into_inner());
                 errors::client(
                     py,
-                    ClientErrorCode::UnsupportedCharset,
-                    "actual result metadata encoding is unknown or unsupported",
+                    ClientErrorCode::InternalState,
+                    "confirmed session facts are unavailable",
                 )
-            })?,
-        ))
+            })?;
+            (|| {
+                let codec = facts.client_codec().ok_or((ClientErrorCode::UnsupportedCharset, "The actual client charset is unknown or unsupported; it is not reinterpreted as utf8mb4"))?;
+                let mode = facts.sql_mode.as_ref().ok_or((
+                    ClientErrorCode::SessionState,
+                    "SQL mode is not confirmed; safe binding requires a confirmed session context",
+                ))?;
+                let has_mode = |token: &str| mode.split(',').any(|part| part == token);
+                Ok((
+                    Context {
+                        codec,
+                        no_backslash_escapes: has_mode("NO_BACKSLASH_ESCAPES"),
+                        utc_confirmed: facts.utc_confirmed(),
+                        limit: self.max_send.min(facts.server_packet_limit),
+                    },
+                    has_mode("ANSI_QUOTES"),
+                    facts.metadata_codec().ok_or((
+                        ClientErrorCode::UnsupportedCharset,
+                        "actual result metadata encoding is unknown or unsupported",
+                    ))?,
+                ))
+            })()
+        };
+        context.map_err(|(code, message)| errors::client(py, code, message))
     }
     pub(crate) fn query_job(
         &self,
@@ -584,9 +586,20 @@ impl Connection {
         Ok(())
     }
     fn server_timeout(&self, py: Python<'_>, index: usize, name: &str) -> PyResult<u64> {
-        self.native.facts.lock()
-            .map_err(|_| errors::client(py, ClientErrorCode::InternalState, "confirmed session facts are unavailable"))?
-            .server_timeouts[index].ok_or_else(|| errors::client(py, ClientErrorCode::SessionState, format!("MySQL SESSION {name} is no longer reliably confirmed; its previous value is not returned as current")))
+        let timeout = self
+            .native
+            .facts
+            .lock()
+            .map_err(|error| {
+                drop(error.into_inner());
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "confirmed session facts are unavailable",
+                )
+            })?
+            .server_timeouts[index];
+        timeout.ok_or_else(|| errors::client(py, ClientErrorCode::SessionState, format!("MySQL SESSION {name} is no longer reliably confirmed; its previous value is not returned as current")))
     }
     fn set_server_timeout(
         &self,
@@ -769,8 +782,8 @@ macro_rules! connection_api {
             /// Confirmed MySQL autocommit mode; no network read is performed.
             /// Unknown facts raise InterfaceError, including after close.
             #[getter] fn autocommit(&self,py:Python<'_>)->PyResult<bool> {
-                let facts=self.native.facts.lock().map_err(|_|errors::client(py,ClientErrorCode::InternalState,"confirmed session facts are unavailable"))?;
-                facts.status.map(|status|status.contains(sqlaero_core::protocol::StatusFlags::SERVER_STATUS_AUTOCOMMIT))
+                let status=self.native.facts.lock().map_err(|error|{drop(error.into_inner());errors::client(py,ClientErrorCode::InternalState,"confirmed session facts are unavailable")})?.status;
+                status.map(|status|status.contains(sqlaero_core::protocol::StatusFlags::SERVER_STATUS_AUTOCOMMIT))
                     .ok_or_else(||errors::client(py,ClientErrorCode::SessionState,"autocommit has not been reliably confirmed"))
             }
             /// Change server SESSION autocommit after acquiring command ownership.

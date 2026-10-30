@@ -170,3 +170,59 @@ print('native allocation failures propagated as MemoryError:', failures)
                             capture_output=True, timeout=15, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'propagated as MemoryError' in result.stdout
+
+
+def test_parallel_json_and_set_construction_with_gc_inspection() -> None:
+    """Inspect GC while independent decoders build final strings and tuples."""
+    import subprocess
+    import sys
+
+    source = r'''
+from concurrent.futures import ThreadPoolExecutor
+import gc
+import json
+import sys
+from threading import Barrier
+
+def gil_enabled() -> bool:
+    check = getattr(sys, '_is_gil_enabled', None)
+    return True if check is None else bool(check())
+
+initial_gil: bool = gil_enabled()
+from sqlaero import _sqlaero
+assert gil_enabled() is initial_gil, 'extension import changed the GIL state'
+
+# Every storage kind crosses the private Unicode filling work window. Long
+# keys exercise the same path before insertion; escapes exercise jiter's tape.
+texts: list[str] = [point * 65540 for point in ('a', 'é', '中', '😀')]
+texts.append('\\"\n\x00' * 22000)
+expected: dict[str, list[str]] = {texts[2]: texts, 'other': texts}
+payload: bytes = json.dumps(expected, ensure_ascii=False).encode()
+members: tuple[str, ...] = tuple(str(index) for index in range(32))
+set_payload: bytes = ','.join(members).encode()
+barrier: Barrier = Barrier(4, timeout=15)
+
+def decode_worker() -> int:
+    barrier.wait()
+    for _ in range(12):
+        assert _sqlaero._decode_json(payload) == expected
+        assert _sqlaero._decode_field(248, set_payload, decode_set=True) == members
+    return 12
+
+with ThreadPoolExecutor(max_workers=3) as pool:
+    futures = [pool.submit(decode_worker) for _ in range(3)]
+    barrier.wait()
+    for _ in range(12):
+        gc.collect()
+        for value in gc.get_objects():
+            if type(value) is tuple and len(value) == 32:
+                for index in range(len(value)):
+                    _ = value[index]
+    assert [future.result(timeout=30) for future in futures] == [12, 12, 12]
+assert gil_enabled() is initial_gil
+print('parallel JSON and SET construction with GC inspection completed')
+'''
+    result = subprocess.run([sys.executable, '-'], input=source, text=True,
+                            capture_output=True, timeout=60, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'GC inspection completed' in result.stdout

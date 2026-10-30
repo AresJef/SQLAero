@@ -24,7 +24,14 @@ pub(crate) struct Transaction {
     owns: AtomicBool,
     entered: AtomicBool,
     finished: AtomicBool,
+    active: AtomicBool,
     cursor: Mutex<Option<Py<Cursor>>>,
+}
+struct Operation<'a>(&'a AtomicBool);
+impl Drop for Operation<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 impl Transaction {
     pub(crate) fn new(connection: Py<Connection>, scope: Arc<AtomicBool>) -> Self {
@@ -34,8 +41,23 @@ impl Transaction {
             owns: AtomicBool::new(false),
             entered: AtomicBool::new(false),
             finished: AtomicBool::new(false),
+            active: AtomicBool::new(false),
             cursor: Mutex::new(None),
         }
+    }
+    fn operation(&self, py: Python<'_>) -> PyResult<Operation<'_>> {
+        if self
+            .active
+            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
+            .is_err()
+        {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::InterfaceBusy,
+                "Transaction context is busy entering or exiting another operation",
+            ));
+        }
+        Ok(Operation(&self.active))
     }
     fn release(&self) {
         if self.owns.swap(false, Ordering::AcqRel) {
@@ -100,6 +122,7 @@ impl Drop for Transaction {
 #[pymethods]
 impl Transaction {
     fn __enter__(&self, py: Python<'_>) -> PyResult<Py<Cursor>> {
+        let _operation = self.operation(py)?;
         if self.entered.swap(true, Ordering::AcqRel) {
             return Err(errors::client(
                 py,
@@ -224,6 +247,7 @@ impl Transaction {
         value: &Bound<'_, PyAny>,
         _traceback: &Bound<'_, PyAny>,
     ) -> PyResult<bool> {
+        let _operation = self.operation(py)?;
         if !self.owns.load(Ordering::Acquire) || self.finished.swap(true, Ordering::AcqRel) {
             return Err(errors::client(
                 py,

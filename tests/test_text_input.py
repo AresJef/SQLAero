@@ -4,6 +4,7 @@
 
 import pytest
 from sqlaero import _sqlaero
+from sqlaero._sqlaero import OperationalError
 
 # Independently inspected differences from both MySQL conversion outputs.
 # These are server semantics, not a fallback to the PSF codec at runtime.
@@ -18,6 +19,106 @@ MYSQL_DIFFERENCES: dict[str, dict[int, str | None]] = {
 @pytest.mark.parametrize("value", [b"", b"12", b"\x00\xff'\\", bytearray(b"\x00a\xff")])
 def test_binary_values_use_ordinary_binary_string_semantics(value: bytes | bytearray) -> None:
     assert _sqlaero._encode_scalar(value) == b"CAST(X'" + value.hex().upper().encode("ascii") + b"' AS BINARY)"
+
+
+@pytest.mark.parametrize("length", [0, 1, 262143, 262144, 262145, 524305])
+def test_bytearray_snapshot_keeps_binary_work_window_contents(length: int) -> None:
+    source = bytearray((bytes(range(256)) * ((length + 255) // 256))[:length])
+    expected = b"CAST(X'" + source.hex().upper().encode("ascii") + b"' AS BINARY)"
+    assert _sqlaero._encode_scalar(source) == expected
+    assert _sqlaero._bind_sql("SELECT %s", [source]) == [b"\x03SELECT " + expected]
+
+
+@pytest.mark.parametrize("length", [0, 1, 262145])
+def test_bytearray_limit_uses_complete_binary_width_and_current_request(length: int) -> None:
+    source = bytearray(b"\x00" * length)
+    expected = b"CAST(X'" + b"00" * length + b"' AS BINARY)"
+    assert len(expected) == 2 * length + 19
+    assert _sqlaero._encode_scalar(source, limit=len(expected)) == expected
+    with pytest.raises(OperationalError) as scalar:
+        _sqlaero._encode_scalar(source, limit=len(expected) - 1)
+    assert scalar.value.code == 65538
+    request = b"\x03SELECT " + expected
+    assert _sqlaero._bind_sql("SELECT %s", [source], limit=len(request)) == [request]
+    with pytest.raises(OperationalError) as binding:
+        _sqlaero._bind_sql("SELECT %s", [source], limit=len(request) - 1)
+    assert binding.value.code == 65538
+
+
+def test_completed_binary_owner_is_independent_of_mutable_source() -> None:
+    source = bytearray(bytes(range(256)) * 1025)
+    expected = b"CAST(X'" + source.hex().upper().encode("ascii") + b"' AS BINARY)"
+    owner = _sqlaero._prepare_encoder().encode(source)
+    source.clear()
+    source.extend(b"replacement")
+    assert owner.to_bytes() == expected
+
+
+def test_shared_stable_nested_input_can_use_one_encoder_concurrently() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    source = bytearray(bytes(range(256)) * 1025)
+    value = (True, [source, ("中", None)])
+    expected = b"(1,(CAST(X'" + source.hex().upper().encode("ascii") + b"' AS BINARY),('" + "中".encode() + b"',NULL)))"
+    encoder = _sqlaero._prepare_encoder()
+    start = Barrier(4)
+
+    def encode() -> None:
+        start.wait(timeout=10)
+        for _ in range(8):
+            assert encoder.encode(value).to_bytes() == expected
+
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        futures = [workers.submit(encode) for _ in range(4)]
+        for future in futures:
+            future.result(timeout=20)
+
+
+def test_concurrent_bytearray_resize_cannot_invalidate_a_native_read() -> None:
+    """Isolate contract-violating input; only safety and valid bytes are asserted."""
+    import subprocess
+    import sys
+    import textwrap
+
+    code = textwrap.dedent("""
+        from threading import Event, Thread
+        from sqlaero import _sqlaero
+
+        sizes = (262175, 524305)
+        variants = (b'a' * sizes[0], b'b' * sizes[1])
+        source = bytearray(variants[0])
+        encoder = _sqlaero._prepare_encoder()
+        ready = Event()
+        stop = Event()
+
+        def mutate() -> None:
+            ready.set()
+            while not stop.is_set():
+                for value in variants:
+                    source[:] = value
+
+        worker = Thread(target=mutate)
+        worker.start()
+        try:
+            assert ready.wait(10)
+            for _ in range(64):
+                try:
+                    result = encoder.encode(source).to_bytes()
+                except ValueError as error:
+                    assert 'bytearray length changed while binding' in str(error)
+                    continue
+                assert result.startswith(b"CAST(X'") and result.endswith(b"' AS BINARY)")
+                assert len(result) in {2 * size + 19 for size in sizes}
+                assert set(bytes.fromhex(result[7:-12].decode('ascii'))) <= {97, 98}
+        finally:
+            stop.set()
+            worker.join(10)
+            assert not worker.is_alive()
+    """)
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True,
+                            timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_utf8_quoting_keeps_unicode_patterns_and_both_sql_modes() -> None:
