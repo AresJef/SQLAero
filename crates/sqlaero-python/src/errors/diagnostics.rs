@@ -371,14 +371,21 @@ pub(super) fn capture(
     let original = error.value(py).as_any();
     let mut construction = Construction::new(py);
     let root = fresh(py, original, stage, true, &mut construction)?;
-    let mut seen = HashMap::from([(original.as_ptr() as usize, root.clone_ref(py))]);
-    let mut pending = VecDeque::from([(original.clone().unbind(), root.clone_ref(py))]);
-    while let Some((original, info)) = pending.pop_front() {
+    let root_address = original.as_ptr() as usize;
+    let mut seen = None;
+    let mut pending = VecDeque::new();
+    // Process the root on the stack. Leaf captures need no graph-work storage.
+    let mut current = Some((original.clone().unbind(), root.clone_ref(py)));
+    while let Some((original, info)) = current {
         for (name, is_cause) in [(c"__cause__", true), (c"__context__", false)] {
             let target = attribute(original.bind(py), name)?;
             if target.is_none() {
                 continue;
             }
+            // Register the root before looking up or constructing the first
+            // actual edge, so self-cycles and later back-edges keep its identity.
+            let seen =
+                seen.get_or_insert_with(|| HashMap::from([(root_address, root.clone_ref(py))]));
             let address = target.as_ptr() as usize;
             let node = if let Some(node) = seen.get(&address) {
                 node.clone_ref(py)
@@ -394,6 +401,10 @@ pub(super) fn capture(
                 info.borrow_mut(py).context = Some(node);
             }
         }
+        // Release this work item before advancing, as in the previous queue loop.
+        drop(info);
+        drop(original);
+        current = pending.pop_front();
     }
     construction.publish();
     Ok(root)
