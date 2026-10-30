@@ -1,7 +1,7 @@
 //! Exact Python scalar readers; no Python objects cross into the native core.
 
 use crate::errors;
-use pyo3::exceptions::{PyMemoryError, PyTypeError, PyUnicodeEncodeError};
+use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
 use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{
@@ -40,10 +40,16 @@ impl ScalarTypes {
             .collect::<String>();
         if value.is_exact_instance_of::<PyString>() {
             let length = value.len()?;
-            let preview = value
-                .get_item(pyo3::types::PySlice::new(py, 0, 32, 1))?
-                .repr()?
-                .extract::<String>()?;
+            // SAFETY: the owned exact str remains alive and attached. This
+            // bounded substring returns an owned value or its actual error,
+            // without infallible temporary Python slice/integer objects.
+            let prefix = unsafe {
+                Bound::<PyAny>::from_owned_ptr_or_err(
+                    py,
+                    pyo3::ffi::PyUnicode_Substring(value.as_ptr(), 0, 32),
+                )?
+            };
+            let preview = prefix.repr()?.extract::<String>()?;
             let clipped = preview.chars().count() > 140;
             let preview: String = preview.chars().take(140).collect();
             return Ok(format!(
@@ -76,7 +82,7 @@ impl ScalarTypes {
             return Ok(binary_preview(&name, &preview[..copied], length));
         }
         if value.is_exact_instance_of::<PyInt>() {
-            let bits = value.call_method0("bit_length")?.extract::<u64>()?;
+            let bits = errors::integer_bit_length(value)?.extract::<u64>()?;
             if bits > 512 {
                 return Ok(format!("int ({bits} bits; value preview omitted)"));
             }
@@ -428,7 +434,7 @@ fn binary_bytearray(
     let mut snapshot = SmallVec::<[u8; 32]>::new();
     snapshot
         .try_reserve_exact(length)
-        .map_err(|error| PyMemoryError::new_err(error.to_string()))?;
+        .map_err(|_| errors::memory_error(py))?;
     for start in (0..length).step_by(WORK_BYTES) {
         if length > WORK_BYTES {
             checkpoint(py, budget)?;

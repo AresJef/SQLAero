@@ -1,5 +1,6 @@
 //! Single-pass JSON output using jiter's validated streaming interface.
 
+use crate::errors;
 use jiter::{
     Jiter, NumberAny, NumberInt, Peek,
     progress::{CheckedError, Progress},
@@ -168,13 +169,11 @@ where
     value.cast_into::<PyString>().map_err(Into::into)
 }
 
-fn checked_error(parser: &Jiter<'_>, error: CheckedError<PyErr>) -> DecodeFailure {
+fn checked_error(py: Python<'_>, parser: &Jiter<'_>, error: CheckedError<PyErr>) -> DecodeFailure {
     match error {
         CheckedError::Json(error) => syntax(parser, error),
         CheckedError::Interrupted(error) => DecodeFailure::Python(error),
-        CheckedError::Allocation(error) => {
-            DecodeFailure::Python(pyo3::exceptions::PyMemoryError::new_err(error.to_string()))
-        }
+        CheckedError::Allocation(_) => DecodeFailure::Python(errors::memory_error(py)),
     }
 }
 
@@ -204,7 +203,7 @@ where
         Peek::String => {
             let text = match parser.known_str_checked(progress) {
                 Ok(text) => text,
-                Err(error) => return Err(checked_error(parser, error)),
+                Err(error) => return Err(checked_error(py, parser, error)),
             };
             Ok(string(py, text, progress)?.into_any())
         }
@@ -242,7 +241,7 @@ where
             };
             let mut next = match parser.known_object_checked(progress) {
                 Ok(key) => key.map(|key| string(py, key, progress)).transpose()?,
-                Err(error) => return Err(checked_error(parser, error)),
+                Err(error) => return Err(checked_error(py, parser, error)),
             };
             while let Some(key) = next {
                 check_work(py, until_check)?;
@@ -253,7 +252,7 @@ where
                 )?;
                 next = match parser.next_key_checked(progress) {
                     Ok(key) => key.map(|key| string(py, key, progress)).transpose()?,
-                    Err(error) => return Err(checked_error(parser, error)),
+                    Err(error) => return Err(checked_error(py, parser, error)),
                 };
             }
             Ok(result.into_any())
@@ -290,8 +289,7 @@ where
                 // Base 16 avoids Python's separate configurable decimal-input
                 // limit and uses the same public fallible API on 3.12–3.15.
                 let mut text = value.to_str_radix(16);
-                text.try_reserve(1)
-                    .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+                text.try_reserve(1).map_err(|_| errors::memory_error(py))?;
                 text.push('\0');
                 // SAFETY: the owned text is NUL terminated, contains only a
                 // sign and hexadecimal digits, and lives through this call.

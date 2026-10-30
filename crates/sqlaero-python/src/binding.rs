@@ -336,7 +336,7 @@ impl Visit<'_> {
         }
         self.active
             .try_reserve(1)
-            .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+            .map_err(|_| errors::memory_error(py))?;
         self.active.push(identity);
         Ok(())
     }

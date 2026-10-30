@@ -162,7 +162,7 @@ impl<'py> Construction<'py> {
     fn object(&mut self, value: ErrorInfo) -> PyResult<Py<ErrorInfo>> {
         self.nodes
             .try_reserve(1)
-            .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+            .map_err(|_| super::memory_error(self.py))?;
         let value = Py::new(self.py, value)?;
         // SAFETY: this is a new, attached, privately owned GC object. No
         // callback, allocation, detach, blocking operation or safepoint occurs

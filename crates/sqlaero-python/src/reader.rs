@@ -355,7 +355,7 @@ impl Reader {
             let mut values = Vec::new();
             values
                 .try_reserve(fields.len())
-                .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+                .map_err(|_| errors::memory_error(py))?;
             for (index, (cell, plan)) in fields.iter().zip(data.plans.iter()).enumerate() {
                 values.push(decode(index, cell, *plan)?.unbind());
             }
@@ -399,7 +399,7 @@ impl Reader {
             let mut result = Vec::new();
             result
                 .try_reserve(range.len())
-                .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+                .map_err(|_| errors::memory_error(py))?;
             for index in range {
                 result.push(
                     self.row_tuple::<false>(py, data, types, index, start, &mut progress)?

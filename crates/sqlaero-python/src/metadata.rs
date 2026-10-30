@@ -345,7 +345,7 @@ impl Snapshot {
             let mut values = Vec::new();
             values
                 .try_reserve(self.len())
-                .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+                .map_err(|_| errors::memory_error(py))?;
             for index in 0..self.len() {
                 let value = match attr {
                     Attr::Names => self.value(py, index, Attr::Name)?,
@@ -540,7 +540,7 @@ impl Columns {
             let mut values = Vec::new();
             values
                 .try_reserve(slice.slicelength)
-                .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+                .map_err(|_| errors::memory_error(py))?;
             let mut index = slice.start;
             for offset in 0..slice.slicelength {
                 values.push(self.item(py, index as usize)?.into_any());

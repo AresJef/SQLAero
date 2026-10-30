@@ -28,6 +28,16 @@ pub(crate) fn attribute<'py>(
     }
 }
 
+/// Record an allocation failure without preparing a diagnostic message.
+#[cold]
+#[inline(never)]
+pub(crate) fn memory_error(py: Python<'_>) -> PyErr {
+    // SAFETY: the Python token proves this thread is attached. CPython records
+    // its native MemoryError, which fetch consumes without String conversion.
+    unsafe { pyo3::ffi::PyErr_NoMemory() };
+    PyErr::fetch(py)
+}
+
 /// Prepare a built-in error message fallibly before returning across FFI.
 /// The caller supplies a built-in exception type, never a user-defined class.
 /// Native error restoration handles exception allocation with the prepared text.
@@ -67,7 +77,7 @@ pub(crate) fn integer_value(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
         let mut buffer = Vec::<u32>::new();
         buffer
             .try_reserve_exact(digits)
-            .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+            .map_err(|_| memory_error(value.py()))?;
         // SAFETY: value is a live int and Python remains attached. The native
         // reservation proves the full u32 byte count fits its allocation
         // layout. On success CPython writes every byte in signed little-endian
@@ -244,7 +254,7 @@ pub(crate) fn wire(py: Python<'_>, error: WireError) -> PyErr {
     let detail =
         diagnostics::Native::capture(&error, Some("sqlaero_core::protocol::framing::WireError"));
     let mapped = match error {
-        WireError::Allocation(error) => pyo3::exceptions::PyMemoryError::new_err(error.to_string()),
+        WireError::Allocation(_) => memory_error(py),
         error @ WireError::Io(_) => client(py, ClientErrorCode::Transport, error.to_string()),
         error @ (WireError::Limit { .. } | WireError::Memory(_)) => {
             client(py, ClientErrorCode::ResourceLimit, error.to_string())
@@ -791,8 +801,28 @@ pub(crate) fn additional_detail(
 
 /// Record a real new fact without changing the primary object or older views.
 pub(crate) fn note(py: Python<'_>, primary: &PyErr, message: impl Into<String>) {
-    if primary.add_note(py, message.into()).is_err() {
-        return;
+    {
+        let message = message.into();
+        let Ok(message) = PyString::from_bytes(py, message.as_bytes()) else {
+            return;
+        };
+        let Ok(method) = attribute(primary.value(py), c"add_note") else {
+            return;
+        };
+        // SAFETY: Python is attached and both callable and argument stay owned
+        // through the public call. Its result is a new reference or NULL with
+        // the actual error; secondary note failures remain best effort.
+        let result = unsafe {
+            Bound::<PyAny>::from_owned_ptr_or_err(
+                py,
+                pyo3::ffi::PyObject_CallOneArg(method.as_ptr(), message.as_ptr()),
+            )
+        };
+        if result.is_err() {
+            return;
+        }
+        // Drop the return value, method and message outside diagnostics locks;
+        // an overridden method's returned object may run Python on final drop.
     }
     let Ok(error) = primary.value(py).extract::<PyRef<'_, SQLAeroError>>() else {
         return;

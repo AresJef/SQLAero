@@ -118,9 +118,7 @@ pub(crate) fn tuple_from_values<'py>(
 
 pub(crate) fn memory(py: Python<'_>, error: MemoryError) -> PyErr {
     match error {
-        MemoryError::Allocation(error) => {
-            pyo3::exceptions::PyMemoryError::new_err(error.to_string())
-        }
+        MemoryError::Allocation(_) => errors::memory_error(py),
         error => errors::client(py, ClientErrorCode::ResourceLimit, error.to_string()),
     }
 }
@@ -407,9 +405,9 @@ pub(crate) fn field<'py>(
             let mut start = 0;
             for end in 0..=values.len() {
                 if end == values.len() || values[end] == u32::from(b',') {
-                    members.try_reserve(1).map_err(|error| {
-                        pyo3::exceptions::PyMemoryError::new_err(error.to_string())
-                    })?;
+                    members
+                        .try_reserve(1)
+                        .map_err(|_| errors::memory_error(py))?;
                     members.push(codepoints(py, &values[start..end])?.into_any().unbind());
                     start = end + 1;
                 }
