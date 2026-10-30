@@ -368,30 +368,35 @@ pub(super) fn capture(
     error: &PyErr,
     stage: Option<&str>,
 ) -> PyResult<Py<ErrorInfo>> {
-    let original = error.value(py).as_any();
+    let root_source = error.value(py).as_any();
     let mut construction = Construction::new(py);
-    let root = fresh(py, original, stage, true, &mut construction)?;
-    let root_address = original.as_ptr() as usize;
+    let root = fresh(py, root_source, stage, true, &mut construction)?;
+    let root_address = root_source.as_ptr() as usize;
     let mut seen = None;
     let mut pending = VecDeque::new();
     // Process the root on the stack. Leaf captures need no graph-work storage.
-    let mut current = Some((original.clone().unbind(), root.clone_ref(py)));
+    let mut current = Some((root_source.clone().unbind(), root.clone_ref(py)));
     while let Some((original, info)) = current {
         for (name, is_cause) in [(c"__cause__", true), (c"__context__", false)] {
             let target = attribute(original.bind(py), name)?;
             if target.is_none() {
                 continue;
             }
-            // Register the root before looking up or constructing the first
-            // actual edge, so self-cycles and later back-edges keep its identity.
-            let seen =
-                seen.get_or_insert_with(|| HashMap::from([(root_address, root.clone_ref(py))]));
+            // Own the root before the first edge lookup. Every identity key
+            // keeps its source alive until capture ends, including temporary
+            // exceptions returned by dynamic relationship getters.
+            let seen = seen.get_or_insert_with(|| {
+                HashMap::from([(
+                    root_address,
+                    (root_source.clone().unbind(), root.clone_ref(py)),
+                )])
+            });
             let address = target.as_ptr() as usize;
-            let node = if let Some(node) = seen.get(&address) {
+            let node = if let Some((_, node)) = seen.get(&address) {
                 node.clone_ref(py)
             } else {
                 let node = fresh(py, &target, None, false, &mut construction)?;
-                seen.insert(address, node.clone_ref(py));
+                seen.insert(address, (target.clone().unbind(), node.clone_ref(py)));
                 pending.push_back((target.unbind(), node.clone_ref(py)));
                 node
             };
@@ -407,6 +412,9 @@ pub(super) fn capture(
         current = pending.pop_front();
     }
     construction.publish();
+    // Source finalizers may call Python. Release the capture-only owners after
+    // graph completion, outside Rust locks; snapshots do not retain sources.
+    drop(seen);
     Ok(root)
 }
 

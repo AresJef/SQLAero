@@ -485,3 +485,86 @@ def test_failed_snapshot_capture_releases_a_partly_constructed_cycle() -> None:
     gc.collect()
     gc.collect()
     assert reference() is None, 'abandoned untracked diagnostic cycle retained its exception type'
+
+
+def test_transient_relationship_sources_cannot_alias_a_later_exception() -> None:
+    """Distinct getter results stay distinct even when an address is recycled."""
+    class State:
+        def __init__(self) -> None:
+            self.address = 0
+            self.source: weakref.ReferenceType[Exception] | None = None
+            self.reads: dict[tuple[str, str], int] = {}
+
+        def read(self, label: str, name: str) -> None:
+            key = label, name
+            self.reads[key] = self.reads.get(key, 0) + 1
+
+    class Transient(Exception):
+        def __init__(self, label: str, state: State) -> None:
+            super().__init__(label)
+            self.label = label
+            self.state = state
+
+        def __getattribute__(self, name: str) -> object:
+            if name in ('__cause__', '__context__'):
+                state: State = super().__getattribute__('state')
+                label: str = super().__getattribute__('label')
+                state.read(label, name)
+                return None
+            return super().__getattribute__(name)
+
+    class Bridge(Exception):
+        def __init__(self, state: State) -> None:
+            super().__init__('bridge')
+            self.state = state
+
+        def __getattribute__(self, name: str) -> object:
+            if name in ('__cause__', '__context__'):
+                state: State = super().__getattribute__('state')
+                state.read('bridge', name)
+                if name == '__context__':
+                    return None
+                # A bounded pool exercises normal allocator reuse without
+                # forging pointers or requiring reuse on every interpreter.
+                candidates: list[Transient] = []
+                for _ in range(128):
+                    candidate = Transient('later', state)
+                    candidates.append(candidate)
+                    if id(candidate) == state.address:
+                        return candidate
+                return candidates[0]
+            return super().__getattribute__(name)
+
+    class Root(SQLAeroError):
+        state: State
+        bridge: Bridge
+
+        def __getattribute__(self, name: str) -> object:
+            if name in ('__cause__', '__context__'):
+                state: State = super().__getattribute__('state')
+                state.read('root', name)
+                if name == '__context__':
+                    return super().__getattribute__('bridge')
+                source = Transient('first', state)
+                state.address = id(source)
+                state.source = weakref.ref(source)
+                return source
+            return super().__getattribute__(name)
+
+    for _ in range(4):
+        state = State()
+        root = Root('root')
+        root.state = state
+        root.bridge = Bridge(state)
+        info = root.error_info
+        assert info.cause is not None and info.context is not None
+        later = info.context.cause
+        assert later is not None and info.cause.message == 'first'
+        assert later.message == 'later', 'a new exception reused an old diagnostic identity'
+        assert later is not info.cause
+        assert state.reads == {
+            (label, name): 1 for label in ('root', 'first', 'bridge', 'later')
+            for name in ('__cause__', '__context__')
+        }
+        gc.collect()
+        assert state.source is not None and state.source() is None, 'source escaped capture'
