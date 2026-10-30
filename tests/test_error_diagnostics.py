@@ -295,6 +295,44 @@ print('shared boundary allocation failures propagated as MemoryError:', failures
     assert 'propagated as MemoryError' in result.stdout
 
 
+def test_unsigned_integer_fallback_preserves_the_original_memory_error() -> None:
+    """An expected unsigned overflow must not hide its message-allocation OOM."""
+    import subprocess
+    import sys
+
+    source = r'''
+import _testcapi
+from functools import partial
+from sqlaero._sqlaero import _prepare_encoder
+
+value = 1 << 200
+expected = str(value).encode('ascii')
+operation = partial(_prepare_encoder().encode, value)
+enable = _testcapi.set_nomemory
+disable = _testcapi.remove_mem_hooks
+assert operation().to_bytes() == expected
+try:
+    try:
+        # All arguments, native entry and caches are ready. The first Python
+        # allocation is the unsigned-conversion overflow message, not a lambda
+        # frame or conversion of the final native result to Python bytes.
+        enable(0, 1)
+        operation()
+    finally:
+        disable()
+except MemoryError:
+    pass
+else:
+    raise AssertionError('unsigned fallback swallowed the allocation failure')
+assert operation().to_bytes() == expected
+print('unsigned fallback preserved MemoryError and recovered')
+'''
+    result = subprocess.run([sys.executable, '-'], input=source, text=True,
+                            capture_output=True, timeout=20, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'preserved MemoryError and recovered' in result.stdout
+
+
 @pytest.mark.parametrize('number', [-(1 << 300), -(1 << 200), -(1 << 64), -(1 << 31),
                                   -129, -128, -1, 0, 1, 127, 128, 1 << 31,
                                   1 << 64, 1 << 200, 1 << 300])

@@ -294,10 +294,14 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
         }
         return scalar::integer(output, compact, limit).map_err(|e| errors::wire(py, e));
     }
-    if overflow > 0
-        && let Ok(unsigned) = value.extract::<u64>()
-    {
-        return scalar::integer(output, unsigned, limit).map_err(|e| errors::wire(py, e));
+    if overflow > 0 {
+        match value.extract::<u64>() {
+            Ok(unsigned) => {
+                return scalar::integer(output, unsigned, limit).map_err(|e| errors::wire(py, e));
+            }
+            Err(error) if error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) => {}
+            Err(error) => return Err(error),
+        }
     }
     // Exact int's public constant-time size query avoids copying a huge,
     // already out-of-policy integer merely to discover its native bit count.
