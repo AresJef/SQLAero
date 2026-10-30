@@ -2,13 +2,14 @@
 
 use crate::errors;
 use num_bigint::BigInt;
-use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
+use pyo3::exceptions::{PyMemoryError, PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
 use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{
     PyBool, PyByteArray, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess,
     PyFloat, PyInt, PyString, PyTime, PyTimeAccess, PyTuple, PyType, PyTzInfoAccess,
 };
+use smallvec::SmallVec;
 use sqlaero_core::bind::scalar::{Clock, Date, ScalarError};
 use sqlaero_core::bind::{Context, scalar, writer};
 use sqlaero_core::charset::codec::CodecError;
@@ -180,9 +181,7 @@ impl ScalarTypes {
             );
         }
         if value.is_exact_instance_of::<PyByteArray>() {
-            let source = value.cast::<PyByteArray>()?;
-            let snapshot = bytearray_snapshot(source, output.len(), limit, budget)?;
-            return binary(py, &snapshot, output, limit, budget);
+            return binary_bytearray(value.cast::<PyByteArray>()?, output, limit, budget);
         }
         if value.is_exact_instance_of::<PyDateTime>() {
             let datetime = value.cast::<PyDateTime>()?;
@@ -373,25 +372,27 @@ fn codec_error(
 
 const WORK_BYTES: usize = 256 * 1024;
 
-/// Copy one mutable scalar without retaining an unprotected Python view.
+/// Copy and consume one mutable scalar without an unprotected Python view.
 /// Callers keep mutable inputs stable; this is not an atomic snapshot across
 /// the short copy windows. The completed Rust buffer is independently owned.
-fn bytearray_snapshot(
+fn binary_bytearray(
     source: &Bound<'_, PyByteArray>,
-    output_len: usize,
+    output: &mut Vec<u8>,
     limit: usize,
     budget: Option<&IoBudget>,
-) -> PyResult<Vec<u8>> {
+) -> PyResult<()> {
     let py = source.py();
     let length = with_critical_section(source, || source.len());
     if length > WORK_BYTES {
         checkpoint(py, budget)?;
     }
-    writer::binary_width(output_len, length, limit).map_err(|error| errors::wire(py, error))?;
-    let mut snapshot = Vec::new();
+    writer::binary_width(output.len(), length, limit).map_err(|error| errors::wire(py, error))?;
+    // Short snapshots stay native and inline; keep them here through encoding
+    // so no inline buffer has to move back to the scalar dispatcher's frame.
+    let mut snapshot = SmallVec::<[u8; 32]>::new();
     snapshot
         .try_reserve_exact(length)
-        .map_err(|error| errors::wire(py, error.into()))?;
+        .map_err(|error| PyMemoryError::new_err(error.to_string()))?;
     for start in (0..length).step_by(WORK_BYTES) {
         if length > WORK_BYTES {
             checkpoint(py, budget)?;
@@ -418,7 +419,7 @@ fn bytearray_snapshot(
             ));
         }
     }
-    Ok(snapshot)
+    binary(py, &snapshot, output, limit, budget)
 }
 
 fn binary(

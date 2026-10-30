@@ -21,7 +21,7 @@ def test_binary_values_use_ordinary_binary_string_semantics(value: bytes | bytea
     assert _sqlaero._encode_scalar(value) == b"CAST(X'" + value.hex().upper().encode("ascii") + b"' AS BINARY)"
 
 
-@pytest.mark.parametrize("length", [0, 1, 262143, 262144, 262145, 524305])
+@pytest.mark.parametrize("length", [0, 1, 31, 32, 33, 262143, 262144, 262145, 524305])
 def test_bytearray_snapshot_keeps_binary_work_window_contents(length: int) -> None:
     source = bytearray((bytes(range(256)) * ((length + 255) // 256))[:length])
     expected = b"CAST(X'" + source.hex().upper().encode("ascii") + b"' AS BINARY)"
@@ -29,7 +29,7 @@ def test_bytearray_snapshot_keeps_binary_work_window_contents(length: int) -> No
     assert _sqlaero._bind_sql("SELECT %s", [source]) == [b"\x03SELECT " + expected]
 
 
-@pytest.mark.parametrize("length", [0, 1, 262145])
+@pytest.mark.parametrize("length", [0, 1, 31, 32, 33, 262145])
 def test_bytearray_limit_uses_complete_binary_width_and_current_request(length: int) -> None:
     source = bytearray(b"\x00" * length)
     expected = b"CAST(X'" + b"00" * length + b"' AS BINARY)"
