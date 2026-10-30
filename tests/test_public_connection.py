@@ -979,31 +979,63 @@ def test_actual_native_socket_error_keeps_os_cause_without_fabricated_python_fra
 @requires_mysql
 def test_independent_cursor_then_connection_cleanup_failures_keep_actual_order(connection: Connection) -> None:
     from concurrent.futures import Future, ThreadPoolExecutor
-    from threading import Event
     import time as clock_time
     from sqlaero.errors import InterfaceBusyError, SQLAeroError
     primary = SQLAeroError('body failure')
     cursor = connection.cursor()
-    started = Event()
+    label = '84' if connection.server_version.startswith('8.') else '97'
+    timeout = connection.operation_timeout
     future: Future[int] | None = None
-
-    def occupied() -> int:
-        started.set()
-        return cursor.execute('SELECT SLEEP(0.3)')
-
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        with pytest.raises(SQLAeroError) as caught:
-            with connection, cursor:
-                future = executor.submit(occupied)
-                assert started.wait(2)
-                clock_time.sleep(0.03)
-                raise primary
-        assert caught.value is primary
-        later = primary.error_info.additional_errors
-        assert tuple(item.stage for item in later) == ('cursor.close', 'connection.close')
-        assert all(item.exception_type is InterfaceBusyError for item in later)
-        assert len(later) == 2 and later is primary.error_info.additional_errors
-        assert future is not None and future.result(timeout=3) == 1
+    connection.operation_timeout = None
+    try:
+        # Close the observer before the executor waits if explicit release
+        # itself fails, so its server lock cannot strand the worker.
+        with ThreadPoolExecutor(max_workers=1) as executor, live(label) as observer:
+            check = observer.cursor()
+            name = f'sqlaero_cleanup_order_{connection.connection_id}'
+            check.execute('SELECT GET_LOCK(%s, 0)', name)
+            assert check.fetchone() == (1,)
+            statement = f"SELECT GET_LOCK('{name}', 30)"
+            before: tuple[Any, ...] | None = None
+            try:
+                with pytest.raises(SQLAeroError) as caught:
+                    with connection, cursor:
+                        future = executor.submit(cursor.execute, statement)
+                        deadline = clock_time.monotonic() + 3
+                        while True:
+                            check.execute('SELECT INFO FROM information_schema.PROCESSLIST WHERE ID=%s',
+                                          connection.connection_id)
+                            before = check.fetchone()
+                            if before and before[0] == statement:
+                                break
+                            assert clock_time.monotonic() < deadline, (
+                                'no real in-flight command observed', before, future.done())
+                            clock_time.sleep(0.001)
+                        raise primary
+                assert caught.value is primary
+                assert future is not None
+                check.execute('SELECT INFO FROM information_schema.PROCESSLIST WHERE ID=%s',
+                              connection.connection_id)
+                after = check.fetchone()
+                assert after and after[0] == statement, (
+                    'in-flight command did not span both context exits', before, after, future.done())
+                later = primary.error_info.additional_errors
+                stages = tuple(item.stage for item in later)
+                assert stages == ('cursor.close', 'connection.close'), (
+                    stages, before, after, getattr(primary, '__notes__', ()),
+                    future.done(), cursor.closed, connection.closed)
+                assert all(item.exception_type is InterfaceBusyError for item in later)
+                assert len(later) == 2 and later is primary.error_info.additional_errors
+            finally:
+                try:
+                    check.execute('SELECT RELEASE_LOCK(%s)', name)
+                    assert check.fetchone() == (1,)
+                finally:
+                    if future is not None:
+                        assert future.result(timeout=5) == 1
+    finally:
+        if not connection.closed:
+            connection.operation_timeout = timeout
     assert not cursor.closed and not connection.closed and connection.ping()
     cursor.close()
 

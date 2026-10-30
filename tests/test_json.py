@@ -222,7 +222,8 @@ with ThreadPoolExecutor(max_workers=3) as pool:
 assert gil_enabled() is initial_gil
 print('parallel JSON and SET construction with GC inspection completed')
 '''
-    result = subprocess.run([sys.executable, '-'], input=source, text=True,
+    # Send UTF-8 source bytes without the parent's locale-dependent text codec.
+    result = subprocess.run([sys.executable, '-'], input=source.encode('utf-8'),
                             capture_output=True, timeout=60, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
-    assert 'GC inspection completed' in result.stdout
+    assert b'GC inspection completed' in result.stdout

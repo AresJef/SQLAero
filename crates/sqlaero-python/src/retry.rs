@@ -88,7 +88,7 @@ impl RetryRule {
                                 "error_codes[{index}] must be int or IntEnum, not bool"
                             )));
                         }
-                        value.extract::<BigInt>()
+                        errors::integer_value(value)
                     })
                     .collect::<PyResult<Vec<_>>>()
             })

@@ -1,7 +1,6 @@
 //! Exact Python scalar readers; no Python objects cross into the native core.
 
 use crate::errors;
-use num_bigint::BigInt;
 use pyo3::exceptions::{PyMemoryError, PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
 use pyo3::sync::critical_section::with_critical_section;
@@ -296,14 +295,14 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
     }
     // Exact int's public constant-time size query avoids copying a huge,
     // already out-of-policy integer merely to discover its native bit count.
-    if value.call_method0("bit_length")?.extract::<u64>()? > scalar::MAX_INTEGER_BITS {
+    if errors::integer_bit_length(value)?.extract::<u64>()? > scalar::MAX_INTEGER_BITS {
         return Err(errors::client(
             py,
             ClientErrorCode::NumericRange,
             "integer exceeds the 65-digit exact SQL range",
         ));
     }
-    let value = value.extract::<BigInt>()?;
+    let value = errors::integer_value(value)?;
     scalar::large_integer(output, &value, limit).map_err(|e| scalar_error(py, e))
 }
 

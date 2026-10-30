@@ -188,9 +188,9 @@ def test_concurrent_traceback_reads_return_the_same_published_text(monkeypatch: 
     assert info.traceback is first_text
 
 
-@pytest.mark.parametrize('kind', ['notes', 'metadata', 'retry-rule'])
+@pytest.mark.parametrize('kind', ['notes', 'metadata', 'retry-rule', 'error-code', 'escape', 'config'])
 def test_shared_boundary_tuple_allocation_failure_preserves_memory_error(kind: str) -> None:
-    """Exercise the shared fallible constructor without exhausting host memory."""
+    """Exercise final construction and all four integer-input boundaries."""
     from pathlib import Path
     import subprocess
     import sys
@@ -198,11 +198,13 @@ def test_shared_boundary_tuple_allocation_failure_preserves_memory_error(kind: s
     source = r'''
 import _testcapi
 from collections.abc import Callable
+from functools import partial
 import sys
 from typing import Any
 sys.path.insert(0, TEST_HELPERS)
 from test_buffered_reader import column, packets
-from sqlaero._sqlaero import _rows_from_packets
+from sqlaero import connect
+from sqlaero._sqlaero import _prepare_encoder, _rows_from_packets
 from sqlaero.errors import SQLAeroError
 from sqlaero.retry import RetryRule
 
@@ -226,6 +228,15 @@ def prepare() -> Callable[[], Any]:
         columns = _rows_from_packets(packets([column(f'c{index}') for index in range(32)], [])).columns
         get = columns.__getitem__
         return lambda: get(whole)
+    if kind == 'error-code':
+        return lambda: SQLAeroError('code', code=codes[-1])
+    if kind == 'escape':
+        encode = _prepare_encoder().encode
+        return lambda: encode(codes[-2])
+    if kind == 'config':
+        # Invoke the C entry directly: an extra Python lambda frame can itself
+        # lose an error during CPython's fault-injected frame cleanup.
+        return partial(connect, user='unopened', connect_timeout=codes[-2])
     return lambda: RetryRule(error_types=types, error_codes=codes)
 
 def injected(operation: Callable[[], Any], offset: int) -> tuple[bool, Any]:
@@ -237,6 +248,10 @@ def injected(operation: Callable[[], Any], offset: int) -> tuple[bool, Any]:
             disable()
     except MemoryError:
         return True, None
+    except ValueError as error:
+        if kind != 'config':
+            raise
+        return False, error
     return False, result
 
 def verify(result: Any) -> None:
@@ -244,6 +259,13 @@ def verify(result: Any) -> None:
         assert result.notes == ('a',) * 32
     elif kind == 'metadata':
         assert len(result) == 32
+    elif kind == 'error-code':
+        assert result.code == codes[-1] and type(result.code) is int
+    elif kind == 'escape':
+        assert result.to_bytes() == str(codes[-2]).encode()
+    elif kind == 'config':
+        assert isinstance(result, ValueError)
+        assert 'connect_timeout' in str(result) and 'represented safely' in str(result)
     else:
         assert result.error_types == types and result.error_codes == codes
 
@@ -255,7 +277,15 @@ for offset in range(96):
         verify(result)
     failures += int(failed)
 assert failures > 0
-verify(prepare()())
+if kind == 'config':
+    try:
+        prepare()()
+    except ValueError as error:
+        verify(error)
+    else:
+        raise AssertionError('oversized timeout did not fail before connecting')
+else:
+    verify(prepare()())
 print('shared boundary allocation failures propagated as MemoryError:', failures)
 '''
     source = source.replace('KIND', repr(kind)).replace('TEST_HELPERS', repr(str(Path(__file__).resolve().parent)))
@@ -263,6 +293,52 @@ print('shared boundary allocation failures propagated as MemoryError:', failures
                             capture_output=True, timeout=20, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'propagated as MemoryError' in result.stdout
+
+
+@pytest.mark.parametrize('number', [-(1 << 300), -(1 << 200), -(1 << 64), -(1 << 31),
+                                  -129, -128, -1, 0, 1, 127, 128, 1 << 31,
+                                  1 << 64, 1 << 200, 1 << 300])
+def test_integer_inputs_keep_signed_precision_and_intenum_normalization(number: int) -> None:
+    from enum import IntEnum
+    from sqlaero.retry import RetryRule
+
+    class Code(IntEnum):
+        ACTUAL = number
+
+    error = SQLAeroError(code=Code.ACTUAL)
+    rule = RetryRule(error_codes=Code.ACTUAL)
+    codes = rule.error_codes
+    assert error.code == number and type(error.code) is int
+    assert codes is not None and codes == (number,) and type(codes[0]) is int
+
+
+@pytest.mark.parametrize('boundary', ['error-code', 'retry-rule'])
+def test_integer_subclass_method_errors_keep_the_existing_version_semantics(boundary: str) -> None:
+    import sys
+    from sqlaero.retry import RetryRule
+
+    original = MemoryError('original integer method failure')
+
+    class Code(int):
+        def bit_length(self) -> int:
+            raise original
+
+    value = Code(-(1 << 200))
+
+    def construct() -> object:
+        return SQLAeroError(code=value) if boundary == 'error-code' else RetryRule(error_codes=value)
+
+    if sys.version_info < (3, 13):
+        with pytest.raises(MemoryError) as caught:
+            construct()
+        assert caught.value is original
+    else:
+        # The existing native-byte extraction does not call this method.
+        result = construct()
+        if isinstance(result, SQLAeroError):
+            assert result.code == int(value)
+        else:
+            assert isinstance(result, RetryRule) and result.error_codes == (int(value),)
 
 
 def test_snapshot_graph_stays_private_until_all_relationships_are_complete() -> None:

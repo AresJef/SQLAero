@@ -28,6 +28,86 @@ pub(crate) fn attribute<'py>(
     }
 }
 
+/// Prepare a built-in error message fallibly before returning across FFI.
+/// The caller supplies a built-in exception type, never a user-defined class.
+/// Native error restoration handles exception allocation with the prepared text.
+pub(crate) fn builtin_error(typ: &Bound<'_, PyType>, message: &str) -> PyErr {
+    match PyString::from_bytes(typ.py(), message.as_bytes()) {
+        // An owned Python string needs no infallible Rust-string conversion in
+        // lazy restoration; CPython retains its actual normalization failures.
+        Ok(message) => PyErr::from_type(typ.clone(), message.unbind()),
+        Err(error) => error,
+    }
+}
+
+/// Call the existing integer method without an infallible temporary name.
+#[inline]
+pub(crate) fn integer_bit_length<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+    value.call_method0(PyString::from_bytes(value.py(), b"bit_length")?)
+}
+
+/// Read a caller-validated int while preserving its actual conversion errors.
+#[inline]
+pub(crate) fn integer_value(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
+    #[cfg(Py_3_13)]
+    {
+        value.extract::<BigInt>()
+    }
+    #[cfg(not(Py_3_13))]
+    {
+        let value = value.cast::<PyInt>()?;
+        // The pinned PyO3's 3.12 extraction interns this method name through
+        // an infallible constructor. Keep its method/subclass semantics with
+        // a fallible name, then use the same signed native-byte conversion.
+        let bits = integer_bit_length(value.as_any())?.extract::<usize>()?;
+        if bits == 0 {
+            return Ok(BigInt::from(0u8));
+        }
+        let digits = bits / 32 + 1;
+        let mut buffer = Vec::<u32>::new();
+        buffer
+            .try_reserve_exact(digits)
+            .map_err(|error| pyo3::exceptions::PyMemoryError::new_err(error.to_string()))?;
+        // SAFETY: value is a live int and Python remains attached. The native
+        // reservation proves the full u32 byte count fits its allocation
+        // layout. On success CPython writes every byte in signed little-endian
+        // form; on error len stays zero.
+        // This is the pinned PyO3's 3.12 fallback, without private layout reads.
+        unsafe {
+            if pyo3::ffi::_PyLong_AsByteArray(
+                value.as_ptr().cast(),
+                buffer.as_mut_ptr().cast(),
+                digits * std::mem::size_of::<u32>(),
+                1,
+                1,
+            ) == -1
+            {
+                return Err(PyErr::fetch(value.py()));
+            }
+            buffer.set_len(digits);
+        }
+        for word in &mut buffer {
+            *word = u32::from_le(*word);
+        }
+        let sign = if buffer.last().is_some_and(|word| word >> 31 != 0) {
+            let mut words = buffer.iter_mut();
+            for word in words.by_ref() {
+                *word = (!*word).wrapping_add(1);
+                if *word != 0 {
+                    break;
+                }
+            }
+            for word in words {
+                *word = !*word;
+            }
+            num_bigint::Sign::Minus
+        } else {
+            num_bigint::Sign::Plus
+        };
+        Ok(BigInt::new(sign, buffer))
+    }
+}
+
 /// Materialize an exact code with fallible CPython constructors at every size.
 pub(crate) fn code_object<'py>(py: Python<'py>, value: &BigInt) -> PyResult<Bound<'py, PyInt>> {
     // SAFETY: every constructor copies its native input and returns an owned
@@ -238,7 +318,7 @@ impl SQLAeroError {
                                     "code must be int or None, not bool",
                                 ));
                             }
-                            code = Some(value.extract::<BigInt>()?);
+                            code = Some(integer_value(&value)?);
                         }
                     }
                     "is_server_error" => {

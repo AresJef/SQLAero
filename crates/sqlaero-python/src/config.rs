@@ -1,6 +1,6 @@
 //! Strict boundary configuration, shared path parsing and reusable TLS material.
 
-use num_bigint::{BigInt, BigUint};
+use num_bigint::BigUint;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyInt, PyString};
@@ -89,7 +89,7 @@ pub(crate) fn positive(value: &Bound<'_, PyAny>, name: &str) -> PyResult<BigUint
             "{name} must be a positive int; bool is not accepted"
         )));
     }
-    let value = value.extract::<BigInt>()?;
+    let value = crate::errors::integer_value(value)?;
     let value = value
         .to_biguint()
         .filter(|value| value != &BigUint::from(0u8))
@@ -102,9 +102,10 @@ pub(crate) fn timeout(value: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<
         .map(|value| {
             let integer = positive(value, name)?;
             let seconds = u64::try_from(integer).map_err(|_| {
-                PyValueError::new_err(format!(
-                    "{name} cannot be represented safely as a client duration"
-                ))
+                crate::errors::builtin_error(
+                    &value.py().get_type::<PyValueError>(),
+                    &format!("{name} cannot be represented safely as a client duration"),
+                )
             })?;
             let duration = Duration::from_secs(seconds);
             Instant::now().checked_add(duration).ok_or_else(|| {
