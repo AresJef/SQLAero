@@ -42,6 +42,28 @@ PYTHONS = ('cp312', 'cp313', 'cp314', 'cp315')
 RUNTIMES = tuple((python, python) for python in PYTHONS) + (
     ('cp314', 'cp314t'), ('cp315', 'cp315t'),
 )
+WINDOWS_PARALLEL_NA = frozenset({
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids0-extra0]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids1-extra1]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids2-extra2]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids3-extra3]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids4-extra4]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids5-extra5]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids6-extra6]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids7-extra7]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids8-extra8]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids9-extra9]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids10-extra10]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids11-extra11]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids12-extra12]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids13-extra13]',
+    'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids14-extra14]',
+    'test_free_threaded_entry_rejects_enabled_gil_before_loading_package',
+    'test_parallel_consumptive_tasks_are_private_and_cleanup_follows_stop',
+    'test_parallel_worker_failure_aborts_peers_and_closes_sessions[preparation]',
+    'test_parallel_worker_failure_aborts_peers_and_closes_sessions[call]',
+    'test_parallel_timeout_releases_barriers_and_reports_in_flight_work',
+})
 
 
 def digest(path: Path) -> str:
@@ -162,19 +184,32 @@ def download(package_version: str, manifest_path: Path, destination: Path, outpu
                                   'sha256': record['sha256']}, indent=2) + '\n', encoding='utf-8')
 
 
-def test_totals(path: Path) -> dict[str, int]:
+def test_totals(path: Path, target: str | None = None) -> dict[str, int]:
     """Read the actual JUnit outcome rather than inferring tests from filenames."""
     root = ElementTree.parse(path).getroot()
     suites = [root] if root.tag == 'testsuite' else list(root.findall('testsuite'))
     totals = {name: sum(int(suite.get(name, '0')) for suite in suites)
               for name in ('tests', 'failures', 'errors', 'skipped')}
     assert totals['tests'] > 0 and totals['failures'] == totals['errors'] == 0, (path, totals)
+    windows = target in ('windows-x86_64', 'windows-arm64')
+    seen: set[tuple[str | None, str | None]] = set()
     for case in root.iter('testcase'):
         skipped = case.find('skipped')
         if skipped is not None:
-            assert (case.get('name') == 'test_windows_unix_socket_is_rejected_without_tcp_fallback'
-                    and skipped.get('message') == 'Windows explicitly rejects the Unix-only transport'), (
+            identity = (case.get('classname'), case.get('name'))
+            unix_socket = (not windows and identity == (
+                'tests.test_public_connection',
+                'test_windows_unix_socket_is_rejected_without_tcp_fallback')
+                and skipped.get('message') == 'Windows explicitly rejects the Unix-only transport')
+            parallel = (windows and identity[0] == 'tests.test_benchmark_parallel'
+                        and identity[1] in WINDOWS_PARALLEL_NA
+                        and skipped.get('message') == 'Parallel performance observations require '
+                        'POSIX resource snapshots and are measured on macOS')
+            assert unix_socket or parallel, (
                         'Unexpected skipped requirement', path, case.attrib, skipped.attrib)
+            assert identity not in seen, ('Duplicate skipped requirement', path, identity)
+            seen.add(identity)
+    assert len(seen) == totals['skipped'], ('Skipped total differs from cases', path, totals)
     return totals
 
 
@@ -205,8 +240,8 @@ def manifest(directory: Path, identities: Path, output: Path, free_threaded: boo
             if kind == 'original':
                 match = next(row for row in wheels if (row['platform'], row['python'], row['abi']) == key)
                 assert match['sha256'] == record['sha256'] and match['native_sha256'] == record['native_sha256']
-            totals = test_totals(path.with_name(f'python-{kind}.xml'))
-            assert totals['skipped'] == (0 if key[0].startswith('windows-') else 1), (path, totals)
+            totals = test_totals(path.with_name(f'python-{kind}.xml'), target=key[0])
+            assert totals['skipped'] == (20 if key[0].startswith('windows-') else 1), (path, totals)
             assert bool(record['free_threaded']) == key[2].endswith('t')
             assert bool(record['gil_enabled']) is not bool(record['free_threaded'])
             evidence.append({'kind': kind, 'platform': key[0], 'python': key[1], 'abi': key[2],
