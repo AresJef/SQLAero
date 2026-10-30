@@ -1,7 +1,7 @@
 """Host/container administration shares one private fixture client contract."""
 
 import json
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,13 +50,13 @@ def test_unix_readiness_waits_for_its_socket_even_when_tcp_is_open(
                 raise FileNotFoundError(endpoint)
 
     @contextmanager
-    def tcp(endpoint: tuple[str, int], *, timeout: float) -> Iterator[None]:
+    def tcp(endpoint: tuple[str, int], *, timeout: float) -> Generator[None, None, None]:
         assert timeout == 0.2
         tcp_calls.append(endpoint)
         yield None
 
     @contextmanager
-    def unix(family: int, kind: int) -> Iterator[UnixProbe]:
+    def unix(family: int, kind: int) -> Generator[UnixProbe, None, None]:
         assert (family, kind) == (1, 2)
         try:
             yield UnixProbe()
@@ -79,7 +79,7 @@ def test_windows_selected_none_uses_only_tcp(monkeypatch: pytest.MonkeyPatch) ->
     calls: list[tuple[tuple[str, int], float]] = []
 
     @contextmanager
-    def tcp(endpoint: tuple[str, int], *, timeout: float) -> Iterator[None]:
+    def tcp(endpoint: tuple[str, int], *, timeout: float) -> Generator[None, None, None]:
         calls.append((endpoint, timeout))
         yield None
 
