@@ -466,6 +466,7 @@ fn binary_bytearray(
     binary(py, &snapshot, output, limit, budget)
 }
 
+#[inline(never)]
 fn binary(
     py: Python<'_>,
     source: &[u8],
@@ -476,6 +477,17 @@ fn binary(
     if source.len() <= WORK_BYTES {
         return writer::binary(output, source, limit).map_err(|error| errors::wire(py, error));
     }
+    binary_long(py, source, output, limit, budget)
+}
+
+#[inline(never)]
+fn binary_long(
+    py: Python<'_>,
+    source: &[u8],
+    output: &mut Vec<u8>,
+    limit: usize,
+    budget: Option<&IoBudget>,
+) -> PyResult<()> {
     checkpoint(py, budget)?;
     writer::binary_start(output, source.len(), limit).map_err(|error| errors::wire(py, error))?;
     for chunk in source.chunks(WORK_BYTES) {
