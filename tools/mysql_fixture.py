@@ -173,6 +173,20 @@ def register_clients(clients: dict[str, Path]) -> None:
         run(mysql_command(label), data='SELECT 1;')
 
 
+def ready_endpoint(port: int, unix_socket: Path | None) -> bool:
+    """Probe the local transport selected for fixture administration."""
+    try:
+        if unix_socket is None:
+            with network.create_connection(('127.0.0.1', port), timeout=0.2):
+                return True
+        with network.socket(network.AF_UNIX, network.SOCK_STREAM) as probe:
+            probe.settimeout(0.2)
+            probe.connect(str(unix_socket))
+            return True
+    except OSError:
+        return False
+
+
 def prepare(label: str, tls: Path) -> dict[str, Any]:
     """Initialize, launch and verify one independent native MySQL instance."""
     version, port = VERSIONS[label]
@@ -230,11 +244,8 @@ def prepare(label: str, tls: Path) -> dict[str, Any]:
         while True:
             if process.poll() is not None or time.monotonic() >= end:
                 raise RuntimeError(f'MySQL {version} did not become ready; inspect {directory}')
-            try:
-                with network.create_connection(('127.0.0.1', port), timeout=0.2):
-                    break
-            except OSError:
-                pass
+            if ready_endpoint(port, None if os.name == 'nt' else socket):
+                break
             time.sleep(0.1)
     endpoint = (f'protocol=TCP\nhost=127.0.0.1\nport={port}\n'
                 f'ssl-mode=VERIFY_IDENTITY\nssl-ca={config_path(tls / "ca.pem")}\n'
