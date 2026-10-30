@@ -387,7 +387,7 @@ const WORK_BYTES: usize = 256 * 1024;
 /// Callers keep mutable inputs stable; this is not an atomic snapshot across
 /// the short copy windows. The completed Rust buffer is independently owned.
 // Free-threaded object-lock work stays out of the common scalar visitor.
-#[cfg_attr(Py_GIL_DISABLED, inline(never))]
+#[inline(never)]
 fn binary_bytearray(
     source: &Bound<'_, PyByteArray>,
     output: &mut Vec<u8>,
