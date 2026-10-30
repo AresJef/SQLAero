@@ -13,7 +13,6 @@ use sqlaero_core::bind::scalar::{Clock, Date, ScalarError};
 use sqlaero_core::bind::{Context, scalar, writer};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
-#[cfg(Py_GIL_DISABLED)]
 use sqlaero_core::protocol::framing::WireError;
 use sqlaero_core::transport::deadline::IoBudget;
 
@@ -395,46 +394,40 @@ fn binary_bytearray(
     budget: Option<&IoBudget>,
 ) -> PyResult<()> {
     let py = source.py();
-    // Only the free-threaded boundary needs the fused lock window. Ordinary
-    // GIL builds retain their measured layout; both paths own the same bytes.
-    #[cfg(Py_GIL_DISABLED)]
-    let mut snapshot = SmallVec::<[u8; 32]>::new();
-    #[cfg(Py_GIL_DISABLED)]
-    let length = with_critical_section(source, || {
+    let mut short = [0u8; 32];
+    let (length, copied) = with_critical_section(source, || {
         let length = source.len();
-        if length <= snapshot.inline_size() {
+        let mut copied = length == 0;
+        if length <= short.len() {
             writer::binary_width(output.len(), length, limit)?;
             if length != 0 {
                 // SAFETY: source stays owned and protected throughout this
-                // bounded native copy. Rechecking the view length proves it
-                // fits inline, so extending cannot allocate or call Python.
+                // bounded native copy. The checked length fits the local
+                // array; no allocation, Python call, or detach follows the
+                // acquired view before the copy ends.
                 let current = unsafe { source.as_bytes() };
                 if current.len() == length {
-                    snapshot.extend_from_slice(current);
+                    short[..length].copy_from_slice(current);
+                    copied = true;
                 }
             }
         }
         // Only native state escapes the guard; Python errors stay outside.
-        Ok::<usize, WireError>(length)
+        Ok::<_, WireError>((length, copied))
     })
     .map_err(|error| errors::wire(py, error))?;
-    #[cfg(not(Py_GIL_DISABLED))]
-    let length = with_critical_section(source, || source.len());
-    #[cfg(Py_GIL_DISABLED)]
-    if length <= snapshot.inline_size() {
-        if snapshot.len() != length {
+    if length <= short.len() {
+        if !copied {
             return Err(pyo3::exceptions::PyValueError::new_err(
                 "bytearray length changed while binding; current request was not sent",
             ));
         }
-        return binary(py, &snapshot, output, limit, budget);
+        return binary(py, &short[..length], output, limit, budget);
     }
     if length > WORK_BYTES {
         checkpoint(py, budget)?;
     }
     writer::binary_width(output.len(), length, limit).map_err(|error| errors::wire(py, error))?;
-    // Keep inline storage local until the common binary writer consumes it.
-    #[cfg(not(Py_GIL_DISABLED))]
     let mut snapshot = SmallVec::<[u8; 32]>::new();
     snapshot
         .try_reserve_exact(length)
