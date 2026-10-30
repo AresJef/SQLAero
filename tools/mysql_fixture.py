@@ -179,7 +179,10 @@ def ready_endpoint(port: int, unix_socket: Path | None) -> bool:
         if unix_socket is None:
             with network.create_connection(('127.0.0.1', port), timeout=0.2):
                 return True
-        with network.socket(network.AF_UNIX, network.SOCK_STREAM) as probe:
+        family: int | None = getattr(network, 'AF_UNIX', None)
+        if family is None:
+            return False
+        with network.socket(family, network.SOCK_STREAM) as probe:
             probe.settimeout(0.2)
             probe.connect(str(unix_socket))
             return True
