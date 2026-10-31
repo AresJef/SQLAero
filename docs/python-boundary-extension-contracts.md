@@ -1,6 +1,6 @@
 # Python 边界类型扩展契约：Escape 与 Decode
 
-状态：长期规则随[原实施计划](../tasks/gil-nogil-support/plan.md)获批。源码 `296f6e4` 的48组合及C12性能证据保留为R0历史事实；当前[Review修复与bytearray移除](../tasks/gil-nogil-review-remediation/plan.md)正在验收，原证据不能代替新包验证。本文说明长期实现规则；具体类型清单、版本、尺寸／深度／工作窗、质量阈值及本次范围由对应有效规格决定，不将阶段数字固化为永久架构。本轮包不公开发行。
+状态：长期规则随[原实施计划](../tasks/gil-nogil-support/plan.md)获批。源码 `296f6e4` 的48组合及C12性能证据保留为R0历史事实；[Review修复与bytearray移除](../tasks/gil-nogil-review-remediation/plan.md)已完成库内修复、C16同源48组合／96安装与实际激活，性能具体取舍及固定SDK的L01内部OOM限制独立保留于[交付报告](../evidence/gil-nogil-review-remediation/run-20261031T031725Z/final/REPORT.md)，原证据没有改署新包。本文说明长期实现规则；具体类型清单、版本、尺寸／深度／工作窗、质量阈值及本次范围由对应有效规格决定，不将阶段数字固化为永久架构。本轮包不公开发行。
 
 ## 1. 共同边界
 
