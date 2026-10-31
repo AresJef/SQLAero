@@ -38,7 +38,7 @@ resource: Any = None if os.name == 'nt' else importlib.import_module('resource')
 ROOT = Path(__file__).resolve().parents[1]
 FROZEN = ROOT / "experimental/rust/list_rust.so"
 Call = Callable[[], object]
-CPU_FAMILIES = frozenset({"escape", "bind", "fetch", "decode-json", "diagnostic"})
+CPU_FAMILIES = frozenset({"escape", "bind", "fetch", "decode-json", "diagnostic", "metadata", "retry"})
 
 
 def digest(path: Path) -> str:
@@ -57,6 +57,13 @@ def fingerprint(value: object) -> dict[str, object]:
         info = cast(Any, value)
         value = (info.stage, info.message, info.code, info.is_server_error,
                  info.notes, len(info.additional_errors))
+    if original_type == "SQLAeroError":
+        error = cast(Any, value)
+        value = (error.args, error.code, error.is_server_error)
+    if original_type == "Retry":
+        retry = cast(Any, value)
+        value = (retry.max_attempts, retry.wait_interval, retry.wait_multiplier,
+                 retry.max_wait_interval, retry.wait_jitter)
     payload = pickle.dumps(value, protocol=5)
     result: dict[str, object] = {"type": original_type, "sha256": hashlib.sha256(payload).hexdigest(),
                                  "size": len(payload)}
@@ -193,6 +200,13 @@ def cases() -> list[Case]:
     for mode in ("snapshot-cold", "snapshot-cached", "notes-cached", "additional-cached",
                  "code-small", "code-large"):
         result.append(Case(f"diagnostic/{mode}", mode, "diagnostic"))
+    for mode in ("construct-small", "construct-large", "construct-intenum"):
+        result.append(Case(f"diagnostic/{mode}", mode, "diagnostic"))
+    for mode in ("default", "explicit"):
+        result.append(Case(f"retry/construct-{mode}", mode, "retry"))
+    for width in (16, 512):
+        for mode in ("cold", "cached"):
+            result.append(Case(f"metadata/keys-{mode}/C{width}", (width, mode), "metadata"))
     # Widths immediately beyond the existing stack specialization need direct
     # comparisons too; the original 32-column and all older cases stay intact.
     for server in ("84", "97"):
@@ -237,6 +251,12 @@ def target(case: Case, native: Any, legacy: Any | None, sessions: dict[str, Any]
         return Task(lambda: decode(case.value))
     if case.family == "diagnostic":
         error_type = native.SQLAeroError
+        if str(case.value).startswith('construct-'):
+            code = 1 << 200 if case.value == 'construct-large' else 65537
+            if case.value == 'construct-intenum':
+                from enum import IntEnum
+                code = IntEnum('MeasuredCode', {'ACTUAL': code}).ACTUAL
+            return Task(lambda: error_type('benchmark diagnostic', code=code, is_server_error=False))
         if case.value == "snapshot-cold":
             return Task(lambda: error_type("benchmark diagnostic").error_info)
         code = 1 << 200 if case.value == "code-large" else 65537
@@ -250,6 +270,39 @@ def target(case: Case, native: Any, legacy: Any | None, sessions: dict[str, Any]
             info.additional_errors
             return Task(lambda: info.additional_errors)
         return Task(lambda: error.code)
+    if case.family == 'retry':
+        rule = native.RetryRule(error_types=ValueError)
+        if case.value == 'default':
+            return Task(lambda: native.Retry(rule))
+        return Task(lambda: native.Retry(rule, max_attempts=3, wait_interval=0.0,
+                                         wait_multiplier=1.0, max_wait_interval=10.0))
+    if case.family == 'metadata':
+        width, mode = cast(tuple[int, str], case.value)
+        labels = (b'def', b'db', b't', b't', b'id', b'id')
+        column = b''.join(bytes([len(value)]) + value for value in labels)
+        column += b'\x0c\x3f\x00\x0b\x00\x00\x00\x03\x00\x00\x00\x00\x00'
+        count = bytes([width]) if width < 251 else b'\xfc' + width.to_bytes(2, 'little')
+        packets = [count, *([column] * width), b'\xfe\x00\x00\x02\x00\x00\x00']
+        if mode == 'cached':
+            columns = native._rows_from_packets(packets).columns
+            columns.keys
+            return Task(lambda: columns.keys)
+        owners: list[Any] = []
+        position = 0
+
+        def prepare_keys(n: int) -> None:
+            nonlocal position
+            owners.clear()
+            owners.extend(native._rows_from_packets(packets).columns for _ in range(n))
+            position = 0
+
+        def read_keys() -> object:
+            nonlocal position
+            columns = owners[position]
+            position += 1
+            return columns.keys
+
+        return Task(read_keys, prepare_keys, finish=owners.clear)
     return network_target(case, native, sessions)
 
 
