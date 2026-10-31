@@ -172,6 +172,20 @@ impl ScalarTypes {
                 budget,
             );
         }
+        self.write_extended(value, output, context)
+    }
+
+    /// Isolate callback-rich temporal and Decimal work from primitive frames.
+    /// The exact-type checks, conversion order and original errors are unchanged.
+    #[inline(never)]
+    fn write_extended(
+        &self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        context: &Context,
+    ) -> PyResult<()> {
+        let py = value.py();
+        let limit = context.limit;
         if value.is_exact_instance_of::<PyDateTime>() {
             let datetime = value.cast::<PyDateTime>()?;
             let mut date = date(datetime);
