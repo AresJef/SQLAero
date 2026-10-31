@@ -36,7 +36,7 @@ def test_exact_scalar_values(value: object, expected: bytes) -> None:
     assert _sqlaero._encode_scalar(value) == expected
 
 
-@pytest.mark.parametrize("value", [10**65, -(10**65), pytest.param(10**10000, id="oversized-integer"), Decimal("1e-31"), Decimal("1e65")])
+@pytest.mark.parametrize("value", [10**65, -(10**65), pytest.param(10**10000, id="oversized-integer"), Decimal("1e-66"), Decimal("1e65")])
 def test_numeric_range_has_a_real_client_data_error(value: object) -> None:
     with pytest.raises(DataError) as caught:
         _sqlaero._encode_scalar(value)
@@ -56,6 +56,16 @@ def test_decimal_is_independent_of_the_current_rounding_context() -> None:
     with localcontext() as context:
         context.prec = 2
         assert _sqlaero._encode_scalar(Decimal("1234.5600")) == b"1234.56"
+
+
+@pytest.mark.parametrize("value,expected", [
+    (Decimal("1e-31"), b"0." + b"0" * 30 + b"1"),
+    (Decimal("-1e-65"), b"-0." + b"0" * 64 + b"1"),
+    (Decimal("0.000000000000000000000000000000012300"), b"0." + b"0" * 31 + b"123"),
+    (Decimal("9" * 65 + ".000"), b"9" * 65),
+])
+def test_decimal_value_precision_is_independent_of_target_column_scale(value: Decimal, expected: bytes) -> None:
+    assert _sqlaero._encode_scalar(value) == expected
 
 
 def test_utc_normalization_preserves_calendar_endpoints_and_fold() -> None:

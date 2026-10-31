@@ -148,7 +148,8 @@ impl Column {
     pub fn scale(&self) -> Option<u8> {
         match self.type_code {
             1..=3 | 8 | 9 | 13 => Some(0),
-            0 | 4 | 5 | 246 if self.decimals <= 30 => Some(self.decimals),
+            0 | 246 if self.decimals <= 65 => Some(self.decimals),
+            4 | 5 if self.decimals <= 30 => Some(self.decimals),
             _ => None,
         }
     }

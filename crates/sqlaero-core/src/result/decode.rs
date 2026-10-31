@@ -292,20 +292,37 @@ pub fn decimal(data: &[u8]) -> Result<(), ContentError> {
         data
     };
     let mut point = false;
-    let mut digits = 0;
-    let mut fraction = 0;
+    let mut digits = 0usize;
+    let mut integer_places = 0usize;
+    let mut fraction = 0usize;
+    let mut necessary_fraction = 0usize;
     for byte in data {
         if *byte == b'.' && !point && digits != 0 {
             point = true;
         } else if byte.is_ascii_digit() {
             digits += 1;
-            fraction += usize::from(point);
+            if point {
+                fraction += 1;
+                if *byte != b'0' {
+                    necessary_fraction = fraction;
+                }
+            } else if integer_places != 0 || *byte != b'0' {
+                integer_places += 1;
+            }
         } else {
             return Err(ContentError("invalid MySQL Decimal text"));
         }
     }
-    if digits == 0 || digits > 65 || fraction > 30 || (point && fraction == 0) {
+    if digits == 0 || (point && fraction == 0) {
         return Err(ContentError("incomplete MySQL Decimal text"));
+    }
+    // Leading integer zeroes and trailing fractional zeroes carry formatting
+    // or scale, not additional necessary precision. Keep the original text for
+    // the output boundary; only its exact-value domain is validated here.
+    if integer_places.saturating_add(necessary_fraction) > 65 {
+        return Err(ContentError(
+            "MySQL Decimal exceeds 65 necessary decimal places",
+        ));
     }
     Ok(())
 }
@@ -450,6 +467,10 @@ mod tests {
         assert!(float(b"NaN").is_err());
         assert!(decimal(b"-0.0000").is_ok());
         assert!(decimal(b"1.2300").is_ok());
+        assert!(decimal(format!("0.{}1", "0".repeat(64)).as_bytes()).is_ok());
+        assert!(decimal(format!("000{}.000", "9".repeat(65)).as_bytes()).is_ok());
+        assert!(decimal(format!("-0.{}", "0".repeat(100)).as_bytes()).is_ok());
+        assert!(decimal(format!("0.{}1", "0".repeat(65)).as_bytes()).is_err());
         assert!(decimal(b"1e4").is_err());
     }
     #[test]

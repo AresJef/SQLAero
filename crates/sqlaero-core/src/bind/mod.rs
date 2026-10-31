@@ -2,6 +2,7 @@
 
 pub mod batch;
 pub mod scalar;
+pub mod temporal;
 pub mod template;
 pub mod writer;
 

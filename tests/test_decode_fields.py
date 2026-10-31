@@ -108,6 +108,28 @@ def test_exact_decimal_ignores_context_and_preserves_received_scale() -> None:
     assert math.copysign(1, decimal_negative) == -1
 
 
+@pytest.mark.parametrize("raw", [
+    b"0." + b"0" * 64 + b"1", b"-0." + b"0" * 30 + b"12300",
+    b"000" + b"9" * 65 + b".000", b"-0." + b"0" * 100,
+])
+@pytest.mark.parametrize("use_decimal", [False, True])
+def test_decimal_return_preserves_high_scale_and_redundant_zeroes(raw: bytes, use_decimal: bool) -> None:
+    actual = field(246, raw, use_decimal=use_decimal)
+    expected = Decimal(raw.decode("ascii"))
+    if use_decimal:
+        assert isinstance(actual, Decimal)
+        assert actual.as_tuple() == expected.as_tuple()
+    else:
+        assert isinstance(actual, float)
+        assert actual.hex() == float(expected).hex()
+
+
+@pytest.mark.parametrize("raw", [b"0." + b"0" * 65 + b"1", b"1" * 66, b"1.", b".1", b"1e-31"])
+def test_decimal_return_rejects_excess_necessary_precision_or_invalid_syntax(raw: bytes) -> None:
+    with pytest.raises(DataError):
+        field(246, raw)
+
+
 def test_strict_and_recoverable_text_keep_raw_invalid_bytes() -> None:
     with pytest.raises(UnicodeDecodeError) as caught:
         field(253, b"A\xffB")

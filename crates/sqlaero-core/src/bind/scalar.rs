@@ -82,8 +82,8 @@ pub fn float(output: &mut Vec<u8>, value: f64, limit: usize) -> Result<(), WireE
 /// `digits` contains its nonnegative coefficient in most-significant order.
 ///
 /// # Errors
-/// Returns malformed digits, more than 65 necessary digits, more than 30
-/// necessary fractional places, or an actual request-buffer failure.
+/// Returns malformed digits, more than 65 necessary decimal places, or an
+/// actual request-buffer failure. Target-column scale is a server decision.
 pub fn decimal(
     output: &mut Vec<u8>,
     negative: bool,
@@ -115,9 +115,9 @@ pub fn decimal(
     ))?;
     let integer_places = decimal_point.max(0);
     let fractional_places = exponent.saturating_neg().max(0);
-    if fractional_places > 30 || integer_places.saturating_add(fractional_places) > 65 {
+    if integer_places.saturating_add(fractional_places) > 65 {
         return Err(ScalarError::Range(
-            "Decimal exceeds 65 necessary digits or 30 fractional places",
+            "Decimal exceeds 65 necessary decimal places",
         ));
     }
     let width = integer_places.max(1) as usize
@@ -364,7 +364,10 @@ mod tests {
             decimal(&mut out, false, digits, exp, 1024).unwrap();
             assert_eq!(out, expected.as_bytes());
         }
-        assert!(decimal(&mut Vec::new(), false, &[1], -31, 1024).is_err());
+        let mut high_scale = Vec::new();
+        decimal(&mut high_scale, false, &[1], -65, 1024).unwrap();
+        assert_eq!(high_scale, format!("0.{}1", "0".repeat(64)).as_bytes());
+        assert!(decimal(&mut Vec::new(), false, &[1], -66, 1024).is_err());
         assert!(decimal(&mut Vec::new(), false, &[1], 65, 1024).is_err());
         assert!(decimal(&mut Vec::new(), false, &[1], i64::MIN, 1024).is_err());
     }
