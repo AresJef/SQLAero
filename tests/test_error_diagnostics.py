@@ -300,7 +300,9 @@ print('shared boundary allocation failures propagated as MemoryError:', failures
     'display', 'repr', 'retry-defaults', 'unsupported-input', 'client-error',
     'integer-subclass',
 ])
-def test_public_failure_boundaries_never_panic_on_one_allocation_failure(kind: str) -> None:
+def test_public_failure_boundaries_never_panic_on_one_allocation_failure(
+    kind: str, capsys: pytest.CaptureFixture[str],
+) -> None:
     """Use isolated single faults, with callables and values prepared beforehand."""
     import subprocess
     import sys
@@ -419,7 +421,12 @@ print('allocation boundary preserved:', kind, failures)
     result = subprocess.run([sys.executable, '-'], input=source.encode('utf-8'),
                             capture_output=True, timeout=30, check=False)
     diagnostic = ''
-    if kind == 'traceback' and result.returncode < 0:
+    replay_failed = False
+    if kind == 'traceback' and (
+        result.returncode < 0 or
+        (sys.platform.startswith('linux') and sys.version_info[:2] == (3, 15)
+         and not sys._is_gil_enabled())
+    ):
         control = r'''
 import decimal
 import _testcapi
@@ -451,12 +458,39 @@ for offset in range(48):
         assert isinstance(result, list)
 print('stdlib-only format control completed')
 '''
-        separate = subprocess.run([sys.executable, '-'], input=control.encode('utf-8'),
-                                  capture_output=True, timeout=30, check=False)
-        diagnostic = ('\nIndependent stdlib-only format control: '
-                      + str(separate.returncode) + '\n'
-                      + (separate.stdout + separate.stderr).decode('utf-8', 'replace'))
-    assert result.returncode == 0, (result.stdout + result.stderr).decode('utf-8', 'replace') + diagnostic
+        import os
+        import json
+
+        original = source.replace('import faulthandler\n', '').replace('import sys\n', '')
+        original = original.replace('faulthandler.enable()\n', '').replace(
+            "    print('allocation offset:', kind, offset, flush=True)\n", '')
+        prepared = source.replace('    info = error.error_info\n', '''    if kind == 'traceback':
+        summary = extract_stack(traceback.walk_tb(error.__traceback__),
+                                capture_locals=False, lookup_lines=False)
+        lines = original_format(summary)
+        traceback.StackSummary.format = lambda _self: lines
+    info = error.error_info
+''').replace('extract_stack = traceback.StackSummary.extract\n',
+             'extract_stack = traceback.StackSummary.extract\noriginal_format = traceback.StackSummary.format\n')
+        observed: list[dict[str, object]] = []
+        for label, program in [('original', original), ('prepared-provider', prepared),
+                               ('stdlib-only', control)]:
+            for repeat in range(8):
+                environment = os.environ.copy()
+                environment['PYTHONFAULTHANDLER'] = '1'
+                separate = subprocess.run([sys.executable, '-'], input=program.encode('utf-8'),
+                                          capture_output=True, timeout=30, check=False,
+                                          env=environment)
+                observed.append({'variant': label, 'repeat': repeat, 'exit': separate.returncode,
+                                 'stdout': separate.stdout.decode('utf-8', 'replace')[-1000:],
+                                 'stderr': separate.stderr.decode('utf-8', 'replace')[-7000:]})
+                if separate.returncode and label != 'stdlib-only':
+                    replay_failed = True
+        diagnostic = '\nFixed allocation diagnosis: ' + json.dumps(observed)
+        with capsys.disabled():
+            print(diagnostic, flush=True)
+    assert result.returncode == 0 and not replay_failed, (
+        result.stdout + result.stderr).decode('utf-8', 'replace') + diagnostic
     assert b'allocation boundary preserved:' in result.stdout
 
 
