@@ -1,15 +1,17 @@
-"""Bounded, temporary ownership diagnosis; not a product acceptance waiver."""
+"""Isolated causal check of a known CPython allocation cleanup path."""
 
 import hashlib
 import json
+from pathlib import Path
+import shutil
 import subprocess
 import sys
-import shutil
+import tempfile
 import pytest
 
 
 def test_untraced_oom_ownership_controls(capsys: pytest.CaptureFixture[str]) -> None:
-    """Keep the observer disabled while isolating native versus stdlib calls."""
+    """Compare unchanged failures with a debugger-only constructor correction."""
     if not (sys.platform.startswith('linux') and sys.version_info[:2] == (3, 15)
             and not getattr(sys, '_is_gil_enabled', lambda: True)()):
         return
@@ -22,89 +24,78 @@ def test_untraced_oom_ownership_controls(capsys: pytest.CaptureFixture[str]) -> 
             disable()
 '''
     assert original.count(legacy) == 1
-    stdlib = r'''
-import decimal
-import _testcapi
-import gc
-import sys
-import tokenize
-import traceback
-assert not any(name == 'sqlaero' or name.startswith('sqlaero.') for name in sys.modules)
-failures = 0
-successes = 0
-for offset in range(256):
-    gc.collect()
-    try:
-        raise ValueError('allocation boundary')
-    except ValueError as error:
-        stack = traceback.StackSummary.extract(traceback.walk_tb(error.__traceback__),
-                                               capture_locals=False, lookup_lines=False)
-    operation = stack.format
-    try:
-        _testcapi.set_nomemory(offset, offset + 1)
-        try:
-            result = operation()
-        finally:
-            _testcapi.remove_mem_hooks()
-    except MemoryError:
-        failures += 1
-    else:
-        assert isinstance(result, list)
-        successes += 1
-assert failures and successes
-print('stdlib completed', failures, successes)
-'''
-    stdlib_scoped = stdlib.replace('''        _testcapi.set_nomemory(offset, offset + 1)
+    native = original.replace(legacy, '''        result = _testcapi.call_with_nomemory(offset, offset + 1, operation)
+''').replace('for offset in range(48):', 'for offset in range(256):')
+    stdlib = "\nimport decimal\nimport _testcapi\nimport gc\nimport sys\nimport tokenize\nimport traceback\nassert not any(name == 'sqlaero' or name.startswith('sqlaero.') for name in sys.modules)\nfailures = 0\nsuccesses = 0\nfor offset in range(256):\n    gc.collect()\n    try:\n        raise ValueError('allocation boundary')\n    except ValueError as error:\n        stack = traceback.StackSummary.extract(traceback.walk_tb(error.__traceback__),\n                                               capture_locals=False, lookup_lines=False)\n    operation = stack.format\n    try:\n        _testcapi.set_nomemory(offset, offset + 1)\n        try:\n            result = operation()\n        finally:\n            _testcapi.remove_mem_hooks()\n    except MemoryError:\n        failures += 1\n    else:\n        assert isinstance(result, list)\n        successes += 1\nassert failures and successes\nprint('stdlib completed', failures, successes)\n"
+    stdlib = stdlib.replace('''        _testcapi.set_nomemory(offset, offset + 1)
         try:
             result = operation()
         finally:
             _testcapi.remove_mem_hooks()
 ''', '''        result = _testcapi.call_with_nomemory(offset, offset + 1, operation)
 ''')
-    methodcaller = stdlib_scoped.replace('import traceback\n',
-        'import traceback\nfrom operator import methodcaller\nfrom functools import partial\n')
-    methodcaller = methodcaller.replace('operation = stack.format',
-                                        "operation = partial(methodcaller('format'), stack)")
-    no_package = "assert not any(name == 'sqlaero' or name.startswith('sqlaero.') for name in sys.modules)"
-    imported = methodcaller.replace(no_package, 'import sqlaero')
-    enums = methodcaller.replace(no_package, '''from enum import IntEnum
-Server = IntEnum('Server', {'ER_TEST_' + str(i): 1000 + i for i in range(2046)})
-Client = IntEnum('Client', {'CLIENT_TEST_' + str(i): 65536 + i for i in range(19)})''')
-    full = stdlib_scoped.replace('import traceback\n', 'import traceback\nfrom functools import partial\n')
+    full = stdlib.replace('import traceback\n', 'import traceback\nfrom functools import partial\n')
     full = full.replace('''    except ValueError as error:
         stack = traceback.StackSummary.extract(traceback.walk_tb(error.__traceback__),
                                                capture_locals=False, lookup_lines=False)
     operation = stack.format''', '''    except ValueError as error:
         saved = error
     operation = partial(traceback.format_exception, saved)''')
-    assert full != stdlib_scoped and 'format_exception' in full
-    records: list[dict[str, object]] = []
-    for name, program in (('exact-original-untraced', original),
-                          ('stdlib-methodcaller-untraced-256', methodcaller),
-                          ('stdlib-import-methodcaller-untraced-256', imported),
-                          ('stdlib-enum-methodcaller-untraced-256', enums),
-                          ('stdlib-full-format-untraced-256', full)):
-        assert 'faulthandler' not in program
-        for repeat in range(1 if name == 'exact-original-untraced' else 4):
-            result = subprocess.run([sys.executable, '-'], input=program.encode(),
-                                    capture_output=True, timeout=30, check=False)
-            records.append({'variant': name, 'repeat': repeat, 'exit': result.returncode,
-                            'source_sha256': hashlib.sha256(program.encode()).hexdigest(),
-                            'stdout': result.stdout.decode(errors='replace')[-1500:],
-                            'stderr': result.stderr.decode(errors='replace')[-1500:]})
+    assert hashlib.sha256(full.encode()).hexdigest() == "3704f31cf850f897874564684da8987fca3ed62fa8e1d70abb7f43de237bdeb2"
+    # Verified disassembly for this exact Linux 3.15.2t SDK: rbx owns the
+    # unpublished PyList_New object; size/item/allocated are +32/+40/+48.
+    # Only the inferior process is changed. No SDK file or product is patched.
+    guard = r'''
+set pagination off
+set confirm off
+if *(unsigned short *)((char *)PyList_New+240) != 0x438b
+  echo UNSUPPORTED_DEBUG_SDK\n
+  quit 3
+end
+if *(unsigned int *)((char *)PyList_New+85) != 0x284b8948
+  echo UNSUPPORTED_LIST_ITEM_LAYOUT\n
+  quit 3
+end
+set $guard_hits = 0
+break *((char *)PyList_New+240)
+commands
+  silent
+  set $guard_hits = $guard_hits + 1
+  set {long long}($rbx+32) = 0
+  set {long long}($rbx+40) = 0
+  set {long long}($rbx+48) = 0
+  continue
+end
+echo HOST_LIST_GUARD_READY\n
+run
+printf "HOST_LIST_GUARD_HITS=%ld\n", $guard_hits
+'''
     debugger = shutil.which('gdb')
-    if debugger is not None:
-        result = subprocess.run([
-            debugger, '-q', '--batch', '-ex', 'run', '-ex', 'thread apply all bt 30',
-            '-ex', 'frame 2', '-ex', 'info registers rax rbx rbp r12 r13 r14 r15',
-            '-ex', 'disassemble /r PyList_New', '-ex', 'x/16gx $rbx',
-            '--args', sys.executable, '-',
-        ], input=original.encode(), capture_output=True, timeout=60, check=False)
-        records.append({'variant': 'gdb-exact-list-allocation', 'repeat': 0,
-                        'exit': result.returncode,
-                        'stdout': result.stdout.decode(errors='replace')[-40000:],
-                        'stderr': result.stderr.decode(errors='replace')[-2000:]})
-    # Expected crash observations are recorded, never relabelled as safe.
+    assert debugger is not None, 'This bounded check needs the existing Linux debugger'
+    records: list[dict[str, object]] = []
+    with tempfile.TemporaryDirectory(prefix='sqlaero-list-cleanup-') as directory:
+        commands = Path(directory) / 'guard.gdb'
+        commands.write_text(guard)
+        for name, program, corrected in (
+            ('gdb-native-original-unpatched', original, False),
+            ('gdb-stdlib-full-unpatched', full, False),
+            ('gdb-native-original-host-corrected', original, True),
+            ('gdb-native-scoped256-host-corrected', native, True),
+            ('gdb-stdlib-full-host-corrected', full, True),
+        ):
+            assert 'faulthandler' not in program
+            options = ['-x', str(commands)] if corrected else [
+                '-ex', 'run', '-ex', 'thread apply all bt 30', '-ex', 'frame 2',
+                '-ex', 'info registers rbx r12 r13', '-ex', 'x/8gx $rbx']
+            result = subprocess.run([debugger, '-q', '--batch', *options,
+                                     '--args', sys.executable, '-'],
+                                    input=program.encode(), capture_output=True,
+                                    timeout=90, check=False)
+            records.append({'variant': name, 'repeat': 0, 'exit': result.returncode,
+                            'source_sha256': hashlib.sha256(program.encode()).hexdigest(),
+                            'python_executable_sha256': hashlib.sha256(Path(sys.executable).read_bytes()).hexdigest(),
+                            'stdout': result.stdout.decode(errors='replace')[-45000:],
+                            'stderr': result.stderr.decode(errors='replace')[-3000:]})
     with capsys.disabled():
         print('Untraced ownership diagnosis: ' + json.dumps(records), flush=True)
 
