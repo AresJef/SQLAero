@@ -182,6 +182,7 @@ def test_key_tuple_gc_reentry_reuses_complete_values() -> None:
 
 @pytest.mark.parametrize('interrupt', [False, True])
 def test_cold_key_preparation_survives_signal_reentry_or_interruption(interrupt: bool) -> None:
+    import dis
     from types import FrameType
     from _native_signal import NativeAlarm
 
@@ -193,10 +194,24 @@ def test_cold_key_preparation_survives_signal_reentry_or_interruption(interrupt:
     entered = False
     observed: list[tuple[str, ...]] = []
     original = KeyboardInterrupt('original metadata preparation interruption')
+    code = test_cold_key_preparation_survives_signal_reentry_or_interruption.__code__
+    key_reads: set[int] = set()
+    reading_keys = False
+    for instruction in dis.get_instructions(code, show_caches=True):
+        if instruction.opname != 'CACHE':
+            reading_keys = instruction.opname == 'LOAD_ATTR' and instruction.argval == 'keys'
+        if reading_keys:
+            key_reads.add(instruction.offset)
 
-    def on_signal(_number: int, _frame: FrameType | None) -> None:
-        if not entered:
+    def on_signal(_number: int, frame: FrameType | None) -> None:
+        nonlocal entered
+        # Accept one delivery only while the caller is actually in the native
+        # getter, including its inline-cache instruction span. Queued console
+        # events before/after that call must not escape the expected exception.
+        if (not entered or frame is None or frame.f_code is not code
+                or frame.f_lasti not in key_reads):
             return
+        entered = False
         alarm.cancel()
         if interrupt:
             raise original
@@ -205,12 +220,13 @@ def test_cold_key_preparation_survives_signal_reentry_or_interruption(interrupt:
     alarm = NativeAlarm(on_signal)
     try:
         alarm.start(0.001, 0.001, wait_ready=True)
-        entered = True
         if interrupt:
             with pytest.raises(KeyboardInterrupt) as caught:
+                entered = True
                 _ = columns.keys
             assert caught.value is original
         else:
+            entered = True
             keys = columns.keys
             assert observed and all(value is keys for value in observed)
     finally:
