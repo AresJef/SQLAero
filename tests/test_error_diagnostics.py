@@ -441,10 +441,9 @@ import _testcapi
 import gc
 import sys
 assert not any(name == 'sqlaero' or name.startswith('sqlaero.') for name in sys.modules)
-text = 'one two three four five six'
 for offset in range(16):
     gc.collect()
-    operation = text.split
+    operation = _testcapi.test_list_api
     prime = [None, None, None]
     del prime
     try:
@@ -456,7 +455,7 @@ for offset in range(16):
     except MemoryError:
         pass
     else:
-        assert result == ['one', 'two', 'three', 'four', 'five', 'six']
+        assert result is None
 print('stdlib-only primed list control completed')
 '''
         for label, program in [('stdlib-list-untraced', list_control),
