@@ -187,6 +187,10 @@ impl<'py> Sequence<'py> {
         visit: impl FnOnce(PyResult<&Bound<'py, PyAny>>) -> PyResult<()>,
     ) -> PyResult<()> {
         match self {
+            Self::List(v) => match v.get_item(index) {
+                Ok(item) => visit(Ok(&item)),
+                Err(error) => visit(Err(error)),
+            },
             Self::Normalized { inner, .. } => inner.with_item(index, visit),
             Self::Tuple(v) => match v.get_borrowed_item(index) {
                 Ok(item) => visit(Ok(&item)),
