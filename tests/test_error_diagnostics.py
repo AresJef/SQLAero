@@ -298,6 +298,7 @@ print('shared boundary allocation failures propagated as MemoryError:', failures
 @pytest.mark.parametrize('kind', [
     'invalid-error', 'invalid-timeout', 'snapshot-stack', 'traceback',
     'display', 'repr', 'retry-defaults', 'unsupported-input', 'client-error',
+    'integer-subclass',
 ])
 def test_public_failure_boundaries_never_panic_on_one_allocation_failure(kind: str) -> None:
     """Use isolated single faults, with callables and values prepared beforehand."""
@@ -324,6 +325,12 @@ encoder = _sqlaero._prepare_encoder()
 unknown = object()
 extract_stack = traceback.StackSummary.extract
 
+class SmallWidth(int):
+    def bit_length(self) -> int:
+        return 0
+
+large_subclass = SmallWidth(1 << 200)
+
 def prepare() -> Callable[[], Any]:
     if kind == 'invalid-error':
         return partial(SQLAeroError, 42)
@@ -335,6 +342,8 @@ def prepare() -> Callable[[], Any]:
         return partial(encoder.encode, unknown)
     if kind == 'client-error':
         return partial(_sqlaero._encode_scalar, 'oversized', limit=1)
+    if kind == 'integer-subclass':
+        return partial(SQLAeroError, code=large_subclass)
     try:
         raise SQLAeroError('allocation boundary', code=123)
     except SQLAeroError as caught:
@@ -358,6 +367,8 @@ def prepare() -> Callable[[], Any]:
 def verify(result: Any) -> None:
     if kind == 'retry-defaults':
         assert isinstance(result, Retry) and result.wait_interval == 1.0
+    elif kind == 'integer-subclass':
+        assert isinstance(result, SQLAeroError) and result.code == 1 << 200
     elif kind == 'snapshot-stack':
         assert isinstance(result, ErrorInfo) and result.message == 'allocation boundary'
         assert result.code == 123
@@ -547,6 +558,30 @@ def test_integer_subclass_width_cannot_change_the_actual_error_code(number: int,
                 count += 1
                 raise primary
     assert count == 2 and caught.value is primary
+
+
+def test_integer_subclass_signed_attempt_preserves_both_sides_of_the_boundary() -> None:
+    """A bounded native attempt must fully fit or use the exact large fallback."""
+    import sys
+    from sqlaero.retry import RetryRule
+
+    calls: list[int] = []
+
+    class Code(int):
+        def bit_length(self) -> int:
+            calls.append(1)
+            return 0
+
+        def __int__(self) -> int:
+            raise AssertionError('normalization must not invoke a replacement __int__')
+
+    for number in [-(1 << 63) - 1, -(1 << 63), -(1 << 63) + 1,
+                   (1 << 63) - 1, 1 << 63, (1 << 63) + 1]:
+        calls.clear()
+        error = SQLAeroError(code=Code(number))
+        rule = RetryRule(error_codes=Code(number))
+        assert error.code == number and rule.error_codes == (number,)
+        assert len(calls) == (2 if sys.version_info < (3, 13) else 0)
 
 
 @pytest.mark.parametrize('returned', [None, 'not-an-integer', -1])

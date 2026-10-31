@@ -200,7 +200,7 @@ def cases() -> list[Case]:
     for mode in ("snapshot-cold", "snapshot-cached", "notes-cached", "additional-cached",
                  "code-small", "code-large"):
         result.append(Case(f"diagnostic/{mode}", mode, "diagnostic"))
-    for mode in ("construct-small", "construct-large", "construct-intenum"):
+    for mode in ("construct-small", "construct-large", "construct-intenum", "construct-intenum-large"):
         result.append(Case(f"diagnostic/{mode}", mode, "diagnostic"))
     for mode in ("default", "explicit"):
         result.append(Case(f"retry/construct-{mode}", mode, "retry"))
@@ -252,8 +252,8 @@ def target(case: Case, native: Any, legacy: Any | None, sessions: dict[str, Any]
     if case.family == "diagnostic":
         error_type = native.SQLAeroError
         if str(case.value).startswith('construct-'):
-            code = 1 << 200 if case.value == 'construct-large' else 65537
-            if case.value == 'construct-intenum':
+            code = 1 << 200 if case.value in ('construct-large', 'construct-intenum-large') else 65537
+            if case.value in ('construct-intenum', 'construct-intenum-large'):
                 from enum import IntEnum
                 code = IntEnum('MeasuredCode', {'ACTUAL': code}).ACTUAL
             return Task(lambda: error_type('benchmark diagnostic', code=code, is_server_error=False))

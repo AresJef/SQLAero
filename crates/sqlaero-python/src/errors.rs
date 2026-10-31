@@ -13,15 +13,6 @@ use std::sync::Mutex;
 mod diagnostics;
 pub(crate) use diagnostics::ErrorInfo;
 
-// Like the existing 3.12 signed-byte conversion below, this uses CPython's
-// full C API. The 3.12 header exports size_t _PyLong_NumBits(PyObject *),
-// but the pinned PyO3 ffi omits its declaration. No object layout is read.
-#[cfg(not(Py_3_13))]
-unsafe extern "C" {
-    #[link_name = "_PyLong_NumBits"]
-    fn integer_native_bits(value: *mut pyo3::ffi::PyObject) -> usize;
-}
-
 /// Read a named Python attribute without an infallible temporary name object.
 pub(crate) fn attribute<'py>(
     value: &Bound<'py, PyAny>,
@@ -133,16 +124,31 @@ pub(crate) fn integer_value(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
             reported
         } else {
             // Keep the existing subclass callback and its errors above, but
-            // never trust an override to size the actual integer's storage.
-            // SAFETY: the cast proved a live normalized Python int (including
-            // subclasses), its digits are immutable, and 3.12 holds the GIL.
-            // The exported API reads its absolute native width without Python
-            // callbacks. SIZE_MAX reports the original OverflowError.
-            let bits = unsafe { integer_native_bits(value.as_ptr()) };
-            if bits == usize::MAX {
-                return Err(PyErr::fetch(value.py()));
+            // never trust its width as the value. A small report only selects
+            // a bounded signed native attempt. The existing C conversion must
+            // prove that the whole value fits; it cannot truncate successfully.
+            if reported <= 63 {
+                match integer_value_with_bits(value, 63) {
+                    Ok(actual) => return Ok(actual),
+                    Err(error)
+                        if error
+                            .is_instance_of::<pyo3::exceptions::PyOverflowError>(value.py()) => {}
+                    Err(error) => return Err(error),
+                }
             }
-            bits
+            // A large report or an insufficient native attempt uses int's
+            // actual base width. Do not reserve arbitrary storage from an
+            // untrusted override or mask a real allocation/conversion error.
+            let method = attribute(value.py().get_type::<PyInt>().as_any(), c"bit_length")?;
+            // SAFETY: both owned references stay live while attached. This
+            // calls int's descriptor, not a second subclass override.
+            unsafe {
+                Bound::<PyAny>::from_owned_ptr_or_err(
+                    value.py(),
+                    pyo3::ffi::PyObject_CallOneArg(method.as_ptr(), value.as_ptr()),
+                )?
+            }
+            .extract::<usize>()?
         };
         integer_value_with_bits(value, bits)
     }
