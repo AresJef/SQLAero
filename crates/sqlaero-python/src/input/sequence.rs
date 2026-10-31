@@ -7,13 +7,11 @@ use pyo3::exceptions::{PyIndexError, PyRuntimeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyFrozenSet, PyIterator, PyList, PySet, PyTuple};
 use std::cell::RefCell;
-use std::rc::Rc;
 
-#[derive(Clone)]
 pub(crate) enum Sequence<'py> {
     List(Bound<'py, PyList>),
     Tuple(Bound<'py, PyTuple>),
-    Iterator(Rc<IterSequence<'py>>),
+    Iterator(Box<IterSequence<'py>>),
     Normalized {
         owner: Bound<'py, PyAny>,
         inner: Box<Self>,
@@ -121,15 +119,18 @@ impl<'py> Sequence<'py> {
         };
         let length = values.len()?;
         let iterator = values.try_iter()?;
-        Ok(Some(Self::Iterator(Rc::new(IterSequence {
-            owner: value.clone(),
-            length,
-            state: RefCell::new(IterState {
-                iterator,
-                consumed: 0,
-                current: None,
-            }),
-        }))))
+        Ok(Some(Self::Iterator(super::boxed(
+            py,
+            IterSequence {
+                owner: value.clone(),
+                length,
+                state: RefCell::new(IterState {
+                    iterator,
+                    consumed: 0,
+                    current: None,
+                }),
+            },
+        )?)))
     }
     pub(crate) fn len(&self) -> usize {
         match self {

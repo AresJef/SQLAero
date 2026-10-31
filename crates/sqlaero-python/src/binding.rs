@@ -65,8 +65,11 @@ impl<'py> Rows<'py> {
         } else {
             None
         };
-        let outer = if many { sequence.clone() } else { None };
-        let single = if many { None } else { sequence };
+        let (outer, single) = if many {
+            (sequence, None)
+        } else {
+            (None, sequence)
+        };
         let (count, empty) = match native.as_ref().map(|v| v.shape()) {
             Some(Shape::Vector { length }) => (if many { length.max(1) } else { 1 }, length == 0),
             Some(Shape::Record { fields }) => (1, fields == 0),
@@ -152,9 +155,9 @@ impl<'py> Rows<'py> {
         };
         let sequence = if !self.empty {
             if self.outer.is_none() {
-                self.single.clone()
+                self.single.as_ref().map(SequenceRef::Borrowed)
             } else {
-                Sequence::from(&value, types, &[])?
+                Sequence::from(&value, types, &[])?.map(SequenceRef::Owned)
             }
         } else {
             None
@@ -202,6 +205,21 @@ enum SourceRef<'r, 'py> {
     Borrowed(&'r mut (dyn PreparedSource<'py> + 'py)),
     Owned(Box<dyn PreparedSource<'py> + 'py>),
 }
+
+/// A single root strategy stays in Rows; a batch child owns its independently
+/// prepared strategy. Re-encoding never clones an iterator or normalized Box.
+enum SequenceRef<'r, 'py> {
+    Borrowed(&'r Sequence<'py>),
+    Owned(Sequence<'py>),
+}
+impl<'py> SequenceRef<'_, 'py> {
+    fn sequence(&self) -> &Sequence<'py> {
+        match self {
+            Self::Borrowed(value) => value,
+            Self::Owned(value) => value,
+        }
+    }
+}
 impl<'py> SourceRef<'_, 'py> {
     fn source(&mut self) -> &mut (dyn PreparedSource<'py> + 'py) {
         match self {
@@ -223,7 +241,7 @@ struct NativeRow<'r, 'py> {
 
 pub(crate) struct Row<'r, 'py> {
     value: Bound<'py, PyAny>,
-    sequence: Option<Sequence<'py>>,
+    sequence: Option<SequenceRef<'r, 'py>>,
     native: Option<NativeRow<'r, 'py>>,
     outer: Option<usize>,
     path: SmallVec<[usize; 4]>,
@@ -246,7 +264,9 @@ impl Row<'_, '_> {
                 _ => 1,
             };
         }
-        self.sequence.as_ref().map_or(1, Sequence::len)
+        self.sequence
+            .as_ref()
+            .map_or(1, |value| value.sequence().len())
     }
     pub(crate) fn bind(
         self,
@@ -316,7 +336,7 @@ impl Row<'_, '_> {
         }
         let sequence = self.sequence.take();
         let row = if self.itemize {
-            sequence.as_ref()
+            sequence.as_ref().map(SequenceRef::sequence)
         } else {
             None
         };
@@ -400,7 +420,7 @@ impl Row<'_, '_> {
                     visit.native_value(native.source.source(), output)
                 }
             } else if let Some(sequence) = sequence.as_ref().filter(|_| !self.itemize) {
-                visit.sequence(sequence, output, None)
+                visit.sequence(sequence.sequence(), output, None)
             } else {
                 visit.value(&source, output, row.map(|_| index))
             };

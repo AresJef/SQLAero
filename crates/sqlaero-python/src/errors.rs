@@ -347,11 +347,10 @@ pyo3::create_exception!(
 
 /// Construct a real driver exception with complete source metadata. User-made
 /// exceptions retain the independent, optional constructor semantics below.
-pub(crate) fn client(py: Python<'_>, code: ClientErrorCode, message: impl Into<String>) -> PyErr {
+pub(crate) fn client(py: Python<'_>, code: ClientErrorCode, message: impl AsRef<str>) -> PyErr {
     let prepared = || -> PyResult<Bound<'_, PyAny>> {
         let keywords = error_keywords(py, code as u32, false)?;
-        let message = message.into();
-        let message = PyString::from_bytes(py, message.as_bytes())?;
+        let message = PyString::from_bytes(py, message.as_ref().as_bytes())?;
         exception_type(py, code.entry().class).call((message,), Some(&keywords))
     };
     match prepared() {
@@ -936,10 +935,9 @@ pub(crate) fn additional_detail(
 }
 
 /// Record a real new fact without changing the primary object or older views.
-pub(crate) fn note(py: Python<'_>, primary: &PyErr, message: impl Into<String>) {
+pub(crate) fn note(py: Python<'_>, primary: &PyErr, message: impl AsRef<str>) {
     {
-        let message = message.into();
-        let Ok(message) = PyString::from_bytes(py, message.as_bytes()) else {
+        let Ok(message) = PyString::from_bytes(py, message.as_ref().as_bytes()) else {
             return;
         };
         let Ok(method) = attribute(primary.value(py), c"add_note") else {
