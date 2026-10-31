@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
+import ctypes
 from decimal import Decimal
 from datetime import datetime, timedelta, tzinfo
 import gc
@@ -13,6 +14,7 @@ import math
 import struct
 import sys
 from types import FrameType
+from typing import Any, cast
 import weakref
 
 import pytest
@@ -347,6 +349,81 @@ def test_arrow_invalid_utf8_from_public_buffer_constructor_fails_before_native_t
     )
     with pytest.raises(TypeError, match="UTF-8"):
         _sqlaero._encode_value(value)
+
+
+@pytest.mark.parametrize("long_message", [False, True], ids=["escaped-bytes", "bounded-512"])
+def test_arrow_real_stream_failure_keeps_status_bounded_detail_and_one_release(
+    monkeypatch: pytest.MonkeyPatch, long_message: bool
+) -> None:
+    """A public Pandas export bridges the actual capsule on both GIL ABIs."""
+    pd = pytest.importorskip("pandas", reason="CStream failure observation uses the public Pandas Arrow export")
+
+    class Stream(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_void_p) for name in ("get_schema", "get_next", "get_last_error", "release", "private_data")]
+
+    source = pa.chunked_array([[7]], type=pa.int64())
+    capsule = source.__arrow_c_stream__()
+    get_pointer = ctypes.pythonapi.PyCapsule_GetPointer
+    get_pointer.argtypes = [ctypes.py_object, ctypes.c_char_p]
+    get_pointer.restype = ctypes.c_void_p
+    stream = cast(Any, ctypes.cast(get_pointer(capsule, b"arrow_array_stream"), ctypes.POINTER(Stream)))
+    expected_header = bytes(stream.contents)
+    original_next = stream.contents.get_next
+    original_error = stream.contents.get_last_error
+    original_release = stream.contents.release
+    release_type = ctypes.PYFUNCTYPE(None, ctypes.c_void_p)
+    release_original = release_type(original_release)
+    payload = b"x" * 600 if long_message else b"producer \xff detail"
+    detail = ctypes.create_string_buffer(payload)
+    failures: list[str] = []
+    released: list[int] = []
+    error_reads: list[int] = []
+
+    def next_array(_stream: int, _array: int) -> int:
+        # Returning a genuine C status leaves the initialized out-array empty;
+        # no producer buffer address or schema is fabricated.
+        return 73
+
+    def last_error(_stream: int) -> int:
+        error_reads.append(1)
+        return ctypes.addressof(detail)
+
+    def release(raw_pointer: int) -> None:
+        live = cast(Any, ctypes.cast(raw_pointer, ctypes.POINTER(Stream)))
+        live.contents.get_next = original_next
+        live.contents.get_last_error = original_error
+        live.contents.release = original_release
+        if bytes(live.contents) != expected_header:
+            failures.append("stream header changed before original release")
+        released.append(1)
+        release_original(raw_pointer)
+
+    callbacks = (
+        ctypes.PYFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p)(next_array),
+        ctypes.PYFUNCTYPE(ctypes.c_void_p, ctypes.c_void_p)(last_error),
+        release_type(release),
+    )
+    for name, callback in zip(("get_next", "get_last_error", "release"), callbacks, strict=True):
+        setattr(stream.contents, name, ctypes.cast(callback, ctypes.c_void_p).value)
+
+    class Export:
+        def __arrow_c_stream__(self) -> object:
+            return capsule
+
+    def export(_source: object, _type: object = None) -> object:
+        return Export()
+
+    value = pd.array([7], dtype=pd.ArrowDtype(pa.int64()))
+    monkeypatch.setattr(pd.arrays.ArrowExtensionArray, "__arrow_array__", export)
+    with pytest.raises(TypeError) as caught:
+        _sqlaero._encode_value(value)
+    message = str(caught.value)
+    expected_detail = payload[:512].decode("ascii", "backslashreplace")
+    assert "Arrow stream get_next failed with status 73:" in message
+    assert message.endswith(expected_detail + (" [truncated]" if long_message else ""))
+    assert len(message) < 650
+    assert error_reads == [1] and released == [1] and failures == []
+    assert not stream.contents.release, "the capsule must be consumed rather than released twice"
 
 
 def test_arrow_invalid_intermediate_offset_is_checked_at_actual_value() -> None:
