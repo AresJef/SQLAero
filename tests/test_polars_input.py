@@ -133,6 +133,44 @@ def test_polars_classification_uses_labels_not_physical_codes(dtype: object) -> 
     ]
 
 
+@pytest.mark.parametrize("dtype", [pl.Categorical, pl.Enum(["a'\\", "b中"])])
+@pytest.mark.parametrize("no_backslash", [False, True])
+def test_polars_repeated_category_columns_keep_independent_labels_and_quote_modes(dtype: object, no_backslash: bool) -> None:
+    left = ["a'\\", "a'\\", None, "b中", "b中", "a'\\"] * 6
+    right = list(reversed(left))
+    value = pl.DataFrame([
+        pl.Series("left", left, dtype=dtype), pl.Series("right", right, dtype=dtype),
+    ])
+    expected = _sqlaero._bind_sql("SELECT %s,%s", list(zip(left, right, strict=True)), many=True, no_backslash=no_backslash)
+    assert _sqlaero._bind_sql("SELECT %s,%s", value, no_backslash=no_backslash) == expected
+
+
+def test_polars_category_reuse_never_caches_object_conversion_hooks() -> None:
+    calls: list[int] = []
+
+    class CountingInt(int):
+        def __int__(self) -> int:
+            calls.append(1)
+            return len(calls)
+
+    source = CountingInt(7)
+    value = pl.DataFrame([
+        pl.Series("category", ["a'"] * 32, dtype=pl.Categorical),
+        pl.Series("objects", [source] * 32, dtype=pl.Object),
+    ])
+    assert _sqlaero._bind_sql("SELECT %s,%s", value) == [b"\x03SELECT 'a\\''," + str(index).encode() for index in range(1, 33)]
+    assert calls == [1] * 32
+
+
+@pytest.mark.parametrize("length", [1, 100, 1000])
+@pytest.mark.parametrize("high_cardinality", [False, True], ids=["low", "high"])
+def test_polars_small_and_large_category_sources_keep_actual_labels(length: int, high_cardinality: bool) -> None:
+    labels = [f"label{i}'" for i in range(length if high_cardinality else 3)]
+    values = [labels[index % len(labels)] for index in range(length)]
+    value = pl.Series(values, dtype=pl.Categorical)
+    assert _sqlaero._encode_value(value).to_bytes() == _sqlaero._encode_value(values).to_bytes()
+
+
 @pytest.mark.parametrize("dtype", [pl.Categorical, pl.Enum(["a", "b"])])
 @pytest.mark.parametrize("kind", ["list", "struct"])
 def test_polars_nested_classification_keeps_labels_and_parent_validity(dtype: object, kind: str) -> None:
@@ -295,7 +333,10 @@ def test_polars_null_c_import_restores_headers_and_releases_exactly_once(
     assert releases == [1]
 
 
-@pytest.mark.parametrize("mode", ["success", "early-schema-failure", "repeat-consumption"])
+@pytest.mark.parametrize("mode", [
+    "success", "early-schema-failure", "repeat-consumption",
+    "cached-dictionary-success", "cached-dictionary-encoding-failure",
+])
 def test_c_array_consumption_owns_both_releases_on_every_exit(
     monkeypatch: pytest.MonkeyPatch, mode: str
 ) -> None:
@@ -317,7 +358,16 @@ def test_c_array_consumption_owns_both_releases_on_every_exit(
             ("release", ctypes.c_void_p), ("private_data", ctypes.c_void_p),
         ]
 
-    source = pa.array([1.5], type=pa.float16()) if mode == "early-schema-failure" else pa.array([7])
+    cached = mode.startswith("cached-dictionary-")
+    if cached:
+        failing = mode == "cached-dictionary-encoding-failure"
+        labels = ["a'\\", "🙂"] if failing else ["a'\\"]
+        codes = [0] * 39 + [int(failing)]
+        source = pa.DictionaryArray.from_arrays(pa.array(codes, type=pa.int8()), pa.array(labels))
+        value = pl.Series([labels[code] for code in codes], dtype=pl.Categorical)
+    else:
+        source = pa.array([1.5], type=pa.float16()) if mode == "early-schema-failure" else pa.array([7])
+        value = pl.Series([7], dtype=pl.Int64)
     capsules = source.__arrow_c_array__()
     get_pointer = ctypes.pythonapi.PyCapsule_GetPointer
     get_pointer.argtypes = [ctypes.py_object, ctypes.c_char_p]
@@ -354,13 +404,17 @@ def test_c_array_consumption_owns_both_releases_on_every_exit(
         return capsules
 
     monkeypatch.setattr(pl.Series, "__arrow_c_array__", export, raising=False)
-    value = pl.Series([7], dtype=pl.Int64)
     if mode == "early-schema-failure":
         with pytest.raises(TypeError, match="unsupported Arrow"):
             _sqlaero._encode_value(value)
+    elif mode == "cached-dictionary-encoding-failure":
+        with pytest.raises(UnicodeEncodeError) as caught:
+            _sqlaero._bind_sql("SELECT %s", (value,), charset="ascii")
+        assert caught.value.object == "🙂"
     else:
-        assert _sqlaero._encode_value(value).to_bytes() == b"(7)"
-        if mode == "repeat-consumption":
+        expected = b"(" + b",".join([b"'a\\'\\\\'"] * 40) + b")" if cached else b"(7)"
+        assert _sqlaero._encode_value(value).to_bytes() == expected
+        if mode in ("repeat-consumption", "cached-dictionary-success"):
             with pytest.raises(TypeError, match="already consumed"):
                 _sqlaero._encode_value(value)
     assert sorted(releases) == ["array", "schema"]

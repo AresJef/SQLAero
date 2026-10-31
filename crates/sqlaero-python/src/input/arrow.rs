@@ -33,6 +33,7 @@ use super::temporal::{self, TimeKind, TimeUnit};
 use crate::errors;
 
 mod cdata;
+mod dictionary;
 
 /// The five fields of the public Arrow C Stream ABI. Apache's record-batch
 /// reader requires a Struct root, while this input also accepts primitive
@@ -136,6 +137,7 @@ enum Storage {
 /// the Python owner and token keep provider access/release in the right domain.
 pub(crate) struct Prepared<'py> {
     storage: Storage,
+    dictionary: Option<Box<dictionary::Cache>>,
     field: Field,
     shape: Shape,
     owner: Bound<'py, PyAny>,
@@ -421,6 +423,7 @@ pub(crate) fn prepare_exported<'py>(
         validate_root_shape(py, &array, shape)?;
         return Ok(Prepared {
             storage: Storage::Single(array),
+            dictionary: dictionary::Cache::for_schema(py, &field, shape)?,
             field,
             shape,
             owner: owner.clone(),
@@ -471,6 +474,7 @@ pub(crate) fn prepare_exported<'py>(
             start: 0,
             end: 0,
         },
+        dictionary: dictionary::Cache::for_schema(py, &field, shape)?,
         field,
         shape,
         owner: owner.clone(),
@@ -636,6 +640,9 @@ impl Prepared<'_> {
                         .checked_add(array.len())
                         .ok_or_else(|| invalid(py, "Arrow stream length overflows usize"))?;
                     *current = Some(array);
+                    if let Some(cache) = &mut self.dictionary {
+                        cache.clear_chunk();
+                    }
                 }
                 let array = current
                     .as_ref()
@@ -680,21 +687,22 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
                 .as_any()
                 .downcast_ref::<StructArray>()
                 .ok_or_else(|| invalid(py, "Arrow table did not produce a Struct array"))?;
-            write_value(
-                py,
-                data.column(column),
-                index,
-                output,
-                context,
-                budget,
-                visitor,
-            )
+            let value = data.column(column);
+            if let Some(cache) = &mut self.dictionary
+                && cache.has_column(column)
+            {
+                return cache.write(py, column, value, index, output, context, budget, visitor);
+            }
+            write_value(py, value, index, output, context, budget, visitor)
         } else {
             if column != 0 {
                 return Err(invalid(
                     py,
                     "Arrow vector has only one logical cell per element",
                 ));
+            }
+            if let Some(cache) = &mut self.dictionary {
+                return cache.write(py, 0, &array, index, output, context, budget, visitor);
             }
             write_value(py, &array, index, output, context, budget, visitor)
         }
@@ -1208,47 +1216,52 @@ fn write_extended(
                 },
             )
         }
-        DataType::Dictionary(key, _) => {
-            macro_rules! label {
-                ($key:ty) => {{
-                    let dictionary = array
-                        .as_any()
-                        .downcast_ref::<DictionaryArray<$key>>()
-                        .ok_or_else(|| invalid(py, "Arrow Dictionary physical key type differs"))?;
-                    let key = dictionary.keys().value(index);
-                    let label = usize::try_from(key).map_err(|_| {
-                        invalid(py, "Arrow Dictionary key is negative or exceeds usize")
-                    })?;
-                    if label >= dictionary.values().len() {
-                        return Err(invalid(
-                            py,
-                            "Arrow Dictionary key is outside the current dictionary",
-                        ));
-                    }
-                    write_value(
-                        py,
-                        dictionary.values(),
-                        label,
-                        output,
-                        context,
-                        budget,
-                        visitor,
-                    )
-                }};
-            }
-            match key.as_ref() {
-                DataType::Int8 => label!(Int8Type),
-                DataType::Int16 => label!(Int16Type),
-                DataType::Int32 => label!(Int32Type),
-                DataType::Int64 => label!(Int64Type),
-                DataType::UInt8 => label!(UInt8Type),
-                DataType::UInt16 => label!(UInt16Type),
-                DataType::UInt32 => label!(UInt32Type),
-                DataType::UInt64 => label!(UInt64Type),
-                _ => Err(invalid(py, "unsupported Arrow Dictionary key type")),
-            }
+        DataType::Dictionary(_, _) => {
+            let (values, label) = dictionary_label(py, array, index)?;
+            write_value(py, values, label, output, context, budget, visitor)
         }
         _ => Err(invalid(py, "unsupported Arrow logical input dtype")),
+    }
+}
+
+/// Resolve one actual key against its own dictionary, for both the ordinary
+/// recursive writer and the bounded native-string label cache.
+fn dictionary_label<'a>(
+    py: Python<'_>,
+    array: &'a ArrayRef,
+    index: usize,
+) -> PyResult<(&'a ArrayRef, usize)> {
+    macro_rules! label {
+        ($key:ty) => {{
+            let dictionary = array
+                .as_any()
+                .downcast_ref::<DictionaryArray<$key>>()
+                .ok_or_else(|| invalid(py, "Arrow Dictionary physical key type differs"))?;
+            let key = dictionary.keys().value(index);
+            let label = usize::try_from(key)
+                .map_err(|_| invalid(py, "Arrow Dictionary key is negative or exceeds usize"))?;
+            if label >= dictionary.values().len() {
+                return Err(invalid(
+                    py,
+                    "Arrow Dictionary key is outside the current dictionary",
+                ));
+            }
+            Ok((dictionary.values(), label))
+        }};
+    }
+    match array.data_type() {
+        DataType::Dictionary(key, _) => match key.as_ref() {
+            DataType::Int8 => label!(Int8Type),
+            DataType::Int16 => label!(Int16Type),
+            DataType::Int32 => label!(Int32Type),
+            DataType::Int64 => label!(Int64Type),
+            DataType::UInt8 => label!(UInt8Type),
+            DataType::UInt16 => label!(UInt16Type),
+            DataType::UInt32 => label!(UInt32Type),
+            DataType::UInt64 => label!(UInt64Type),
+            _ => Err(invalid(py, "unsupported Arrow Dictionary key type")),
+        },
+        _ => Err(invalid(py, "Arrow value is not a Dictionary")),
     }
 }
 

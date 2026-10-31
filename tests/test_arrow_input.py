@@ -150,6 +150,74 @@ def test_arrow_dictionary_uses_each_chunks_labels() -> None:
     assert _sqlaero._encode_value(value).to_bytes() == b"('a','b',NULL,'b','a')"
 
 
+@pytest.mark.parametrize("dtype", [pa.string(), pa.large_string(), pa.string_view()])
+@pytest.mark.parametrize("no_backslash", [False, True])
+def test_arrow_repeated_dictionary_strings_keep_actual_encoding_and_null_labels(dtype: object, no_backslash: bool) -> None:
+    # The non-ASCII category is valid UTF-8 but cannot be encoded as ASCII. Its
+    # unused presence must never trigger eager label conversion or validation.
+    labels = pa.array(["a'\\", None, "unused🙂"], type=dtype)
+    value = pa.DictionaryArray.from_arrays(pa.array([0, 0, None, 1, 0, 1] * 8, type=pa.int16()), labels)
+    literal = b"'a''\\'" if no_backslash else b"'a\\'\\\\'"
+    expected = b"(" + b",".join([literal, literal, b"NULL", b"NULL", literal, b"NULL"] * 8) + b")"
+    assert _sqlaero._bind_sql("SELECT %s", (value,), charset="ascii", no_backslash=no_backslash) == [b"\x03SELECT " + expected]
+
+
+def test_arrow_repeated_dictionary_labels_are_independent_across_columns_and_chunks() -> None:
+    chunks = []
+    for labels in (["a'", "b\\"], ["b\\", "a'"]):
+        chunks.append(pa.DictionaryArray.from_arrays(pa.array([0, 0, 1, None, 1] * 8), pa.array(labels)))
+    left = pa.chunked_array(chunks)
+    right = pa.chunked_array(list(reversed(chunks)))
+    value = pa.table({"left": left, "right": right})
+    left_values = ["a'", "a'", "b\\", None, "b\\"] * 8 + ["b\\", "b\\", "a'", None, "a'"] * 8
+    right_values = left_values[40:] + left_values[:40]
+    expected = _sqlaero._bind_sql("SELECT %s,%s", list(zip(left_values, right_values, strict=True)), many=True)
+    assert _sqlaero._bind_sql("SELECT %s,%s", value) == expected
+
+
+@pytest.mark.parametrize("kind", ["many-labels", "large-label"])
+def test_arrow_dictionary_cache_bounds_keep_the_original_writer(kind: str) -> None:
+    labels = [f"label{i}" for i in range(65)] if kind == "many-labels" else ["x" * (20 * 1024)]
+    codes = [i % len(labels) for i in range(130 if kind == "many-labels" else 32)]
+    value = pa.DictionaryArray.from_arrays(pa.array(codes, type=pa.int16()), pa.array(labels))
+    expected = _sqlaero._encode_value([labels[code] for code in codes]).to_bytes()
+    assert _sqlaero._encode_value(value).to_bytes() == expected
+
+
+def test_arrow_repeated_dictionary_label_still_checks_the_output_limit() -> None:
+    value = pa.DictionaryArray.from_arrays(pa.array([0] * 32, type=pa.int8()), pa.array(["abcd"]))
+    with pytest.raises(_sqlaero.OperationalError):
+        _sqlaero._bind_sql("SELECT %s", (value,), limit=len(b"\x03SELECT ('abcd','abc"))
+
+
+def test_arrow_dictionary_reuse_keeps_later_original_encoding_errors_located() -> None:
+    value = pa.DictionaryArray.from_arrays(pa.array([0] * 32 + [1]), pa.array(["ok", "🙂"]))
+    with pytest.raises(UnicodeEncodeError) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True, charset="ascii")
+    assert caught.value.object == "🙂" and (caught.value.start, caught.value.end) == (0, 1)
+    assert "args[32]" in "\n".join(getattr(caught.value, "__notes__", []))
+
+
+def test_arrow_dictionary_columns_outside_the_small_cache_keep_the_same_values() -> None:
+    columns = [
+        pa.DictionaryArray.from_arrays(pa.array([0, 0, None] * 11), pa.array([f"c{column}'"]))
+        for column in range(10)
+    ]
+    value = pa.Table.from_arrays(columns, names=[f"c{column}" for column in range(10)])
+    sql = "SELECT " + ",".join(["%s"] * 10)
+    expected = _sqlaero._bind_sql(sql, ([[f"c{column}'" for column in range(10)]] * 2 + [[None] * 10]) * 11, many=True)
+    assert _sqlaero._bind_sql(sql, value) == expected
+
+
+@pytest.mark.parametrize("length", [1, 100, 1000])
+@pytest.mark.parametrize("high_cardinality", [False, True], ids=["low", "high"])
+def test_arrow_small_and_large_dictionary_sources_keep_their_exact_labels(length: int, high_cardinality: bool) -> None:
+    labels = [f"label{i}'" for i in range(length if high_cardinality else 3)]
+    codes = [i % len(labels) for i in range(length)]
+    value = pa.DictionaryArray.from_arrays(pa.array(codes), pa.array(labels))
+    assert _sqlaero._encode_value(value).to_bytes() == _sqlaero._encode_value([labels[code] for code in codes]).to_bytes()
+
+
 @pytest.mark.parametrize(
     "dtype", [pa.int8(), pa.int16(), pa.int32(), pa.int64(), pa.uint8(), pa.uint16(), pa.uint32(), pa.uint64()]
 )
@@ -510,11 +578,16 @@ def test_unsupported_arrow_schema_is_not_hidden_by_empty_or_null_data(value: obj
         _sqlaero._bind_sql("SELECT 1", value)
 
 
-def test_arrow_repeated_shared_immutable_input_has_independent_stream_owners() -> None:
+@pytest.mark.parametrize("dictionary", [False, True], ids=["chunked", "cached-dictionary"])
+def test_arrow_repeated_shared_immutable_input_has_independent_stream_owners(dictionary: bool) -> None:
     # Each call exports and consumes its own capsule. Sharing the Python source
     # cannot make another call observe an already consumed or released capsule.
-    value = pa.chunked_array([[1, None], [], [-3, 4]])
-    expected = b"(1,NULL,-3,4)"
+    if dictionary:
+        value = pa.DictionaryArray.from_arrays(pa.array([0] * 40, type=pa.int8()), pa.array(["label"]))
+        expected = b"(" + b",".join([b"'label'"] * 40) + b")"
+    else:
+        value = pa.chunked_array([[1, None], [], [-3, 4]])
+        expected = b"(1,NULL,-3,4)"
 
     def encode_repeatedly(_: int) -> bytes:
         result = b""
