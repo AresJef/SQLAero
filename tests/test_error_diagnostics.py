@@ -506,15 +506,34 @@ print('stdlib-only format control completed')
             _testcapi.remove_mem_hooks()
 ''', '''        result = _testcapi.call_with_nomemory(offset, offset + 1, operation)
 ''')
-        for label, program in [('original-untraced', original), ('original', original),
-                               ('prepared-provider', prepared),
-                               ('stdlib-only', control), ('call-scoped', source),
-                               ('stdlib-scoped', scoped_control),
-                               ('call-scoped-wide', source.replace('range(48)', 'range(256)')),
-                               ('stdlib-scoped-wide', scoped_control.replace('range(48)', 'range(256)'))]:
-            for repeat in range(2):
+        list_control = r'''
+import _testcapi
+import gc
+import sys
+assert not any(name == 'sqlaero' or name.startswith('sqlaero.') for name in sys.modules)
+text = 'one two three four five six'
+for offset in range(16):
+    gc.collect()
+    operation = text.split
+    prime = [None, None, None]
+    del prime
+    try:
+        _testcapi.set_nomemory(offset, offset + 1)
+        try:
+            result = operation()
+        finally:
+            _testcapi.remove_mem_hooks()
+    except MemoryError:
+        pass
+    else:
+        assert result == ['one', 'two', 'three', 'four', 'five', 'six']
+print('stdlib-only primed list control completed')
+'''
+        for label, program in [('stdlib-list-untraced', list_control),
+                               ('call-scoped-wide', source.replace('range(48)', 'range(256)'))]:
+            for repeat in range(1):
                 environment = os.environ.copy()
-                if label == 'original-untraced':
+                if label == 'stdlib-list-untraced':
                     environment.pop('PYTHONFAULTHANDLER', None)
                 else:
                     environment['PYTHONFAULTHANDLER'] = '1'
@@ -524,7 +543,7 @@ print('stdlib-only format control completed')
                 observed.append({'variant': label, 'repeat': repeat, 'exit': separate.returncode,
                                  'stdout': separate.stdout.decode('utf-8', 'replace')[-1000:],
                                  'stderr': separate.stderr.decode('utf-8', 'replace')[-7000:]})
-                if separate.returncode and label != 'stdlib-only':
+                if separate.returncode and label != 'stdlib-list-untraced':
                     replay_failed = True
         import shutil
         debugger = shutil.which('gdb')
@@ -534,9 +553,9 @@ print('stdlib-only format control completed')
             native_stack = subprocess.run([
                 debugger, '--batch', '-ex', 'set disable-randomization off',
                 '-ex', 'run', '-ex', 'thread apply all bt 28', '--args', sys.executable, '-',
-            ], input=original.encode('utf-8'), capture_output=True, timeout=60,
+            ], input=list_control.encode('utf-8'), capture_output=True, timeout=60,
                 check=False, env=environment)
-            observed.append({'variant': 'gdb-exact-original', 'repeat': 0,
+            observed.append({'variant': 'gdb-stdlib-list', 'repeat': 0,
                              'exit': native_stack.returncode,
                              'stdout': native_stack.stdout.decode('utf-8', 'replace')[-24000:],
                              'stderr': native_stack.stderr.decode('utf-8', 'replace')[-4000:]})
