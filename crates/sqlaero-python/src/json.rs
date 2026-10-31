@@ -47,16 +47,21 @@ pub(crate) fn decode<'py>(
     data: &[u8],
 ) -> Result<Bound<'py, PyAny>, DecodeFailure> {
     let mut parser = Jiter::new(data);
-    let peek = parser.peek().map_err(|error| syntax(&parser, error))?;
+    let peek = parser.peek().map_err(|error| syntax(py, &parser, error))?;
     let mut until_check = SIGNAL_WORK;
     let mut progress = Progress::new(|_work| py.check_signals());
     let value = read_value(py, &mut parser, peek, 0, &mut until_check, &mut progress)?;
-    parser.finish().map_err(|error| syntax(&parser, error))?;
+    parser
+        .finish()
+        .map_err(|error| syntax(py, &parser, error))?;
     Ok(value)
 }
 
-fn syntax(parser: &Jiter<'_>, error: jiter::JiterError) -> DecodeFailure {
-    DecodeFailure::Invalid(PyValueError::new_err(error.description(parser)))
+fn syntax(py: Python<'_>, parser: &Jiter<'_>, error: jiter::JiterError) -> DecodeFailure {
+    DecodeFailure::Invalid(crate::errors::builtin_message::<PyValueError>(
+        py,
+        error.description(parser),
+    ))
 }
 
 /// Bound conversion and copying work as well as JSON token decoding.
@@ -171,7 +176,7 @@ where
 
 fn checked_error(py: Python<'_>, parser: &Jiter<'_>, error: CheckedError<PyErr>) -> DecodeFailure {
     match error {
-        CheckedError::Json(error) => syntax(parser, error),
+        CheckedError::Json(error) => syntax(py, parser, error),
         CheckedError::Interrupted(error) => DecodeFailure::Python(error),
         CheckedError::Allocation(_) => DecodeFailure::Python(errors::memory_error(py)),
     }
@@ -190,12 +195,14 @@ where
 {
     match peek {
         Peek::Null => {
-            parser.known_null().map_err(|error| syntax(parser, error))?;
+            parser
+                .known_null()
+                .map_err(|error| syntax(py, parser, error))?;
             Ok(py.None().into_bound(py))
         }
         Peek::True | Peek::False => Ok(parser
             .known_bool(peek)
-            .map_err(|error| syntax(parser, error))?
+            .map_err(|error| syntax(py, parser, error))?
             .into_pyobject(py)
             .map_err(PyErr::from)?
             .to_owned()
@@ -208,7 +215,7 @@ where
             Ok(string(py, text, progress)?.into_any())
         }
         Peek::Array => {
-            check_depth(depth)?;
+            check_depth(py, depth)?;
             // SAFETY: the public constructor returns a new exact list or NULL.
             // Keep allocation failure as the original MemoryError, not a panic.
             let result = unsafe {
@@ -217,7 +224,7 @@ where
             };
             let mut next = parser
                 .known_array()
-                .map_err(|error| syntax(parser, error))?;
+                .map_err(|error| syntax(py, parser, error))?;
             while let Some(item) = next {
                 check_work(py, until_check)?;
                 result.append(read_value(
@@ -228,12 +235,14 @@ where
                     until_check,
                     progress,
                 )?)?;
-                next = parser.array_step().map_err(|error| syntax(parser, error))?;
+                next = parser
+                    .array_step()
+                    .map_err(|error| syntax(py, parser, error))?;
             }
             Ok(result.into_any())
         }
         Peek::Object => {
-            check_depth(depth)?;
+            check_depth(py, depth)?;
             // SAFETY: the public constructor returns a new exact dict or NULL.
             let result = unsafe {
                 Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyDict_New())?
@@ -245,7 +254,7 @@ where
             };
             while let Some(key) = next {
                 check_work(py, until_check)?;
-                let item = parser.peek().map_err(|error| syntax(parser, error))?;
+                let item = parser.peek().map_err(|error| syntax(py, parser, error))?;
                 result.set_item(
                     key,
                     read_value(py, parser, item, depth + 1, until_check, progress)?,
@@ -259,11 +268,16 @@ where
         }
         _ => match parser
             .known_number(peek)
-            .map_err(|error| syntax(parser, error))?
+            .map_err(|error| syntax(py, parser, error))?
         {
-            NumberAny::Float(value) if !value.is_finite() => Err(DecodeFailure::Invalid(
-                PyValueError::new_err("JSON number is outside the finite binary64 range"),
-            )),
+            NumberAny::Float(value) if !value.is_finite() => {
+                Err(DecodeFailure::Invalid(crate::errors::builtin_message::<
+                    PyValueError,
+                >(
+                    py,
+                    "JSON number is outside the finite binary64 range",
+                )))
+            }
             NumberAny::Float(value) => {
                 // SAFETY: the public constructor returns an exact float or
                 // NULL with the original allocation error set.
@@ -318,9 +332,12 @@ fn check_work(py: Python<'_>, until_check: &mut usize) -> PyResult<()> {
     Ok(())
 }
 
-fn check_depth(depth: usize) -> Result<(), DecodeFailure> {
+fn check_depth(py: Python<'_>, depth: usize) -> Result<(), DecodeFailure> {
     if depth >= MAX_DEPTH {
-        return Err(DecodeFailure::Invalid(PyValueError::new_err(
+        return Err(DecodeFailure::Invalid(crate::errors::builtin_message::<
+            PyValueError,
+        >(
+            py,
             "JSON container recursion limit exceeded",
         )));
     }

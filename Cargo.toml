@@ -1,7 +1,7 @@
 [workspace]
 members = ["crates/sqlaero-core", "crates/sqlaero-python"]
 resolver = "3"
-exclude = ["third-party/jiter"]
+exclude = ["third-party/jiter", "third-party/pyo3"]
 
 [workspace.package]
 version = "0.2.0-beta.3"
@@ -53,3 +53,4 @@ overflow-checks = true
 
 [patch.crates-io]
 jiter = { path = "third-party/jiter" }
+pyo3 = { path = "third-party/pyo3" }

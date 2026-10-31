@@ -295,6 +295,145 @@ print('shared boundary allocation failures propagated as MemoryError:', failures
     assert 'propagated as MemoryError' in result.stdout
 
 
+@pytest.mark.parametrize('kind', [
+    'invalid-error', 'invalid-timeout', 'snapshot-stack', 'traceback',
+    'display', 'repr', 'retry-defaults', 'unsupported-input', 'client-error',
+])
+def test_public_failure_boundaries_never_panic_on_one_allocation_failure(kind: str) -> None:
+    """Use isolated single faults, with callables and values prepared beforehand."""
+    import subprocess
+    import sys
+
+    source = r'''
+import _testcapi
+from collections.abc import Callable
+from functools import partial
+import gc
+import tokenize
+import traceback
+from typing import Any
+from sqlaero import connect, _sqlaero
+from sqlaero.errors import ErrorInfo, SQLAeroError
+from sqlaero.retry import Retry, RetryRule
+
+kind: str = KIND
+enable = _testcapi.set_nomemory
+disable = _testcapi.remove_mem_hooks
+rule = RetryRule(error_types=ValueError)
+encoder = _sqlaero._prepare_encoder()
+unknown = object()
+extract_stack = traceback.StackSummary.extract
+
+def prepare() -> Callable[[], Any]:
+    if kind == 'invalid-error':
+        return partial(SQLAeroError, 42)
+    if kind == 'invalid-timeout':
+        return partial(connect, user='unopened', connect_timeout=0)
+    if kind == 'retry-defaults':
+        return partial(Retry, rule)
+    if kind == 'unsupported-input':
+        return partial(encoder.encode, unknown)
+    if kind == 'client-error':
+        return partial(_sqlaero._encode_scalar, 'oversized', limit=1)
+    try:
+        raise SQLAeroError('allocation boundary', code=123)
+    except SQLAeroError as caught:
+        error = caught
+    if kind == 'snapshot-stack':
+        # Isolate our native boundary's allocation failures. Older CPython can
+        # corrupt a Python frame while injecting OOM inside StackSummary.extract
+        # (also reproducible with decimal + traceback and no SQLAero import).
+        # Real stack extraction and original provider errors have separate tests.
+        summary = extract_stack(traceback.walk_tb(error.__traceback__),
+                                capture_locals=False, lookup_lines=False)
+        def prepared_stack(*args: Any, **kwargs: Any) -> traceback.StackSummary:
+            return summary
+        traceback.StackSummary.extract = prepared_stack
+        return partial(getattr, error, 'error_info')
+    info = error.error_info
+    if kind == 'traceback':
+        return partial(getattr, info, 'traceback')
+    return partial(repr if kind == 'repr' else str, info)
+
+def verify(result: Any) -> None:
+    if kind == 'retry-defaults':
+        assert isinstance(result, Retry) and result.wait_interval == 1.0
+    elif kind == 'snapshot-stack':
+        assert isinstance(result, ErrorInfo) and result.message == 'allocation boundary'
+        assert result.code == 123
+    else:
+        assert isinstance(result, str) and 'allocation boundary' in result
+
+failures = 0
+for offset in range(48):
+    gc.collect()
+    operation = prepare()
+    try:
+        enable(offset, offset + 1)
+        try:
+            result = operation()
+        finally:
+            disable()
+    except MemoryError:
+        failures += 1
+    except SQLAeroError as error:
+        assert kind == 'client-error' and error.code == 65538
+        assert error.is_server_error is False
+    except (TypeError, ValueError) as error:
+        if kind in ('invalid-error', 'unsupported-input'):
+            assert type(error) is TypeError
+        elif kind == 'invalid-timeout':
+            assert type(error) is ValueError and 'connect_timeout' in str(error)
+        else:
+            raise
+    else:
+        verify(result)
+assert failures > 0
+operation = prepare()
+if kind in ('invalid-error', 'invalid-timeout', 'unsupported-input', 'client-error'):
+    try:
+        operation()
+    except (TypeError, ValueError, SQLAeroError):
+        pass
+    else:
+        raise AssertionError('invalid input unexpectedly succeeded')
+else:
+    verify(operation())
+print('allocation boundary preserved:', kind, failures)
+'''.replace('KIND', repr(kind))
+    result = subprocess.run([sys.executable, '-'], input=source.encode('utf-8'),
+                            capture_output=True, timeout=30, check=False)
+    assert result.returncode == 0, (result.stdout + result.stderr).decode('utf-8', 'replace')
+    assert b'allocation boundary preserved:' in result.stdout
+
+
+@pytest.mark.parametrize('failure_type', [MemoryError, KeyboardInterrupt, RuntimeError])
+def test_real_stack_provider_failure_preserves_original_and_allows_retry(
+    monkeypatch: pytest.MonkeyPatch, failure_type: type[BaseException],
+) -> None:
+    """A provider's own exception stays distinct from our allocation failures."""
+    import traceback
+    from typing import Any
+
+    try:
+        raise SQLAeroError('actual stack provider', code=123)
+    except SQLAeroError as caught:
+        error = caught
+    original = failure_type('original stack provider failure')
+
+    def fail(*args: Any, **kwargs: Any) -> Any:
+        raise original
+
+    with monkeypatch.context() as patch:
+        patch.setattr(traceback.StackSummary, 'extract', fail)
+        with pytest.raises(failure_type) as received:
+            _ = error.error_info
+        assert received.value is original
+    info = error.error_info
+    assert info.message == 'actual stack provider' and info.code == 123
+    assert info.traceback is not None and 'test_real_stack_provider_failure' in info.traceback
+
+
 def test_unsigned_integer_fallback_preserves_the_original_memory_error() -> None:
     """An expected unsigned overflow must not hide its message-allocation OOM."""
     import subprocess

@@ -37,6 +37,7 @@ include = [
     { path = "rust-toolchain.toml", format = "sdist" },
     { path = "data/error-catalog.json", format = "sdist" },
     { path = "third-party/jiter/**/*", format = "sdist" },
+    { path = "third-party/pyo3/**/*", format = "sdist" },
 ]
 
 [tool.pyright]

@@ -30,21 +30,31 @@ impl<'py> FromPyObject<'_, 'py> for Argument<'py> {
     }
 }
 pub(crate) fn boolean(value: &Bound<'_, PyAny>, name: &str) -> PyResult<bool> {
+    let py = value.py();
     if !value.is_exact_instance_of::<PyBool>() {
-        return Err(PyTypeError::new_err(format!("{name} must be bool")));
+        return Err(crate::errors::builtin_message::<PyTypeError>(
+            py,
+            format!("{name} must be bool"),
+        ));
     }
     value.extract()
 }
 pub(crate) fn text(value: &Bound<'_, PyAny>, name: &str, empty: bool) -> PyResult<String> {
+    let py = value.py();
     let value = value
         .cast::<PyString>()
-        .map_err(|_| PyTypeError::new_err(format!("{name} must be str")))?
+        .map_err(|_| {
+            crate::errors::builtin_message::<PyTypeError>(py, format!("{name} must be str"))
+        })?
         .to_str()?;
     if (!empty && value.is_empty()) || value.contains('\0') {
-        return Err(PyValueError::new_err(format!(
-            "{name} must {}contain no NUL",
-            if empty { "" } else { "be nonempty and " }
-        )));
+        return Err(crate::errors::builtin_message::<PyValueError>(
+            py,
+            format!(
+                "{name} must {}contain no NUL",
+                if empty { "" } else { "be nonempty and " }
+            ),
+        ));
     }
     Ok(value.to_owned())
 }
@@ -59,18 +69,21 @@ pub(crate) fn optional_text(
         .transpose()
 }
 pub(crate) fn path(value: &Bound<'_, PyAny>, name: &str) -> PyResult<PathBuf> {
+    let py = value.py();
     if value.is_instance_of::<PyBytes>() {
-        return Err(PyTypeError::new_err(format!(
-            "{name} must be str or os.PathLike; bare bytes are not accepted"
-        )));
+        return Err(crate::errors::builtin_message::<PyTypeError>(
+            py,
+            format!("{name} must be str or os.PathLike; bare bytes are not accepted"),
+        ));
     }
     // PyO3 invokes os.fspath exactly once and preserves the native OsString;
     // no manual separators, lossy UTF-8 conversion, expansion or realpath.
     let path = value.extract::<PathBuf>()?;
     if path.as_os_str().is_empty() || path.as_os_str().as_encoded_bytes().contains(&0) {
-        return Err(PyValueError::new_err(format!(
-            "{name} must be a nonempty filesystem path without NUL"
-        )));
+        return Err(crate::errors::builtin_message::<PyValueError>(
+            py,
+            format!("{name} must be a nonempty filesystem path without NUL"),
+        ));
     }
     Ok(path)
 }
@@ -84,22 +97,30 @@ pub(crate) fn optional_path(
         .transpose()
 }
 pub(crate) fn positive(value: &Bound<'_, PyAny>, name: &str) -> PyResult<BigUint> {
+    let py = value.py();
     if !value.is_exact_instance_of::<PyInt>() {
-        return Err(PyTypeError::new_err(format!(
-            "{name} must be a positive int; bool is not accepted"
-        )));
+        return Err(crate::errors::builtin_message::<PyTypeError>(
+            py,
+            format!("{name} must be a positive int; bool is not accepted"),
+        ));
     }
     let value = crate::errors::integer_value(value)?;
     let value = value
         .to_biguint()
         .filter(|value| value != &BigUint::from(0u8))
-        .ok_or_else(|| PyValueError::new_err(format!("{name} must be greater than zero")))?;
+        .ok_or_else(|| {
+            crate::errors::builtin_message::<PyValueError>(
+                py,
+                format!("{name} must be greater than zero"),
+            )
+        })?;
     Ok(value)
 }
 pub(crate) fn timeout(value: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<Option<Duration>> {
     value
         .filter(|value| !value.is_none())
         .map(|value| {
+            let py = value.py();
             let integer = positive(value, name)?;
             let seconds = u64::try_from(integer).map_err(|_| {
                 crate::errors::builtin_error(
@@ -109,26 +130,31 @@ pub(crate) fn timeout(value: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<
             })?;
             let duration = Duration::from_secs(seconds);
             Instant::now().checked_add(duration).ok_or_else(|| {
-                PyValueError::new_err(format!(
-                    "{name} exceeds the platform's safe monotonic deadline range"
-                ))
+                crate::errors::builtin_message::<PyValueError>(
+                    py,
+                    format!("{name} exceeds the platform's safe monotonic deadline range"),
+                )
             })?;
             Ok(duration)
         })
         .transpose()
 }
 pub(crate) fn bytes_limit(value: &Bound<'_, PyAny>, name: &str, maximum: usize) -> PyResult<usize> {
+    let py = value.py();
     let count = if let Ok(text) = value.cast::<PyString>() {
-        size::parse_size(text.to_str()?)
-            .map_err(|error| PyValueError::new_err(format!("{name}: {error}")))?
+        size::parse_size(text.to_str()?).map_err(|error| {
+            crate::errors::builtin_message::<PyValueError>(py, format!("{name}: {error}"))
+        })?
     } else {
-        usize::try_from(positive(value, name)?)
-            .map_err(|_| PyValueError::new_err(format!("{name} is too large")))?
+        usize::try_from(positive(value, name)?).map_err(|_| {
+            crate::errors::builtin_message::<PyValueError>(py, format!("{name} is too large"))
+        })?
     };
     if count == 0 || count > maximum {
-        return Err(PyValueError::new_err(format!(
-            "{name} must represent 1..={maximum} bytes"
-        )));
+        return Err(crate::errors::builtin_message::<PyValueError>(
+            py,
+            format!("{name} must represent 1..={maximum} bytes"),
+        ));
     }
     Ok(count)
 }
@@ -160,6 +186,7 @@ impl Ssl {
     }
     pub(crate) fn prepare(
         &self,
+        py: Python<'_>,
         unix: bool,
         host: &str,
     ) -> PyResult<Option<sqlaero_core::session::connect::ConnectTls>> {
@@ -169,12 +196,14 @@ impl Ssl {
             Mode::VerifyIdentity
         });
         if mode == Mode::Disabled && self.server_name.is_some() {
-            return Err(PyValueError::new_err(
+            return Err(crate::errors::builtin_message::<PyValueError>(
+                py,
                 "SSL server_name conflicts with DISABLED transport",
             ));
         }
         if unix && mode == Mode::VerifyIdentity && self.server_name.is_none() {
-            return Err(PyValueError::new_err(
+            return Err(crate::errors::builtin_message::<PyValueError>(
+                py,
                 "Unix VERIFY_IDENTITY requires an explicit SSL server_name",
             ));
         }
@@ -188,7 +217,9 @@ impl Ssl {
                     self.roots.clone(),
                     self.identity.clone(),
                 )
-                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                .map_err(|error| {
+                    crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+                })?;
                 let _ = cached.set(config.clone());
                 config
             }
@@ -199,10 +230,16 @@ impl Ssl {
         let name = match &self.server_name {
             Some(name) => name.clone(),
             None if unix => ServerName::try_from("sqlaero.invalid")
-                .map_err(|_| PyValueError::new_err("invalid internal Unix TLS identity"))?
+                .map_err(|_| {
+                    crate::errors::builtin_message::<PyValueError>(
+                        py,
+                        "invalid internal Unix TLS identity",
+                    )
+                })?
                 .to_owned(),
             None => ServerName::try_from(host.to_owned()).map_err(|_| {
-                PyValueError::new_err(
+                crate::errors::builtin_message::<PyValueError>(
+                    py,
                     "host is not a valid TLS DNS/IP identity; use SSL.server_name when appropriate",
                 )
             })?,
@@ -250,44 +287,57 @@ impl Ssl {
         let mode = optional_text(mode, "mode", false)?
             .map(|value| value.parse::<Mode>())
             .transpose()
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            .map_err(|error| {
+                crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+            })?;
         let minimum = optional_text(min_tls_version, "min_tls_version", false)?
             .map(|value| value.parse::<MinimumVersion>())
             .transpose()
-            .map_err(|error| PyValueError::new_err(error.to_string()))?
+            .map_err(|error| crate::errors::builtin_message::<PyValueError>(py, error.to_string()))?
             .unwrap_or_default();
         let ca = optional_path(ca_file, "ca_file")?;
         let cert = optional_path(cert_file, "cert_file")?;
         let key = optional_path(key_file, "key_file")?;
         if cert.is_some() != key.is_some() {
-            return Err(PyValueError::new_err(
+            return Err(crate::errors::builtin_message::<PyValueError>(
+                py,
                 "cert_file and key_file must be provided together",
             ));
         }
         let password = optional_text(key_password, "key_password", false)?
             .map(|value| Zeroizing::new(value.into_bytes()));
         if password.is_some() && key.is_none() {
-            return Err(PyValueError::new_err("key_password requires key_file"));
+            return Err(crate::errors::builtin_message::<PyValueError>(
+                py,
+                "key_password requires key_file",
+            ));
         }
         let name = optional_text(server_name, "server_name", false)?.map(|name| ServerName::try_from(name)
-            .map_err(|_| PyValueError::new_err("server_name must be a valid DNS name or IP without URL, port, path or wildcard"))).transpose()?;
+            .map_err(|_| crate::errors::builtin_message::<PyValueError>(py, "server_name must be a valid DNS name or IP without URL, port, path or wildcard"))).transpose()?;
         let roots = ca
             .map(|path| py.detach(|| std::fs::read(path)))
             .transpose()?
             .map(|pem| tls::certificates(&pem))
             .transpose()
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            .map_err(|error| {
+                crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+            })?;
         let identity = match (cert, key) {
             (Some(cert), Some(key)) => {
                 let certificate = py.detach(|| std::fs::read(cert))?;
                 let key = Zeroizing::new(py.detach(|| std::fs::read(key))?);
-                let certificates = tls::certificates(&certificate)
-                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
-                let key = tls::private_key(&key, password.as_deref().map(Vec::as_slice))
-                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                let certificates = tls::certificates(&certificate).map_err(|error| {
+                    crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+                })?;
+                let key = tls::private_key(&key, password.as_deref().map(Vec::as_slice)).map_err(
+                    |error| crate::errors::builtin_message::<PyValueError>(py, error.to_string()),
+                )?;
                 Some(
-                    tls::signing_identity(certificates, key, &tls::provider())
-                        .map_err(|error| PyValueError::new_err(error.to_string()))?,
+                    tls::signing_identity(certificates, key, &tls::provider()).map_err(
+                        |error| {
+                            crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+                        },
+                    )?,
                 )
             }
             _ => None,
@@ -303,13 +353,16 @@ impl Ssl {
         };
         if let Some(mode) = mode {
             if mode == Mode::Disabled && value.server_name.is_some() {
-                return Err(PyValueError::new_err(
+                return Err(crate::errors::builtin_message::<PyValueError>(
+                    py,
                     "SSL server_name conflicts with DISABLED transport",
                 ));
             }
             let config =
                 tls::client_config(mode, minimum, value.roots.clone(), value.identity.clone())
-                    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+                    .map_err(|error| {
+                        crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+                    })?;
             let _ = value.tcp.set(config.clone());
             let _ = value.unix.set(config);
         }

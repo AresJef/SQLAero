@@ -644,7 +644,8 @@ impl Connection {
                 && !value.is(py.get_type::<Cursor>())
                 && !value.is(py.get_type::<PyTuple>())
         }) {
-            return Err(PyTypeError::new_err(
+            return Err(crate::errors::builtin_message::<PyTypeError>(
+                py,
                 "cursor must be None, SQLAero Cursor, or tuple; arbitrary cursor classes and formats are not supported",
             ));
         }
@@ -1007,7 +1008,8 @@ pub(crate) fn connect(
         || host.bytes().any(|byte| byte.is_ascii_whitespace())
         || (host.contains(':') && host.parse::<std::net::Ipv6Addr>().is_err())
     {
-        return Err(PyValueError::new_err(
+        return Err(crate::errors::builtin_message::<PyValueError>(
+            py,
             "host must be a DNS name or unbracketed IP, without URL, port, path, NUL or whitespace",
         ));
     }
@@ -1016,11 +1018,17 @@ pub(crate) fn connect(
         Some(value) => u16::try_from(config::positive(value, "port")?)
             .ok()
             .filter(|value| *value != 0)
-            .ok_or_else(|| PyValueError::new_err("port must be an integer in 1..=65535"))?,
+            .ok_or_else(|| {
+                crate::errors::builtin_message::<PyValueError>(
+                    py,
+                    "port must be an integer in 1..=65535",
+                )
+            })?,
     };
     let socket = config::optional_path(unix_socket, "unix_socket")?;
     if socket.is_some() && (host_provided || port_provided) {
-        return Err(PyValueError::new_err(
+        return Err(crate::errors::builtin_message::<PyValueError>(
+            py,
             "unix_socket conflicts with explicitly provided host or port; omit both TCP fields",
         ));
     }
@@ -1035,7 +1043,7 @@ pub(crate) fn connect(
         config::optional_text(charset, "charset", false)?.as_deref(),
         config::optional_text(collation, "collation", false)?.as_deref(),
     )
-    .map_err(|error| PyValueError::new_err(error.to_string()))?;
+    .map_err(|error| crate::errors::builtin_message::<PyValueError>(py, error.to_string()))?;
     let sql_mode = config::optional_text(sql_mode, "sql_mode", true)?;
     let autocommit = configured_bool(&autocommit, "autocommit", true)?;
     let max_send = configured_size(
@@ -1084,9 +1092,9 @@ pub(crate) fn connect(
             .transpose()
     })
     .collect::<PyResult<Vec<_>>>()?;
-    let server_timeouts = server_timeouts
-        .try_into()
-        .map_err(|_| PyValueError::new_err("invalid internal server timeout count"))?;
+    let server_timeouts = server_timeouts.try_into().map_err(|_| {
+        crate::errors::builtin_message::<PyValueError>(py, "invalid internal server timeout count")
+    })?;
     let options = Options {
         decode_json: configured_bool(&decode_json, "decode_json", false)?,
         decode_set: configured_bool(&decode_set, "decode_set", false)?,
@@ -1103,7 +1111,7 @@ pub(crate) fn connect(
         .transpose()?;
     let selected = ssl.as_deref().unwrap_or(&default_ssl);
     let ssl_mode = selected.mode_name(unix);
-    let tls = selected.prepare(unix, &host)?;
+    let tls = selected.prepare(py, unix, &host)?;
     input::check(py, &budget).map_err(|error| errors::at(py, error, "connect"))?;
     let params = ConnectParams {
         endpoint: match socket {

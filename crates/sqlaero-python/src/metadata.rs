@@ -581,7 +581,10 @@ impl Columns {
             let mut index = match key.extract::<isize>() {
                 Ok(value) => value,
                 Err(error) if error.is_instance_of::<PyOverflowError>(py) => {
-                    return Err(PyIndexError::new_err("column index is out of range"));
+                    return Err(crate::errors::builtin_message::<PyIndexError>(
+                        py,
+                        "column index is out of range",
+                    ));
                 }
                 Err(error) => return Err(error),
             };
@@ -589,11 +592,15 @@ impl Columns {
                 index += self.snapshot.len() as isize;
             }
             if index < 0 || index as usize >= self.snapshot.len() {
-                return Err(PyIndexError::new_err("column index is out of range"));
+                return Err(crate::errors::builtin_message::<PyIndexError>(
+                    py,
+                    "column index is out of range",
+                ));
             }
             return Ok(self.item(py, index as usize)?.into_bound(py).into_any());
         }
-        Err(PyTypeError::new_err(
+        Err(crate::errors::builtin_message::<PyTypeError>(
+            py,
             "Columns indexes must be integers, exact string keys or slices",
         ))
     }

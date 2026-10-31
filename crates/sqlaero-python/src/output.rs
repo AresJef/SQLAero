@@ -1,7 +1,7 @@
 //! Final Python values from prepared native fields; no Python decoder loops.
 
 use crate::{errors, input::ScalarTypes, json};
-use pyo3::exceptions::PyUnicodeDecodeError;
+use pyo3::exceptions::{PyOverflowError, PyUnicodeDecodeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateTime, PyDelta, PyString, PyTime, PyTuple};
 use sqlaero_core::charset::{codec::CodecError, output::OutputCodec};
@@ -17,7 +17,7 @@ pub(crate) fn tuple_from_ready<'py, const N: usize>(
     values: [Bound<'py, PyAny>; N],
 ) -> PyResult<Bound<'py, PyTuple>> {
     let length = isize::try_from(N).map_err(|_| {
-        pyo3::exceptions::PyOverflowError::new_err("tuple length exceeds Py_ssize_t")
+        crate::errors::builtin_message::<PyOverflowError>(py, "tuple length exceeds Py_ssize_t")
     })?;
     // SAFETY: the attached constructor returns a new exact tuple or its original
     // error. The array already owns every final value; filling only moves those
@@ -42,7 +42,7 @@ pub(crate) fn tuple_from_ready_vec<'py>(
     values: Vec<Py<PyAny>>,
 ) -> PyResult<Bound<'py, PyTuple>> {
     let length = isize::try_from(values.len()).map_err(|_| {
-        pyo3::exceptions::PyOverflowError::new_err("tuple length exceeds Py_ssize_t")
+        crate::errors::builtin_message::<PyOverflowError>(py, "tuple length exceeds Py_ssize_t")
     })?;
     // SAFETY: the attached constructor returns an owned exact tuple or its
     // original error. Vec iteration and into_ptr only transfer existing owned
@@ -71,7 +71,7 @@ pub(crate) fn tuple_from_values<'py>(
     mut values: impl ExactSizeIterator<Item = PyResult<Bound<'py, PyAny>>>,
 ) -> PyResult<Bound<'py, PyTuple>> {
     let length = isize::try_from(values.len()).map_err(|_| {
-        pyo3::exceptions::PyOverflowError::new_err("tuple length exceeds Py_ssize_t")
+        crate::errors::builtin_message::<PyOverflowError>(py, "tuple length exceeds Py_ssize_t")
     })?;
     // SAFETY: attached CPython returns an owned exact tuple or NULL with its
     // original allocation error. The only owner is local, and no callback,

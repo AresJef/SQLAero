@@ -2,7 +2,7 @@
 
 use crate::output;
 use num_bigint::BigInt;
-use pyo3::exceptions::{PyException, PyTypeError, PyWarning};
+use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyWarning};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict, PyInt, PyString, PyTuple, PyType};
 use sqlaero_core::error::{ClientErrorCode, ExceptionClass};
@@ -48,6 +48,53 @@ pub(crate) fn builtin_error(typ: &Bound<'_, PyType>, message: &str) -> PyErr {
         Ok(message) => PyErr::from_type(typ.clone(), message.unbind()),
         Err(error) => error,
     }
+}
+
+/// Prepare a built-in validation error before lazy FFI error restoration.
+/// Reuse the caller's attachment token rather than attaching inside a native
+/// state guard. E must be a built-in exception type.
+#[cold]
+#[inline(never)]
+pub(crate) fn builtin_message<E: pyo3::PyTypeInfo>(
+    py: Python<'_>,
+    message: impl AsRef<str>,
+) -> PyErr {
+    builtin_error(&py.get_type::<E>(), message.as_ref())
+}
+
+/// Allocate a keyword dictionary with its actual Python failure preserved.
+pub(crate) fn dictionary(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
+    // SAFETY: this attached C constructor returns a new exact dict or NULL
+    // with its original error. No unchecked ownership conversion is used.
+    unsafe {
+        Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyDict_New())?
+            .cast_into::<PyDict>()
+            .map_err(Into::into)
+    }
+}
+
+/// Import through CPython's fallible C boundary, without a Rust-name conversion.
+pub(crate) fn module<'py>(py: Python<'py>, name: &CStr) -> PyResult<Bound<'py, PyModule>> {
+    // SAFETY: the name is terminated and Python is attached. CPython owns the
+    // import protocol and reports both import and allocation errors normally.
+    unsafe {
+        Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyImport_ImportModule(name.as_ptr()))?
+            .cast_into::<PyModule>()
+            .map_err(Into::into)
+    }
+}
+
+/// Prepare the shared driver-error keywords without unchecked conversions.
+fn error_keywords(py: Python<'_>, code: u32, server: bool) -> PyResult<Bound<'_, PyDict>> {
+    let keywords = dictionary(py)?;
+    // SAFETY: u32 fits c_ulong on every supported target. Python is attached
+    // and this normal constructor returns an owned integer or its actual error.
+    let code = unsafe {
+        Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyLong_FromUnsignedLong(code.into()))?
+    };
+    keywords.set_item(PyString::from_bytes(py, b"code")?, code)?;
+    keywords.set_item(PyString::from_bytes(py, b"is_server_error")?, server)?;
+    Ok(keywords)
 }
 
 /// Call the existing integer method without an infallible temporary name.
@@ -225,14 +272,13 @@ pyo3::create_exception!(
 /// Construct a real driver exception with complete source metadata. User-made
 /// exceptions retain the independent, optional constructor semantics below.
 pub(crate) fn client(py: Python<'_>, code: ClientErrorCode, message: impl Into<String>) -> PyErr {
-    let keywords = PyDict::new(py);
-    if let Err(error) = keywords
-        .set_item("code", code as u32)
-        .and_then(|()| keywords.set_item("is_server_error", false))
-    {
-        return error;
-    }
-    match exception_type(py, code.entry().class).call((message.into(),), Some(&keywords)) {
+    let prepared = || -> PyResult<Bound<'_, PyAny>> {
+        let keywords = error_keywords(py, code as u32, false)?;
+        let message = message.into();
+        let message = PyString::from_bytes(py, message.as_bytes())?;
+        exception_type(py, code.entry().class).call((message,), Some(&keywords))
+    };
+    match prepared() {
         Ok(value) => match value.cast_into::<PyException>() {
             Ok(value) => PyErr::from_value(value.into_any()),
             Err(error) => error.into(),
@@ -308,7 +354,8 @@ impl SQLAeroError {
         kwargs: Option<&Bound<'_, PyDict>>,
     ) -> PyResult<Self> {
         if args.len() > 1 {
-            return Err(PyTypeError::new_err(
+            return Err(crate::errors::builtin_message::<PyTypeError>(
+                py,
                 "expected at most one positional message",
             ));
         }
@@ -324,7 +371,10 @@ impl SQLAeroError {
                 match key.extract::<&str>()? {
                     "message" => {
                         if message.is_some() {
-                            return Err(PyTypeError::new_err("message was provided twice"));
+                            return Err(crate::errors::builtin_message::<PyTypeError>(
+                                py,
+                                "message was provided twice",
+                            ));
                         }
                         message = Some(value);
                     }
@@ -332,7 +382,8 @@ impl SQLAeroError {
                         if !value.is_none() {
                             if !value.is_instance_of::<PyInt>() || value.is_instance_of::<PyBool>()
                             {
-                                return Err(PyTypeError::new_err(
+                                return Err(crate::errors::builtin_message::<PyTypeError>(
+                                    py,
                                     "code must be int or None, not bool",
                                 ));
                             }
@@ -342,7 +393,8 @@ impl SQLAeroError {
                     "is_server_error" => {
                         if !value.is_none() {
                             if !value.is_exact_instance_of::<PyBool>() {
-                                return Err(PyTypeError::new_err(
+                                return Err(crate::errors::builtin_message::<PyTypeError>(
+                                    py,
                                     "is_server_error must be bool or None",
                                 ));
                             }
@@ -350,9 +402,10 @@ impl SQLAeroError {
                         }
                     }
                     key => {
-                        return Err(PyTypeError::new_err(format!(
-                            "unexpected keyword argument {key:?}"
-                        )));
+                        return Err(crate::errors::builtin_message::<PyTypeError>(
+                            py,
+                            format!("unexpected keyword argument {key:?}"),
+                        ));
                     }
                 }
             }
@@ -360,9 +413,9 @@ impl SQLAeroError {
         let provided = message.is_some();
         let message = match message {
             Some(value) => {
-                value
-                    .cast::<PyString>()
-                    .map_err(|_| PyTypeError::new_err("message must be str"))?;
+                value.cast::<PyString>().map_err(|_| {
+                    crate::errors::builtin_message::<PyTypeError>(py, "message must be str")
+                })?;
                 // SAFETY: the attached copying/base-normalizing Unicode API
                 // receives a live str. It preserves lone surrogates without
                 // calling a str subclass's conversion hooks or retaining it.
@@ -374,7 +427,7 @@ impl SQLAeroError {
                 }
                 .cast_into::<PyString>()?
             }
-            None => PyString::new(py, ""),
+            None => PyString::from_bytes(py, b"")?,
         };
         // Normalize a str subclass to plain text: no user-owned objects are
         // retained in this immutable tuple, so it cannot introduce a GC cycle.
@@ -436,7 +489,8 @@ impl SQLAeroError {
         let generation = {
             let value = slf.borrow();
             let state = value.diagnostics.lock().map_err(|_| {
-                pyo3::exceptions::PyRuntimeError::new_err(
+                crate::errors::builtin_message::<PyRuntimeError>(
+                    py,
                     "error diagnostic ownership is unavailable",
                 )
             })?;
@@ -449,7 +503,8 @@ impl SQLAeroError {
         let published = {
             let value = slf.borrow();
             let mut state = value.diagnostics.lock().map_err(|_| {
-                pyo3::exceptions::PyRuntimeError::new_err(
+                crate::errors::builtin_message::<PyRuntimeError>(
+                    py,
                     "error diagnostic ownership is unavailable",
                 )
             })?;
@@ -611,13 +666,10 @@ fn server_with_codec(
     codec: Option<sqlaero_core::charset::output::OutputCodec>,
 ) -> PyErr {
     let typ = exception_type(py, sqlaero_core::error::catalog::classify(code, state));
-    let keywords = PyDict::new(py);
-    if let Err(error) = keywords
-        .set_item("code", code)
-        .and_then(|()| keywords.set_item("is_server_error", true))
-    {
-        return error;
-    }
+    let keywords = match error_keywords(py, u32::from(code), true) {
+        Ok(value) => value,
+        Err(error) => return error,
+    };
     let mut raw_text = false;
     let message = match codec {
         Some(codec) => match crate::output::text(py, message, codec, false, None) {

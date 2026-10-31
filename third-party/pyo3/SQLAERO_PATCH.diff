@@ -1,0 +1,27 @@
+--- a/src/impl_/extract_argument.rs
++++ b/src/impl_/extract_argument.rs
+@@ -992,9 +992,21 @@
+         value: PyArg<'py>,
+         _function_description: &FunctionDescription,
+     ) -> PyResult<()> {
+-        varkeywords
+-            .get_or_insert_with(|| PyDict::new(name.py()))
+-            .set_item(name, value)
++        let dictionary = match varkeywords {
++            Some(dictionary) => dictionary,
++            None => {
++                // SAFETY: Python is attached through name, and PyDict_New
++                // returns a new exact dictionary or NULL with its actual error.
++                // Propagate that failure before entering the user's callback;
++                // the infallible PyDict::new would panic at this FFI boundary.
++                let dictionary = unsafe {
++                    Bound::<PyAny>::from_owned_ptr_or_err(name.py(), ffi::PyDict_New())?
++                        .cast_into_unchecked::<PyDict>()
++                };
++                varkeywords.insert(dictionary)
++            }
++        };
++        dictionary.set_item(name, value)
+     }
+ }
+ 

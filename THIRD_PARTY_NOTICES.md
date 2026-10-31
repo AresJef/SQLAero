@@ -11,6 +11,13 @@ Its upstream MIT license and platform scanners are preserved. The local changes
 add fallible work checkpoints used only by the Python result boundary; provenance,
 scope and upgrade instructions are in `third-party/jiter/SQLAERO_PATCH.md`.
 
+SQLAero also carries PyO3 0.29.2 at `third-party/pyo3/`, preserving its original
+MIT/Apache-2.0 licenses. One local argument-collector change checks the nullable
+dictionary allocation before collecting `**kwargs`; it propagates MemoryError
+instead of panicking before a library constructor can handle the failure. The
+version and public API are unchanged. Provenance and the complete minimal diff
+are recorded in `third-party/pyo3/SQLAERO_PATCH.md` and `SQLAERO_PATCH.diff`.
+
 | Package | Version | Declared license | Original texts |
 | --- | --- | --- | --- |
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | [LICENSE-0BSD](licenses/third-party/adler2-2.0.1/LICENSE-0BSD), [LICENSE-APACHE](licenses/third-party/adler2-2.0.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/adler2-2.0.1/LICENSE-MIT) |

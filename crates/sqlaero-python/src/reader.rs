@@ -506,7 +506,10 @@ impl Reader {
                 if size.is_exact_instance_of::<PyInt>() && !size.is_instance_of::<PyBool>() =>
             {
                 if size.lt(0)? {
-                    return Err(PyValueError::new_err("fetchmany size must not be negative"));
+                    return Err(crate::errors::builtin_message::<PyValueError>(
+                        py,
+                        "fetchmany size must not be negative",
+                    ));
                 }
                 match size.extract::<usize>() {
                     Ok(value) => value,
@@ -515,7 +518,8 @@ impl Reader {
                 }
             }
             Some(_) => {
-                return Err(PyTypeError::new_err(
+                return Err(crate::errors::builtin_message::<PyTypeError>(
+                    py,
                     "fetchmany size must be an int or None; bool is not accepted",
                 ));
             }

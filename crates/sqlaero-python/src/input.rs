@@ -1,7 +1,7 @@
 //! Exact Python scalar readers; no Python objects cross into the native core.
 
 use crate::errors;
-use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
+use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{
@@ -131,17 +131,19 @@ impl ScalarTypes {
         self.decimal.bind(py)
     }
     pub(crate) fn new(py: Python<'_>) -> PyResult<Self> {
+        // PyO3's exact datetime type checks expect an initialized C API. Its
+        // public constructor initializes that API fallibly; do this once at
+        // module preparation, rather than allowing the first value check to
+        // panic on a capsule-import failure. No temporary escapes this call.
+        drop(PyDate::new(py, 1, 1, 1)?);
+        let decimal = errors::module(py, c"decimal")?;
+        let datetime = errors::module(py, c"datetime")?;
+        let timezone = errors::attribute(datetime.as_any(), c"timezone")?;
         Ok(Self {
-            decimal: py
-                .import("decimal")?
-                .getattr("Decimal")?
+            decimal: errors::attribute(decimal.as_any(), c"Decimal")?
                 .cast_into()?
                 .unbind(),
-            utc: py
-                .import("datetime")?
-                .getattr("timezone")?
-                .getattr("utc")?
-                .unbind(),
+            utc: errors::attribute(&timezone, c"utc")?.unbind(),
         })
     }
 
@@ -199,7 +201,7 @@ impl ScalarTypes {
                 Some(_) => {
                     // The exact built-in method validates the tzinfo return
                     // type and offset range, preserving its actual exception.
-                    let offset = datetime.call_method0("utcoffset")?;
+                    let offset = datetime.call_method0(PyString::from_bytes(py, b"utcoffset")?)?;
                     if offset.is_none() {
                         None
                     } else {
@@ -234,7 +236,7 @@ impl ScalarTypes {
                 .map_err(|e| errors::wire(py, e));
         }
         if value.get_type().is(self.decimal.bind(py)) {
-            let parts = value.call_method0("as_tuple")?;
+            let parts = value.call_method0(PyString::from_bytes(py, b"as_tuple")?)?;
             let parts = parts.cast::<PyTuple>()?;
             let exponent = parts.get_item(2)?;
             if !exponent.is_exact_instance_of::<PyInt>() {
@@ -249,10 +251,13 @@ impl ScalarTypes {
                 error
             });
         }
-        Err(PyTypeError::new_err(format!(
-            "unsupported exact escape type: {}",
-            value.get_type().name()?
-        )))
+        Err(crate::errors::builtin_message::<PyTypeError>(
+            py,
+            format!(
+                "unsupported exact escape type: {}",
+                value.get_type().name()?
+            ),
+        ))
     }
 }
 
@@ -423,7 +428,8 @@ fn binary_bytearray(
     .map_err(|error| errors::wire(py, error))?;
     if length <= short.len() {
         if !copied {
-            return Err(pyo3::exceptions::PyValueError::new_err(
+            return Err(crate::errors::builtin_message::<PyValueError>(
+                py,
                 "bytearray length changed while binding; current request was not sent",
             ));
         }
@@ -458,7 +464,8 @@ fn binary_bytearray(
             true
         });
         if !copied {
-            return Err(pyo3::exceptions::PyValueError::new_err(
+            return Err(crate::errors::builtin_message::<PyValueError>(
+                py,
                 "bytearray length changed while binding; current request was not sent",
             ));
         }

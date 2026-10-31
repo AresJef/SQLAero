@@ -3,7 +3,7 @@
 use crate::{config::Argument, errors, output};
 use num_bigint::BigInt;
 use pyo3::class::{PyTraverseError, PyVisit};
-use pyo3::exceptions::{PyException, PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{PyException, PyOSError, PyRuntimeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyTuple, PyType};
 use sqlaero_core::retry::{Policy, Run};
@@ -14,6 +14,7 @@ use std::sync::{
 use std::time::{Duration, Instant};
 
 fn entries(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<Py<PyAny>>> {
+    let py = value.py();
     let values = if let Ok(tuple) = value.cast::<PyTuple>() {
         tuple.iter().map(Bound::unbind).collect()
     } else if let Ok(list) = value.cast::<PyList>() {
@@ -22,9 +23,10 @@ fn entries(value: &Bound<'_, PyAny>, name: &str) -> PyResult<Vec<Py<PyAny>>> {
         vec![value.clone().unbind()]
     };
     if values.is_empty() {
-        return Err(PyValueError::new_err(format!(
-            "{name} cannot be an empty collection"
-        )));
+        return Err(crate::errors::builtin_message::<PyValueError>(
+            py,
+            format!("{name} cannot be an empty collection"),
+        ));
     }
     Ok(values)
 }
@@ -71,7 +73,7 @@ impl RetryRule {
             let values=entries(value,"error_types")?;
             for (index,value) in values.iter().enumerate() {
                 if !value.bind(py).cast::<PyType>().is_ok_and(|typ| typ.is_subclass_of::<PyException>().unwrap_or(false)) {
-                    return Err(PyTypeError::new_err(format!("error_types[{index}] must be an Exception subclass, excluding control-flow BaseException classes")));
+                    return Err(crate::errors::builtin_message::<PyTypeError>(py, format!("error_types[{index}] must be an Exception subclass, excluding control-flow BaseException classes")));
                 }
             }
             output::tuple_from_ready_vec(py,values).map(Bound::unbind)
@@ -84,9 +86,10 @@ impl RetryRule {
                     .map(|(index, value)| {
                         let value = value.bind(py);
                         if !value.is_instance_of::<PyInt>() || value.is_instance_of::<PyBool>() {
-                            return Err(PyTypeError::new_err(format!(
-                                "error_codes[{index}] must be int or IntEnum, not bool"
-                            )));
+                            return Err(crate::errors::builtin_message::<PyTypeError>(
+                                py,
+                                format!("error_codes[{index}] must be int or IntEnum, not bool"),
+                            ));
                         }
                         errors::integer_value(value)
                     })
@@ -94,7 +97,8 @@ impl RetryRule {
             })
             .transpose()?;
         if types.is_none() && numbers.is_none() {
-            return Err(PyValueError::new_err(
+            return Err(crate::errors::builtin_message::<PyValueError>(
+                py,
                 "at least one of error_types or error_codes must be provided",
             ));
         }
@@ -143,21 +147,33 @@ fn numeric(
     default: f64,
 ) -> PyResult<(f64, Py<PyAny>)> {
     let original = value.0.as_ref().map_or_else(
-        || default.into_pyobject(py).map(Bound::into_any),
+        || {
+            // SAFETY: this attached scalar constructor returns a new exact
+            // float or its original allocation failure; it must not use an
+            // infallible IntoPyObject conversion at the FFI boundary.
+            unsafe {
+                Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyFloat_FromDouble(default))
+            }
+        },
         |value| Ok(value.clone()),
     )?;
     if !original.is_exact_instance_of::<PyInt>() && !original.is_exact_instance_of::<PyFloat>() {
-        return Err(PyTypeError::new_err(format!(
-            "{name} must be a built-in int or float, not bool"
-        )));
+        return Err(crate::errors::builtin_message::<PyTypeError>(
+            py,
+            format!("{name} must be a built-in int or float, not bool"),
+        ));
     }
-    let number = original
-        .extract::<f64>()
-        .map_err(|_| PyValueError::new_err(format!("{name} cannot be represented safely")))?;
+    let number = original.extract::<f64>().map_err(|_| {
+        crate::errors::builtin_message::<PyValueError>(
+            py,
+            format!("{name} cannot be represented safely"),
+        )
+    })?;
     if !number.is_finite() || number < 0.0 {
-        return Err(PyValueError::new_err(format!(
-            "{name} must be finite and nonnegative"
-        )));
+        return Err(crate::errors::builtin_message::<PyValueError>(
+            py,
+            format!("{name} must be finite and nonnegative"),
+        ));
     }
     Ok((number, original.unbind()))
 }
@@ -176,10 +192,9 @@ pub(crate) struct Retry {
 }
 impl Retry {
     fn matches(&self, py: Python<'_>, error: &PyErr) -> PyResult<bool> {
-        let rules = self
-            .rules
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("retry configuration was released"))?;
+        let rules = self.rules.as_ref().ok_or_else(|| {
+            crate::errors::builtin_message::<PyRuntimeError>(py, "retry configuration was released")
+        })?;
         for rule in rules.bind(py).iter() {
             if rule.extract::<PyRef<'_, RetryRule>>()?.matches(py, error) {
                 return Ok(true);
@@ -205,15 +220,17 @@ impl Retry {
         wait_jitter: Argument<'_>,
     ) -> PyResult<Self> {
         if rules.is_empty() {
-            return Err(PyValueError::new_err(
+            return Err(crate::errors::builtin_message::<PyValueError>(
+                py,
                 "Retry requires at least one RetryRule",
             ));
         }
         for (index, rule) in rules.iter().enumerate() {
             if !rule.is_instance_of::<RetryRule>() {
-                return Err(PyTypeError::new_err(format!(
-                    "rules[{index}] must be RetryRule"
-                )));
+                return Err(crate::errors::builtin_message::<PyTypeError>(
+                    py,
+                    format!("rules[{index}] must be RetryRule"),
+                ));
             }
         }
         let maximum = match max_attempts.0.as_ref() {
@@ -225,13 +242,15 @@ impl Retry {
                     .ok()
                     .filter(|value| *value > 0)
                     .ok_or_else(|| {
-                        PyValueError::new_err(
+                        crate::errors::builtin_message::<PyValueError>(
+                            py,
                             "max_attempts must be 1..2**64-1, or None for unlimited attempts",
                         )
                     })?,
             ),
             _ => {
-                return Err(PyTypeError::new_err(
+                return Err(crate::errors::builtin_message::<PyTypeError>(
+                    py,
                     "max_attempts must be a built-in int or None, not bool",
                 ));
             }
@@ -240,9 +259,10 @@ impl Retry {
         let (factor, multiplier) = numeric(py, &wait_multiplier, "wait_multiplier", 1.0)?;
         let (limit, cap) = numeric(py, &max_wait_interval, "max_wait_interval", 10.0)?;
         let policy = Policy::new(maximum, initial, factor, limit).map_err(|name| {
-            PyValueError::new_err(format!(
-                "{name} is outside its supported finite timing range"
-            ))
+            crate::errors::builtin_message::<PyValueError>(
+                py,
+                format!("{name} is outside its supported finite timing range"),
+            )
         })?;
         let jitter = wait_jitter.0.as_ref().map_or(Ok(false), |value| {
             crate::config::boolean(value, "wait_jitter")
@@ -305,10 +325,10 @@ impl Retry {
     }
 }
 
-fn lock(state: &Mutex<Run>) -> PyResult<std::sync::MutexGuard<'_, Run>> {
-    state
-        .lock()
-        .map_err(|_| PyRuntimeError::new_err("retry traversal state is unavailable"))
+fn lock<'a>(py: Python<'_>, state: &'a Mutex<Run>) -> PyResult<std::sync::MutexGuard<'a, Run>> {
+    state.lock().map_err(|_| {
+        crate::errors::builtin_message::<PyRuntimeError>(py, "retry traversal state is unavailable")
+    })
 }
 fn wait(py: Python<'_>, seconds: f64, jitter: bool) -> PyResult<()> {
     if seconds == 0.0 {
@@ -317,14 +337,18 @@ fn wait(py: Python<'_>, seconds: f64, jitter: bool) -> PyResult<()> {
     let seconds = if jitter {
         let mut bytes = [0; 8];
         getrandom::fill(&mut bytes)
-            .map_err(|error| pyo3::exceptions::PyOSError::new_err(error.to_string()))?;
+            .map_err(|error| crate::errors::builtin_message::<PyOSError>(py, error.to_string()))?;
         let fraction = (u64::from_ne_bytes(bytes) >> 11) as f64 / ((1u64 << 53) - 1) as f64;
         seconds * fraction
     } else {
         seconds
     };
-    let duration = Duration::try_from_secs_f64(seconds)
-        .map_err(|_| PyValueError::new_err("retry delay cannot be represented safely"))?;
+    let duration = Duration::try_from_secs_f64(seconds).map_err(|_| {
+        crate::errors::builtin_message::<PyValueError>(
+            py,
+            "retry delay cannot be represented safely",
+        )
+    })?;
     let start = Instant::now();
     while let Some(remaining) = duration.checked_sub(start.elapsed()) {
         if remaining.is_zero() {
@@ -349,18 +373,17 @@ impl RetryIterator {
         slf
     }
     fn __next__(&self, py: Python<'_>) -> PyResult<Option<RetryAttempt>> {
-        let delay = lock(&self.state)?
+        let delay = lock(py, &self.state)?
             .begin()
-            .map_err(PyRuntimeError::new_err)?;
+            .map_err(|message| crate::errors::builtin_message::<PyRuntimeError>(py, message))?;
         let Some(delay) = delay else {
             return Ok(None);
         };
-        let owner = self
-            .owner
-            .as_ref()
-            .ok_or_else(|| PyRuntimeError::new_err("retry traversal was released"))?;
+        let owner = self.owner.as_ref().ok_or_else(|| {
+            crate::errors::builtin_message::<PyRuntimeError>(py, "retry traversal was released")
+        })?;
         if let Err(error) = wait(py, delay, owner.borrow(py).jitter) {
-            lock(&self.state)?.cancel();
+            lock(py, &self.state)?.cancel();
             return Err(error);
         }
         Ok(Some(RetryAttempt {
@@ -391,8 +414,10 @@ pub(crate) struct RetryAttempt {
 #[pymethods]
 impl RetryAttempt {
     fn __enter__(slf: PyRef<'_, Self>) -> PyResult<PyRef<'_, Self>> {
+        let py = slf.py();
         if slf.entered.swap(true, Ordering::AcqRel) {
-            return Err(PyRuntimeError::new_err(
+            return Err(crate::errors::builtin_message::<PyRuntimeError>(
+                py,
                 "RetryAttempt can be entered only once",
             ));
         }
@@ -406,24 +431,24 @@ impl RetryAttempt {
         _traceback: &Bound<'_, PyAny>,
     ) -> PyResult<bool> {
         if !self.entered.load(Ordering::Acquire) || self.exited.swap(true, Ordering::AcqRel) {
-            return Err(PyRuntimeError::new_err(
+            return Err(crate::errors::builtin_message::<PyRuntimeError>(
+                py,
                 "RetryAttempt has no active context to exit",
             ));
         }
         let matched = if value.is_none() {
             false
         } else {
-            let owner = self
-                .owner
-                .as_ref()
-                .ok_or_else(|| PyRuntimeError::new_err("retry attempt was released"))?;
+            let owner = self.owner.as_ref().ok_or_else(|| {
+                crate::errors::builtin_message::<PyRuntimeError>(py, "retry attempt was released")
+            })?;
             owner
                 .borrow(py)
                 .matches(py, &PyErr::from_value(value.clone()))?
         };
-        lock(&self.state)?
+        lock(py, &self.state)?
             .finish(matched)
-            .map_err(PyRuntimeError::new_err)
+            .map_err(|message| crate::errors::builtin_message::<PyRuntimeError>(py, message))
     }
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.owner)

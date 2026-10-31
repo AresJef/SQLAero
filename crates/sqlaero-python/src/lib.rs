@@ -21,9 +21,9 @@ use pyo3::types::{PyBytes, PyString};
 ///
 /// This private installation probe is not a public configuration API.
 #[pyfunction]
-fn _parse_size(value: &str) -> PyResult<usize> {
+fn _parse_size(py: Python<'_>, value: &str) -> PyResult<usize> {
     sqlaero_core::config::size::parse_size(value)
-        .map_err(|error| PyValueError::new_err(error.to_string()))
+        .map_err(|error| crate::errors::builtin_message::<PyValueError>(py, error.to_string()))
 }
 
 /// Exercise the single-pass output decoder before result-set integration.
@@ -44,11 +44,12 @@ fn _encode_scalar<'py>(
     charset: Option<&str>,
     no_backslash: bool,
 ) -> PyResult<Bound<'py, PyBytes>> {
+    let py = module.py();
     let owner = module.getattr(PyString::from_bytes(module.py(), b"_scalar_types")?)?;
     let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
     let mut request = Vec::new();
     let encoding = sqlaero_core::charset::resolve(charset, None)
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(|error| crate::errors::builtin_message::<PyValueError>(py, error.to_string()))?;
     let context = sqlaero_core::bind::Context {
         codec: sqlaero_core::charset::codec::Codec::new(encoding.charset),
         no_backslash_escapes: no_backslash,
@@ -111,12 +112,13 @@ impl _ValueEncoder {
 #[pyfunction]
 #[pyo3(pass_module, signature = (*, no_backslash=false))]
 fn _prepare_encoder(module: &Bound<'_, PyModule>, no_backslash: bool) -> PyResult<_ValueEncoder> {
+    let py = module.py();
     let types = module
         .getattr(PyString::from_bytes(module.py(), b"_scalar_types")?)?
         .cast_into::<input::ScalarTypes>()?
         .unbind();
     let encoding = sqlaero_core::charset::resolve(None, None)
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(|error| crate::errors::builtin_message::<PyValueError>(py, error.to_string()))?;
     let context = sqlaero_core::bind::Context {
         codec: sqlaero_core::charset::codec::Codec::new(encoding.charset),
         no_backslash_escapes: no_backslash,
@@ -137,7 +139,7 @@ fn _decode_text<'py>(data: &Bound<'py, PyBytes>, charset: &str) -> PyResult<Boun
     let py = data.py();
     let codec = Codec::new(
         resolve(Some(charset), None)
-            .map_err(|error| PyValueError::new_err(error.to_string()))?
+            .map_err(|error| crate::errors::builtin_message::<PyValueError>(py, error.to_string()))?
             .charset,
     );
     match codec.decode(data.as_bytes()) {
@@ -202,7 +204,9 @@ fn _bind_sql<'py>(
     let context = Context {
         codec: Codec::new(
             resolve(charset, None)
-                .map_err(|error| PyValueError::new_err(error.to_string()))?
+                .map_err(|error| {
+                    crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+                })?
                 .charset,
         ),
         no_backslash_escapes: no_backslash,
@@ -259,7 +263,8 @@ fn _bind_sql<'py>(
                     .push(&encoded)
                     .map_err(|error| errors::wire(py, error))?
                 {
-                    return Err(PyValueError::new_err(
+                    return Err(crate::errors::builtin_message::<PyValueError>(
+                        py,
                         "legal first row did not fit empty request",
                     ));
                 }
@@ -347,22 +352,27 @@ fn _rows_from_packets(
     let py = module.py();
     let capabilities = CapabilityFlags::CLIENT_PROTOCOL_41 | CapabilityFlags::CLIENT_DEPRECATE_EOF;
     let mut collector = Receiver::isolated(capabilities, 256 * 1024 * 1024)
-        .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        .map_err(|error| crate::errors::builtin_message::<PyValueError>(py, error.to_string()))?;
     let mut complete = None;
     for index in 0..packets.len() {
         if complete.is_some() {
-            return Err(PyValueError::new_err(
+            return Err(crate::errors::builtin_message::<PyValueError>(
+                py,
                 "packet fixture contains a second response",
             ));
         }
         let packet = packets.get_item(index)?.cast_into::<PyBytes>()?;
-        complete = collector
-            .push(packet.as_bytes())
-            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        complete = collector.push(packet.as_bytes()).map_err(|error| {
+            crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+        })?;
         py.check_signals()?;
     }
-    let response =
-        complete.ok_or_else(|| PyValueError::new_err("packet fixture has no complete response"))?;
+    let response = complete.ok_or_else(|| {
+        crate::errors::builtin_message::<PyValueError>(
+            py,
+            "packet fixture has no complete response",
+        )
+    })?;
     let types = module
         .getattr(PyString::from_bytes(module.py(), b"_scalar_types")?)?
         .cast_into::<input::ScalarTypes>()?

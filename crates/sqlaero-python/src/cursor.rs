@@ -198,7 +198,8 @@ impl Cursor {
             .try_command()
             .map_err(|error| errors::access(py, error))?;
         let sql = sql.cast::<PyString>().map_err(|_| {
-            pyo3::exceptions::PyTypeError::new_err(
+            crate::errors::builtin_message::<pyo3::exceptions::PyTypeError>(
+                py,
                 "sql must be str; already encoded bytes are not accepted",
             )
         })?;

@@ -8,7 +8,7 @@ use super::{SQLAeroError, attribute, code_object};
 use crate::output;
 use num_bigint::BigInt;
 use pyo3::class::{PyTraverseError, PyVisit};
-use pyo3::exceptions::PyAttributeError;
+use pyo3::exceptions::{PyAttributeError, PyRuntimeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyInt, PyList, PyString, PyTuple, PyType};
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -237,16 +237,20 @@ fn stack(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>
     if traceback.is_none() {
         return Ok(None);
     }
-    let module = py.import("traceback")?;
+    let module = super::module(py, c"traceback")?;
     let frames = attribute(module.as_any(), c"walk_tb")?.call1((traceback,))?;
-    let keywords = pyo3::types::PyDict::new(py);
-    keywords.set_item("capture_locals", false)?;
-    keywords.set_item("lookup_lines", false)?;
+    let keywords = super::dictionary(py)?;
+    keywords.set_item(PyString::from_bytes(py, b"capture_locals")?, false)?;
+    keywords.set_item(PyString::from_bytes(py, b"lookup_lines")?, false)?;
     // StackSummary consumes walk_tb now. It stores source locations, not the
     // traceback, live frames or their locals; line formatting remains lazy.
     Ok(Some(
         attribute(module.as_any(), c"StackSummary")?
-            .call_method("extract", (frames,), Some(&keywords))?
+            .call_method(
+                PyString::from_bytes(py, b"extract")?,
+                (frames,),
+                Some(&keywords),
+            )?
             .unbind(),
     ))
 }
@@ -258,40 +262,42 @@ fn fresh(
     construction: &mut Construction<'_>,
 ) -> PyResult<Py<ErrorInfo>> {
     let display = copied_text(value.str()?.as_any())?.unbind();
-    let (message, code, is_server_error, native, additional, actual_stage) = if let Ok(error) =
-        value.extract::<PyRef<'_, SQLAeroError>>()
-    {
-        let state = error.diagnostics.lock().map_err(|_| {
-            pyo3::exceptions::PyRuntimeError::new_err("error diagnostic ownership is unavailable")
-        })?;
-        (
-            error.message.clone_ref(py),
-            error.code.clone(),
-            error.is_server_error,
-            state.native.clone(),
-            if include_additional {
-                state
-                    .additional
-                    .iter()
-                    .map(|info| info.clone_ref(py))
-                    .collect()
-            } else {
-                Vec::new()
-            },
-            stage
-                .map(str::to_owned)
-                .or_else(|| state.stage.map(str::to_owned)),
-        )
-    } else {
-        (
-            display.clone_ref(py),
-            None,
-            None,
-            None,
-            Vec::new(),
-            stage.map(str::to_owned),
-        )
-    };
+    let (message, code, is_server_error, native, additional, actual_stage) =
+        if let Ok(error) = value.extract::<PyRef<'_, SQLAeroError>>() {
+            let state = error.diagnostics.lock().map_err(|_| {
+                crate::errors::builtin_message::<PyRuntimeError>(
+                    py,
+                    "error diagnostic ownership is unavailable",
+                )
+            })?;
+            (
+                error.message.clone_ref(py),
+                error.code.clone(),
+                error.is_server_error,
+                state.native.clone(),
+                if include_additional {
+                    state
+                        .additional
+                        .iter()
+                        .map(|info| info.clone_ref(py))
+                        .collect()
+                } else {
+                    Vec::new()
+                },
+                stage
+                    .map(str::to_owned)
+                    .or_else(|| state.stage.map(str::to_owned)),
+            )
+        } else {
+            (
+                display.clone_ref(py),
+                None,
+                None,
+                None,
+                Vec::new(),
+                stage.map(str::to_owned),
+            )
+        };
     let os_errno = if value.is_instance_of::<pyo3::exceptions::PyOSError>() {
         attribute(value, c"errno")?.extract::<Option<i32>>()?
     } else {
@@ -470,7 +476,7 @@ fn format_traceback(py: Python<'_>, root: &Bound<'_, ErrorInfo>) -> PyResult<Opt
     let mut lines: Vec<Py<PyAny>> = Vec::new();
     if cyclic {
         lines.push(
-            PyString::new(py, "[cycle in captured exception chain]\n")
+            PyString::from_bytes(py, b"[cycle in captured exception chain]\n")?
                 .into_any()
                 .unbind(),
         );
@@ -478,36 +484,44 @@ fn format_traceback(py: Python<'_>, root: &Bound<'_, ErrorInfo>) -> PyResult<Opt
     let mut first = true;
     for (info, relation) in chain.into_iter().rev() {
         if !first && !relation.is_empty() {
-            lines.push(PyString::new(py, relation).into_any().unbind());
+            lines.push(
+                PyString::from_bytes(py, relation.as_bytes())?
+                    .into_any()
+                    .unbind(),
+            );
         }
         first = false;
         let value = info.borrow(py);
         let stack = value.stack.as_ref().map(|stack| stack.clone_ref(py));
         let display = value.display.clone_ref(py);
         let notes = value.notes.clone_ref(py);
-        let name = label(py, &value, true)?;
+        let name = PyString::from_bytes(py, label(py, &value, true)?.as_bytes())?;
         drop(value);
         if let Some(stack) = stack {
             lines.push(
-                PyString::new(py, "Traceback (most recent call last):\n")
+                PyString::from_bytes(py, b"Traceback (most recent call last):\n")?
                     .into_any()
                     .unbind(),
             );
-            for line in stack.bind(py).call_method0("format")?.try_iter()? {
+            for line in stack
+                .bind(py)
+                .call_method0(PyString::from_bytes(py, b"format")?)?
+                .try_iter()?
+            {
                 lines.push(copied_text(&line?)?.into_any().unbind());
             }
         }
         lines.push(
-            PyString::new(py, "{}: {}\n")
-                .call_method1("format", (name, display))?
+            PyString::from_bytes(py, b"{}: {}\n")?
+                .call_method1(PyString::from_bytes(py, b"format")?, (name, display))?
                 .cast_into::<PyString>()?
                 .into_any()
                 .unbind(),
         );
         for note in notes.bind(py).iter() {
             lines.push(
-                PyString::new(py, "{}\n")
-                    .call_method1("format", (note,))?
+                PyString::from_bytes(py, b"{}\n")?
+                    .call_method1(PyString::from_bytes(py, b"format")?, (note,))?
                     .cast_into::<PyString>()?
                     .into_any()
                     .unbind(),
@@ -515,8 +529,11 @@ fn format_traceback(py: Python<'_>, root: &Bound<'_, ErrorInfo>) -> PyResult<Opt
         }
     }
     Ok(Some(
-        PyString::new(py, "")
-            .call_method1("join", (output::tuple_from_ready_vec(py, lines)?,))?
+        PyString::from_bytes(py, b"")?
+            .call_method1(
+                PyString::from_bytes(py, b"join")?,
+                (output::tuple_from_ready_vec(py, lines)?,),
+            )?
             .cast_into::<PyString>()?
             .unbind(),
     ))
@@ -605,7 +622,8 @@ impl ErrorInfo {
             .get()
             .map(|value| value.clone_ref(py))
             .ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err(
+                crate::errors::builtin_message::<PyRuntimeError>(
+                    py,
                     "diagnostic additional-error publication is unavailable",
                 )
             })
@@ -627,38 +645,72 @@ impl ErrorInfo {
             .get()
             .map(|value| value.as_ref().map(|value| value.clone_ref(py)))
             .ok_or_else(|| {
-                pyo3::exceptions::PyRuntimeError::new_err(
+                crate::errors::builtin_message::<PyRuntimeError>(
+                    py,
                     "diagnostic traceback publication is unavailable",
                 )
             })
     }
     fn __str__(&self, py: Python<'_>) -> PyResult<Py<PyString>> {
         let escaped = self.message.bind(py).repr()?;
-        let content = escaped.get_item(pyo3::types::PySlice::new(py, 1, -1, 1))?;
+        let length = escaped.len()?;
+        // SAFETY: repr produced a live exact Unicode string enclosed by two
+        // quotes. CPython copies this in-bounds interior or reports its actual
+        // error; no infallible temporary slice or index objects are needed.
+        let content = unsafe {
+            Bound::<PyAny>::from_owned_ptr_or_err(
+                py,
+                pyo3::ffi::PyUnicode_Substring(escaped.as_ptr(), 1, length as isize - 1),
+            )?
+        };
+        let name = PyString::from_bytes(py, label(py, self, false)?.as_bytes())?;
+        let stage = self
+            .stage
+            .as_deref()
+            .map(|value| PyString::from_bytes(py, value.as_bytes()))
+            .transpose()?;
         Ok(
-            PyString::new(py, "{} [stage={}, code={}, is_server_error={}]: {}")
+            PyString::from_bytes(py, b"{} [stage={}, code={}, is_server_error={}]: {}")?
                 .call_method1(
-                    "format",
-                    (
-                        label(py, self, false)?,
-                        self.stage.as_deref(),
-                        self.code(py)?,
-                        self.is_server_error,
-                        content,
-                    ),
+                    PyString::from_bytes(py, b"format")?,
+                    (name, stage, self.code(py)?, self.is_server_error, content),
                 )?
                 .cast_into::<PyString>()?
                 .unbind(),
         )
     }
     fn __repr__(&self, py: Python<'_>) -> PyResult<Py<PyString>> {
-        let exception_type = if self.exception_type.is_some() {
+        let name = if self.exception_type.is_some() {
             label(py, self, true)?
         } else {
             "None".to_owned()
         };
-        Ok(PyString::new(py, "ErrorInfo(stage={!r}, exception_type={}, native_type={!r}, code={}, os_errno={}, is_server_error={}, message={!r})")
-            .call_method1("format", (self.stage.as_deref(), exception_type, self.native_type.as_deref(), self.code(py)?, self.os_errno, self.is_server_error, self.message.bind(py)))?
+        let exception_type = PyString::from_bytes(py, name.as_bytes())?;
+        let stage = self
+            .stage
+            .as_deref()
+            .map(|value| PyString::from_bytes(py, value.as_bytes()))
+            .transpose()?;
+        let native_type = self
+            .native_type
+            .as_deref()
+            .map(|value| PyString::from_bytes(py, value.as_bytes()))
+            .transpose()?;
+        let os_errno = self
+            .os_errno
+            .map(|value| {
+                // SAFETY: Python is attached; i32 fits c_long on supported targets.
+                // The constructor returns a new integer or its original error.
+                unsafe {
+                    Bound::<PyAny>::from_owned_ptr_or_err(
+                        py,
+                        pyo3::ffi::PyLong_FromLong(value.into()),
+                    )
+                }
+            })
+            .transpose()?;
+        Ok(PyString::from_bytes(py, b"ErrorInfo(stage={!r}, exception_type={}, native_type={!r}, code={}, os_errno={}, is_server_error={}, message={!r})")?
+            .call_method1(PyString::from_bytes(py, b"format")?, (stage, exception_type, native_type, self.code(py)?, os_errno, self.is_server_error, self.message.bind(py)))?
             .cast_into::<PyString>()?.unbind())
     }
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
