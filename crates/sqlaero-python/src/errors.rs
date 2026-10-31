@@ -13,6 +13,15 @@ use std::sync::Mutex;
 mod diagnostics;
 pub(crate) use diagnostics::ErrorInfo;
 
+// Like the existing 3.12 signed-byte conversion below, this uses CPython's
+// full C API. The 3.12 header exports size_t _PyLong_NumBits(PyObject *),
+// but the pinned PyO3 ffi omits its declaration. No object layout is read.
+#[cfg(not(Py_3_13))]
+unsafe extern "C" {
+    #[link_name = "_PyLong_NumBits"]
+    fn integer_native_bits(value: *mut pyo3::ffi::PyObject) -> usize;
+}
+
 /// Read a named Python attribute without an infallible temporary name object.
 pub(crate) fn attribute<'py>(
     value: &Bound<'py, PyAny>,
@@ -125,18 +134,15 @@ pub(crate) fn integer_value(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
         } else {
             // Keep the existing subclass callback and its errors above, but
             // never trust an override to size the actual integer's storage.
-            // Calling int's descriptor directly reads the immutable base value
-            // without invoking __int__, __index__, or a second override.
-            let method = attribute(value.py().get_type::<PyInt>().as_any(), c"bit_length")?;
-            // SAFETY: both owned references remain live and the current thread
-            // is attached. CallOneArg returns its new reference or real error.
-            unsafe {
-                Bound::<PyAny>::from_owned_ptr_or_err(
-                    value.py(),
-                    pyo3::ffi::PyObject_CallOneArg(method.as_ptr(), value.as_ptr()),
-                )?
+            // SAFETY: the cast proved a live normalized Python int (including
+            // subclasses), its digits are immutable, and 3.12 holds the GIL.
+            // The exported API reads its absolute native width without Python
+            // callbacks. SIZE_MAX reports the original OverflowError.
+            let bits = unsafe { integer_native_bits(value.as_ptr()) };
+            if bits == usize::MAX {
+                return Err(PyErr::fetch(value.py()));
             }
-            .extract::<usize>()?
+            bits
         };
         integer_value_with_bits(value, bits)
     }
