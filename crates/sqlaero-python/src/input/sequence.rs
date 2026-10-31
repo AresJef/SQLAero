@@ -99,7 +99,7 @@ impl<'py> Sequence<'py> {
             })?;
             return Ok(Some(Self::Normalized {
                 owner: value.clone(),
-                inner: Box::new(inner),
+                inner: super::boxed(py, inner)?,
             }));
         }
         let values = if value.is_exact_instance_of::<PyDict>() {

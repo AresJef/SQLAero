@@ -22,6 +22,27 @@ pub(crate) mod source;
 pub(crate) mod standard;
 pub(crate) mod temporal;
 
+/// Allocate one boundary-owned strategy fallibly, using the same global
+/// allocation/layout that Box will later release. No upstream storage is read.
+pub(crate) fn boxed<T>(py: Python<'_>, value: T) -> PyResult<Box<T>> {
+    let layout = std::alloc::Layout::new::<T>();
+    let pointer = if layout.size() == 0 {
+        std::ptr::NonNull::<T>::dangling()
+    } else {
+        // SAFETY: Layout::new is valid for T; alloc returns suitably aligned
+        // storage or NULL. NULL is checked before any write or ownership move.
+        let raw = unsafe { std::alloc::alloc(layout) }.cast::<T>();
+        std::ptr::NonNull::new(raw).ok_or_else(|| errors::memory_error(py))?
+    };
+    // SAFETY: this is the unique suitably aligned allocation for exactly T
+    // (or its valid ZST dangling pointer). Initialize before giving Box the
+    // matching global-allocator ownership; no fallible work follows the write.
+    unsafe {
+        pointer.as_ptr().write(value);
+        Ok(Box::from_raw(pointer.as_ptr()))
+    }
+}
+
 /// Build a public Python index fallibly, shared by provider boundary adapters.
 /// No intermediate Python value or implicit infallible tuple conversion is used.
 pub(crate) fn python_index<'py>(py: Python<'py>, index: usize) -> PyResult<Bound<'py, PyAny>> {

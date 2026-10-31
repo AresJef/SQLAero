@@ -30,22 +30,22 @@ pub(crate) fn prepare<'py>(
     }
     if let Some(numpy) = types.numpy_types(value.py())? {
         if let Some(source) = numpy.prepare_array(value, budget)? {
-            return Ok(Some(Box::new(source)));
+            return Ok(Some(super::boxed(value.py(), source)?));
         }
         if let Some(source) = numpy.prepare_record(value, budget)? {
-            return Ok(Some(Box::new(source)));
+            return Ok(Some(super::boxed(value.py(), source)?));
         }
         if let Some(pandas) = types.pandas_types(value.py())?
             && let Some(source) = pandas.prepare(value, numpy, budget)?
         {
-            return Ok(Some(Box::new(source)));
+            return Ok(Some(super::boxed(value.py(), source)?));
         }
     }
     if let Some(source) = super::polars::prepare(value, budget)? {
-        return Ok(Some(Box::new(source)));
+        return Ok(Some(super::boxed(value.py(), source)?));
     }
     if let Some(source) = super::arrow::prepare(value, budget)? {
-        return Ok(Some(Box::new(source)));
+        return Ok(Some(super::boxed(value.py(), source)?));
     }
     Ok(None)
 }

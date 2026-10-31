@@ -88,7 +88,7 @@ fn struct_time(
         // SAFETY: the checked public integer protocol deliberately rejects
         // float truncation and numeric strings. It returns an owned exact int.
         let converted = unsafe { Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Index(value.as_ptr())) }.inspect_err(|error| {
-            errors::note(py, error, format!("while reading struct_time component [{index}]; an integer or __index__ result is required"));
+            errors::note_format(py, error, format_args!("while reading struct_time component [{index}]; an integer or __index__ result is required"));
         })?;
         let mut overflow = 0;
         // SAFETY: `converted` is an owned exact int; range overflow is reported
@@ -101,9 +101,9 @@ fn struct_time(
             return Err(PyErr::fetch(py));
         }
         if overflow < 0 || (overflow == 0 && sign < 0) {
-            return Err(errors::builtin_message::<PyValueError>(
+            return Err(errors::builtin_format::<PyValueError>(
                 py,
-                format!(
+                format_args!(
                     "struct_time component [{index}] must be nonnegative; negative separators cannot be encoded accurately"
                 ),
             ));

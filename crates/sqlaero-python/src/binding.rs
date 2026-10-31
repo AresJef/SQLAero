@@ -183,12 +183,19 @@ impl<'py> Rows<'py> {
 }
 
 fn note_preparation(py: Python<'_>, error: &PyErr, index: Option<usize>) {
-    let path = index.map_or_else(|| "args".to_owned(), |index| format!("args[{index}]"));
-    errors::note(
-        py,
-        error,
-        format!("while binding {path}; current request was not sent"),
-    );
+    if let Some(index) = index {
+        errors::note_format(
+            py,
+            error,
+            format_args!("while binding args[{index}]; current request was not sent"),
+        );
+    } else {
+        errors::note_format(
+            py,
+            error,
+            format_args!("while binding args; current request was not sent"),
+        );
+    }
 }
 
 enum SourceRef<'r, 'py> {

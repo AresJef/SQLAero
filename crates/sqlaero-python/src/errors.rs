@@ -62,6 +62,47 @@ pub(crate) fn builtin_message<E: pyo3::PyTypeInfo>(
     builtin_error(&py.get_type::<E>(), message.as_ref())
 }
 
+/// Format an internal diagnostic through checked Rust capacity growth. Only
+/// native scalar/string arguments belong here; this never invokes Python repr.
+#[cold]
+#[inline(never)]
+pub(crate) fn message(py: Python<'_>, arguments: std::fmt::Arguments<'_>) -> PyResult<String> {
+    struct Text(String);
+    impl std::fmt::Write for Text {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            self.0
+                .try_reserve(text.len())
+                .map_err(|_| std::fmt::Error)?;
+            self.0.push_str(text);
+            Ok(())
+        }
+    }
+    let mut text = Text(String::new());
+    std::fmt::write(&mut text, arguments).map_err(|_| memory_error(py))?;
+    Ok(text.0)
+}
+
+/// Keep dynamic built-in diagnostics fallible before lazy FFI restoration.
+#[cold]
+pub(crate) fn builtin_format<E: pyo3::PyTypeInfo>(
+    py: Python<'_>,
+    arguments: std::fmt::Arguments<'_>,
+) -> PyErr {
+    match message(py, arguments) {
+        Ok(message) => builtin_message::<E>(py, message),
+        Err(error) => error,
+    }
+}
+
+/// Optional location notes cannot replace the original exception if their
+/// formatting or Python allocation fails.
+#[cold]
+pub(crate) fn note_format(py: Python<'_>, primary: &PyErr, arguments: std::fmt::Arguments<'_>) {
+    if let Ok(message) = message(py, arguments) {
+        note(py, primary, message);
+    }
+}
+
 /// Allocate a keyword dictionary with its actual Python failure preserved.
 pub(crate) fn dictionary(py: Python<'_>) -> PyResult<Bound<'_, PyDict>> {
     // SAFETY: this attached C constructor returns a new exact dict or NULL

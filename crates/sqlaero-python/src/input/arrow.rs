@@ -101,11 +101,11 @@ impl StreamAbi {
                 clipped = length == bytes.len();
             }
         }
-        invalid(
+        errors::builtin_format::<PyTypeError>(
             py,
-            format!(
+            format_args!(
                 "Arrow stream {operation} failed with status {status}: {}{}",
-                String::from_utf8_lossy(&bytes[..length]),
+                bytes[..length].escape_ascii(),
                 if clipped { " [truncated]" } else { "" }
             ),
         )
@@ -836,11 +836,11 @@ fn byte_slice<'a>(py: Python<'_>, array: &'a ArrayRef, index: usize) -> PyResult
 
 fn utf8<'a>(py: Python<'_>, bytes: &'a [u8], start: usize) -> PyResult<&'a str> {
     std::str::from_utf8(bytes).map_err(|error| {
-        invalid(
+        errors::builtin_format::<PyTypeError>(
             py,
-            format!(
+            format_args!(
                 "Arrow UTF-8 value is invalid at byte {}",
-                start + error.valid_up_to()
+                start.saturating_add(error.valid_up_to())
             ),
         )
     })
