@@ -240,3 +240,65 @@ def test_manifest_requires_platform_specific_na_counts(
         with pytest.raises(AssertionError):
             release_artifacts.manifest(distribution, identities, output)
         assert not output.exists()
+
+
+def test_known_provider_collection_gap_needs_its_actual_capability_report(tmp_path: Path) -> None:
+    from xml.etree import ElementTree
+    report = tmp_path / 'tests.xml'
+    write_skips(report, (UNIX_NAME,), 'tests.test_public_connection', UNIX_REASON)
+    tree = ElementTree.parse(report)
+    suite = tree.getroot()
+    suite.set('tests', '2')
+    suite.set('skipped', '2')
+    case = ElementTree.SubElement(suite, 'testcase', classname='', name='tests.test_polars_input')
+    ElementTree.SubElement(case, 'skipped', message='collection skipped')
+    tree.write(report)
+    with pytest.raises(AssertionError):
+        release_artifacts.test_totals(report, 'macos-arm64')
+    capabilities = tmp_path / 'providers.json'
+    capabilities.write_text(json.dumps({'platform': 'macos-arm64', 'free_threaded': True,
+        'unavailable': {'polars': 'NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI'}}))
+    assert release_artifacts.test_totals(report, 'macos-arm64', capabilities)['skipped'] == 2
+    collection = suite.find("testcase[@name='tests.test_polars_input']")
+    assert collection is not None
+    collection.set('name', 'tests.test_pandas_input')
+    tree.write(report)
+    with pytest.raises(AssertionError):
+        release_artifacts.test_totals(report, 'macos-arm64', capabilities)
+
+
+def test_provider_gap_cannot_relax_a_gil_runtime_or_baseline_requirement(tmp_path: Path) -> None:
+    report = tmp_path / 'tests.xml'
+    write_skips(report, (UNIX_NAME,), 'tests.test_public_connection', UNIX_REASON)
+    capabilities = tmp_path / 'providers.json'
+    capabilities.write_text(json.dumps({'platform': 'macos-arm64', 'free_threaded': False,
+        'unavailable': {'polars': 'NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI'}}))
+    with pytest.raises(AssertionError):
+        release_artifacts.test_totals(report, 'macos-arm64', capabilities)
+    capabilities.write_text(json.dumps({'platform': 'macos-arm64', 'free_threaded': True, 'unavailable': {}}))
+    write_skips(report, (), 'tests.test_public_connection', UNIX_REASON)
+    with pytest.raises(AssertionError):
+        release_artifacts.test_totals(report, 'macos-arm64', capabilities)
+
+
+def test_joint_provider_observation_gap_is_limited_to_its_three_real_cases(tmp_path: Path) -> None:
+    from xml.etree import ElementTree
+    report = tmp_path / 'tests.xml'
+    write_skips(report, PARALLEL_NAMES, 'tests.test_benchmark_parallel', PARALLEL_REASON)
+    tree = ElementTree.parse(report)
+    root = tree.getroot()
+    for mode in ('success', 'early-schema-failure', 'repeat-consumption'):
+        case = ElementTree.SubElement(root, 'testcase', classname='tests.test_polars_input',
+            name=f'test_c_array_consumption_owns_both_releases_on_every_exit[{mode}]')
+        ElementTree.SubElement(case, 'skipped', message='C Array release observation needs both optional providers')
+    root.set('tests', '23')
+    root.set('skipped', '23')
+    tree.write(report)
+    capabilities = tmp_path / 'providers.json'
+    capabilities.write_text(json.dumps({'platform': 'windows-arm64', 'free_threaded': False,
+        'unavailable': {'pyarrow': 'NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64'}}))
+    assert release_artifacts.test_totals(report, 'windows-arm64', capabilities)['skipped'] == 23
+    root.findall('testcase')[-1].set('name', 'test_unrelated_polars_behavior')
+    tree.write(report)
+    with pytest.raises(AssertionError):
+        release_artifacts.test_totals(report, 'windows-arm64', capabilities)

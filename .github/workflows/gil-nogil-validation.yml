@@ -171,6 +171,7 @@ jobs:
           set -euo pipefail
           python -m pip install --no-deps dist/*.whl
           python tools/release_artifacts.py identity --kind original --wheel dist/*.whl --sdist source-dist/*.tar.gz --output validation-evidence/original-wheel-identity.json
+          python tools/release_artifacts.py providers --identity validation-evidence/original-wheel-identity.json --output validation-evidence/original-providers.json
       - name: Prepare and verify the owned native servers
         if: runner.os != 'Linux'
         run: |
@@ -228,6 +229,7 @@ jobs:
           source: Path = next(Path('source-dist').glob('*.tar.gz'))
           subprocess.run([str(python), '-m', 'pip', 'install', '--no-deps', str(wheels[0])], check=True)
           subprocess.run([str(python), 'tools/release_artifacts.py', 'identity', '--kind', 'sdist', '--wheel', str(wheels[0]), '--sdist', str(source), '--output', 'validation-evidence/sdist-wheel-identity.json'], check=True)
+          subprocess.run([str(python), 'tools/release_artifacts.py', 'providers', '--identity', 'validation-evidence/sdist-wheel-identity.json', '--output', 'validation-evidence/sdist-providers.json'], check=True)
           subprocess.run([str(python), 'tests/_native_signal.py', '--pytest', '-q', 'tests', '--junitxml=validation-evidence/python-sdist.xml'], check=True)
           subprocess.run([str(python), '-m', 'pip', 'check'], check=True)
           PY

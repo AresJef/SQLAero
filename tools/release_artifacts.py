@@ -184,7 +184,48 @@ def download(package_version: str, manifest_path: Path, destination: Path, outpu
                                   'sha256': record['sha256']}, indent=2) + '\n', encoding='utf-8')
 
 
-def test_totals(path: Path, target: str | None = None) -> dict[str, int]:
+def prepare_providers(identity: Path, output: Path) -> None:
+    """Install the four frozen optional providers for this actual CI runtime.
+
+    Known upstream wheel gaps remain explicit unavailable capabilities. An
+    unexpected install/import failure is never downgraded to that state.
+    """
+    from importlib.util import find_spec
+    record: dict[str, Any] = json.loads(identity.read_text(encoding='utf-8'))
+    target = str(record['platform'])
+    free = bool(sysconfig.get_config_var('Py_GIL_DISABLED'))
+    assert target in PLATFORM_TAGS and free == bool(record['free_threaded'])
+    gil = getattr(sys, '_is_gil_enabled', lambda: True)
+    assert bool(gil()) is not free
+    packages = {'numpy': '2.5.4', 'pandas': '3.1.0', 'pyarrow': '26.0.0', 'polars': '2.1.0'}
+    unavailable: dict[str, str] = {}
+    if target == 'windows-arm64':
+        unavailable['pyarrow'] = 'NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64'
+    if free:
+        unavailable['polars'] = 'NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI'
+    required = {name: selected for name, selected in packages.items() if name not in unavailable}
+    output.parent.mkdir(parents=True, exist_ok=True)
+    pip_report = output.with_suffix('.pip.json')
+    subprocess.run([sys.executable, '-m', 'pip', 'install', '--disable-pip-version-check',
+                    '--only-binary=:all:', '--report', str(pip_report),
+                    *[f'{name}=={selected}' for name, selected in required.items()]], check=True)
+    loaded: dict[str, Any] = {}
+    for name, selected in required.items():
+        before = bool(gil())
+        module = import_module(name)
+        actual = str(getattr(module, '__version__'))
+        after = bool(gil())
+        assert actual == selected and before is after is not free, (name, actual, before, after)
+        loaded[name] = {'version': actual, 'gil_before': before, 'gil_after': after}
+    for name in unavailable:
+        assert find_spec(name) is None, ('Unexpected provider changes the frozen capability context', name)
+    result = {'platform': target, 'free_threaded': free, 'packages': loaded,
+              'unavailable': unavailable, 'pip_report_sha256': digest(pip_report)}
+    output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+    print(json.dumps(result))
+
+
+def test_totals(path: Path, target: str | None = None, providers: Path | None = None) -> dict[str, int]:
     """Read the actual JUnit outcome rather than inferring tests from filenames."""
     root = ElementTree.parse(path).getroot()
     suites = [root] if root.tag == 'testsuite' else list(root.findall('testsuite'))
@@ -192,6 +233,19 @@ def test_totals(path: Path, target: str | None = None) -> dict[str, int]:
               for name in ('tests', 'failures', 'errors', 'skipped')}
     assert totals['tests'] > 0 and totals['failures'] == totals['errors'] == 0, (path, totals)
     windows = target in ('windows-x86_64', 'windows-arm64')
+    unavailable: dict[str, str] = {}
+    if providers is not None:
+        capabilities: dict[str, Any] = json.loads(providers.read_text(encoding='utf-8'))
+        assert target is None or capabilities['platform'] == target
+        unavailable = capabilities['unavailable']
+        assert set(unavailable) <= {'polars', 'pyarrow'}
+        if 'polars' in unavailable:
+            assert capabilities['free_threaded'] is True
+            assert unavailable['polars'] == 'NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI'
+        if 'pyarrow' in unavailable:
+            assert capabilities['platform'] == 'windows-arm64'
+            assert unavailable['pyarrow'] == 'NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64'
+    baseline_skips = 0
     seen: set[tuple[str | None, str | None]] = set()
     for case in root.iter('testcase'):
         skipped = case.find('skipped')
@@ -205,11 +259,31 @@ def test_totals(path: Path, target: str | None = None) -> dict[str, int]:
                         and identity[1] in WINDOWS_PARALLEL_NA
                         and skipped.get('message') == 'Parallel performance observations require '
                         'POSIX resource snapshots and are measured on macOS')
-            assert unix_socket or parallel, (
+            module_skip = (identity[0] == '' and skipped.get('message') == 'collection skipped'
+                           and ((identity[1] == 'tests.test_polars_input' and 'polars' in unavailable)
+                                or (identity[1] == 'tests.test_arrow_input' and 'pyarrow' in unavailable)))
+            arrow_case = ('pyarrow' in unavailable
+                          and identity[0] in ('tests.test_numpy_input', 'tests.test_pandas_input', 'tests.test_extended_input_mysql')
+                          and skipped.get('message', '').startswith("could not import 'pyarrow':"))
+            polars_case = ('polars' in unavailable
+                           and identity[0] == 'tests.test_extended_input_mysql'
+                           and skipped.get('message', '').startswith("could not import 'polars':"))
+            joint_release = ('pyarrow' in unavailable
+                             and identity[0] == 'tests.test_polars_input'
+                             and identity[1] in {
+                                 'test_c_array_consumption_owns_both_releases_on_every_exit[success]',
+                                 'test_c_array_consumption_owns_both_releases_on_every_exit[early-schema-failure]',
+                                 'test_c_array_consumption_owns_both_releases_on_every_exit[repeat-consumption]',
+                             }
+                             and skipped.get('message') == 'C Array release observation needs both optional providers')
+            baseline_skips += int(unix_socket or parallel)
+            assert unix_socket or parallel or module_skip or arrow_case or polars_case or joint_release, (
                         'Unexpected skipped requirement', path, case.attrib, skipped.attrib)
             assert identity not in seen, ('Duplicate skipped requirement', path, identity)
             seen.add(identity)
     assert len(seen) == totals['skipped'], ('Skipped total differs from cases', path, totals)
+    if providers is not None:
+        assert baseline_skips == (20 if windows else 1), (path, baseline_skips)
     return totals
 
 
@@ -240,13 +314,17 @@ def manifest(directory: Path, identities: Path, output: Path, free_threaded: boo
             if kind == 'original':
                 match = next(row for row in wheels if (row['platform'], row['python'], row['abi']) == key)
                 assert match['sha256'] == record['sha256'] and match['native_sha256'] == record['native_sha256']
-            totals = test_totals(path.with_name(f'python-{kind}.xml'), target=key[0])
-            assert totals['skipped'] == (20 if key[0].startswith('windows-') else 1), (path, totals)
+            provider_path = path.with_name(f'{kind}-providers.json')
+            assert not free_threaded or provider_path.is_file(), ('48-runtime validation requires actual provider evidence', provider_path)
+            provider_evidence = provider_path if provider_path.is_file() else None
+            totals = test_totals(path.with_name(f'python-{kind}.xml'), target=key[0], providers=provider_evidence)
+            if provider_evidence is None:
+                assert totals['skipped'] == (20 if key[0].startswith('windows-') else 1), (path, totals)
             assert bool(record['free_threaded']) == key[2].endswith('t')
             assert bool(record['gil_enabled']) is not bool(record['free_threaded'])
             evidence.append({'kind': kind, 'platform': key[0], 'python': key[1], 'abi': key[2],
                              'wheel_sha256': record['sha256'],
-                             'tests': totals})
+                             'tests': totals, 'providers': json.loads(provider_path.read_text(encoding='utf-8')) if provider_evidence is not None else None})
     assert len(commits) == 1, commits
     result = {'version': release_version(), 'source_commit': next(iter(commits)),
               'wheels': wheels, 'sdist': {'file': sdists[0].name, 'sha256': source_hash,
@@ -265,6 +343,9 @@ def main() -> None:
     identity.add_argument('--output', type=Path, required=True)
     identity.add_argument('--kind', choices=('original', 'sdist', 'pypi'), required=True)
     identity.add_argument('--sdist', type=Path)
+    provider = commands.add_parser('providers')
+    provider.add_argument('--identity', type=Path, required=True)
+    provider.add_argument('--output', type=Path, required=True)
     unpack = commands.add_parser('extract')
     unpack.add_argument('--sdist', type=Path, required=True)
     unpack.add_argument('--destination', type=Path, required=True)
@@ -283,6 +364,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == 'identity':
         installed(args.wheel, args.output, args.kind, args.sdist)
+    elif args.command == 'providers':
+        prepare_providers(args.identity, args.output)
     elif args.command == 'extract':
         extract(args.sdist, args.destination, args.expected_sha)
     elif args.command == 'download':

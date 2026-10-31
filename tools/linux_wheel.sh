@@ -142,10 +142,11 @@ phase() {
 }
 test_package() {
   local interpreter=$1 kind=$2
+  "$interpreter" tools/release_artifacts.py providers --identity "$evidence/$kind-wheel-identity.json" --output "$evidence/$kind-providers.json"
   "$interpreter" tests/_native_signal.py
   "$interpreter" tests/_native_signal.py --pytest -q tests --junitxml="$evidence/python-$kind.xml"
-  "$interpreter" -c 'from pathlib import Path; import sys; from tools.release_artifacts import test_totals; print(test_totals(Path(sys.argv[1])))' \
-    "$evidence/python-$kind.xml"
+  "$interpreter" -c 'from pathlib import Path; import sys; from tools.release_artifacts import test_totals; import json; p=Path(sys.argv[2]); print(test_totals(Path(sys.argv[1]), json.loads(p.read_text())["platform"], p))' \
+    "$evidence/python-$kind.xml" "$evidence/$kind-providers.json"
   "$interpreter" -m pip check
 }
 
