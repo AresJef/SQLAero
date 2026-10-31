@@ -35,6 +35,9 @@ itoa = "=1.0.18"
 zmij = "=1.0.23"
 memchr = "=2.8.3"
 smallvec = "=1.16.4"
+arrow-array = { version = "=60.0.0", default-features = false, features = ["ffi"] }
+arrow-schema = { version = "=60.0.0", default-features = false, features = ["ffi"] }
+arrow-data = { version = "=60.0.0", default-features = false, features = ["ffi"] }
 getrandom = { version = "=0.3.4", features = ["std"] }
 
 [workspace.lints.rust]

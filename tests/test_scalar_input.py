@@ -106,10 +106,14 @@ def test_private_request_limit_uses_operational_error_not_data_error() -> None:
 
 
 class IntegerSubclass(int):
-    """A subclass is intentionally outside this first-version value contract."""
+    """A genuine integer subclass with its inherited conversion behavior."""
 
 
-@pytest.mark.parametrize("value", [IntegerSubclass(1), memoryview(b"a"), object()])
+def test_inherited_integer_subclass_uses_the_approved_integer_protocol() -> None:
+    assert _sqlaero._encode_scalar(IntegerSubclass(1)) == b"1"
+
+
+@pytest.mark.parametrize("value", [memoryview(b"a"), object()])
 def test_unsupported_types_are_not_implicitly_converted(value: object) -> None:
     with pytest.raises(TypeError, match="unsupported exact escape type"):
         _sqlaero._encode_scalar(value)

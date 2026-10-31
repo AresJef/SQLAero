@@ -613,6 +613,12 @@ class Cursor:
                 itemize: bool = True) -> int:
         """Execute SQL using the native value encoder and positional binding.
 
+        Escape validates supported built-in values, real approved subclasses,
+        containers and optional NumPy/Pandas/PyArrow/Polars inputs at runtime.
+        One-dimensional sources follow many/itemize; two-dimensional tables
+        supply logical rows even when many=False. Optional providers are not
+        imported by this API. bytearray and memoryview are not supported.
+
         Exact datetime.time values preserve their clock and microseconds;
         tzinfo is ignored without calling timezone methods. For example,
         00:30+01:00 is encoded as '00:30:00'. Aware datetime values instead

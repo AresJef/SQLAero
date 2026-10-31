@@ -1,0 +1,458 @@
+"""Pandas values use public storage and retain the native SQL value contract."""
+
+# pyright: reportPrivateUsage=false
+
+import pytest
+import subprocess
+import sys
+
+from sqlaero import _sqlaero
+from sqlaero._sqlaero import DataError, ProgrammingError
+
+pd = pytest.importorskip("pandas")
+np = pytest.importorskip("numpy")
+
+
+@pytest.mark.parametrize("value", [pd.NA, pd.NaT])
+def test_pandas_missing_scalars_are_null_before_other_protocols(value: object) -> None:
+    assert _sqlaero._encode_value(value).to_bytes() == b"NULL"
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    (pd.Timestamp("2024-01-02 03:04:05.123456789"), b"'2024-01-02 03:04:05.123456789'"),
+    (pd.Timestamp("1969-12-31 23:59:59.999999999"), b"'1969-12-31 23:59:59.999999999'"),
+    (pd.Timestamp("2500-01-01 00:00:00"), b"'2500-01-01 00:00:00'"),
+    (pd.Timestamp("2024-01-02 03:04:05.123456789", tz="Asia/Shanghai"), b"'2024-01-01 19:04:05.123456789'"),
+    (pd.Timedelta(1, unit="ns"), b"'00:00:00.000000001'"),
+    (pd.Timedelta(-1, unit="ns"), b"'-00:00:00.000000001'"),
+    (pd.Timedelta(2, unit="D"), b"'48:00:00'"),
+])
+def test_pandas_temporal_scalar_retains_source_unit_fraction_and_utc(value: object, expected: bytes) -> None:
+    assert _sqlaero._encode_value(value).to_bytes() == expected
+
+
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+def test_pandas_temporal_public_asm8_resolution_is_not_forced_to_ns(unit: str) -> None:
+    timestamp = pd.Timestamp("2024-01-02 03:04:05").as_unit(unit)
+    duration = pd.Timedelta(1, unit="s").as_unit(unit)
+    assert _sqlaero._encode_value(timestamp).to_bytes() == b"'2024-01-02 03:04:05'"
+    assert _sqlaero._encode_value(duration).to_bytes() == b"'00:00:01'"
+
+
+def test_pandas_missing_class_name_does_not_register_arbitrary_objects() -> None:
+    fake = type("NAType", (), {})()
+    with pytest.raises(TypeError):
+        _sqlaero._encode_value(fake)
+
+
+@pytest.mark.parametrize("constructor", [pd.Series, pd.Index])
+@pytest.mark.parametrize(("many", "itemize", "sql", "expected"), [
+    (False, True, "SELECT %s,%s", [b"\x03SELECT 1,2"]),
+    (False, False, "SELECT %s", [b"\x03SELECT (1,2)"]),
+    (True, True, "SELECT %s", [b"\x03SELECT 1", b"\x03SELECT 2"]),
+    (True, False, "SELECT %s", [b"\x03SELECT 1", b"\x03SELECT 2"]),
+])
+def test_pandas_vector_roles_match_logical_typed_cells(constructor: type, many: bool, itemize: bool, sql: str, expected: list[bytes]) -> None:
+    value = constructor([1, 2], dtype=np.int64)
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == expected
+
+
+@pytest.mark.parametrize("dtype", ["Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64"])
+def test_pandas_standalone_nullable_integer_array_uses_typed_data_and_mask(dtype: str) -> None:
+    value = pd.array([1, None, 2], dtype=dtype)
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 1", b"\x03SELECT NULL", b"\x03SELECT 2"]
+
+
+def test_pandas_nullable_uint64_preserves_the_unsigned_maximum() -> None:
+    value = pd.array([2**64 - 1, None, 0], dtype="UInt64")
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 18446744073709551615", b"\x03SELECT NULL", b"\x03SELECT 0"]
+
+
+@pytest.mark.parametrize("dtype", ["Float32", "Float64"])
+def test_pandas_nullable_float_mask_and_binary_value_are_distinct(dtype: str) -> None:
+    value = pd.array([0.1, None, -0.0], dtype=dtype)
+    rows = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert float(rows[0].removeprefix(b"\x03SELECT ")).hex() == float(value[0]).hex()
+    assert rows[1] == b"\x03SELECT NULL"
+    assert float(rows[2].removeprefix(b"\x03SELECT ")).hex() == "-0x0.0p+0"
+
+
+def test_pandas_standalone_boolean_array_uses_its_null_mask() -> None:
+    value = pd.array([True, None, False], dtype="boolean")
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 1", b"\x03SELECT NULL", b"\x03SELECT 0"]
+
+
+@pytest.mark.parametrize("storage", ["python", "pyarrow"])
+def test_pandas_standalone_string_storage_preserves_text_and_missing(storage: str) -> None:
+    if storage == "pyarrow":
+        pytest.importorskip("pyarrow")
+    value = pd.array(["a", None, "中文'"], dtype=pd.StringDtype(storage=storage))
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [
+        b"\x03SELECT 'a'", b"\x03SELECT NULL", "\x03SELECT '中文\\''".encode(),
+    ]
+
+
+def test_pandas_standalone_arrow_extension_array_reuses_native_arrow() -> None:
+    pa = pytest.importorskip("pyarrow")
+    value = pd.array([1, None, 2], dtype=pd.ArrowDtype(pa.int64()))
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 1", b"\x03SELECT NULL", b"\x03SELECT 2"]
+
+
+def test_pandas_arrow_nested_array_keeps_each_list_as_one_cell() -> None:
+    pa = pytest.importorskip("pyarrow")
+    value = pd.array([[1, None], None, []], dtype=pd.ArrowDtype(pa.list_(pa.int64())))
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT (1,NULL)", b"\x03SELECT NULL", b"\x03SELECT ()"]
+
+
+def test_pandas_categorical_only_encodes_referenced_labels() -> None:
+    class Unused:
+        def __repr__(self) -> str:
+            raise AssertionError("unused category must not be inspected")
+    labels = pd.Index(["used", Unused()], dtype=object)
+    value = pd.Categorical.from_codes([0, -1, 0], categories=labels)
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 'used'", b"\x03SELECT NULL", b"\x03SELECT 'used'"]
+
+
+def test_pandas_range_index_uses_values_and_ignores_its_name() -> None:
+    value = pd.RangeIndex(9, -2, -3, name=object())
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 9", b"\x03SELECT 6", b"\x03SELECT 3", b"\x03SELECT 0"]
+
+
+def test_pandas_multi_index_tuple_is_one_logical_cell() -> None:
+    value = pd.MultiIndex.from_tuples([(1, "a"), (2, "b")], names=[object(), object()])
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT (1,'a')", b"\x03SELECT (2,'b')"]
+
+
+@pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
+def test_pandas_aware_index_keeps_utc_instants_across_dst(unit: str) -> None:
+    value = pd.DatetimeIndex(["2024-11-03T05:30:00Z", "2024-11-03T06:30:00Z", None]).tz_convert("America/New_York").as_unit(unit)
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [
+        b"\x03SELECT '2024-11-03 05:30:00'", b"\x03SELECT '2024-11-03 06:30:00'", b"\x03SELECT NULL",
+    ]
+
+
+def test_pandas_timedelta_index_retains_negative_nanoseconds() -> None:
+    value = pd.TimedeltaIndex([pd.Timedelta(-1, unit="ns"), pd.NaT, pd.Timedelta(1, unit="ns")])
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [
+        b"\x03SELECT '-00:00:00.000000001'", b"\x03SELECT NULL", b"\x03SELECT '00:00:00.000000001'",
+    ]
+
+
+@pytest.mark.parametrize("many", [False, True])
+@pytest.mark.parametrize("itemize", [False, True])
+def test_pandas_dataframe_preserves_positions_and_duplicate_column_names(many: bool, itemize: bool) -> None:
+    value = pd.DataFrame([[1, 2], [3, 4]], columns=["same", "same"], index=[object(), object()])
+    sql = "SELECT %s,%s" if itemize else "SELECT %s"
+    expected = [b"\x03SELECT 1,2", b"\x03SELECT 3,4"] if itemize else [b"\x03SELECT (1,2)", b"\x03SELECT (3,4)"]
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == expected
+
+
+def test_pandas_dataframe_mixed_extension_storage_uses_one_row_order() -> None:
+    value = pd.DataFrame({
+        "integer": pd.array([1, None], dtype="Int64"),
+        "text": pd.array(["a", None], dtype=pd.StringDtype(storage="python")),
+        "flag": pd.array([None, True], dtype="boolean"),
+        "nested": [(1, 2), [3, 4]],
+    })
+    assert _sqlaero._bind_sql("SELECT %s,%s,%s,%s", value) == [
+        b"\x03SELECT 1,'a',NULL,(1,2)", b"\x03SELECT NULL,NULL,1,(3,4)",
+    ]
+
+
+@pytest.mark.parametrize("shape", [(0, 0), (0, 2), (2, 0)])
+@pytest.mark.parametrize("many", [False, True])
+@pytest.mark.parametrize("itemize", [False, True])
+def test_pandas_empty_root_and_zero_column_rows_keep_the_unified_rule(shape: tuple[int, int], many: bool, itemize: bool) -> None:
+    value = pd.DataFrame(np.zeros(shape, dtype=np.int64))
+    count = max(shape[0], 1)
+    assert _sqlaero._bind_sql("SELECT 1", value, many=many, itemize=itemize) == [b"\x03SELECT 1"] * count
+    with pytest.raises(ProgrammingError):
+        _sqlaero._bind_sql("SELECT %s", value, many=many, itemize=itemize)
+
+
+@pytest.mark.parametrize("length", [0, 1])
+@pytest.mark.parametrize("kind", ["period", "interval", "sparse"])
+def test_pandas_unsupported_declared_extension_schema_is_not_hidden_by_empty_values(length: int, kind: str) -> None:
+    if kind == "period":
+        value = pd.Series(pd.period_range("2024-01-01", periods=length, freq="D"))
+    elif kind == "interval":
+        value = pd.Series(pd.arrays.IntervalArray.from_tuples([(0, 1)] * length))
+    else:
+        value = pd.Series(pd.arrays.SparseArray([0] * length))
+    with pytest.raises(TypeError, match="declared Pandas extension dtype"):
+        _sqlaero._encode_value(value)
+
+
+def test_pandas_series_subclass_values_hook_runs_once_and_defines_values() -> None:
+    calls: list[int] = []
+    class Series(pd.Series):
+        @property
+        def values(self):
+            calls.append(1)
+            return np.array([7, 8], dtype=np.int64)
+    value = Series([1, 2])
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 7", b"\x03SELECT 8"]
+    assert calls == [1]
+
+
+def test_pandas_series_subclass_original_values_exception_is_preserved() -> None:
+    marker = RuntimeError("original values failure")
+    class Series(pd.Series):
+        @property
+        def values(self):
+            raise marker
+    with pytest.raises(RuntimeError) as caught:
+        _sqlaero._encode_value(Series([1]))
+    assert caught.value is marker
+
+
+@pytest.mark.parametrize("values", [np.zeros((2, 1)), np.array([1]), [1, 2]])
+def test_pandas_series_subclass_values_are_shape_and_type_checked(values: object) -> None:
+    class Series(pd.Series):
+        @property
+        def values(self):
+            return values
+    with pytest.raises(TypeError):
+        _sqlaero._encode_value(Series([1, 2]))
+
+
+def test_pandas_nullable_blocks_preserve_values_across_block_boundaries() -> None:
+    value = pd.array([None if i % 17 == 0 else i for i in range(2051)], dtype="Int64")
+    rows = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert rows == [b"\x03SELECT " + (b"NULL" if i % 17 == 0 else str(i).encode("ascii")) for i in range(2051)]
+
+
+def test_pandas_object_back_reference_uses_the_original_series_identity() -> None:
+    value = pd.Series([None], dtype=object)
+    value.iloc[0] = value
+    with pytest.raises(DataError) as caught:
+        _sqlaero._encode_value(value)
+    assert caught.value.code == 65543
+
+
+def test_pandas_shared_stable_sources_and_cold_preparation_are_thread_safe() -> None:
+    script = r"""
+import concurrent.futures,sys,threading
+before = getattr(sys, '_is_gil_enabled', lambda: True)()
+import pandas as pd
+from sqlaero import _sqlaero
+assert getattr(sys, '_is_gil_enabled', lambda: True)() == before
+value = pd.Series(pd.array([1,None,3],dtype='Int64'))
+barrier = threading.Barrier(4)
+def run(index):
+    barrier.wait(timeout=10)
+    for _ in range(16):
+        assert _sqlaero._bind_sql('SELECT %s',value,many=True) == [b'\x03SELECT 1',b'\x03SELECT NULL',b'\x03SELECT 3']
+    return index
+with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+    assert sorted(pool.map(run,range(4))) == list(range(4))
+assert getattr(sys, '_is_gil_enabled', lambda: True)() == before
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_pandas_arrow_to_pandas_zero_copy_numpy_columns_keep_the_native_owner() -> None:
+    pa = pytest.importorskip("pyarrow")
+    value = pa.table({"left": pa.array([1, 2]), "right": pa.array([3, 4])}).to_pandas()
+    assert _sqlaero._bind_sql("SELECT %s,%s", value) == [b"\x03SELECT 1,3", b"\x03SELECT 2,4"]
+
+
+def test_pandas_range_index_beyond_native_integer_width_uses_its_exact_values() -> None:
+    start = 2**130
+    value = pd.RangeIndex(start, start + 2)
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [
+        b"\x03SELECT " + str(start).encode("ascii"), b"\x03SELECT " + str(start + 1).encode("ascii"),
+    ]
+
+
+def test_pandas_dataframe_nested_as_a_cell_does_not_become_an_outer_batch() -> None:
+    value = pd.DataFrame([[1, 2], [3, 4]])
+    assert _sqlaero._bind_sql("SELECT %s", (value,)) == [b"\x03SELECT ((1,2),(3,4))"]
+
+
+def test_pandas_basic_sources_do_not_require_pyarrow() -> None:
+    script = r"""
+import importlib.abc,sys
+class NoArrow(importlib.abc.MetaPathFinder):
+    def find_spec(self,fullname,path=None,target=None):
+        if fullname == 'pyarrow' or fullname.startswith('pyarrow.'):
+            raise ModuleNotFoundError('pyarrow deliberately unavailable',name=fullname)
+sys.meta_path.insert(0,NoArrow())
+import pandas as pd
+from sqlaero import _sqlaero
+assert 'pyarrow' not in sys.modules
+assert _sqlaero._encode_value(pd.NA).to_bytes() == b'NULL'
+for value in (pd.Series([1,2]),pd.Index([1,2]),pd.array([1,None],dtype='Int64')):
+    expected = [b'\x03SELECT 1',b'\x03SELECT NULL'] if len(value) == 2 and value.dtype.name == 'Int64' else [b'\x03SELECT 1',b'\x03SELECT 2']
+    assert _sqlaero._bind_sql('SELECT %s',value,many=True) == expected
+text=pd.array(['a',None],dtype=pd.StringDtype(storage='python'))
+assert _sqlaero._bind_sql('SELECT %s',text,many=True) == [b"\x03SELECT 'a'",b'\x03SELECT NULL']
+assert 'pyarrow' not in sys.modules
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_pandas_cold_preparation_failure_keeps_the_original_and_can_retry() -> None:
+    script = r"""
+import pandas as pd
+from sqlaero import _sqlaero
+value=pd.Series([7,8])
+saved=pd.Int8Dtype
+original=getattr(pd,'__getattr__',None)
+marker=RuntimeError('original Pandas API preparation failure')
+def missing(name):
+    if name=='Int8Dtype': raise marker
+    if original is not None: return original(name)
+    raise AttributeError(name)
+del pd.Int8Dtype
+pd.__getattr__=missing
+assert _sqlaero._encode_value(1).to_bytes()==b'1'
+try:
+    _sqlaero._bind_sql('SELECT %s',value,many=True)
+except RuntimeError as error:
+    assert error is marker
+else:
+    raise AssertionError('incomplete provider preparation must fail')
+finally:
+    pd.Int8Dtype=saved
+    if original is None: del pd.__getattr__
+    else: pd.__getattr__=original
+assert _sqlaero._bind_sql('SELECT %s',value,many=True)==[b'\x03SELECT 7',b'\x03SELECT 8']
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("value", [
+    pd.Series([1, 2]).array,
+    pd.date_range("2024-01-01", periods=2).array,
+    pd.timedelta_range("1 day", periods=2).array,
+    pd.period_range("2024-01-01", periods=2, freq="D").array,
+    pd.arrays.IntervalArray.from_tuples([(0, 1)]),
+    pd.arrays.SparseArray([1, 2]),
+])
+def test_pandas_internal_or_excluded_array_classes_do_not_gain_standalone_entry(value: object) -> None:
+    with pytest.raises(TypeError):
+        _sqlaero._encode_value(value)
+
+
+def test_pandas_active_subclass_cycle_is_rejected_before_repeating_values_hook() -> None:
+    calls: list[int] = []
+    storage = np.empty(1, dtype=object)
+    class Series(pd.Series):
+        @property
+        def values(self):
+            calls.append(1)
+            return storage
+    value = Series([None], dtype=object)
+    storage[0] = value
+    assert storage[0] is value
+    try:
+        with pytest.raises(DataError) as caught:
+            _sqlaero._encode_value(value)
+        assert caught.value.code == 65543
+        assert calls == [1]
+    finally:
+        storage[0] = None
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_pandas_actual_index_subclass_honors_values_once_and_keeps_its_exception(fail: bool) -> None:
+    calls: list[int] = []
+    original = RuntimeError("original Index values conversion")
+    class Index(pd.RangeIndex):
+        @property
+        def values(self):
+            calls.append(1)
+            if fail:
+                raise original
+            return np.array([7, 8], dtype=np.int64)
+    value = Index(2)
+    assert type(value) is Index
+    if fail:
+        with pytest.raises(RuntimeError) as caught:
+            _sqlaero._encode_value(value)
+        assert caught.value is original
+    else:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 7", b"\x03SELECT 8"]
+    assert calls == [1]
+
+
+def test_pandas_categorical_index_uses_labels_and_missing_instead_of_codes_or_names() -> None:
+    value = pd.CategoricalIndex(["b", None, "a"], categories=["a", "b"], ordered=True, name=object())
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 'b'", b"\x03SELECT NULL", b"\x03SELECT 'a'"]
+
+
+@pytest.mark.parametrize("dtype", [np.float32, np.float64])
+def test_pandas_floating_array_distinguishes_the_mask_from_valid_nonfinite_storage(dtype: type) -> None:
+    value = pd.arrays.FloatingArray(
+        np.array([float("nan"), float("inf"), -float("inf"), -0.0, 9.0], dtype=dtype),
+        np.array([False, False, False, False, True], dtype=np.bool_),
+    )
+    requests = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert requests[:3] == [b"\x03SELECT NULL"] * 3
+    assert float(requests[3].removeprefix(b"\x03SELECT ")).hex() == "-0x0.0p+0"
+    assert requests[4] == b"\x03SELECT NULL"
+
+
+@pytest.mark.parametrize("kind", ["category", "integer", "floating", "boolean", "python_string", "arrow_string", "arrow_array"])
+def test_pandas_all_seven_direct_arrays_keep_empty_schema_and_all_missing_values(kind: str) -> None:
+    def make(values: list[None]):
+        if kind == "category":
+            return pd.Categorical(values, categories=["unused"], ordered=True)
+        if kind == "integer":
+            return pd.array(values, dtype="Int64")
+        if kind == "floating":
+            return pd.array(values, dtype="Float64")
+        if kind == "boolean":
+            return pd.array(values, dtype="boolean")
+        if kind in ("python_string", "arrow_string"):
+            storage = "python" if kind == "python_string" else "pyarrow"
+            if storage == "pyarrow":
+                pytest.importorskip("pyarrow")
+            return pd.array(values, dtype=pd.StringDtype(storage=storage))
+        pa = pytest.importorskip("pyarrow")
+        return pd.array(values, dtype=pd.ArrowDtype(pa.int64()))
+    empty = make([])
+    assert _sqlaero._bind_sql("SELECT 1", empty, many=True) == [b"\x03SELECT 1"]
+    with pytest.raises(ProgrammingError):
+        _sqlaero._bind_sql("SELECT %s", empty, many=True)
+    assert _sqlaero._bind_sql("SELECT %s", make([None, None]), many=True) == [b"\x03SELECT NULL"] * 2
+
+
+@pytest.mark.parametrize("code", [-2, 2])
+def test_pandas_categorical_invalid_code_is_rejected_before_label_access(code: int) -> None:
+    value = pd.Categorical.from_codes([code], categories=["a", "b"], validate=False)
+    with pytest.raises(ValueError, match="categorical code"):
+        _sqlaero._encode_value(value)
+
+
+@pytest.mark.parametrize("shape", [(1, 1), (1003, 3), (2, 33)])
+def test_pandas_dataframe_basic_shapes_and_reversed_storage_keep_all_rows(shape: tuple[int, int]) -> None:
+    data = np.arange(shape[0] * shape[1], dtype=np.int64).reshape(shape)
+    value = pd.DataFrame(data, index=[object() for _ in range(shape[0])]).iloc[::-1]
+    sql = "SELECT " + ",".join(["%s"] * shape[1])
+    expected = [b"\x03SELECT " + b",".join(str(int(item)).encode("ascii") for item in row) for row in data[::-1]]
+    assert _sqlaero._bind_sql(sql, value) == expected
+
+
+def test_pandas_dataframe_arrow_columns_keep_distinct_chunk_boundaries_and_slices() -> None:
+    pa = pytest.importorskip("pyarrow")
+    left = pa.chunked_array([[1], [None, 3, 4]], type=pa.int64())
+    right = pa.chunked_array([["a", "b"], [], ["c", "d"]], type=pa.string())
+    value = pd.DataFrame({
+        "left": pd.Series(left, dtype=pd.ArrowDtype(pa.int64())),
+        "right": pd.Series(right, dtype=pd.ArrowDtype(pa.string())),
+    })
+    expected = [b"\x03SELECT 1,'a'", b"\x03SELECT NULL,'b'", b"\x03SELECT 3,'c'", b"\x03SELECT 4,'d'"]
+    assert _sqlaero._bind_sql("SELECT %s,%s", value) == expected
+    assert _sqlaero._bind_sql("SELECT %s,%s", value.iloc[1:]) == expected[1:]
+
+
+def test_pandas_dataframe_subclasses_do_not_gain_an_unapproved_entry() -> None:
+    class Frame(pd.DataFrame):
+        pass
+    with pytest.raises(TypeError):
+        _sqlaero._encode_value(Frame([[1, 2]]))

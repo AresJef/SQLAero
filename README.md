@@ -109,10 +109,12 @@ Memory-size settings accept byte integers or forms such as `64MB` / `64MiB`.
 
 `execute(sql)` sends original SQL without interpolation. Explicit args, including
 `None`, bind `%s` positions outside SQL quotes/comments; `None` is SQL NULL.
-Named placeholders are not supported. Exact built-in scalar inputs are None,
-bool, int, float, Decimal, str, bytes, date, datetime, time and timedelta;
-exact list/tuple provide positional, nested and batch structure. Third-party
-arrays/tables, arbitrary subclasses, bytearray and memoryview are unsupported.
+Named placeholders are not supported. Scalar inputs include None, bool, int,
+float, Decimal, str, bytes, date, datetime, time, timedelta and struct_time.
+Lists, tuples, dictionary values and views, sets, frozensets and ranges provide
+positional, nested and batch structure. Approved real built-in subclasses use
+their documented conversion protocols; arbitrary duck types are rejected.
+Optional NumPy, Pandas, PyArrow and Polars inputs are described below.
 For mutable binary sources, callers may synchronize their own access and pass
 an already created immutable `bytes` value. Escape performs no implicit conversion.
 Nonfinite float/Decimal values become NULL. Aware datetime inputs normalize to
@@ -126,6 +128,36 @@ Approved INSERT/REPLACE VALUES forms merge complete rows within the actual
 encoded request limit; other legal SQL executes per row. A confirmed prefix is
 not a promise that its transaction committed. An entered failed call exposes
 unknown aggregate counters and preserves confirmed prefix facts in diagnostics.
+
+### Optional typed Escape inputs
+
+These packages remain optional: ordinary SQLAero import and execution do not
+import them. Use the provider's canonical classes and keep the entire source
+stable until execute returns, including external buffer aliases.
+
+| Provider | Supported input families | Native representation |
+| --- | --- | --- |
+| NumPy | Fixed-width signed/unsigned integers, float16/32/64, bool, str_/bytes_, datetime64/timedelta64; exact 1D/2D ndarray; np.record | Real strides and byte order, schema field order, original time unit and multiplier |
+| Pandas | NA/NaT, Timestamp/Timedelta, Series, Index and approved index subclasses, exact DataFrame; Categorical and nullable integer/float/bool/string/Arrow extension arrays | Public per-column storage, masks, actual category labels and Arrow chunks |
+| PyArrow | Canonical CPU Array, ChunkedArray, RecordBatch, Table and DictionaryArray | Public C Data/Stream ownership, validity, offsets, chunks and supported recursive List/Array/Struct/Dictionary values |
+| Polars | Exact Series and DataFrame, including supported category/Enum and nested types; top-level Object | Public native Arrow export; Object values use the shared Python value visitor |
+
+One-dimensional sources follow `many`/`itemize`; two-dimensional tables are row
+sources even with `many=False`. Record fields form one logical row. Nested
+containers and typed values remain a single SQL parameter fragment; they are
+not converted to JSON or expanded using the SQL placeholder count. Empty roots
+mean zero positions; a nonempty table with no columns retains every logical row.
+
+Floating inputs preserve their binary source value when widened to float64,
+including negative zero. Missing/nonfinite inputs become NULL. Temporal values
+keep necessary source fractional digits up to nanoseconds; target column
+precision, rounding and SQL mode are enforced by MySQL. Decimal literals retain
+up to 65 necessary digits without imposing a target column's scale limit.
+Custom Arrow extensions/device storage, structured ndarrays other than record
+scalars, ndarray subclasses, Polars LazyFrame/Expr/nested Object, bytearray and
+memoryview remain outside this input contract. Provider wheel availability is
+separate from the kernel's GIL/NoGIL platform support; in particular, the fixed
+Polars runtime currently has no free-threaded wheel.
 
 Rows are tuples. Results are received into native storage, then converted lazily
 by fetch. A failed multi-row fetch leaves its original position unchanged.

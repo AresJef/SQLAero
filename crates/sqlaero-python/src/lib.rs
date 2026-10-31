@@ -221,7 +221,8 @@ fn _bind_sql<'py>(
         ..context
     };
     input::text(sql, &mut encoded, &source_context, false, Some(&budget))?;
-    let mut compiler = if many && itemize {
+    let mut rows = binding::Rows::new(args, many, itemize, &types, &budget)?;
+    let mut compiler = if rows.is_batch() && itemize {
         Compiler::for_batch(encoded, context.codec, no_backslash, ansi_quotes)
     } else {
         Compiler::new(encoded, context.codec, no_backslash, ansi_quotes)
@@ -235,7 +236,6 @@ fn _bind_sql<'py>(
             break template;
         }
     };
-    let mut rows = binding::Rows::new(args, many, itemize);
     let output = pyo3::types::PyList::empty(py);
     if let Some(layout) = template.prepare_merge() {
         let mut blocks = sqlaero_core::bind::batch::Blocks::new(&template, &layout, limit, limit)
@@ -243,7 +243,7 @@ fn _bind_sql<'py>(
         // One bounded native row fragment handles unknown expansion and normal
         // rollover. Its allocation is reused; no per-row Python SQL exists.
         let mut encoded = Vec::new();
-        while let Some(row) = rows.next()? {
+        while let Some(row) = rows.next(&types, &budget)? {
             row.bind_fragment(
                 &template,
                 &types,
@@ -275,7 +275,7 @@ fn _bind_sql<'py>(
         }
         return Ok(output);
     }
-    while let Some(row) = rows.next()? {
+    while let Some(row) = rows.next(&types, &budget)? {
         let request = row.bind(&template, &types, &context, &budget)?;
         output.append(PyBytes::new(py, &request))?;
     }

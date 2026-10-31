@@ -152,7 +152,7 @@ fn fraction(stamp: &mut Stamp, mut value: u32, mut precision: usize) -> Result<(
     if value == 0 {
         return Ok(());
     }
-    while precision != 0 && value % 10 == 0 {
+    while precision != 0 && value.is_multiple_of(10) {
         value /= 10;
         precision -= 1;
     }
@@ -285,6 +285,50 @@ pub fn write_date(output: &mut Vec<u8>, days: i64, limit: usize) -> Result<(), S
     stamp.finish(output, limit)
 }
 
+/// Write six nonnegative integer calendar components without imposing a target
+/// MySQL calendar or clock range. Input adapters already applied their integer
+/// protocol; this layer only checks digits, capacity and SQL framing.
+///
+/// # Errors
+/// Rejects malformed component digits or an actual request-buffer failure.
+pub fn write_components(
+    output: &mut Vec<u8>,
+    parts: [&[u8]; 6],
+    limit: usize,
+) -> Result<(), ScalarError> {
+    if parts
+        .iter()
+        .any(|value| value.is_empty() || !value.iter().all(u8::is_ascii_digit))
+    {
+        return Err(ScalarError::Range(
+            "calendar components must contain nonnegative integer digits",
+        ));
+    }
+    let size = parts
+        .iter()
+        .enumerate()
+        .try_fold(7usize, |size, (index, value)| {
+            size.checked_add(value.len().max(if index == 0 { 4 } else { 2 }))
+                .ok_or_else(range)
+        })?;
+    writer::reserve(output, size, limit)?;
+    output.push(b'\'');
+    for (index, value) in parts.into_iter().enumerate() {
+        if index != 0 {
+            output.push(match index {
+                1 | 2 => b'-',
+                3 => b' ',
+                _ => b':',
+            });
+        }
+        let padding = (if index == 0 { 4usize } else { 2usize }).saturating_sub(value.len());
+        output.resize(output.len() + padding, b'0');
+        output.extend_from_slice(value);
+    }
+    output.push(b'\'');
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,6 +337,21 @@ mod tests {
         let mut out = Vec::new();
         write(&mut out, ticks, unit, multiplier, kind, 512).unwrap();
         String::from_utf8(out).unwrap()
+    }
+
+    #[test]
+    fn calendar_component_writer_preserves_server_owned_validation_and_atomic_bounds() {
+        let parts = [b"2024".as_slice(), b"13", b"31", b"25", b"59", b"61"];
+        let mut out = Vec::new();
+        write_components(&mut out, parts, 1024).unwrap();
+        assert_eq!(out, b"'2024-13-31 25:59:61'");
+        let mut prefix = b"x".to_vec();
+        assert!(write_components(&mut prefix, parts, 21).is_err());
+        assert_eq!(prefix, b"x");
+        let mut malformed = parts;
+        malformed[1] = b"1'";
+        assert!(write_components(&mut prefix, malformed, 1024).is_err());
+        assert_eq!(prefix, b"x");
     }
 
     #[test]

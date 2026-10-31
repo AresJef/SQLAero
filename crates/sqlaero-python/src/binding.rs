@@ -1,9 +1,10 @@
 //! Incremental input-row adaptation and native positional request assembly.
 
 use crate::errors;
+use crate::input::sequence::Sequence;
+use crate::input::source::{self, CellWriter, PreparedSource, Shape};
 use crate::input::{ScalarTypes, check};
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyTuple};
 use smallvec::{SmallVec, smallvec};
 use sqlaero_core::bind::{
     Context,
@@ -14,70 +15,15 @@ use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::deadline::IoBudget;
 use std::ops::Range;
 
-enum Sequence<'py> {
-    List(Bound<'py, PyList>),
-    Tuple(Bound<'py, PyTuple>),
-}
-impl<'py> Sequence<'py> {
-    fn from(value: &Bound<'py, PyAny>) -> Option<Self> {
-        if value.is_exact_instance_of::<PyList>() {
-            value
-                .cast::<PyList>()
-                .ok()
-                .map(|value| Self::List(value.clone()))
-        } else if value.is_exact_instance_of::<PyTuple>() {
-            value
-                .cast::<PyTuple>()
-                .ok()
-                .map(|value| Self::Tuple(value.clone()))
-        } else {
-            None
-        }
-    }
-    fn len(&self) -> usize {
-        match self {
-            Self::List(value) => value.len(),
-            Self::Tuple(value) => value.len(),
-        }
-    }
-    fn get(&self, index: usize) -> PyResult<Bound<'py, PyAny>> {
-        match self {
-            Self::List(value) => value.get_item(index),
-            Self::Tuple(value) => value.get_item(index),
-        }
-    }
-    /// Consume an item while its list strong reference or tuple borrow lives.
-    /// Deliver indexing errors to the same caller that records their position.
-    fn with_item(
-        &self,
-        index: usize,
-        visit: impl FnOnce(PyResult<&Bound<'py, PyAny>>) -> PyResult<()>,
-    ) -> PyResult<()> {
-        match self {
-            Self::List(value) => match value.get_item(index) {
-                Ok(item) => visit(Ok(&item)),
-                Err(error) => visit(Err(error)),
-            },
-            Self::Tuple(value) => match value.get_borrowed_item(index) {
-                Ok(item) => visit(Ok(&item)),
-                Err(error) => visit(Err(error)),
-            },
-        }
-    }
-    fn identity(&self) -> usize {
-        match self {
-            Self::List(value) => value.as_ptr() as usize,
-            Self::Tuple(value) => value.as_ptr() as usize,
-        }
-    }
-}
-
-/// Retain the original input and its current row index, without materializing
-/// row tuples or a whole-batch snapshot. The caller keeps mutable input stable.
+/// Retain an input owner and advance one logical row at a time. Native typed
+/// providers retain their own current chunk; neither path materializes a batch.
 pub(crate) struct Rows<'py> {
     root: Bound<'py, PyAny>,
     outer: Option<Sequence<'py>>,
+    single: Option<Sequence<'py>>,
+    native: Option<Box<dyn PreparedSource<'py> + 'py>>,
     itemize: bool,
+    many: bool,
     position: usize,
     count: usize,
     empty: bool,
@@ -89,75 +35,211 @@ impl<'py> Rows<'py> {
     pub(crate) fn empty_root(&self) -> bool {
         self.empty
     }
-    pub(crate) fn new(root: &Bound<'py, PyAny>, many: bool, itemize: bool) -> Self {
-        let outer = if many { Sequence::from(root) } else { None };
-        let empty = outer.as_ref().is_some_and(|outer| outer.len() == 0);
-        let count = outer.as_ref().map_or(1, |outer| outer.len().max(1));
-        Self {
+    pub(crate) fn is_batch(&self) -> bool {
+        self.many
+            || self
+                .native
+                .as_ref()
+                .is_some_and(|v| matches!(v.shape(), Shape::Table { .. }))
+    }
+    pub(crate) fn new(
+        root: &Bound<'py, PyAny>,
+        many: bool,
+        itemize: bool,
+        types: &ScalarTypes,
+        budget: &IoBudget,
+    ) -> PyResult<Self> {
+        Self::prepare(root, many, itemize, types, budget)
+            .inspect_err(|error| note_preparation(root.py(), error, None))
+    }
+    fn prepare(
+        root: &Bound<'py, PyAny>,
+        many: bool,
+        itemize: bool,
+        types: &ScalarTypes,
+        budget: &IoBudget,
+    ) -> PyResult<Self> {
+        let sequence = Sequence::from(root, types, &[])?;
+        let native = if sequence.is_none() {
+            source::prepare(root, types, budget)?
+        } else {
+            None
+        };
+        let outer = if many { sequence.clone() } else { None };
+        let single = if many { None } else { sequence };
+        let (count, empty) = match native.as_ref().map(|v| v.shape()) {
+            Some(Shape::Vector { length }) => (if many { length.max(1) } else { 1 }, length == 0),
+            Some(Shape::Record { fields }) => (1, fields == 0),
+            Some(Shape::Table { rows, .. }) => (rows.max(1), rows == 0),
+            None => (
+                outer.as_ref().map_or(1, |v| v.len().max(1)),
+                outer.as_ref().is_some_and(|v| v.len() == 0),
+            ),
+        };
+        Ok(Self {
             root: root.clone(),
             outer,
+            single,
+            native,
             itemize,
+            many,
             position: 0,
             count,
             empty,
-        }
+        })
     }
-    /// Strongly own only the next row. Actual indexing remains checked, so a
-    /// caller violating the mutation contract cannot create a stale pointer.
-    pub(crate) fn next(&mut self) -> PyResult<Option<Row<'py>>> {
+    pub(crate) fn next<'r>(
+        &'r mut self,
+        types: &ScalarTypes,
+        budget: &IoBudget,
+    ) -> PyResult<Option<Row<'r, 'py>>> {
         if self.position >= self.count {
             return Ok(None);
         }
         let index = self.position;
         self.position += 1;
-        self.at(index).map(Some)
+        self.at(index, types, budget).map(Some)
     }
-    /// Re-read only a rollover row when a confirmed session context changed.
-    /// Normal rollover reuses encoded bytes and never calls this method.
-    pub(crate) fn at(&self, index: usize) -> PyResult<Row<'py>> {
+    /// Re-encode only the retained rollover row after a real session change.
+    pub(crate) fn at<'r>(
+        &'r mut self,
+        index: usize,
+        types: &ScalarTypes,
+        budget: &IoBudget,
+    ) -> PyResult<Row<'r, 'py>> {
+        let py = self.root.py();
+        let path = (self.outer.is_some() && !self.empty).then_some(index);
+        self.prepare_at(index, types, budget)
+            .inspect_err(|error| note_preparation(py, error, path))
+    }
+    fn prepare_at<'r>(
+        &'r mut self,
+        index: usize,
+        types: &ScalarTypes,
+        budget: &IoBudget,
+    ) -> PyResult<Row<'r, 'py>> {
+        if let Some(native) = self.native.as_mut() {
+            let shape = native.shape();
+            let native_row = match shape {
+                Shape::Table { .. } => Some(index),
+                Shape::Vector { .. } if self.many && !self.empty => Some(index),
+                _ => None,
+            };
+            let path = if native_row.is_some() {
+                smallvec![index]
+            } else {
+                SmallVec::new()
+            };
+            return Ok(Row {
+                value: self.root.clone(),
+                sequence: None,
+                outer: None,
+                path,
+                itemize: self.itemize,
+                zero_positions: self.empty || matches!(shape, Shape::Table { columns: 0, .. }),
+                native: Some(NativeRow {
+                    source: SourceRef::Borrowed(native.as_mut()),
+                    row: native_row,
+                }),
+            });
+        }
         let (value, outer, path) = match &self.outer {
             Some(outer) if !self.empty => {
-                let value = outer.get(index).inspect_err(|error| {
-                    errors::note(
-                        self.root.py(),
-                        error,
-                        format!("while binding args[{index}]; current request was not sent"),
-                    );
-                })?;
+                let value = outer.get(index)?;
                 (value, Some(outer.identity()), smallvec![index])
             }
             _ => (self.root.clone(), None, SmallVec::new()),
         };
+        let sequence = if !self.empty {
+            if self.outer.is_none() {
+                self.single.clone()
+            } else {
+                Sequence::from(&value, types, &[])?
+            }
+        } else {
+            None
+        };
+        let native = if sequence.is_none() && !self.empty {
+            source::prepare(&value, types, budget)?.map(|source| NativeRow {
+                source: SourceRef::Owned(source),
+                row: None,
+            })
+        } else {
+            None
+        };
         Ok(Row {
             value,
+            sequence,
             outer,
             path,
             itemize: self.itemize,
             zero_positions: self.empty,
+            native,
         })
     }
-
     pub(crate) fn position(&self) -> usize {
         self.position
     }
 }
 
-pub(crate) struct Row<'py> {
+fn note_preparation(py: Python<'_>, error: &PyErr, index: Option<usize>) {
+    let path = index.map_or_else(|| "args".to_owned(), |index| format!("args[{index}]"));
+    errors::note(
+        py,
+        error,
+        format!("while binding {path}; current request was not sent"),
+    );
+}
+
+enum SourceRef<'r, 'py> {
+    Borrowed(&'r mut (dyn PreparedSource<'py> + 'py)),
+    Owned(Box<dyn PreparedSource<'py> + 'py>),
+}
+impl<'py> SourceRef<'_, 'py> {
+    fn source(&mut self) -> &mut (dyn PreparedSource<'py> + 'py) {
+        match self {
+            Self::Borrowed(v) => *v,
+            Self::Owned(v) => v.as_mut(),
+        }
+    }
+    fn shape(&self) -> Shape {
+        match self {
+            Self::Borrowed(v) => v.shape(),
+            Self::Owned(v) => v.shape(),
+        }
+    }
+}
+struct NativeRow<'r, 'py> {
+    source: SourceRef<'r, 'py>,
+    row: Option<usize>,
+}
+
+pub(crate) struct Row<'r, 'py> {
     value: Bound<'py, PyAny>,
+    sequence: Option<Sequence<'py>>,
+    native: Option<NativeRow<'r, 'py>>,
     outer: Option<usize>,
     path: SmallVec<[usize; 4]>,
     itemize: bool,
     zero_positions: bool,
 }
-impl Row<'_> {
+impl Row<'_, '_> {
     pub(crate) fn width(&self) -> usize {
         if self.zero_positions {
-            0
-        } else if self.itemize {
-            Sequence::from(&self.value).map_or(1, |sequence| sequence.len())
-        } else {
-            1
+            return 0;
         }
+        if !self.itemize {
+            return 1;
+        }
+        if let Some(native) = &self.native {
+            return match (native.source.shape(), native.row) {
+                (Shape::Vector { length }, None) => length,
+                (Shape::Record { fields }, _) => fields,
+                (Shape::Table { columns, .. }, Some(_)) => columns,
+                _ => 1,
+            };
+        }
+        self.sequence.as_ref().map_or(1, Sequence::len)
     }
     pub(crate) fn bind(
         self,
@@ -190,7 +272,7 @@ impl Row<'_> {
     }
 
     fn fill(
-        self,
+        mut self,
         template: &Template,
         types: &ScalarTypes,
         context: &Context,
@@ -219,21 +301,27 @@ impl Row<'_> {
             active: SmallVec::new(),
             path: self.path,
             work: 0,
+            native_depth: 0,
+            active_depth: 0,
         };
         if let Some(identity) = self.outer {
             visit.enter(py, identity)?;
         }
-        let row = if self.itemize && !self.zero_positions {
-            Sequence::from(&self.value)
+        let sequence = self.sequence.take();
+        let row = if self.itemize {
+            sequence.as_ref()
         } else {
             None
         };
-        if let Some(row) = &row {
-            visit.enter(py, row.identity())?;
+        if let Some(row) = row {
+            visit.enter_sequence(py, row)?;
+        }
+        if self.native.is_some() {
+            visit.enter(py, self.value.as_ptr() as usize)?;
         }
         let mut cursor = 0;
         for index in 0..width {
-            let source = if let Some(row) = &row {
+            let source = if let Some(row) = row {
                 row.get(index).inspect_err(|error| {
                     errors::note(
                         py,
@@ -258,7 +346,58 @@ impl Row<'_> {
                     "binding position is unavailable",
                 ));
             }
-            if let Err(error) = visit.value(&source, output, row.as_ref().map(|_| index)) {
+            let result = if let Some(native) = &mut self.native {
+                let shape = native.source.shape();
+                let source_row = native.row;
+                if self.itemize {
+                    let coordinates = match (shape, source_row) {
+                        (Shape::Vector { .. }, Some(row)) => (row, 0),
+                        (Shape::Vector { .. }, None) => (index, 0),
+                        (Shape::Record { .. }, _) => (0, index),
+                        (Shape::Table { .. }, Some(row)) => (row, index),
+                        (Shape::Table { .. }, None) => (0, 0),
+                    };
+                    if matches!((shape, source_row), (Shape::Table { .. }, None)) {
+                        visit.native_value(native.source.source(), output)
+                    } else {
+                        let positional =
+                            !matches!((shape, source_row), (Shape::Vector { .. }, Some(_)));
+                        if positional {
+                            visit.push_index(py, index)?;
+                        }
+                        let result = native.source.source().write_cell(
+                            coordinates.0,
+                            coordinates.1,
+                            output,
+                            context,
+                            budget,
+                            &mut visit,
+                        );
+                        if result.is_ok() && positional {
+                            visit.pop_index();
+                        }
+                        result
+                    }
+                } else if let Some(row) = source_row {
+                    match shape {
+                        Shape::Vector { .. } => native
+                            .source
+                            .source()
+                            .write_cell(row, 0, output, context, budget, &mut visit),
+                        Shape::Table { columns, .. } => {
+                            visit.native_row(native.source.source(), row, columns, output)
+                        }
+                        Shape::Record { .. } => visit.native_value(native.source.source(), output),
+                    }
+                } else {
+                    visit.native_value(native.source.source(), output)
+                }
+            } else if let Some(sequence) = sequence.as_ref().filter(|_| !self.itemize) {
+                visit.sequence(sequence, output, None)
+            } else {
+                visit.value(&source, output, row.map(|_| index))
+            };
+            if let Err(error) = result {
                 errors::note(
                     py,
                     &error,
@@ -295,6 +434,8 @@ struct Visit<'a> {
     active: SmallVec<[usize; 4]>,
     path: SmallVec<[usize; 4]>,
     work: usize,
+    native_depth: usize,
+    active_depth: usize,
 }
 
 /// Measure the production value visitor without copying its bytes into Python.
@@ -316,6 +457,8 @@ pub(crate) fn encode_value(
         active: SmallVec::new(),
         path: SmallVec::new(),
         work: 0,
+        native_depth: 0,
+        active_depth: 0,
     }
     .value(value, &mut output, None)?;
     check(value.py(), budget)?;
@@ -324,7 +467,7 @@ pub(crate) fn encode_value(
 
 impl Visit<'_> {
     fn enter(&mut self, py: Python<'_>, identity: usize) -> PyResult<()> {
-        if self.active.len() >= 64 || self.active.contains(&identity) {
+        if self.active_depth + self.native_depth >= 64 || self.active.contains(&identity) {
             return Err(errors::client(
                 py,
                 ClientErrorCode::ContainerNesting,
@@ -338,6 +481,7 @@ impl Visit<'_> {
             .try_reserve(1)
             .map_err(|_| errors::memory_error(py))?;
         self.active.push(identity);
+        self.active_depth += 1;
         Ok(())
     }
     /// Defer a leaf's diagnostic index until failure. Containers still keep
@@ -360,19 +504,68 @@ impl Visit<'_> {
             }
             self.work = 0;
         }
-        let Some(sequence) = Sequence::from(value) else {
-            let result = self
+        // Preserve the two exact-container checks in front of primitive
+        // writes. Extended families are resolved only after scalar rejection.
+        let sequence = if value.is_exact_instance_of::<pyo3::types::PyList>()
+            || value.is_exact_instance_of::<pyo3::types::PyTuple>()
+        {
+            Sequence::from(value, self.types, &self.active)?
+        } else {
+            match self
                 .types
-                .write(value, output, self.context, Some(self.budget));
-            if let Err(error) = &result {
-                self.failed_value(value, child, error);
+                .try_write(value, output, self.context, Some(self.budget))
+            {
+                Ok(true) => return Ok(()),
+                Err(error) => {
+                    self.failed_value(value, child, &error);
+                    return Err(error);
+                }
+                Ok(false) => (),
             }
-            return result;
+            match Sequence::from(value, self.types, &self.active) {
+                Ok(sequence) => sequence,
+                Err(error) => {
+                    self.failed_value(value, child, &error);
+                    return Err(error);
+                }
+            }
         };
+        if let Some(sequence) = sequence {
+            self.sequence(&sequence, output, child)
+        } else {
+            self.native_or_unsupported(value, output, child)
+        }
+    }
+
+    fn enter_sequence(&mut self, py: Python<'_>, sequence: &Sequence<'_>) -> PyResult<()> {
+        self.enter(py, sequence.identity())?;
+        if let Some(alias) = sequence.alias() {
+            if self.active.contains(&alias) {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::ContainerNesting,
+                    "normalized input contains a true cycle",
+                ));
+            }
+            self.active
+                .try_reserve(1)
+                .map_err(|_| errors::memory_error(py))?;
+            self.active.push(alias);
+        }
+        Ok(())
+    }
+
+    fn sequence(
+        &mut self,
+        sequence: &Sequence<'_>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
+        let py = sequence.py();
         if let Some(index) = child {
             self.path.push(index);
         }
-        self.enter(py, sequence.identity())?;
+        self.enter_sequence(py, sequence)?;
         let result = (|| {
             writer::append(output, b"(", self.context.limit)
                 .map_err(|error| errors::wire(py, error))?;
@@ -391,11 +584,108 @@ impl Visit<'_> {
             writer::append(output, b")", self.context.limit)
                 .map_err(|error| errors::wire(py, error))
         })();
+        if sequence.alias().is_some() {
+            self.active.pop();
+        }
         self.active.pop();
+        self.active_depth -= 1;
         if result.is_ok() && child.is_some() {
             self.path.pop();
         }
         result
+    }
+
+    #[cold]
+    fn native_or_unsupported(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
+        let py = value.py();
+        if let Some(index) = child {
+            self.push_index(py, index)?;
+        }
+        let result = (|| {
+            let Some(mut source) = source::prepare(value, self.types, self.budget)? else {
+                return Err(crate::input::unsupported(value));
+            };
+            self.enter(py, value.as_ptr() as usize)?;
+            let result = self.native_value(source.as_mut(), output);
+            self.active.pop();
+            self.active_depth -= 1;
+            result
+        })();
+        if let Err(error) = &result {
+            self.failed_value(value, None, error);
+        }
+        if result.is_ok() && child.is_some() {
+            self.pop_index();
+        }
+        result
+    }
+
+    fn native_value<'py>(
+        &mut self,
+        source: &mut dyn PreparedSource<'py>,
+        output: &mut Vec<u8>,
+    ) -> PyResult<()> {
+        let py = source.owner().py();
+        match source.shape() {
+            Shape::Vector { length } => {
+                writer::append(output, b"(", self.context.limit)
+                    .map_err(|e| errors::wire(py, e))?;
+                for index in 0..length {
+                    if index != 0 {
+                        writer::append(output, b",", self.context.limit)
+                            .map_err(|e| errors::wire(py, e))?;
+                    }
+                    self.push_index(py, index)?;
+                    source.write_cell(index, 0, output, self.context, self.budget, self)?;
+                    self.pop_index();
+                }
+                writer::append(output, b")", self.context.limit).map_err(|e| errors::wire(py, e))
+            }
+            Shape::Record { fields } => self.native_row(source, 0, fields, output),
+            Shape::Table { rows, columns } => {
+                writer::append(output, b"(", self.context.limit)
+                    .map_err(|e| errors::wire(py, e))?;
+                for row in 0..rows {
+                    if row != 0 {
+                        writer::append(output, b",", self.context.limit)
+                            .map_err(|e| errors::wire(py, e))?;
+                    }
+                    self.push_index(py, row)?;
+                    self.enter_native(py)?;
+                    let result = self.native_row(source, row, columns, output);
+                    self.leave_native();
+                    result?;
+                    self.pop_index();
+                }
+                writer::append(output, b")", self.context.limit).map_err(|e| errors::wire(py, e))
+            }
+        }
+    }
+
+    fn native_row<'py>(
+        &mut self,
+        source: &mut dyn PreparedSource<'py>,
+        row: usize,
+        columns: usize,
+        output: &mut Vec<u8>,
+    ) -> PyResult<()> {
+        let py = source.owner().py();
+        writer::append(output, b"(", self.context.limit).map_err(|e| errors::wire(py, e))?;
+        for column in 0..columns {
+            if column != 0 {
+                writer::append(output, b",", self.context.limit)
+                    .map_err(|e| errors::wire(py, e))?;
+            }
+            self.push_index(py, column)?;
+            source.write_cell(row, column, output, self.context, self.budget, self)?;
+            self.pop_index();
+        }
+        writer::append(output, b")", self.context.limit).map_err(|e| errors::wire(py, e))
     }
 
     /// Keep Python diagnostic construction off the successful traversal frame.
@@ -409,6 +699,52 @@ impl Visit<'_> {
         if let Ok(summary) = self.types.diagnostic(value) {
             errors::note(value.py(), error, format!("failed escape input: {summary}"));
         }
+    }
+}
+
+impl CellWriter for Visit<'_> {
+    fn python(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
+        self.value(value, output, child)
+    }
+    fn enter_native(&mut self, py: Python<'_>) -> PyResult<()> {
+        if self.active_depth + self.native_depth >= 64 {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::ContainerNesting,
+                format!(
+                    "{} exceeds 64 active container levels; current request was not sent",
+                    path_text(&self.path)
+                ),
+            ));
+        }
+        self.native_depth += 1;
+        Ok(())
+    }
+    fn leave_native(&mut self) {
+        self.native_depth -= 1;
+    }
+    fn push_index(&mut self, py: Python<'_>, index: usize) -> PyResult<()> {
+        self.path
+            .try_reserve(1)
+            .map_err(|_| errors::memory_error(py))?;
+        self.path.push(index);
+        Ok(())
+    }
+    fn pop_index(&mut self) {
+        self.path.pop();
+    }
+    fn checkpoint(&mut self, py: Python<'_>, work: usize) -> PyResult<()> {
+        self.work = self.work.saturating_add(work);
+        if self.work >= 16384 {
+            self.work = 0;
+            check(py, self.budget)?;
+        }
+        Ok(())
     }
 }
 

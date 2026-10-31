@@ -13,12 +13,41 @@ use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::deadline::IoBudget;
 
+pub(crate) mod arrow;
+pub(crate) mod numpy;
+pub(crate) mod pandas;
+pub(crate) mod polars;
+pub(crate) mod sequence;
+pub(crate) mod source;
+pub(crate) mod standard;
+pub(crate) mod temporal;
+
+/// Build a public Python index fallibly, shared by provider boundary adapters.
+/// No intermediate Python value or implicit infallible tuple conversion is used.
+pub(crate) fn python_index<'py>(py: Python<'py>, index: usize) -> PyResult<Bound<'py, PyAny>> {
+    // SAFETY: CPython returns a new integer reference or its actual allocation
+    // exception. `usize` is exactly the argument domain of PyLong_FromSize_t.
+    unsafe { Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyLong_FromSize_t(index)) }
+}
+
+/// Test the actual type hierarchy without invoking an object's __class__ hook.
+pub(crate) fn actual_instance(value: &Bound<'_, PyAny>, base: &Bound<'_, PyType>) -> bool {
+    // SAFETY: both references denote live actual type objects. The public
+    // subtype predicate consults their MRO and does not call Python code.
+    unsafe {
+        pyo3::ffi::PyType_IsSubtype(value.get_type().as_ptr().cast(), base.as_ptr().cast()) != 0
+    }
+}
+
 /// Module-owned immutable type references; there is no process-global Python
 /// type pointer or per-value import, and a future interpreter can own its state.
 #[pyclass(frozen)]
 pub(crate) struct ScalarTypes {
     decimal: Py<PyType>,
     utc: Py<PyAny>,
+    struct_time: Py<PyType>,
+    numpy: std::sync::OnceLock<numpy::NumpyTypes>,
+    pandas: std::sync::OnceLock<pandas::PandasTypes>,
 }
 
 impl ScalarTypes {
@@ -128,11 +157,16 @@ impl ScalarTypes {
                 .cast_into()?
                 .unbind(),
             utc: errors::attribute(&timezone, c"utc")?.unbind(),
+            struct_time: errors::attribute(errors::module(py, c"time")?.as_any(), c"struct_time")?
+                .cast_into::<PyType>()?
+                .unbind(),
+            numpy: std::sync::OnceLock::new(),
+            pandas: std::sync::OnceLock::new(),
         })
     }
 
-    /// Read one supported exact scalar directly into the native request.
-    /// Approved tzinfo code executes only here, while attached to Python.
+    /// Retain the scalar-only probe contract without treating a recognized
+    /// provider failure as an unsupported-type sentinel.
     pub(crate) fn write(
         &self,
         value: &Bound<'_, PyAny>,
@@ -140,10 +174,28 @@ impl ScalarTypes {
         context: &Context,
         budget: Option<&IoBudget>,
     ) -> PyResult<()> {
+        if self.try_write(value, output, context, budget)? {
+            Ok(())
+        } else {
+            Err(unsupported(value))
+        }
+    }
+
+    /// Read one supported exact scalar directly into the native request.
+    /// Approved tzinfo code executes only here, while attached to Python.
+    pub(crate) fn try_write(
+        &self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        context: &Context,
+        budget: Option<&IoBudget>,
+    ) -> PyResult<bool> {
         let py = value.py();
         let limit = context.limit;
         if value.is_none() {
-            return writer::append(output, b"NULL", limit).map_err(|e| errors::wire(py, e));
+            return writer::append(output, b"NULL", limit)
+                .map_err(|e| errors::wire(py, e))
+                .map(|()| true);
         }
         if value.is_exact_instance_of::<PyBool>() {
             return writer::append(
@@ -151,17 +203,19 @@ impl ScalarTypes {
                 if value.extract::<bool>()? { b"1" } else { b"0" },
                 limit,
             )
-            .map_err(|e| errors::wire(py, e));
+            .map_err(|e| errors::wire(py, e))
+            .map(|()| true);
         }
         if value.is_exact_instance_of::<PyInt>() {
-            return integer(value, output, limit);
+            return integer(value, output, limit).map(|()| true);
         }
         if value.is_exact_instance_of::<PyFloat>() {
             return scalar::float(output, value.extract::<f64>()?, limit)
-                .map_err(|e| errors::wire(py, e));
+                .map_err(|e| errors::wire(py, e))
+                .map(|()| true);
         }
         if value.is_exact_instance_of::<PyString>() {
-            return text(value.cast::<PyString>()?, output, context, true, budget);
+            return text(value.cast::<PyString>()?, output, context, true, budget).map(|()| true);
         }
         if value.is_exact_instance_of::<PyBytes>() {
             return binary(
@@ -170,9 +224,10 @@ impl ScalarTypes {
                 output,
                 limit,
                 budget,
-            );
+            )
+            .map(|()| true);
         }
-        self.write_extended(value, output, context)
+        self.write_extended(value, output, context, budget)
     }
 
     /// Isolate callback-rich temporal and Decimal work from primitive frames.
@@ -183,59 +238,38 @@ impl ScalarTypes {
         value: &Bound<'_, PyAny>,
         output: &mut Vec<u8>,
         context: &Context,
-    ) -> PyResult<()> {
+        budget: Option<&IoBudget>,
+    ) -> PyResult<bool> {
         let py = value.py();
         let limit = context.limit;
         if value.is_exact_instance_of::<PyDateTime>() {
-            let datetime = value.cast::<PyDateTime>()?;
-            let mut date = date(datetime);
-            let mut clock = clock(datetime);
-            let offset = match datetime.get_tzinfo() {
-                None => None,
-                Some(zone) if zone.is(self.utc.bind(py)) => Some(0),
-                Some(_) => {
-                    // The exact built-in method validates the tzinfo return
-                    // type and offset range, preserving its actual exception.
-                    let offset = datetime.call_method0(PyString::from_bytes(py, b"utcoffset")?)?;
-                    if offset.is_none() {
-                        None
-                    } else {
-                        Some(delta(offset.cast::<PyDelta>()?))
-                    }
-                }
-            };
-            if let Some(offset) = offset {
-                if !context.utc_confirmed {
-                    return Err(errors::client(
-                        py,
-                        ClientErrorCode::SessionState,
-                        "aware datetime requires a reliably confirmed UTC MySQL session; time_zone is non-UTC or unknown",
-                    ));
-                }
-                (date, clock) =
-                    scalar::utc(date, clock, offset).map_err(|e| scalar_error(py, e))?;
-            }
-            return scalar::date_time(output, date, Some(clock), limit)
-                .map_err(|e| errors::wire(py, e));
+            return self
+                .write_datetime(value.cast::<PyDateTime>()?, output, context)
+                .map(|()| true);
         }
         if value.is_exact_instance_of::<PyDate>() {
             return scalar::date_time(output, date(value.cast::<PyDate>()?), None, limit)
-                .map_err(|e| errors::wire(py, e));
+                .map_err(|e| errors::wire(py, e))
+                .map(|()| true);
         }
         if value.is_exact_instance_of::<PyTime>() {
             return scalar::time(output, clock(value.cast::<PyTime>()?), limit)
-                .map_err(|e| errors::wire(py, e));
+                .map_err(|e| errors::wire(py, e))
+                .map(|()| true);
         }
         if value.is_exact_instance_of::<PyDelta>() {
             return scalar::duration(output, delta(value.cast::<PyDelta>()?), limit)
-                .map_err(|e| errors::wire(py, e));
+                .map_err(|e| errors::wire(py, e))
+                .map(|()| true);
         }
         if value.get_type().is(self.decimal.bind(py)) {
             let parts = value.call_method0(PyString::from_bytes(py, b"as_tuple")?)?;
             let parts = parts.cast::<PyTuple>()?;
             let exponent = parts.get_item(2)?;
             if !exponent.is_exact_instance_of::<PyInt>() {
-                return writer::append(output, b"NULL", limit).map_err(|e| errors::wire(py, e));
+                return writer::append(output, b"NULL", limit)
+                    .map_err(|e| errors::wire(py, e))
+                    .map(|()| true);
             }
             let negative = parts.get_item(0)?.extract::<u8>()? != 0;
             let digits = parts.get_item(1)?.extract::<Vec<u8>>()?;
@@ -244,16 +278,181 @@ impl ScalarTypes {
                 let error = scalar_error(py, error);
                 errors::note(py, &error, format!("failed Decimal components: sign={}, digits={:?}{} ({} digits), exponent={exponent}", u8::from(negative), &digits[..digits.len().min(16)], if digits.len() > 16 { " [truncated]" } else { "" }, digits.len()));
                 error
-            });
+            }).map(|()| true);
         }
-        Err(unsupported(value))
+        if self.write_pandas(value, output, context, budget)? {
+            return Ok(true);
+        }
+        if self.write_numpy(value, output, context, budget)? {
+            return Ok(true);
+        }
+        standard::write(self, value, output, context, budget)
     }
+
+    fn write_datetime(
+        &self,
+        datetime: &Bound<'_, PyDateTime>,
+        output: &mut Vec<u8>,
+        context: &Context,
+    ) -> PyResult<()> {
+        let py = datetime.py();
+        let limit = context.limit;
+        let mut date = date(datetime);
+        let mut clock = clock(datetime);
+        let offset = match datetime.get_tzinfo() {
+            None => None,
+            Some(zone) if zone.is(self.utc.bind(py)) => Some(0),
+            Some(_) => {
+                // The exact built-in method validates the tzinfo return
+                // type and offset range, preserving its actual exception.
+                let offset = datetime.call_method0(PyString::from_bytes(py, b"utcoffset")?)?;
+                if offset.is_none() {
+                    None
+                } else {
+                    Some(delta(offset.cast::<PyDelta>()?))
+                }
+            }
+        };
+        if let Some(offset) = offset {
+            if !context.utc_confirmed {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::SessionState,
+                    "aware datetime requires a reliably confirmed UTC MySQL session; time_zone is non-UTC or unknown",
+                ));
+            }
+            (date, clock) = scalar::utc(date, clock, offset).map_err(|e| scalar_error(py, e))?;
+        }
+        scalar::date_time(output, date, Some(clock), limit).map_err(|e| errors::wire(py, e))
+    }
+
+    /// Discover an already-used optional provider, outside every primitive path.
+    /// Full candidates are prepared without a cache lock and losers drop after
+    /// OnceLock has returned; Python callbacks never run inside a publish lock.
+    pub(crate) fn numpy_types(&self, py: Python<'_>) -> PyResult<Option<&numpy::NumpyTypes>> {
+        if let Some(types) = self.numpy.get() {
+            return Ok(Some(types));
+        }
+        if !provider_loaded(py, b"numpy")? {
+            return Ok(None);
+        }
+        let candidate = numpy::NumpyTypes::new(py)?;
+        let _ = self.numpy.set(candidate);
+        Ok(self.numpy.get())
+    }
+
+    /// Discover Pandas only after the caller imported it, and publish a fully
+    /// prepared interpreter-owned cache without holding a lock during Python.
+    pub(crate) fn pandas_types(&self, py: Python<'_>) -> PyResult<Option<&pandas::PandasTypes>> {
+        if let Some(types) = self.pandas.get() {
+            return Ok(Some(types));
+        }
+        if !provider_loaded(py, b"pandas")? {
+            return Ok(None);
+        }
+        let candidate = pandas::PandasTypes::new(py)?;
+        let _ = self.pandas.set(candidate);
+        Ok(self.pandas.get())
+    }
+
+    fn write_pandas(
+        &self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        context: &Context,
+        budget: Option<&IoBudget>,
+    ) -> PyResult<bool> {
+        let py = value.py();
+        let Some(types) = self.pandas_types(py)? else {
+            return Ok(false);
+        };
+        let Some(numpy) = self.numpy_types(py)? else {
+            return Ok(false);
+        };
+        let Some(scalar) = types.read_scalar(value, numpy)? else {
+            return Ok(false);
+        };
+        match scalar {
+            pandas::PandasScalar::Null => writer::append(output, b"NULL", context.limit)
+                .map_err(|error| errors::wire(py, error))?,
+            pandas::PandasScalar::Temporal {
+                ticks,
+                unit,
+                multiplier,
+                kind,
+                aware,
+            } => {
+                if aware && !context.utc_confirmed {
+                    return Err(errors::client(
+                        py,
+                        ClientErrorCode::SessionState,
+                        "timezone-aware Pandas input requires a confirmed UTC session",
+                    ));
+                }
+                temporal::write(py, ticks, unit, multiplier, kind, output, context, budget)?;
+            }
+        }
+        Ok(true)
+    }
+
+    fn write_numpy(
+        &self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        context: &Context,
+        budget: Option<&IoBudget>,
+    ) -> PyResult<bool> {
+        let py = value.py();
+        let Some(types) = self.numpy_types(py)? else {
+            return Ok(false);
+        };
+        use numpy::NumpyScalar;
+        let result = match types.read(value)? {
+            Some(NumpyScalar::Signed(value)) => scalar::integer(output, value, context.limit)
+                .map_err(|error| errors::wire(py, error)),
+            Some(NumpyScalar::Unsigned(value)) => scalar::integer(output, value, context.limit)
+                .map_err(|error| errors::wire(py, error)),
+            Some(NumpyScalar::Float(value)) => {
+                scalar::float(output, value, context.limit).map_err(|error| errors::wire(py, error))
+            }
+            Some(NumpyScalar::Bool(value)) => {
+                writer::append(output, if value { b"1" } else { b"0" }, context.limit)
+                    .map_err(|error| errors::wire(py, error))
+            }
+            Some(NumpyScalar::Temporal {
+                ticks,
+                unit,
+                multiplier,
+                kind,
+            }) => temporal::write(py, ticks, unit, multiplier, kind, output, context, budget),
+            None if types.is_text(value) => text(value.cast()?, output, context, true, budget),
+            None if types.is_binary(value) => binary(
+                py,
+                value.cast::<PyBytes>()?.as_bytes(),
+                output,
+                context.limit,
+                budget,
+            ),
+            None => return Ok(false),
+        };
+        result.map(|()| true)
+    }
+}
+
+/// Consult an existing provider import without freezing a negative result.
+fn provider_loaded(py: Python<'_>, name: &[u8]) -> PyResult<bool> {
+    // SAFETY: CPython owns sys.modules for this interpreter; acquire an owned
+    // reference while attached and use PyO3's owned dictionary lookup API.
+    let modules =
+        unsafe { Bound::<PyAny>::from_borrowed_ptr(py, pyo3::ffi::PyImport_GetModuleDict()) }
+            .cast_into::<pyo3::types::PyDict>()?;
+    Ok(modules.get_item(PyString::from_bytes(py, name)?)?.is_some())
 }
 
 /// Keep fallible error formatting outside the common scalar visitor's frame.
 #[cold]
 #[inline(never)]
-fn unsupported(value: &Bound<'_, PyAny>) -> PyErr {
+pub(crate) fn unsupported(value: &Bound<'_, PyAny>) -> PyErr {
     match value.get_type().name() {
         Ok(name) => errors::builtin_message::<PyTypeError>(
             value.py(),
@@ -395,7 +594,7 @@ fn codec_error(
 const WORK_BYTES: usize = 256 * 1024;
 
 #[inline(never)]
-fn binary(
+pub(crate) fn binary(
     py: Python<'_>,
     source: &[u8],
     output: &mut Vec<u8>,
@@ -438,6 +637,103 @@ fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
         Some(budget) => check(py, budget),
         None => py.check_signals(),
     }
+}
+
+/// Encode native UTF-8 content through the same codec and checked work windows.
+/// A Python string is constructed only if the codec needs its error payload.
+pub(crate) fn text_utf8(
+    py: Python<'_>,
+    source: &str,
+    output: &mut Vec<u8>,
+    context: &Context,
+    budget: Option<&IoBudget>,
+) -> PyResult<()> {
+    let convert_error = |error: CodecError, start: usize| -> PyErr {
+        match error {
+            CodecError::Encode { offset, point } => {
+                // SAFETY: source is valid UTF-8 and remains borrowed only for
+                // this synchronous call. Construction is checked and attached.
+                let original = unsafe {
+                    Bound::<PyAny>::from_owned_ptr_or_err(
+                        py,
+                        pyo3::ffi::PyUnicode_FromStringAndSize(
+                            source.as_ptr().cast(),
+                            source.len() as pyo3::ffi::Py_ssize_t,
+                        ),
+                    )
+                }
+                .and_then(|value| value.cast_into::<PyString>().map_err(Into::into));
+                match original {
+                    Ok(original) => codec_error(
+                        &original,
+                        source,
+                        context.codec.name(),
+                        CodecError::Encode {
+                            offset: start + offset,
+                            point,
+                        },
+                    ),
+                    Err(error) => error,
+                }
+            }
+            CodecError::Wire(error) => errors::wire(py, error),
+            error => errors::client(py, ClientErrorCode::UnsupportedCharset, error.to_string()),
+        }
+    };
+    if source.len() <= WORK_BYTES {
+        return context
+            .codec
+            .literal(source, output, context.no_backslash_escapes, context.limit)
+            .map_err(|error| convert_error(error, 0));
+    }
+    checkpoint(py, budget)?;
+    writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))?;
+    let mut start = 0;
+    while start < source.len() {
+        checkpoint(py, budget)?;
+        let mut end = (start + WORK_BYTES).min(source.len());
+        while !source.is_char_boundary(end) {
+            end -= 1;
+        }
+        context
+            .codec
+            .literal_fragment(
+                &source[start..end],
+                output,
+                context.no_backslash_escapes,
+                context.limit,
+            )
+            .map_err(|error| convert_error(error, start))?;
+        start = end;
+    }
+    writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))
+}
+
+/// Write a bounded Arrow/Polars two's-complement coefficient without Python.
+pub(crate) fn decimal_bytes(
+    py: Python<'_>,
+    signed_le: &[u8],
+    scale: i8,
+    output: &mut Vec<u8>,
+    context: &Context,
+) -> PyResult<()> {
+    if signed_le.is_empty() || signed_le.len() > 32 {
+        return Err(errors::client(
+            py,
+            ClientErrorCode::NumericRange,
+            "Decimal coefficient must contain between 1 and 32 bytes",
+        ));
+    }
+    let coefficient = num_bigint::BigInt::from_signed_bytes_le(signed_le);
+    let (sign, digits) = coefficient.to_radix_be(10);
+    scalar::decimal(
+        output,
+        sign == num_bigint::Sign::Minus,
+        &digits,
+        -i64::from(scale),
+        context.limit,
+    )
+    .map_err(|error| scalar_error(py, error))
 }
 
 /// The same strict text conversion serves SQL source and quoted value content.

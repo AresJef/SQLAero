@@ -219,7 +219,8 @@ impl Cursor {
             connection.ensure_context(py, &mut lease, &mut budget)?;
             let mut last = None;
             if let Some(args) = args.0 {
-                let mut rows = binding::Rows::new(&args, many, itemize);
+                let mut rows = binding::Rows::new(&args, many, itemize, &types, &budget)?;
+                let batch = rows.is_batch();
                 let empty = rows.empty_root();
                 let mut prepared: Option<Prepared> = None;
                 // Only an overflow row is retained here, as already encoded
@@ -231,7 +232,7 @@ impl Cursor {
                     let key = BindingKey::new(&context, ansi);
                     if prepared.as_ref().is_none_or(|value| value.key != key) {
                         prepared = Some(Prepared::new(
-                            py, sql, &context, ansi, many, itemize, &budget,
+                            py, sql, &context, ansi, batch, itemize, &budget,
                         )?);
                     }
                     let prepared = prepared.as_mut().ok_or_else(|| {
@@ -253,7 +254,7 @@ impl Cursor {
                                 index = saved;
                                 fragment = bytes;
                                 if saved_key != key {
-                                    rows.at(index)?.bind_fragment(
+                                    rows.at(index, &types, &budget)?.bind_fragment(
                                         &prepared.template,
                                         &types,
                                         &context,
@@ -263,8 +264,10 @@ impl Cursor {
                                     )?;
                                 }
                             } else {
-                                let Some(row) = rows.next()? else { break };
-                                index = rows.position() - 1;
+                                index = rows.position();
+                                let Some(row) = rows.next(&types, &budget)? else {
+                                    break;
+                                };
                                 row.bind_fragment(
                                     &prepared.template,
                                     &types,
@@ -290,8 +293,10 @@ impl Cursor {
                         };
                         (request, end)
                     } else {
-                        let Some(row) = rows.next()? else { break };
-                        let end = if empty { 0 } else { rows.position() };
+                        let end = if empty { 0 } else { rows.position() + 1 };
+                        let Some(row) = rows.next(&types, &budget)? else {
+                            break;
+                        };
                         (
                             row.bind(&prepared.template, &types, &context, &budget)?,
                             end,
@@ -379,6 +384,11 @@ macro_rules! cursor_api {
             /// Omitted args sends original SQL; explicit None binds one NULL.
             /// many/itemize are exact bool and keyword-only. All request chunks
             /// share one deadline. Confirmed prefixes never imply a commit.
+            /// Escape validates supported built-in values, approved real
+            /// subclasses, containers and optional NumPy/Pandas/Arrow/Polars
+            /// inputs. One-dimensional sources follow many/itemize; tables
+            /// supply logical rows even when many=False. Providers are not
+            /// imported by this API. bytearray and memoryview are rejected.
             /// datetime.time keeps its clock fields and microseconds, ignores
             /// tzinfo and never calls timezone methods; 00:30+01:00 remains
             /// 00:30:00. Aware datetime, in contrast, is normalized to UTC.

@@ -41,6 +41,8 @@ def accepts_mode(_mode: Literal["DISABLED", "REQUIRED", "VERIFY_CA", "VERIFY_IDE
     pass
 accepts_mode(connection.ssl_mode)
 cursor = connection.cursor()
+cursor.execute("SELECT %s", {"one": 1})
+cursor.execute("SELECT %s", range(3), many=True)
 assert_type(cursor, Cursor)
 assert_type(cursor.columns, Columns)
 assert_type(cursor.columns[0], ColumnInfo)
