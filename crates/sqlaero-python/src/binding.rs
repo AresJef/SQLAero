@@ -365,12 +365,7 @@ impl Visit<'_> {
                 .types
                 .write(value, output, self.context, Some(self.budget));
             if let Err(error) = &result {
-                if let Some(index) = child {
-                    self.path.push(index);
-                }
-                if let Ok(summary) = self.types.diagnostic(value) {
-                    errors::note(py, error, format!("failed escape input: {summary}"));
-                }
+                self.failed_value(value, child, error);
             }
             return result;
         };
@@ -401,6 +396,19 @@ impl Visit<'_> {
             self.path.pop();
         }
         result
+    }
+
+    /// Keep Python diagnostic construction off the successful traversal frame.
+    /// The actual failure, child index, and best-effort note stay unchanged.
+    #[cold]
+    #[inline(never)]
+    fn failed_value(&mut self, value: &Bound<'_, PyAny>, child: Option<usize>, error: &PyErr) {
+        if let Some(index) = child {
+            self.path.push(index);
+        }
+        if let Ok(summary) = self.types.diagnostic(value) {
+            errors::note(value.py(), error, format!("failed escape input: {summary}"));
+        }
     }
 }
 
