@@ -509,8 +509,10 @@ print('stdlib-only format control completed')
         for label, program in [('original-untraced', original), ('original', original),
                                ('prepared-provider', prepared),
                                ('stdlib-only', control), ('call-scoped', source),
-                               ('stdlib-scoped', scoped_control)]:
-            for repeat in range(8):
+                               ('stdlib-scoped', scoped_control),
+                               ('call-scoped-wide', source.replace('range(48)', 'range(256)')),
+                               ('stdlib-scoped-wide', scoped_control.replace('range(48)', 'range(256)'))]:
+            for repeat in range(2):
                 environment = os.environ.copy()
                 if label == 'original-untraced':
                     environment.pop('PYTHONFAULTHANDLER', None)
@@ -524,6 +526,22 @@ print('stdlib-only format control completed')
                                  'stderr': separate.stderr.decode('utf-8', 'replace')[-7000:]})
                 if separate.returncode and label != 'stdlib-only':
                     replay_failed = True
+        import shutil
+        debugger = shutil.which('gdb')
+        if debugger is not None:
+            environment = os.environ.copy()
+            environment.pop('PYTHONFAULTHANDLER', None)
+            native_stack = subprocess.run([
+                debugger, '--batch', '-ex', 'set disable-randomization off',
+                '-ex', 'run', '-ex', 'thread apply all bt 28', '--args', sys.executable, '-',
+            ], input=original.encode('utf-8'), capture_output=True, timeout=60,
+                check=False, env=environment)
+            observed.append({'variant': 'gdb-exact-original', 'repeat': 0,
+                             'exit': native_stack.returncode,
+                             'stdout': native_stack.stdout.decode('utf-8', 'replace')[-24000:],
+                             'stderr': native_stack.stderr.decode('utf-8', 'replace')[-4000:]})
+        else:
+            observed.append({'variant': 'gdb-unavailable', 'repeat': 0, 'exit': None})
         diagnostic = '\nFixed allocation diagnosis: ' + json.dumps(observed)
         with capsys.disabled():
             print(diagnostic, flush=True)
