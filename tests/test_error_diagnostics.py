@@ -325,6 +325,7 @@ kind: str = KIND
 faulthandler.enable()
 enable = _testcapi.set_nomemory
 disable = _testcapi.remove_mem_hooks
+call_with_nomemory = getattr(_testcapi, 'call_with_nomemory', None)
 rule = RetryRule(error_types=ValueError)
 encoder = _sqlaero._prepare_encoder()
 unknown = object()
@@ -386,11 +387,15 @@ for offset in range(48):
     gc.collect()
     operation = prepare()
     try:
-        enable(offset, offset + 1)
-        try:
-            result = operation()
-        finally:
-            disable()
+        if call_with_nomemory is not None:
+            # The C helper removes hooks before returning to Python bytecode.
+            result = call_with_nomemory(offset, offset + 1, operation)
+        else:
+            enable(offset, offset + 1)
+            try:
+                result = operation()
+            finally:
+                disable()
     except MemoryError:
         failures += 1
     except SQLAeroError as error:
@@ -425,7 +430,7 @@ print('allocation boundary preserved:', kind, failures)
     if kind == 'traceback' and (
         result.returncode < 0 or
         (sys.platform.startswith('linux') and sys.version_info[:2] == (3, 15)
-         and not sys._is_gil_enabled())
+         and not getattr(sys, '_is_gil_enabled', lambda: True)())
     ):
         control = r'''
 import decimal
@@ -461,10 +466,27 @@ print('stdlib-only format control completed')
         import os
         import json
 
-        original = source.replace('import faulthandler\n', '').replace('import sys\n', '')
+        legacy_call = '''        enable(offset, offset + 1)
+        try:
+            result = operation()
+        finally:
+            disable()
+'''
+        scoped_call = '''        if call_with_nomemory is not None:
+            # The C helper removes hooks before returning to Python bytecode.
+            result = call_with_nomemory(offset, offset + 1, operation)
+        else:
+            enable(offset, offset + 1)
+            try:
+                result = operation()
+            finally:
+                disable()
+'''
+        original = source.replace(scoped_call, legacy_call)
+        original = original.replace('import faulthandler\n', '').replace('import sys\n', '')
         original = original.replace('faulthandler.enable()\n', '').replace(
             "    print('allocation offset:', kind, offset, flush=True)\n", '')
-        prepared = source.replace('    info = error.error_info\n', '''    if kind == 'traceback':
+        prepared = original.replace('    info = error.error_info\n', '''    if kind == 'traceback':
         summary = extract_stack(traceback.walk_tb(error.__traceback__),
                                 capture_locals=False, lookup_lines=False)
         lines = original_format(summary)
@@ -473,8 +495,16 @@ print('stdlib-only format control completed')
 ''').replace('extract_stack = traceback.StackSummary.extract\n',
              'extract_stack = traceback.StackSummary.extract\noriginal_format = traceback.StackSummary.format\n')
         observed: list[dict[str, object]] = []
+        scoped_control = control.replace('''        _testcapi.set_nomemory(offset, offset + 1)
+        try:
+            result = operation()
+        finally:
+            _testcapi.remove_mem_hooks()
+''', '''        result = _testcapi.call_with_nomemory(offset, offset + 1, operation)
+''')
         for label, program in [('original', original), ('prepared-provider', prepared),
-                               ('stdlib-only', control)]:
+                               ('stdlib-only', control), ('call-scoped', source),
+                               ('stdlib-scoped', scoped_control)]:
             for repeat in range(8):
                 environment = os.environ.copy()
                 environment['PYTHONFAULTHANDLER'] = '1'
