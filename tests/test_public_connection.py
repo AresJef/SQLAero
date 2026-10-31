@@ -1104,6 +1104,7 @@ def test_public_columns_allow_concurrent_cold_reads(
 def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fetch(
     connection: Connection, result_rows: int, fetch_method: str,
 ) -> None:
+    import dis
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
     from types import FrameType
@@ -1131,7 +1132,31 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
         finally:
             exited.set()
 
-    def overlap(signum: int, frame: FrameType | None) -> None:
+    current: Cursor
+    fetch_calls: set[int] = set()
+
+    def fetch() -> tuple[object, ...] | None:
+        if fetch_method == 'fetchone':
+            return current.fetchone()
+        return current.fetchmany(1)[0]
+
+    reading = False
+    for instruction in dis.get_instructions(fetch, show_caches=True):
+        if instruction.opname != 'CACHE':
+            reading = instruction.opname == 'CALL'
+        if reading:
+            fetch_calls.add(instruction.offset)
+
+    def overlap(_signum: int, frame: FrameType | None) -> None:
+        # A one-shot timer need not run before a fast fetch ends. Repeated
+        # deliveries count only inside its actual native call, and the public
+        # Busy result independently proves that the Reader owns the operation.
+        if (fetching.is_set() or frame is None or frame.f_code is not fetch.__code__
+                or frame.f_lasti not in fetch_calls):
+            return
+        alarm.cancel()
+        with pytest.raises(InterfaceBusyError):
+            current.fetchone()
         fetching.set()
         assert exited.wait(10), 'transaction exit did not finish while the fetch was paused'
 
@@ -1143,9 +1168,9 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
             # it is preparation, not the behavior's interruption deadline.
             assert ready.wait(20), 'server did not finish preparing the JSON result'
             current = cursors[0]
-            alarm.start(0.001)
+            alarm.start(0.0001, 0.0001, wait_ready=True)
             try:
-                row = current.fetchone() if fetch_method == 'fetchone' else current.fetchmany(1)[0]
+                row = fetch()
             finally:
                 alarm.start(0)
             assert fetching.is_set()
