@@ -301,7 +301,7 @@ print('shared boundary allocation failures propagated as MemoryError:', failures
     'integer-subclass',
 ])
 def test_public_failure_boundaries_never_panic_on_one_allocation_failure(
-    kind: str, capsys: pytest.CaptureFixture[str],
+    kind: str,
 ) -> None:
     """Use isolated single faults, with callables and values prepared beforehand."""
     import subprocess
@@ -311,9 +311,7 @@ def test_public_failure_boundaries_never_panic_on_one_allocation_failure(
 import _testcapi
 from collections.abc import Callable
 from functools import partial
-import faulthandler
 import gc
-import sys
 import tokenize
 import traceback
 from typing import Any
@@ -322,7 +320,6 @@ from sqlaero.errors import ErrorInfo, SQLAeroError
 from sqlaero.retry import Retry, RetryRule
 
 kind: str = KIND
-faulthandler.enable()
 enable = _testcapi.set_nomemory
 disable = _testcapi.remove_mem_hooks
 call_with_nomemory = getattr(_testcapi, 'call_with_nomemory', None)
@@ -330,6 +327,7 @@ rule = RetryRule(error_types=ValueError)
 encoder = _sqlaero._prepare_encoder()
 unknown = object()
 extract_stack = traceback.StackSummary.extract
+format_stack = traceback.StackSummary.format
 
 class SmallWidth(int):
     def bit_length(self) -> int:
@@ -365,6 +363,19 @@ def prepare() -> Callable[[], Any]:
             return summary
         traceback.StackSummary.extract = prepared_stack
         return partial(getattr, error, 'error_info')
+    if kind == 'traceback':
+        # Prepare the real stdlib provider outside native allocation injection.
+        # CPython's free-threaded PyList_New OOM path can itself crash while
+        # traceback lazily imports its formatting dependencies (gh-152125).
+        # The native getter remains cold; provider exceptions are tested below.
+        summary = extract_stack(traceback.walk_tb(error.__traceback__),
+                                capture_locals=False, lookup_lines=False)
+        lines = format_stack(summary)
+        def prepared_format(
+            _self: traceback.StackSummary, *args: Any, **kwargs: Any,
+        ) -> list[str]:
+            return lines
+        traceback.StackSummary.format = prepared_format
     info = error.error_info
     if kind == 'traceback':
         return partial(getattr, info, 'traceback')
@@ -382,8 +393,8 @@ def verify(result: Any) -> None:
         assert isinstance(result, str) and 'allocation boundary' in result
 
 failures = 0
-for offset in range(48):
-    print('allocation offset:', kind, offset, flush=True)
+successes = 0
+for offset in range(256 if kind == 'traceback' else 48):
     gc.collect()
     operation = prepare()
     try:
@@ -410,7 +421,10 @@ for offset in range(48):
             raise
     else:
         verify(result)
+        successes += 1
 assert failures > 0
+if kind == 'traceback':
+    assert successes > 0, 'the bounded scan never reached the successful native path'
 operation = prepare()
 if kind in ('invalid-error', 'invalid-timeout', 'unsupported-input', 'client-error'):
     try:
@@ -421,86 +435,18 @@ if kind in ('invalid-error', 'invalid-timeout', 'unsupported-input', 'client-err
         raise AssertionError('invalid input unexpectedly succeeded')
 else:
     verify(operation())
-print('allocation boundary preserved:', kind, failures)
+print('allocation boundary preserved:', kind, failures, successes)
 '''.replace('KIND', repr(kind))
     result = subprocess.run([sys.executable, '-'], input=source.encode('utf-8'),
                             capture_output=True, timeout=30, check=False)
-    diagnostic = ''
-    replay_failed = False
-    if kind == 'traceback' and (
-        result.returncode < 0 or
-        (sys.platform.startswith('linux') and sys.version_info[:2] == (3, 15)
-         and not getattr(sys, '_is_gil_enabled', lambda: True)())
-    ):
-        import os
-        import json
-
-        observed: list[dict[str, object]] = []
-        list_control = r'''
-import _testcapi
-import gc
-import sys
-assert not any(name == 'sqlaero' or name.startswith('sqlaero.') for name in sys.modules)
-for offset in range(16):
-    gc.collect()
-    operation = _testcapi.test_list_api
-    prime = [None, None, None]
-    del prime
-    try:
-        _testcapi.set_nomemory(offset, offset + 1)
-        try:
-            result = operation()
-        finally:
-            _testcapi.remove_mem_hooks()
-    except MemoryError:
-        pass
-    else:
-        assert result is None
-print('stdlib-only primed list control completed')
-'''
-        for label, program in [('stdlib-list-untraced', list_control),
-                               ('call-scoped-wide', source.replace('range(48)', 'range(256)'))]:
-            for repeat in range(1):
-                environment = os.environ.copy()
-                if label == 'stdlib-list-untraced':
-                    environment.pop('PYTHONFAULTHANDLER', None)
-                else:
-                    environment['PYTHONFAULTHANDLER'] = '1'
-                separate = subprocess.run([sys.executable, '-'], input=program.encode('utf-8'),
-                                          capture_output=True, timeout=30, check=False,
-                                          env=environment)
-                observed.append({'variant': label, 'repeat': repeat, 'exit': separate.returncode,
-                                 'stdout': separate.stdout.decode('utf-8', 'replace')[-1000:],
-                                 'stderr': separate.stderr.decode('utf-8', 'replace')[-7000:]})
-                if separate.returncode and label != 'stdlib-list-untraced':
-                    replay_failed = True
-        import shutil
-        debugger = shutil.which('gdb')
-        if debugger is not None:
-            environment = os.environ.copy()
-            environment.pop('PYTHONFAULTHANDLER', None)
-            native_stack = subprocess.run([
-                debugger, '--batch', '-ex', 'set disable-randomization off',
-                '-ex', 'run', '-ex', 'thread apply all bt 28', '--args', sys.executable, '-',
-            ], input=list_control.encode('utf-8'), capture_output=True, timeout=60,
-                check=False, env=environment)
-            observed.append({'variant': 'gdb-stdlib-list', 'repeat': 0,
-                             'exit': native_stack.returncode,
-                             'stdout': native_stack.stdout.decode('utf-8', 'replace')[-24000:],
-                             'stderr': native_stack.stderr.decode('utf-8', 'replace')[-4000:]})
-        else:
-            observed.append({'variant': 'gdb-unavailable', 'repeat': 0, 'exit': None})
-        diagnostic = '\nFixed allocation diagnosis: ' + json.dumps(observed)
-        with capsys.disabled():
-            print(diagnostic, flush=True)
-    assert result.returncode == 0 and not replay_failed, (
-        result.stdout + result.stderr).decode('utf-8', 'replace') + diagnostic
+    assert result.returncode == 0, (result.stdout + result.stderr).decode('utf-8', 'replace')
     assert b'allocation boundary preserved:' in result.stdout
 
 
 @pytest.mark.parametrize('failure_type', [MemoryError, KeyboardInterrupt, RuntimeError])
+@pytest.mark.parametrize('provider', ['extract', 'format'])
 def test_real_stack_provider_failure_preserves_original_and_allows_retry(
-    monkeypatch: pytest.MonkeyPatch, failure_type: type[BaseException],
+    monkeypatch: pytest.MonkeyPatch, failure_type: type[BaseException], provider: str,
 ) -> None:
     """A provider's own exception stays distinct from our allocation failures."""
     import traceback
@@ -510,17 +456,23 @@ def test_real_stack_provider_failure_preserves_original_and_allows_retry(
         raise SQLAeroError('actual stack provider', code=123)
     except SQLAeroError as caught:
         error = caught
+    snapshot = error.error_info if provider == 'format' else None
     original = failure_type('original stack provider failure')
 
     def fail(*args: Any, **kwargs: Any) -> Any:
         raise original
 
     with monkeypatch.context() as patch:
-        patch.setattr(traceback.StackSummary, 'extract', fail)
+        patch.setattr(traceback.StackSummary, provider, fail)
         with pytest.raises(failure_type) as received:
-            _ = error.error_info
+            if snapshot is None:
+                _ = error.error_info
+            else:
+                _ = snapshot.traceback
         assert received.value is original
     info = error.error_info
+    if snapshot is not None:
+        assert info is snapshot
     assert info.message == 'actual stack provider' and info.code == 123
     assert info.traceback is not None and 'test_real_stack_provider_failure' in info.traceback
 
