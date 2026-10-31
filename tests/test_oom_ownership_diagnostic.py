@@ -4,9 +4,10 @@ import hashlib
 import json
 import subprocess
 import sys
+import pytest
 
 
-def test_untraced_oom_ownership_controls() -> None:
+def test_untraced_oom_ownership_controls(capsys: pytest.CaptureFixture[str]) -> None:
     """Keep the observer disabled while isolating native versus stdlib calls."""
     if not (sys.platform.startswith('linux') and sys.version_info[:2] == (3, 15)
             and not getattr(sys, '_is_gil_enabled', lambda: True)()):
@@ -75,5 +76,6 @@ print('stdlib completed', failures, successes)
                             'stdout': result.stdout.decode(errors='replace')[-1500:],
                             'stderr': result.stderr.decode(errors='replace')[-1500:]})
     # Expected crash observations are recorded, never relabelled as safe.
-    print('Untraced ownership diagnosis: ' + json.dumps(records), flush=True)
+    with capsys.disabled():
+        print('Untraced ownership diagnosis: ' + json.dumps(records), flush=True)
 
