@@ -1,6 +1,6 @@
 # SQLAero Escape 全类型接入、性能优化与验收计划
 
-状态：**Goal已由用户正式启动并处于active，A01–A05已批准；S01起点身份已核对；S06–S16全部类型已有本机GIL／适用NoGIL功能切片，S17完整F0仍待最后覆盖补齐、文档和组合检查。** 用户已确认总预算72有效小时，并明确新增24小时全部专用于性能优化；充分利用时间持续改进，尽可能测清统计未明。用户进一步授权仅本轮推进期间的合理请求及经合理论次优化、完整数据支持的合理代价取舍由主窗口决定；不豁免精度／安全／身份／统计门槛，不把FAIL／U改为PASS。本计划是执行顺序、预算和状态的唯一台账。
+状态：**Goal已由用户正式启动并处于active，A01–A05已批准；S01起点身份已核对；S06–S16全部类型已有本机GIL／适用NoGIL功能切片，S17本机完整功能F0已封存，S21关键平台先导已开始；当前进入C池实测优化，最终48组合与正式性能尚待完成。** 用户已确认总预算72有效小时，并明确新增24小时全部专用于性能优化；充分利用时间持续改进，尽可能测清统计未明。用户进一步授权仅本轮推进期间的合理请求及经合理论次优化、完整数据支持的合理代价取舍由主窗口决定；不豁免精度／安全／身份／统计门槛，不把FAIL／U改为PASS。本计划是执行顺序、预算和状态的唯一台账。
 
 工作目录：`/Users/jef/.codex/worktrees/beta-native-integration/SQLAero`。
 
@@ -347,13 +347,19 @@ S00规划完成；正式Goal创建时间经工具核实为2026-10-31T19:20:28Z�
 | S05–S07 | Rows／Row／Visit稳定契约、天然表格、标准容器／子类／struct_time已接入；e09共用回归1019通过、1条诊断措辞回归、1个已约定平台skip | B池；原功能失败记录保留 | 当前请求未发送的共用错误位置已补；统一沿用原while binding文字消除措辞回归，待下一包。不是每类型单独诊断 |
 | S04／S09 | 原生时间和Decimal65必要位修订完成；e06两版真实MySQL共14项通过，包含高scale返回/目标rounding、DATETIME/TIME源纳秒和天然表格 | A/B既定功能工作，不计性能专用24h | [core目录](../../evidence/escape-type-expansion/run-20261031T192028Z/core)；e09增加Pandas nullable表真实闭环，已含共用回归运行 |
 | S14–S15 | Pandas scalar／Series／Index及真实子类／DataFrame／7类独立EA按既有存储读取；e09纳入上述287×2实测 | B池；无整表object或Python SQL str | Range只捕OverflowError及坏NumPy冷cache不发布已实测转GREEN；补分类／nullable／Index等代表组合 |
-| S17／组合检查 | e09两ABIrelease成功，398份生产／license文件构建前后hash相同；packaged native与实际加载相同；下一包纳入精确Clippy清理和诊断措辞 | B池；尚未称F0完整 | 核心66项单元通过；两个socket测试的sandbox拒绝后，获准实际loopback重跑2项通过。严格Clippy的真实局部问题在各所有者修正，不降门槛。全仓Pyright此前0错误／4条既有compiled-source警告，新增测试后再核 |
-| S21先导 | GitHub已授权repo/workflow；尚未推送或启动Actions。新增固定provider准备复用原工具，82项工具测试通过 | B阶段前移适用CI先导，不算最终48矩阵 | NumPy/Pandas当前runner48格可用；PyArrow缺Windows ARM64六格，Polars runtime缺16个t格；明确能力边界，不能把全部48当provider覆盖。官方文件证据agent-b/provider-wheel-metadata.json |
-| O01–O16／S18–S24 | 正式性能采集和优化尚未开始；完整F0后先定位一个实测慢点，滚动当前最佳 | C池32h（含追加24h）使用0；D/E必要余量保留 | 不拿新TypeError或旧Python输出算收益；仍需完整C16→最终与F0→最终对照、适用48组合／96次安装及交付 |
+| S17／组合检查 | **F0已于2026-10-31T22:34:27Z封存**：源4a76be9，e13两ABI完整实包GIL1607PASS＋1平台NA、NoGIL1524PASS＋10已说明缺provider／平台项；66核心单元、严格fmt／Clippy／Pyright通过 | 截止F0累计3h33m12s；A62m41s、B150m31s；比A+B原26h少22h26m48s。节余按第4节优先供后续有据优化，D/E14h保留 | [F0唯一身份](../../evidence/escape-type-expansion/run-20261031T192028Z/core/F0.json)。e10/e11完整功能证据及e12编译失败保留，未混包安装。交叉核查后共用fallible Box/格式化与借用唯一序列策略收拢；e12因转发签名遗漏失败未安装，父曾提前启动构建的执行顺序已纠正，e13明确等Clippy成功后构建 |
 
-2026-10-31T21:58Z恢复记录：正式实施仍从19:20:28Z连续累计，前置19分13秒不重置；有效用时约2小时57分45秒，余额约69小时02分15秒（此分钟级记录不是暂停点）。预算按主窗口主要阶段记账，先前前置＋至20:03:56Z记A池62分41秒，之后整合接入记B池；并行工具／agent耗时不相加。C池32h、D池10h、E池4h尚未使用。T150自查已于21:31:58Z汇报，下一T180为22:01:15Z。用户授权等待期间始终有独立推进，未扣除这些实际开发区间。
+| S21先导 | GitHub已授权repo/workflow；任务分支已推送，两个关键平台Actions均已成功。新增固定provider准备复用原工具，82项工具测试通过 | B阶段前移适用CI先导，不算最终48矩阵 | Windows ARM64／3.13先导run41246596098、musl ARM64／3.14t先导run41246589675均完成原wheel＋sdist实际安装。先导c5de139源不同于最终F0，不能改署最终通过。NumPy/Pandas当前runner48格可用；PyArrow缺Windows ARM64六格，Polars runtime缺16个t格；明确能力边界，不能把全部48当provider覆盖。官方文件证据agent-b/provider-wheel-metadata.json |
+| O01–O16／S18–S24 | F0封存后开始C池；O01恢复精确list短热路已局部采用，当前最佳448d3c2；完整验收待办 | C池32h从22:34:27Z起累计，含新增24h专用；D10h/E4h尚未使用 | 不拿新TypeError或旧Python输出算收益；仍需完整C16→最终与F0→最终对照、适用48组合／96次安装及交付 |
 
-当前恢复入口：两agent仅补自有必要测试与已确认Clippy清理；主窗口补typed rollover／晚失败／Context、公开类型／README和组合检查，随后封存F0、推送本轮分支做关键平台先导；CI等待与有据性能诊断并行，正式本机性能窗口独占。原C16环境／六ABI包仍保留，e09只安装在任务专用cp313/cp314t环境，不公开发行。
+2026-10-31T22:34:27Z预算记录：前置19m13s＋19:20:28Z以来连续实施＝有效3h33m12s，余额68h26m48s。A池主要阶段记62m41s，B池至F0记150m31s，C池现在开始；正常编译／CI与并行agent区间取并集。新增24h仍完整保留在C池，没有用于上述功能检查。无暂停／用户等待扣除区间。T210自查于22:31Z附近已汇报，下一T240约23:01:15Z；原72h不刷新。
+
+当前恢复入口：F0为e13/4a76be9及F0.json内两native hash；原C16六ABI及主.venv保持。两agent源码／测试冻结，测速窗口不构建/压力；主窗口先按现有benchmark对C16→F0做4真实周期的16项诊断校准，不把其当正式24周期结论；随后按实测慢点小步优化。已跑通Windows ARM64先导，musl先导继续，最终同源48／96安装另验。本轮仍不发行。
+
+
+O01已按用户本轮取舍授权纳入当前最佳：仅恢复精确list的owned getter短热路，生产改动4行。F0→O01主／独各24真实周期、各768完整组、零质量拒绝；16局部场景为15个1%保护PASS、0可信FAIL、1个原U（varied int tuple独立CI成本上沿约1.07%，主轮PASS，中心近持平）。长int list约快1.117倍，float／str／bytes list约快1.06–1.08倍，varied str tuple约快1.064倍。两ABI各555定向功能通过。原U保留，最终C16直接比较和完整矩阵不豁免；[采用事实](../../evidence/escape-type-expansion/run-20261031T192028Z/performance/o01/local-decision.json)。下一步在现有benchmark补必要新类型输入工厂及真实fingerprint，控制在单一runner，不建工具框架；随后先用实际输入测出新reader慢点。F0包已封存不覆盖，当前安装环境为O01，主.venv仍C16。
+
+2026-10-31T23:12Z输入准备检查：现有benchmark新增360个确定性类型场景（标准24、子类42、NumPy111、Pandas77、Arrow53、Polars53），仅补工厂／实际值fingerprint与天然表格作为单值绑定的计时外一致性检查；正式调用、计时／质量／统计规则不变，CI固定8项smoke不构造该新集合。F0实包360项输出／绑定一致，原59项测量边界与并行工具测试通过，修改文件Pyright零错误／警告。证据performance/typed-f0-validation.json与.runtime/escape-type-expansion/benchmark-typed-*.{log,json}。接下来最多约10分钟完成20项真实worker校准／短预试、核对跨进程输入身份和绝对成本，随后立即回到产品reader优化；不继续扩展测量能力。旧O01成绩保持原runner身份，不混入新输入上下文。
 
 ### 11.2 30分钟自查与有限恢复
 

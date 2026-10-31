@@ -2,8 +2,9 @@
 
 This is the project's single sampling entry. Inputs and outputs are checked
 once outside timing; each timed result has its normal allocation/destruction.
-Native escape output remains owned by Rust. NumPy is used only after collection
-for the predeclared process-cluster bootstrap, never by a product invocation.
+Native escape output remains owned by Rust. Optional providers construct fixed
+inputs before collection; NumPy also supplies the process-cluster bootstrap.
+Timed calls include each provider's actual production reader and preparation.
 """
 from __future__ import annotations
 
@@ -48,6 +49,19 @@ def digest(path: Path) -> str:
 def fingerprint(value: object) -> dict[str, object]:
     """Inspect the final result outside timing, without retaining sample values."""
     original_type = type(value).__qualname__
+    if type(value) in (type(dict[object, object]().keys()), type(dict[object, object]().values()),
+                       type(dict[object, object]().items())):
+        value = tuple(cast(Any, value))
+    polars = sys.modules.get('polars')
+    if polars is not None:
+        pl = cast(Any, polars)
+        if type(value) is pl.Series and cast(Any, value).dtype == pl.Object:
+            source = cast(Any, value)
+            value = ('PolarsObjectSeries', source.name, str(source.dtype), source.to_list())
+        elif type(value) is pl.DataFrame and pl.Object in cast(Any, value).dtypes:
+            source = cast(Any, value)
+            value = ('PolarsObjectFrame', tuple((column.name, str(column.dtype), column.to_list())
+                                               for column in source.iter_columns()))
     if hasattr(value, "to_bytes") and original_type == "_EncodedValue":
         value = cast(Any, value).to_bytes()
     if original_type == "Connection":
@@ -97,7 +111,7 @@ class Task:
     finish: Callable[[], None] | None = None
 
 
-def cases() -> list[Case]:
+def cases(*, typed: bool = True) -> list[Case]:
     """Build the same complete input collection once in every real worker."""
     values: dict[str, list[object]] = {
         "none": [None], "bool": [True, False],
@@ -215,6 +229,256 @@ def cases() -> list[Case]:
                 result.append(Case(f"fetch/{server}/wide{width}/{method}/R{size}",
                     {"server": server, "transport": "unix", "rows": size,
                      "schema": "wide", "width": width, "method": method}, "fetch"))
+    if typed:
+        result.extend(typed_cases())
+    return result
+
+
+def typed_cases() -> list[Case]:
+    """Construct deterministic new inputs once, outside every timed call.
+
+    Missing optional packages omit their own cases; broken installed packages
+    fail preparation. CI's fixed eight-task smoke does not build this pool.
+    """
+    result: list[Case] = []
+
+    def add(provider: str, name: str, value: object) -> None:
+        result.append(Case(f'typed/{provider}/{name}', value))
+
+    def optional(name: str) -> Any:
+        if importlib.util.find_spec(name) is None:
+            return None
+        enabled = getattr(sys, '_is_gil_enabled', lambda: True)
+        before = bool(enabled())
+        module = importlib.import_module(name)
+        if bool(enabled()) != before:
+            raise RuntimeError(f'{name} changed the actual GIL mode')
+        return cast(Any, module)
+
+    def child(base: type) -> Any:
+        name = '_Benchmark' + base.__name__
+        if name not in globals():
+            globals()[name] = type(name, (base,), {'__module__': __name__})
+        return globals()[name]
+
+    for n in (1, 100, 1000):
+        values = list(range(n))
+        mapping = dict(enumerate(values))
+        for name, value in {'dict': mapping, 'values': mapping.values(), 'items': mapping.items(),
+                            'keys': mapping.keys(), 'set': set(values),
+                            'frozenset': frozenset(values), 'range': range(n)}.items():
+            add('stdlib', f'{name}/N{n}', value)
+        for base in (list, tuple, dict, set, frozenset):
+            value = child(base)(mapping if base is dict else values)
+            add('subclass', f'{base.__name__}/N{n}', value)
+    scalars = [child(str)("中文'"), child(int)(7), child(float)(0.1), child(bytes)(b'A\0'),
+               child(Decimal)('123.45'), child(date)(2024, 2, 29),
+               child(datetime)(2024, 2, 29, 12, 34, 56, 123456),
+               child(daytime)(12, 34, 56, 123456), child(timedelta)(days=-2, microseconds=7)]
+    scalars.append(time.struct_time((2024, 2, 29, 12, 34, 56, 3, 60, 0)))
+    for value in scalars:
+        name = type(value).__name__
+        add('subclass' if name.startswith('_Benchmark') else 'stdlib', f'{name}/scalar', value)
+        for n in (100, 1000):
+            add('subclass' if name.startswith('_Benchmark') else 'stdlib', f'{name}/list/N{n}', [value] * n)
+
+    np = optional('numpy')
+    pd = optional('pandas')
+    pa = optional('pyarrow')
+    pl = optional('polars')
+    if np is not None:
+        scalar_values = {**{kind: np.dtype(kind).type(-7) for kind in ('i1', 'i2', 'i4', 'i8')},
+                         **{kind: np.dtype(kind).type(np.iinfo(kind).max) for kind in ('u1', 'u2', 'u4', 'u8')},
+                         **{kind: np.dtype(kind).type(0.1) for kind in ('f2', 'f4', 'f8')},
+                         'bool': np.bool_(True), 'text': np.str_("中文'🙂"), 'binary': np.bytes_(b'A\0\xff'),
+                         'datetime': np.datetime64('2024-01-02T03:04:05.123456789', 'ns'),
+                         'duration': np.timedelta64(-123456789, 'ns')}
+        for name, value in scalar_values.items():
+            add('numpy', f'{name}/scalar', value)
+            for n in (100, 1000):
+                add('numpy', f'{name}/scalar-list/N{n}', [value] * n)
+        for n in (1, 100, 1000):
+            arrays: dict[str, Any] = {}
+            for kind in ('i1', 'i2', 'i4', 'i8'):
+                info = np.iinfo(kind)
+                arrays[kind] = np.resize(np.array([7, -7, 0, info.min, info.max], dtype=kind), n)
+            for kind in ('u1', 'u2', 'u4', 'u8'):
+                arrays[kind] = np.resize(np.array([7, 0, np.iinfo(kind).max], dtype=kind), n)
+            for kind in ('f2', 'f4', 'f8'):
+                arrays[kind] = np.resize(np.array([0.1, -0.0, 1.5], dtype=kind), n)
+            arrays.update(bool=np.resize(np.array([True, False]), n),
+                          datetime=(1704164645123456789 + np.arange(n, dtype='i8')).astype('datetime64[ns]'),
+                          duration=(np.arange(n, dtype='i8') * 1001 - 500000001).astype('timedelta64[ns]'),
+                          binary=np.resize(np.array([b'ascii', b'A\0B', b"'\\"], dtype='S16'), n),
+                          text=np.resize(np.array(['ascii', "中文'🙂", 'A\0B'], dtype='U16'), n))
+            objects = np.empty(n, dtype=object)
+            for i in range(n):
+                objects[i] = (i, "中'", None) if i % 2 == 0 else [i, 'x']
+            arrays['object'] = objects
+            for name, value in arrays.items():
+                add('numpy', f'{name}/array/N{n}', value)
+            if n == 1000:
+                for name in ('i8', 'f4', 'text', 'object'):
+                    add('numpy', f'{name}/reverse/N1000', arrays[name][::-1])
+            records = np.zeros(n, dtype=[('i', 'i8'), ('s', 'U16')]).view(np.recarray)
+            records['i'] = np.arange(n, dtype='i8')
+            records['s'] = np.resize(np.array(["row'", '中文'], dtype='U16'), n)
+            if n == 1:
+                add('numpy', 'record/scalar', records[0])
+            add('numpy', f'record/list/N{n}', [records[i] for i in range(n)])
+
+    if pd is not None and np is not None:
+        for name, value in {'Timestamp': pd.Timestamp('2024-01-02T03:04:05.123456789'),
+                            'Timestamp-utc': pd.Timestamp('2024-01-02T03:04:05.123456789', tz='UTC'),
+                            'Timedelta': pd.Timedelta(-123456789, unit='ns'), 'NA': pd.NA, 'NaT': pd.NaT}.items():
+            add('pandas', f'{name}/scalar', value)
+            for n in (100, 1000):
+                add('pandas', f'{name}/list/N{n}', [value] * n)
+        for n in (1, 100, 1000):
+            index = np.arange(n, dtype='i8')
+            mask = index % 7 == 6
+            text = np.resize(np.array(['ascii', "中文'", 'A\\B'], dtype='U16'), n)
+            arrays = {'Categorical': pd.Categorical.from_codes(np.where(mask, -1, index % 3), categories=['ascii', "中文'", 'x']),
+                      'IntegerArray': pd.array(index + 7, dtype='Int64'),
+                      'FloatingArray': pd.array(np.resize(np.array([0.1, -0.0, 1.5], dtype='f4'), n), dtype='Float32'),
+                      'BooleanArray': pd.array(index % 2 == 0, dtype='boolean'),
+                      'StringArray': pd.array(text, dtype=pd.StringDtype(storage='python'))}
+            for name in ('IntegerArray', 'FloatingArray', 'BooleanArray', 'StringArray'):
+                arrays[name][mask] = pd.NA
+            if pa is not None:
+                arrays['ArrowStringArray'] = pd.array(text, dtype=pd.StringDtype(storage='pyarrow'))
+                arrays['ArrowStringArray'][mask] = pd.NA
+                arrays['ArrowExtensionArray'] = pd.array(pa.array(index + 7, mask=mask), dtype=pd.ArrowDtype(pa.int64()))
+            for name, value in arrays.items():
+                add('pandas', f'{name}/N{n}', value)
+            add('pandas', f'Series-int64/N{n}', pd.Series(index + 7))
+            add('pandas', f'Series-nullable/N{n}', pd.Series(arrays['IntegerArray']))
+            utc = pd.date_range('2024-01-02T03:04:05Z', periods=n, freq='1001ns').as_unit('ns')
+            indices = {'Index': pd.Index(index + 7), 'RangeIndex': pd.RangeIndex(7, 7 + n * 3, 3),
+                       'DatetimeIndex': utc.tz_localize(None), 'DatetimeIndex-utc': utc,
+                       'TimedeltaIndex': pd.to_timedelta(index * 1001 - 500000001, unit='ns'),
+                       'CategoricalIndex': pd.CategoricalIndex(arrays['Categorical']),
+                       'MultiIndex': pd.MultiIndex.from_arrays([index // 3, pd.Index(text, dtype=object)])}
+            for name, value in indices.items():
+                add('pandas', f'{name}/N{n}', value)
+
+    for n in (1, 100, 1000):
+        index = list(range(n))
+        text = [f"v{i % 19}中'\\" for i in index]
+        binary = [b'A\0' + i.to_bytes(4, 'little') for i in index]
+        nullable = [None if (i + 1) % 7 == 0 else i for i in index]
+        ticks = [1704067200000000000 + i * 1000000001 for i in index]
+        spans = [-i * 1000000001 - 1 for i in index]
+        flags = [None if (i + 1) % 7 == 0 else bool(i % 2) for i in index]
+        decimals = [Decimal(i - 500).scaleb(-4) for i in index]
+        nested = [[i, None, i + 1] for i in index]
+        structs = [{'i': i, 's': text[i]} for i in index]
+        if pa is not None:
+            vectors = {'i64': pa.array(index, type=pa.int64()),
+                       'f32': pa.array([i % 100 + 0.1 for i in index], type=pa.float32()),
+                       'bool-null': pa.array(flags, type=pa.bool_()), 'nullable-i64': pa.array(nullable, type=pa.int64()),
+                       'timestamp-ns-utc': pa.array(ticks, type=pa.timestamp('ns', tz='UTC')),
+                       'duration-ns': pa.array(spans, type=pa.duration('ns')),
+                       'decimal128': pa.array(decimals, type=pa.decimal128(12, 4)),
+                       'utf8': pa.array(text), 'binary': pa.array(binary),
+                       'list': pa.array(nested, type=pa.list_(pa.int64())),
+                       'struct': pa.array(structs, type=pa.struct([('i', pa.int64()), ('s', pa.string())]))}
+            for name, value in vectors.items():
+                add('arrow', f'{name}/N{n}', value)
+            cut = max(1, n // 3)
+            source = vectors['nullable-i64']
+            add('arrow', f'chunked/N{n}', pa.chunked_array([source.slice(0, cut), source.slice(cut, 0), source.slice(cut)]))
+            keys = pa.array([None if (i + 1) % 7 == 0 else i % 3 for i in index], type=pa.int16())
+            add('arrow', f'dictionary/N{n}', pa.DictionaryArray.from_arrays(keys, pa.array(['a', "中'", 'b'])))
+        if pl is not None:
+            vectors = {'i64': pl.Series('v', index, dtype=pl.Int64),
+                       'f32': pl.Series('v', [i % 100 + 0.1 for i in index], dtype=pl.Float32),
+                       'bool-null': pl.Series('v', flags, dtype=pl.Boolean),
+                       'nullable-i64': pl.Series('v', nullable, dtype=pl.Int64),
+                       'timestamp-ns-utc': pl.Series('v', ticks, dtype=pl.Datetime('ns', 'UTC')),
+                       'duration-ns': pl.Series('v', spans, dtype=pl.Duration('ns')),
+                       'decimal': pl.Series('v', decimals, dtype=pl.Decimal(12, 4)),
+                       'utf8': pl.Series('v', text), 'binary': pl.Series('v', binary),
+                       'category': pl.Series('v', [['a', "中'", 'b'][i % 3] for i in index], dtype=pl.Categorical),
+                       'list': pl.Series('v', nested, dtype=pl.List(pl.Int64)),
+                       'struct': pl.Series('v', structs),
+                       'object': pl.Series('v', [[7, "中'", None, b'A\0'][i % 4] for i in index], dtype=pl.Object)}
+            for name, value in vectors.items():
+                add('polars', f'{name}/N{n}', value)
+
+    # Same logical values and column order in every parallel table comparison.
+    for rows, width in ((1, 1), (1000, 1), (1000, 4), (10, 32)):
+        logical = {f'c{j}': [i * width + j for i in range(rows)] for j in range(width)}
+        frames: dict[str, Any] = {}
+        if np is not None:
+            add('numpy', f'table-int64/R{rows}C{width}', np.arange(rows * width, dtype='i8').reshape(rows, width))
+        if pd is not None:
+            frames['pandas'] = pd.DataFrame(logical)
+        if pa is not None:
+            frames['arrow'] = pa.table(logical)
+        if pl is not None:
+            frames['polars'] = pl.DataFrame(logical)
+        for provider, value in frames.items():
+            add(provider, f'frame-int64/R{rows}C{width}', value)
+            if (rows, width) == (1000, 4):
+                result.append(Case(f'typed/{provider}/bind-int64/R1000C4', value, 'bind',
+                                   'INSERT INTO t VALUES (%s,%s,%s,%s)', True))
+        if (rows, width) == (1000, 4) and pa is not None:
+            add('arrow', 'recordbatch/R1000C4', pa.record_batch(logical))
+
+    for schema in ('mixed', 'nullable', 'category-low', 'category-high', 'time', 'decimal-binary', 'nested', 'object'):
+        n = 1000
+        ints = list(range(n))
+        text = [f"v{i % 19}中'\\" for i in ints]
+        binary = [b'A\0' + i.to_bytes(4, 'little') for i in ints]
+        logical: dict[str, Any] = {'i': ints, 'f': [i * 0.125 for i in ints], 's': text, 'b': [bool(i % 2) for i in ints]}
+        if schema == 'nullable':
+            logical = {'i': [None if i % 7 == 6 else i for i in ints],
+                       'f': [None if i % 2 else i * 0.125 for i in ints],
+                       's': [None if i % 11 == 10 else text[i] for i in ints],
+                       'b': [None if i % 3 == 2 else bool(i % 2) for i in ints]}
+        elif schema.startswith('category'):
+            labels = [f'k{i}' if schema == 'category-high' else ['a', "中'", 'b'][i % 3] for i in ints]
+            logical = {f'c{j}': labels for j in range(4)}
+        elif schema == 'decimal-binary':
+            logical = {'d': [Decimal(i - 500).scaleb(-4) for i in ints], 'x': binary, 'i': ints, 's': text}
+        elif schema == 'nested':
+            logical = {'a': [[i, None, i + 1] for i in ints], 'b': [{'i': i, 's': text[i]} for i in ints], 'i': ints, 's': text}
+        elif schema == 'object':
+            logical = {'i': ints, 'o': [[7, "中'", None, b'A\0'][i % 4] for i in ints], 's': text, 'b': [bool(i % 2) for i in ints]}
+        elif schema == 'time':
+            if pa is None:
+                continue
+            logical = {'d': pa.array([i % 28 + 19723 for i in ints], type=pa.date32()),
+                       't': pa.array([1704067200000000000 + i * 1000000001 for i in ints], type=pa.timestamp('ns', tz='UTC')),
+                       'span': pa.array([-i * 1000000001 - 1 for i in ints], type=pa.duration('ns')),
+                       'clock': pa.array([i * 1000000001 for i in ints], type=pa.time64('ns'))}
+        frames = {}
+        if pd is not None:
+            columns = {key: pd.Categorical(value) if schema.startswith('category') else
+                       pd.array(value, dtype=pd.ArrowDtype(value.type)) if schema == 'time' else value
+                       for key, value in logical.items()}
+            if schema == 'nullable':
+                columns = {key: pd.array(value, dtype={'i': 'Int64', 'f': 'Float64', 's': 'string', 'b': 'boolean'}[key])
+                           for key, value in logical.items()}
+            frames['pandas'] = pd.DataFrame(columns)
+        if pa is not None and schema != 'object':
+            columns = {key: pa.array(value).dictionary_encode() if schema.startswith('category') else value
+                       for key, value in logical.items()}
+            frames['arrow'] = pa.table(columns)
+        if pl is not None:
+            if schema == 'time' and pa is not None:
+                frames['polars'] = pl.from_arrow(pa.table(logical))
+            else:
+                columns = {key: pl.Series(key, value, dtype=pl.Categorical) if schema.startswith('category') else
+                           pl.Series(key, value, dtype=pl.Object) if schema == 'object' and key == 'o' else value
+                           for key, value in logical.items()}
+                frames['polars'] = pl.DataFrame(columns)
+        for provider, value in frames.items():
+            add(provider, f'frame-{schema}/R1000C4', value)
+            if schema == 'mixed':
+                result.append(Case(f'typed/{provider}/bind-mixed/R1000C4', value, 'bind',
+                                   'INSERT INTO t VALUES (%s,%s,%s,%s)', True))
     return result
 
 
@@ -521,7 +785,7 @@ def worker(package: str | None, with_legacy: bool, warmup_calls: int = 16) -> No
                 actual = task.call()
                 outputs["/".join(key)] = fingerprint(actual)
                 if case.family == "escape" and role != "legacy":
-                    expected = native._bind_sql("SELECT %s", case.value, itemize=False,
+                    expected = native._bind_sql("SELECT %s", (case.value,), itemize=True,
                                                  no_backslash=case.no_backslash)[0][8:]
                     if cast(Any, actual).to_bytes() != expected:
                         raise AssertionError("Measurement and production binding disagree")
@@ -980,7 +1244,7 @@ def smoke(directory: Path, seconds: float) -> None:
         'fetch/84/json/fetchall/R100': 10,
         'fetch/84/mixed/fetchall/R100': 10,
     }
-    collection = {case.id: case for case in cases()}
+    collection = {case.id: case for case in cases(typed=False)}
     sessions: dict[str, Any] = {}
     results: list[dict[str, object]] = []
     started = time.monotonic()
@@ -1075,7 +1339,7 @@ def parallel_trial(case: Case, native: Any, threads: int, calls: int, python_wor
                 actual = current.call()
                 checked_output = fingerprint(actual)
                 if case.family == 'escape':
-                    expected = native._bind_sql('SELECT %s', case.value, itemize=False,
+                    expected = native._bind_sql('SELECT %s', (case.value,), itemize=True,
                                                 no_backslash=case.no_backslash)[0][8:]
                     if cast(Any, actual).to_bytes() != expected:
                         raise AssertionError('Measurement and production binding disagree')
