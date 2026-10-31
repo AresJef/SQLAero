@@ -432,80 +432,10 @@ print('allocation boundary preserved:', kind, failures)
         (sys.platform.startswith('linux') and sys.version_info[:2] == (3, 15)
          and not getattr(sys, '_is_gil_enabled', lambda: True)())
     ):
-        control = r'''
-import decimal
-import _testcapi
-import faulthandler
-import gc
-import sys
-import tokenize
-import traceback
-faulthandler.enable()
-assert not any(name == 'sqlaero' or name.startswith('sqlaero.') for name in sys.modules)
-for offset in range(48):
-    print('stdlib format offset:', offset, flush=True)
-    gc.collect()
-    try:
-        raise ValueError('allocation boundary')
-    except ValueError as error:
-        stack = traceback.StackSummary.extract(traceback.walk_tb(error.__traceback__),
-                                               capture_locals=False, lookup_lines=False)
-    operation = stack.format
-    try:
-        _testcapi.set_nomemory(offset, offset + 1)
-        try:
-            result = operation()
-        finally:
-            _testcapi.remove_mem_hooks()
-    except MemoryError:
-        pass
-    else:
-        assert isinstance(result, list)
-print('stdlib-only format control completed')
-'''
         import os
         import json
 
-        legacy_call = '''        enable(offset, offset + 1)
-        try:
-            result = operation()
-        finally:
-            disable()
-'''
-        scoped_call = '''        if call_with_nomemory is not None:
-            # The C helper removes hooks before returning to Python bytecode.
-            result = call_with_nomemory(offset, offset + 1, operation)
-        else:
-            enable(offset, offset + 1)
-            try:
-                result = operation()
-            finally:
-                disable()
-'''
-        original = source.replace(scoped_call, legacy_call)
-        original = original.replace('import faulthandler\n', '').replace('import sys\n', '')
-        original = original.replace('faulthandler.enable()\n', '').replace(
-            "    print('allocation offset:', kind, offset, flush=True)\n", '')
-        original = original.replace(
-            "call_with_nomemory = getattr(_testcapi, 'call_with_nomemory', None)\n", '')
-        import hashlib
-        assert hashlib.sha256(original.encode('utf-8')).hexdigest() == '54ce821040ce0fef924feb6f9adcd2bb70663dc2999d20ec0eef652e4d2f2f68'
-        prepared = original.replace('    info = error.error_info\n', '''    if kind == 'traceback':
-        summary = extract_stack(traceback.walk_tb(error.__traceback__),
-                                capture_locals=False, lookup_lines=False)
-        lines = original_format(summary)
-        traceback.StackSummary.format = lambda _self: lines
-    info = error.error_info
-''').replace('extract_stack = traceback.StackSummary.extract\n',
-             'extract_stack = traceback.StackSummary.extract\noriginal_format = traceback.StackSummary.format\n')
         observed: list[dict[str, object]] = []
-        scoped_control = control.replace('''        _testcapi.set_nomemory(offset, offset + 1)
-        try:
-            result = operation()
-        finally:
-            _testcapi.remove_mem_hooks()
-''', '''        result = _testcapi.call_with_nomemory(offset, offset + 1, operation)
-''')
         list_control = r'''
 import _testcapi
 import gc
