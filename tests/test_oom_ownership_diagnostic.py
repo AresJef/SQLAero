@@ -22,8 +22,6 @@ def test_untraced_oom_ownership_controls(capsys: pytest.CaptureFixture[str]) -> 
             disable()
 '''
     assert original.count(legacy) == 1
-    native = original.replace(legacy, '''        result = _testcapi.call_with_nomemory(offset, offset + 1, operation)
-''').replace('for offset in range(48):', 'for offset in range(256):')
     stdlib = r'''
 import decimal
 import _testcapi
