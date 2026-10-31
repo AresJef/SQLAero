@@ -125,10 +125,11 @@ pub(crate) fn integer_value(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
         } else {
             // Keep the existing subclass callback and its errors above, but
             // never trust its width as the value. A small report only selects
-            // a bounded signed native attempt. The existing C conversion must
-            // prove that the whole value fits; it cannot truncate successfully.
-            if reported <= 63 {
-                match integer_value_with_bits(value, 63) {
+            // a bounded signed native attempt (at most 32 bytes). The existing
+            // C conversion must prove that the whole value fits; it cannot
+            // truncate successfully.
+            if reported <= 255 {
+                match integer_value_with_bits(value, reported.max(63)) {
                     Ok(actual) => return Ok(actual),
                     Err(error)
                         if error
@@ -154,8 +155,9 @@ pub(crate) fn integer_value(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
     }
 }
 
-/// Read an int using the bit count already obtained by its caller.
-/// The shared conversion preserves the original signed-byte and error rules.
+/// Read an int into checked signed storage derived from a bit-capacity hint.
+/// The C conversion rejects insufficient capacity; success preserves the whole
+/// original signed value, even when the supplied hint understates its width.
 #[cfg(not(Py_3_13))]
 #[inline]
 pub(crate) fn integer_value_with_bits(value: &Bound<'_, PyInt>, bits: usize) -> PyResult<BigInt> {

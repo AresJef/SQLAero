@@ -560,7 +560,7 @@ def test_integer_subclass_width_cannot_change_the_actual_error_code(number: int,
     assert count == 2 and caught.value is primary
 
 
-def test_integer_subclass_signed_attempt_preserves_both_sides_of_the_boundary() -> None:
+def test_integer_subclass_signed_attempt_preserves_capacity_boundaries() -> None:
     """A bounded native attempt must fully fit or use the exact large fallback."""
     import sys
     from sqlaero.retry import RetryRule
@@ -570,18 +570,20 @@ def test_integer_subclass_signed_attempt_preserves_both_sides_of_the_boundary() 
     class Code(int):
         def bit_length(self) -> int:
             calls.append(1)
-            return 0
+            return reported
 
         def __int__(self) -> int:
             raise AssertionError('normalization must not invoke a replacement __int__')
 
-    for number in [-(1 << 63) - 1, -(1 << 63), -(1 << 63) + 1,
-                   (1 << 63) - 1, 1 << 63, (1 << 63) + 1]:
-        calls.clear()
-        error = SQLAeroError(code=Code(number))
-        rule = RetryRule(error_codes=Code(number))
-        assert error.code == number and rule.error_codes == (number,)
-        assert len(calls) == (2 if sys.version_info < (3, 13) else 0)
+    for reported in [0, 63, 255, 256, sys.maxsize]:
+        for bits in [63, 255]:
+            for number in [-(1 << bits) - 1, -(1 << bits), -(1 << bits) + 1,
+                           (1 << bits) - 1, 1 << bits, (1 << bits) + 1]:
+                calls.clear()
+                error = SQLAeroError(code=Code(number))
+                rule = RetryRule(error_codes=Code(number))
+                assert error.code == number and rule.error_codes == (number,)
+                assert len(calls) == (2 if sys.version_info < (3, 13) else 0)
 
 
 @pytest.mark.parametrize('returned', [None, 'not-an-integer', -1])
