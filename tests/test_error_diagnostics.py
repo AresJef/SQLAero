@@ -518,6 +518,37 @@ def test_integer_subclass_method_errors_keep_the_existing_version_semantics(boun
             assert isinstance(result, RetryRule) and result.error_codes == (int(value),)
 
 
+@pytest.mark.parametrize('number', [0, 123, -123, 1 << 200, -(1 << 200)])
+@pytest.mark.parametrize('reported', ['zero', 'short', 'actual'])
+def test_integer_subclass_width_cannot_change_the_actual_error_code(number: int, reported: str) -> None:
+    import sys
+    from sqlaero.retry import Retry, RetryRule
+
+    calls: list[int] = []
+
+    class Code(int):
+        def bit_length(self) -> int:
+            calls.append(1)
+            return {'zero': 0, 'short': 1, 'actual': int.bit_length(self)}[reported]
+
+        def __int__(self) -> int:
+            raise AssertionError('code normalization must not call a replacement __int__')
+
+    error = SQLAeroError(code=Code(number))
+    assert error.code == number and type(error.code) is int
+    rule = RetryRule(error_codes=Code(number))
+    assert rule.error_codes == (number,)
+    assert len(calls) == (2 if sys.version_info < (3, 13) else 0)
+    count = 0
+    primary = SQLAeroError(code=number)
+    with pytest.raises(SQLAeroError) as caught:
+        for attempt in Retry(rule, max_attempts=2, wait_interval=0):
+            with attempt:
+                count += 1
+                raise primary
+    assert count == 2 and caught.value is primary
+
+
 def test_snapshot_graph_stays_private_until_all_relationships_are_complete() -> None:
     """GC inspection must not expose nodes which capture will still mutate."""
     import subprocess

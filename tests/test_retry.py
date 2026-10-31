@@ -145,6 +145,58 @@ def test_retry_controls_are_checked_once_with_clear_parameter_names(name: str, v
         Retry(RetryRule(error_types=ValueError), **{name: value})  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize('name', ['max_attempts', 'wait_interval', 'wait_multiplier', 'max_wait_interval'])
+def test_overflow_preparation_preserves_python_allocation_errors(name: str) -> None:
+    """Inject isolated faults after preparing the real public constructor call."""
+    import subprocess
+    import sys
+
+    source = r'''
+import _testcapi
+from functools import partial
+import gc
+from sqlaero.retry import Retry, RetryRule
+
+name = NAME
+rule = RetryRule(error_types=ValueError)
+settings = dict(max_attempts=3, wait_interval=0, wait_multiplier=1, max_wait_interval=1)
+settings[name] = 1 << (200 if name == 'max_attempts' else 10000)
+operation = partial(Retry, rule, **settings)
+enable = _testcapi.set_nomemory
+disable = _testcapi.remove_mem_hooks
+# Each normal call must still reject the actual range with the public message.
+try:
+    operation()
+except ValueError as error:
+    assert name in str(error)
+else:
+    raise AssertionError('out-of-range retry control was accepted')
+for offset in (0, 1):
+    gc.collect()
+    try:
+        enable(offset, offset + 1)
+        try:
+            operation()
+        finally:
+            disable()
+    except MemoryError:
+        pass
+    else:
+        raise AssertionError('overflow preparation lost its Python allocation error')
+try:
+    operation()
+except ValueError as error:
+    assert name in str(error)
+else:
+    raise AssertionError('retry validation did not recover')
+print('original allocation error preserved; normal range rejection recovered')
+'''.replace('NAME', repr(name))
+    result = subprocess.run([sys.executable, '-'], input=source, text=True,
+                            capture_output=True, timeout=20, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert 'normal range rejection recovered' in result.stdout
+
+
 def test_rules_required_attempt_creation_and_context_protocol() -> None:
     with pytest.raises(ValueError):
         Retry()

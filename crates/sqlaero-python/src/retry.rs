@@ -3,7 +3,9 @@
 use crate::{config::Argument, errors, output};
 use num_bigint::BigInt;
 use pyo3::class::{PyTraverseError, PyVisit};
-use pyo3::exceptions::{PyException, PyOSError, PyRuntimeError, PyTypeError, PyValueError};
+use pyo3::exceptions::{
+    PyException, PyOSError, PyOverflowError, PyRuntimeError, PyTypeError, PyValueError,
+};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyFloat, PyInt, PyList, PyTuple, PyType};
 use sqlaero_core::retry::{Policy, Run};
@@ -163,11 +165,15 @@ fn numeric(
             format!("{name} must be a built-in int or float, not bool"),
         ));
     }
-    let number = original.extract::<f64>().map_err(|_| {
-        crate::errors::builtin_message::<PyValueError>(
-            py,
-            format!("{name} cannot be represented safely"),
-        )
+    let number = original.extract::<f64>().map_err(|error| {
+        if error.is_instance_of::<PyOverflowError>(py) {
+            crate::errors::builtin_message::<PyValueError>(
+                py,
+                format!("{name} cannot be represented safely"),
+            )
+        } else {
+            error
+        }
     })?;
     if !number.is_finite() || number < 0.0 {
         return Err(crate::errors::builtin_message::<PyValueError>(
@@ -236,18 +242,25 @@ impl Retry {
         let maximum = match max_attempts.0.as_ref() {
             None => Some(3),
             Some(value) if value.is_none() => None,
-            Some(value) if value.is_exact_instance_of::<PyInt>() => Some(
-                value
-                    .extract::<u64>()
-                    .ok()
-                    .filter(|value| *value > 0)
-                    .ok_or_else(|| {
+            Some(value) if value.is_exact_instance_of::<PyInt>() => {
+                let maximum = value.extract::<u64>().map_err(|error| {
+                    if error.is_instance_of::<PyOverflowError>(py) {
                         crate::errors::builtin_message::<PyValueError>(
                             py,
                             "max_attempts must be 1..2**64-1, or None for unlimited attempts",
                         )
-                    })?,
-            ),
+                    } else {
+                        error
+                    }
+                })?;
+                if maximum == 0 {
+                    return Err(crate::errors::builtin_message::<PyValueError>(
+                        py,
+                        "max_attempts must be 1..2**64-1, or None for unlimited attempts",
+                    ));
+                }
+                Some(maximum)
+            }
             _ => {
                 return Err(crate::errors::builtin_message::<PyTypeError>(
                     py,
@@ -326,7 +339,8 @@ impl Retry {
 }
 
 fn lock<'a>(py: Python<'_>, state: &'a Mutex<Run>) -> PyResult<std::sync::MutexGuard<'a, Run>> {
-    state.lock().map_err(|_| {
+    state.lock().map_err(|error| {
+        drop(error);
         crate::errors::builtin_message::<PyRuntimeError>(py, "retry traversal state is unavailable")
     })
 }
@@ -373,8 +387,8 @@ impl RetryIterator {
         slf
     }
     fn __next__(&self, py: Python<'_>) -> PyResult<Option<RetryAttempt>> {
-        let delay = lock(py, &self.state)?
-            .begin()
+        let begun = lock(py, &self.state)?.begin();
+        let delay = begun
             .map_err(|message| crate::errors::builtin_message::<PyRuntimeError>(py, message))?;
         let Some(delay) = delay else {
             return Ok(None);
@@ -446,9 +460,8 @@ impl RetryAttempt {
                 .borrow(py)
                 .matches(py, &PyErr::from_value(value.clone()))?
         };
-        lock(py, &self.state)?
-            .finish(matched)
-            .map_err(|message| crate::errors::builtin_message::<PyRuntimeError>(py, message))
+        let finished = lock(py, &self.state)?.finish(matched);
+        finished.map_err(|message| crate::errors::builtin_message::<PyRuntimeError>(py, message))
     }
     fn __traverse__(&self, visit: PyVisit<'_>) -> Result<(), PyTraverseError> {
         visit.call(&self.owner)

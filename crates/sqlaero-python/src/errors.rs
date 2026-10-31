@@ -116,7 +116,25 @@ pub(crate) fn integer_value(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
         // The pinned PyO3's 3.12 extraction interns this method name through
         // an infallible constructor. Keep its method/subclass semantics with
         // a fallible name, then use the same signed native-byte conversion.
-        let bits = integer_bit_length(value.as_any())?.extract::<usize>()?;
+        let reported = integer_bit_length(value.as_any())?.extract::<usize>()?;
+        let bits = if value.is_exact_instance_of::<PyInt>() {
+            reported
+        } else {
+            // Keep the existing subclass callback and its errors above, but
+            // never trust an override to size the actual integer's storage.
+            // Calling int's descriptor directly reads the immutable base value
+            // without invoking __int__, __index__, or a second override.
+            let method = attribute(value.py().get_type::<PyInt>().as_any(), c"bit_length")?;
+            // SAFETY: both owned references remain live and the current thread
+            // is attached. CallOneArg returns its new reference or real error.
+            unsafe {
+                Bound::<PyAny>::from_owned_ptr_or_err(
+                    value.py(),
+                    pyo3::ffi::PyObject_CallOneArg(method.as_ptr(), value.as_ptr()),
+                )?
+            }
+            .extract::<usize>()?
+        };
         integer_value_with_bits(value, bits)
     }
 }
