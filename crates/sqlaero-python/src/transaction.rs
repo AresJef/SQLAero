@@ -64,7 +64,7 @@ impl Transaction {
             self.scope.store(false, Ordering::Release);
         }
     }
-    fn note(py: Python<'_>, primary: &PyErr, message: impl Into<String>) {
+    fn note(py: Python<'_>, primary: &PyErr, message: impl AsRef<str>) {
         errors::note(py, primary, message);
     }
     fn rollback_after_error(
