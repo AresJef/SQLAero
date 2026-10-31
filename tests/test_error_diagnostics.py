@@ -486,6 +486,10 @@ print('stdlib-only format control completed')
         original = original.replace('import faulthandler\n', '').replace('import sys\n', '')
         original = original.replace('faulthandler.enable()\n', '').replace(
             "    print('allocation offset:', kind, offset, flush=True)\n", '')
+        original = original.replace(
+            "call_with_nomemory = getattr(_testcapi, 'call_with_nomemory', None)\n", '')
+        import hashlib
+        assert hashlib.sha256(original.encode('utf-8')).hexdigest() == '54ce821040ce0fef924feb6f9adcd2bb70663dc2999d20ec0eef652e4d2f2f68'
         prepared = original.replace('    info = error.error_info\n', '''    if kind == 'traceback':
         summary = extract_stack(traceback.walk_tb(error.__traceback__),
                                 capture_locals=False, lookup_lines=False)
@@ -502,12 +506,16 @@ print('stdlib-only format control completed')
             _testcapi.remove_mem_hooks()
 ''', '''        result = _testcapi.call_with_nomemory(offset, offset + 1, operation)
 ''')
-        for label, program in [('original', original), ('prepared-provider', prepared),
+        for label, program in [('original-untraced', original), ('original', original),
+                               ('prepared-provider', prepared),
                                ('stdlib-only', control), ('call-scoped', source),
                                ('stdlib-scoped', scoped_control)]:
             for repeat in range(8):
                 environment = os.environ.copy()
-                environment['PYTHONFAULTHANDLER'] = '1'
+                if label == 'original-untraced':
+                    environment.pop('PYTHONFAULTHANDLER', None)
+                else:
+                    environment['PYTHONFAULTHANDLER'] = '1'
                 separate = subprocess.run([sys.executable, '-'], input=program.encode('utf-8'),
                                           capture_output=True, timeout=30, check=False,
                                           env=environment)
