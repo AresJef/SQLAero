@@ -82,7 +82,6 @@ pub(crate) struct Snapshot {
     labels: Mutex<Buffer<LabelCache>>,
     values: Mutex<Buffer<ValueCache>>,
     keys: OnceLock<Keys>,
-    key_preparation: Mutex<()>,
     _owner: Option<Reservation>,
 }
 fn storage<T>(scope: Option<&Arc<Scope>>) -> Buffer<T> {
@@ -163,7 +162,6 @@ impl Snapshot {
             labels: Mutex::new(storage(scope.as_ref())),
             values: Mutex::new(storage(scope.as_ref())),
             keys: OnceLock::new(),
-            key_preparation: Mutex::new(()),
             scope,
             _owner: owner,
         }))
@@ -248,16 +246,9 @@ impl Snapshot {
         if let Some(keys) = self.keys.get() {
             return Ok(keys);
         }
-        let _guard = self.key_preparation.try_lock().map_err(|_| {
-            errors::client(
-                py,
-                ClientErrorCode::InterfaceBusy,
-                "this result's column keys are already being prepared",
-            )
-        })?;
-        if let Some(keys) = self.keys.get() {
-            return Ok(keys);
-        }
+        // Prepare outside the publication boundary: label conversion and
+        // signal handlers may execute Python. Every native candidate remains
+        // charged to the snapshot's existing scope, including transient work.
         let mut owned = storage(self.scope.as_ref());
         owned
             .reserve(self.len())
@@ -294,12 +285,10 @@ impl Snapshot {
                 KeyError::Memory(error) => output::memory(py, error),
                 KeyError::Invariant(message) => internal(py, message),
             })?;
-        if self.keys.set(keys).is_err() {
-            return Err(internal(
-                py,
-                "column keys were concurrently published twice",
-            ));
-        }
+        // OnceLock publishes one complete native value. A losing candidate is
+        // dropped here, outside any Python/cache guard, and readers reuse the
+        // winner. Ordinary immutable reads never expose preparation as Busy.
+        let _ = self.keys.set(keys);
         self.keys
             .get()
             .ok_or_else(|| internal(py, "complete column keys were not published"))

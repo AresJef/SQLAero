@@ -1041,7 +1041,39 @@ def test_independent_cursor_then_connection_cleanup_failures_keep_actual_order(c
 
 
 @requires_mysql
-def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fetch(connection: Connection) -> None:
+@pytest.mark.parametrize('width', [256, 512])
+@pytest.mark.parametrize('closed', [False, True])
+def test_public_columns_allow_concurrent_cold_reads(
+    connection: Connection, width: int, closed: bool,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    current = connection.cursor()
+    current.execute('SELECT ' + ','.join(['1 AS id'] * width) + ' WHERE FALSE')
+    columns = current.columns
+    if closed:
+        current.close()
+    ready = Barrier(4)
+
+    def read(_index: int) -> tuple[str, ...]:
+        ready.wait(timeout=5)
+        return columns.keys
+
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        observed = list(executor.map(read, range(4)))
+    assert observed[0] == tuple(f'id.{index + 1}' for index in range(width))
+    assert all(keys is observed[0] for keys in observed)
+    assert current.closed is closed and connection.ping()
+    current.close()
+
+
+@requires_mysql
+@pytest.mark.parametrize('result_rows', [1, 2])
+@pytest.mark.parametrize('fetch_method', ['fetchone', 'fetchmany'])
+def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fetch(
+    connection: Connection, result_rows: int, fetch_method: str,
+) -> None:
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
     from types import FrameType
@@ -1061,7 +1093,8 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
             with connection.transaction() as current:
                 current.execute(f'INSERT INTO {name} VALUES (1)')
                 current.decode_json = True
-                current.execute('SELECT CAST(%s AS JSON) AS payload', (document,))
+                query = ' UNION ALL '.join(['SELECT CAST(%s AS JSON) AS payload'] * result_rows)
+                current.execute(query, (document,) * result_rows)
                 cursors.append(current)
                 ready.set()
                 assert fetching.wait(10), 'fetch did not reach its existing signal boundary'
@@ -1082,7 +1115,7 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
             current = cursors[0]
             alarm.start(0.001)
             try:
-                row = current.fetchone()
+                row = current.fetchone() if fetch_method == 'fetchone' else current.fetchmany(1)[0]
             finally:
                 alarm.start(0)
             assert fetching.is_set()
@@ -1095,7 +1128,7 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
                        for note in getattr(caught.value, '__notes__', []))
             assert caught.value.error_info.stage == 'cursor.close'
             assert current.closed
-            assert current.columns.names == ('payload',) and current.row_count == 1
+            assert current.columns.names == ('payload',) and current.row_count == result_rows
             with pytest.raises(InterfaceError, match='closed|retired'):
                 current.fetchone()
             with pytest.raises(InterfaceError, match='closed|retired'):

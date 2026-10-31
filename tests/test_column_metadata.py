@@ -110,6 +110,48 @@ def test_surrogateescaped_names_preserve_exact_key_lookup() -> None:
     assert columns["bad\udcff"] is columns[0]
 
 
+@pytest.mark.parametrize('workers', [2, 4])
+@pytest.mark.parametrize('width', [256, 512])
+@pytest.mark.parametrize('closed', [False, True])
+@pytest.mark.parametrize('duplicate', [False, True])
+@pytest.mark.parametrize('entry', ['keys', 'column-key', 'lookup'])
+def test_concurrent_cold_key_readers_reuse_one_complete_publication(
+    workers: int, width: int, closed: bool, duplicate: bool, entry: str,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+
+    names = [b'id'] * width if duplicate else [f'c{index}'.encode() for index in range(width)]
+    first = 'id.1' if duplicate else 'c0'
+    source = result([field(name) for name in names])
+    columns = source.columns
+    if closed:
+        source.close()
+    ready = Barrier(workers)
+
+    def read(_index: int) -> object:
+        ready.wait(timeout=5)
+        if entry == 'keys':
+            return columns.keys
+        if entry == 'column-key':
+            return columns[0].key
+        return columns[first]
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        observed = list(executor.map(read, range(workers)))
+    expected = tuple(f'id.{index + 1}' for index in range(width)) if duplicate else tuple(
+        name.decode() for name in names)
+    assert columns.keys == expected
+    assert all(value is observed[0] for value in observed)
+    if entry == 'keys':
+        assert observed[0] is columns.keys
+    elif entry == 'column-key':
+        assert observed[0] is columns[0].key and observed[0] == first
+    else:
+        assert observed[0] is columns[0]
+    assert source.closed is closed
+
+
 def test_optional_flags_types_numeric_facts_and_description() -> None:
     value = result([
         field(b"price", type_code=246, flags=1 | 32 | 64 | 512 | 2 | 4 | 8,

@@ -11,10 +11,10 @@ use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::memory::{Buffer, Reservation};
 use sqlaero_core::result::{
     decode::{Options, Plan},
+    lifecycle::Lifecycle,
     text::{Buffered, Cell},
 };
 use std::mem::size_of;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Bound aggregate field work without restarting a signal check at every row.
@@ -64,10 +64,9 @@ impl Drop for Operation<'_> {
     fn drop(&mut self) {
         // Retirement never frees an active fetch's owned Arc. Clear only the
         // Reader's retained rows after that operation reaches its safe exit.
-        if self.0.closed.load(Ordering::Acquire) {
+        if self.0.lifecycle.finish() {
             self.0.release_retired_rows();
         }
-        self.0.active.store(false, Ordering::Release);
     }
 }
 
@@ -77,13 +76,12 @@ impl Drop for Operation<'_> {
 #[pyclass(frozen, name = "_Rows", module = "sqlaero._sqlaero")]
 pub(crate) struct Reader {
     state: Mutex<State>,
-    active: AtomicBool,
-    closed: AtomicBool,
+    lifecycle: Lifecycle,
     types: Py<ScalarTypes>,
 }
 impl Reader {
     pub(crate) fn is_closed(&self) -> bool {
-        self.closed.load(Ordering::Acquire)
+        self.lifecycle.is_retired()
     }
     pub(crate) fn empty(types: Py<ScalarTypes>) -> Self {
         Self {
@@ -95,17 +93,12 @@ impl Reader {
                 total: 0,
                 arraysize: 1,
             }),
-            active: AtomicBool::new(false),
-            closed: AtomicBool::new(false),
+            lifecycle: Lifecycle::default(),
             types,
         }
     }
     pub(crate) fn operation(&self, py: Python<'_>) -> PyResult<Operation<'_>> {
-        if self
-            .active
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_err()
-        {
+        if !self.lifecycle.try_begin() {
             return Err(errors::client(
                 py,
                 ClientErrorCode::InterfaceBusy,
@@ -124,8 +117,7 @@ impl Reader {
     /// Mandatory context cleanup can retire a busy Cursor without cancelling
     /// its current local operation or destroying metadata and saved counters.
     pub(crate) fn retire(&self) {
-        self.closed.store(true, Ordering::Release);
-        if !self.active.load(Ordering::Acquire) {
+        if self.lifecycle.retire() {
             self.release_retired_rows();
         }
     }
@@ -133,7 +125,7 @@ impl Reader {
         match self.state.lock() {
             Ok(state) => Ok(state),
             Err(error) => {
-                self.closed.store(true, Ordering::Release);
+                let _ = self.lifecycle.retire();
                 error.into_inner().data.take();
                 Err(errors::client(
                     py,
@@ -144,7 +136,7 @@ impl Reader {
         }
     }
     pub(crate) fn open(&self, py: Python<'_>) -> PyResult<()> {
-        if self.closed.load(Ordering::Acquire) {
+        if self.lifecycle.is_retired() {
             Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
@@ -535,14 +527,14 @@ impl Reader {
     /// Permanently retire this reader locally. Saved metadata remains readable.
     pub(crate) fn close(&self, py: Python<'_>) -> PyResult<()> {
         let _operation = self.operation(py)?;
-        self.closed.store(true, Ordering::Release);
+        let _ = self.lifecycle.retire();
         let released = self.lock(py)?.data.take();
         drop(released);
         Ok(())
     }
     #[getter]
     fn closed(&self) -> bool {
-        self.closed.load(Ordering::Acquire)
+        self.lifecycle.is_retired()
     }
     /// Internal verification position, not an additional public Cursor API.
     #[getter]

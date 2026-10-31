@@ -32,7 +32,9 @@ def column(name: str, type_code: int = 3, collation_id: int = 63) -> bytes:
 
 
 def packets(columns: list[bytes], rows: list[tuple[bytes | None, ...]]) -> list[bytes]:
-    return [bytes([len(columns)]), *columns,
+    count = len(columns)
+    header = bytes([count]) if count < 251 else b'\xfc' + count.to_bytes(2, 'little')
+    return [header, *columns,
             *(b"".join(b"\xfb" if value is None else length(value) for value in row) for row in rows),
             b"\xfe\x00\x00\x02\x00\x00\x00"]
 
