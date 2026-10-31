@@ -309,7 +309,9 @@ def test_public_failure_boundaries_never_panic_on_one_allocation_failure(kind: s
 import _testcapi
 from collections.abc import Callable
 from functools import partial
+import faulthandler
 import gc
+import sys
 import tokenize
 import traceback
 from typing import Any
@@ -318,6 +320,7 @@ from sqlaero.errors import ErrorInfo, SQLAeroError
 from sqlaero.retry import Retry, RetryRule
 
 kind: str = KIND
+faulthandler.enable()
 enable = _testcapi.set_nomemory
 disable = _testcapi.remove_mem_hooks
 rule = RetryRule(error_types=ValueError)
@@ -377,6 +380,7 @@ def verify(result: Any) -> None:
 
 failures = 0
 for offset in range(48):
+    print('allocation offset:', kind, offset, flush=True)
     gc.collect()
     operation = prepare()
     try:
@@ -414,7 +418,45 @@ print('allocation boundary preserved:', kind, failures)
 '''.replace('KIND', repr(kind))
     result = subprocess.run([sys.executable, '-'], input=source.encode('utf-8'),
                             capture_output=True, timeout=30, check=False)
-    assert result.returncode == 0, (result.stdout + result.stderr).decode('utf-8', 'replace')
+    diagnostic = ''
+    if kind == 'traceback' and result.returncode < 0:
+        control = r'''
+import decimal
+import _testcapi
+import faulthandler
+import gc
+import sys
+import tokenize
+import traceback
+faulthandler.enable()
+assert not any(name == 'sqlaero' or name.startswith('sqlaero.') for name in sys.modules)
+for offset in range(48):
+    print('stdlib format offset:', offset, flush=True)
+    gc.collect()
+    try:
+        raise ValueError('allocation boundary')
+    except ValueError as error:
+        stack = traceback.StackSummary.extract(traceback.walk_tb(error.__traceback__),
+                                               capture_locals=False, lookup_lines=False)
+    operation = stack.format
+    try:
+        _testcapi.set_nomemory(offset, offset + 1)
+        try:
+            result = operation()
+        finally:
+            _testcapi.remove_mem_hooks()
+    except MemoryError:
+        pass
+    else:
+        assert isinstance(result, list)
+print('stdlib-only format control completed')
+'''
+        separate = subprocess.run([sys.executable, '-'], input=control.encode('utf-8'),
+                                  capture_output=True, timeout=30, check=False)
+        diagnostic = ('\nIndependent stdlib-only format control: '
+                      + str(separate.returncode) + '\n'
+                      + (separate.stdout + separate.stderr).decode('utf-8', 'replace'))
+    assert result.returncode == 0, (result.stdout + result.stderr).decode('utf-8', 'replace') + diagnostic
     assert b'allocation boundary preserved:' in result.stdout
 
 
