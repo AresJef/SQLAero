@@ -456,3 +456,41 @@ def test_pandas_dataframe_subclasses_do_not_gain_an_unapproved_entry() -> None:
         pass
     with pytest.raises(TypeError):
         _sqlaero._encode_value(Frame([[1, 2]]))
+
+
+def test_pandas_primitive_source_revalidates_before_reading_beyond_its_owned_run() -> None:
+    script = r"""
+from datetime import datetime,timedelta,tzinfo
+import re
+import numpy as np
+import pandas as pd
+from sqlaero import _sqlaero
+calls=[]
+armed=False
+value=pd.DataFrame({'number':pd.Series(np.arange(2050,dtype='i8'),copy=False),
+                    'callback':pd.Series([None]*2050,dtype=object)},copy=False)
+root=value['number'].to_numpy(copy=False)
+while isinstance(root.base,np.ndarray): root=root.base
+assert root.flags.owndata
+class Zone(tzinfo):
+    def utcoffset(self,dt):
+        if not armed: return timedelta(0)
+        calls.append(1)
+        root.__setstate__((1,(1,),np.dtype('i8'),False,bytes(8)))
+        return timedelta(0)
+value.iloc[0,1]=datetime(2024,1,1,tzinfo=Zone())
+calls.clear()
+armed=True
+try:
+    _sqlaero._bind_sql('SELECT %s,%s',value)
+except BufferError as error:
+    assert 'stable' in str(error) or 'physical allocation' in str(error)
+    notes='\n'.join(getattr(error,'__notes__',()))
+    positions=re.findall(r'args\[(\d+)\]\[0\]',notes)
+    assert positions and 1<=int(positions[-1])<=1024,notes
+else:
+    raise AssertionError('a new read must reject the replaced allocation')
+assert calls==[1]
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -1,11 +1,13 @@
 //! Prepared exact ndarray coordinates with short, reacquired native exports.
 //!
 //! NumPy requires callers to keep shared storage stable. A private view is used
-//! only while preparing metadata. Every later access reacquires the original
+//! only while preparing metadata. Each new native read reacquires the original
 //! source because even a retained view/export can be invalidated by setstate.
+//! Primitive values can reuse an already copied, bounded Rust-owned block;
+//! such bytes no longer borrow mutable NumPy memory.
 //! Weak references guard normal resize, not arbitrary external NumPy/C writers.
 
-use super::allocation::Allocation;
+use super::allocation::{Allocation, Export};
 use super::{Kind, half_to_f64};
 use crate::errors;
 use crate::input::source::{CellWriter, PreparedSource, Shape};
@@ -16,7 +18,64 @@ use pyo3::types::{PyString, PyTuple, PyType};
 use sqlaero_core::bind::{Context, scalar, writer};
 use sqlaero_core::protocol::framing::WireError;
 use sqlaero_core::transport::deadline::IoBudget;
-use std::mem::MaybeUninit;
+
+const PRIMITIVE_BLOCK: usize = 1024;
+const PRIMITIVE_MINIMUM: usize = 32;
+
+/// A small logical run already read from NumPy. This is machine data, never
+/// SQL or Python values, and cannot be invalidated by a later Python callback.
+struct PrimitiveBlock {
+    start: usize,
+    bytes: Vec<u8>,
+}
+
+/// Only the copying window owns these fresh exports. Metadata is copied into
+/// native coordinates before any source address is formed; no Python call,
+/// allocation or checkpoint occurs while reading their bytes.
+struct NativeView<'owner, 'py> {
+    // Fields drop in declaration order: end the derived export first.
+    source: Export<'owner, 'py>,
+    root: Export<'owner, 'py>,
+    dimensions: usize,
+    lengths: [usize; 2],
+    strides: [isize; 2],
+    width: usize,
+}
+
+impl NativeView<'_, '_> {
+    fn offset(&self, row: usize, column: usize) -> Option<usize> {
+        if row >= self.lengths[0] || column >= self.lengths[1] {
+            return None;
+        }
+        let mut offset = 0isize;
+        for (axis, coordinate) in [row, column].into_iter().enumerate().take(self.dimensions) {
+            let delta = isize::try_from(coordinate)
+                .ok()?
+                .checked_mul(self.strides[axis])?;
+            offset = offset.checked_add(delta)?;
+        }
+        let address = (self.source.raw.buf as usize).checked_add_signed(offset)?;
+        if !self.root.contains(address as *const u8, self.width) {
+            return None;
+        }
+        address.checked_sub(self.root.raw.buf as usize)
+    }
+
+    fn contiguous(&self) -> bool {
+        let Ok(width) = isize::try_from(self.width) else {
+            return false;
+        };
+        if self.dimensions == 1 {
+            self.strides[0] == width
+        } else {
+            self.strides[1] == width
+                && self.lengths[1]
+                    .checked_mul(self.width)
+                    .and_then(|stride| isize::try_from(stride).ok())
+                    == Some(self.strides[0])
+        }
+    }
+}
 
 #[derive(Clone, Copy)]
 enum ArrayKind {
@@ -36,6 +95,7 @@ pub(crate) struct NumpySource<'py> {
     width: usize,
     swap: bool,
     temporal: Option<(TimeUnit, u64, TimeKind)>,
+    primitive: Option<PrimitiveBlock>,
 }
 
 impl<'py> NumpySource<'py> {
@@ -129,12 +189,41 @@ impl<'py> NumpySource<'py> {
             width,
             swap: !native_order,
             temporal,
+            primitive: None,
         })
     }
 
-    fn cell_bytes(&self, row: usize, column: usize) -> PyResult<[u8; 8]> {
+    fn cell_bytes(&mut self, row: usize, column: usize, budget: &IoBudget) -> PyResult<[u8; 8]> {
         let mut bytes = [0u8; 8];
-        self.copy_cell_range(row, column, 0, &mut bytes[..self.width])?;
+        let (rows, columns) = match self.shape {
+            Shape::Vector { length } => (length, 1),
+            Shape::Table { rows, columns } => (rows, columns),
+            Shape::Record { .. } => (0, 0),
+        };
+        let total = rows.checked_mul(columns);
+        let index = (row < rows && column < columns)
+            .then(|| row.checked_mul(columns)?.checked_add(column))
+            .flatten();
+        if let (Some(total), Some(index)) = (total, index)
+            && total >= PRIMITIVE_MINIMUM
+        {
+            if !self.primitive.as_ref().is_some_and(|block| {
+                index >= block.start && index - block.start < block.bytes.len() / self.width
+            }) {
+                self.read_primitive_block(index, total, columns, budget)?;
+            }
+            let copied = self.primitive.as_ref().and_then(|block| {
+                let start = index.checked_sub(block.start)?.checked_mul(self.width)?;
+                block.bytes.get(start..start.checked_add(self.width)?)
+            });
+            if let Some(copied) = copied {
+                bytes[..self.width].copy_from_slice(copied);
+            } else {
+                self.copy_cell_range(row, column, 0, &mut bytes[..self.width])?;
+            }
+        } else {
+            self.copy_cell_range(row, column, 0, &mut bytes[..self.width])?;
+        }
         if self.swap {
             bytes[..self.width].reverse();
         }
@@ -142,7 +231,7 @@ impl<'py> NumpySource<'py> {
     }
 
     /// Read a signed native mask/code/time value without Python number boxing.
-    pub(crate) fn signed_at(&self, row: usize) -> PyResult<i64> {
+    pub(crate) fn signed_at(&mut self, row: usize, budget: &IoBudget) -> PyResult<i64> {
         let read = match self.kind {
             ArrayKind::Scalar(Kind::I8) => 1,
             ArrayKind::Scalar(Kind::I16) => 2,
@@ -161,7 +250,7 @@ impl<'py> NumpySource<'py> {
                 "NumPy codes or ticks require one dimension",
             ));
         }
-        let bytes = self.cell_bytes(row, 0)?;
+        let bytes = self.cell_bytes(row, 0, budget)?;
         Ok(match read {
             1 => i64::from(i8::from_ne_bytes([bytes[0]])),
             2 => i64::from(i16::from_ne_bytes([bytes[0], bytes[1]])),
@@ -171,7 +260,7 @@ impl<'py> NumpySource<'py> {
     }
 
     /// A nullable mask must be byte-per-element NumPy bool, never Arrow bits.
-    pub(crate) fn bool_at(&self, row: usize) -> PyResult<bool> {
+    pub(crate) fn bool_at(&mut self, row: usize, budget: &IoBudget) -> PyResult<bool> {
         if !matches!(self.kind, ArrayKind::Scalar(Kind::Bool))
             || !matches!(self.shape, Shape::Vector { .. })
         {
@@ -180,32 +269,17 @@ impl<'py> NumpySource<'py> {
                 "NumPy missing-value mask requires a one-dimensional bool array",
             ));
         }
-        Ok(self.cell_bytes(row, 0)?[0] != 0)
+        Ok(self.cell_bytes(row, 0, budget)?[0] != 0)
     }
 
-    /// Copy only this bounded native fragment, releasing its export before
-    /// writers, signal checks, Python calls, or recursive field processing.
-    fn copy_cell_range(
-        &self,
-        row: usize,
-        column: usize,
-        start: usize,
-        destination: &mut [u8],
-    ) -> PyResult<()> {
+    /// Validate the current original owners once for one bounded native read.
+    /// The returned guard must be dropped before making any Python call.
+    fn native_view(&self) -> PyResult<NativeView<'_, 'py>> {
         let py = self.owner.py();
         if !errors::attribute(&self.owner, c"dtype")?.is(&self.dtype) {
             return Err(errors::builtin_message::<PyBufferError>(
                 py,
                 "NumPy input dtype changed during escape; keep input storage stable",
-            ));
-        }
-        if start
-            .checked_add(destination.len())
-            .is_none_or(|end| end > self.width)
-        {
-            return Err(errors::builtin_message::<PyIndexError>(
-                py,
-                "NumPy fragment is outside its prepared item width",
             ));
         }
         let (dimensions, lengths) = match self.shape {
@@ -218,30 +292,15 @@ impl<'py> NumpySource<'py> {
                 ));
             }
         };
-        if row >= lengths[0] || column >= lengths[1] {
-            return Err(errors::builtin_message::<PyIndexError>(
-                py,
-                "NumPy source coordinate is outside its prepared shape",
-            ));
-        }
         let root = self.allocation.export()?;
-        let mut raw = MaybeUninit::<pyo3::ffi::Py_buffer>::uninit();
-        // SAFETY: exact NumPy exports populate this owned stack descriptor or
-        // preserve their actual Python error; this thread remains attached.
-        if unsafe {
-            pyo3::ffi::PyObject_GetBuffer(
-                self.owner.as_ptr(),
-                raw.as_mut_ptr(),
-                pyo3::ffi::PyBUF_STRIDES,
-            )
-        } < 0
-        {
-            let error = PyErr::fetch(py);
-            drop(root);
-            return Err(error);
-        }
-        // SAFETY: the successful constructor initialized the full descriptor.
-        let mut raw = unsafe { raw.assume_init() };
+        let source = match Export::acquire(&self.owner, pyo3::ffi::PyBUF_STRIDES) {
+            Ok(source) => source,
+            Err(error) => {
+                drop(root);
+                return Err(error);
+            }
+        };
+        let raw = &source.raw;
         let length = lengths[0]
             .checked_mul(if dimensions == 1 { 1 } else { lengths[1] })
             .and_then(|n| n.checked_mul(self.width));
@@ -253,9 +312,9 @@ impl<'py> NumpySource<'py> {
             && !raw.shape.is_null()
             && !raw.strides.is_null()
             && raw.suboffsets.is_null();
-        let mut offset = 0isize;
+        let mut strides = [0isize; 2];
         if valid {
-            for (axis, coordinate) in [row, column].into_iter().enumerate().take(dimensions) {
+            for axis in 0..dimensions {
                 // SAFETY: a non-NULL shape/stride vector has `raw.ndim`
                 // entries, and this loop is bounded by the checked ndim.
                 let (length, stride) = unsafe { (*raw.shape.add(axis), *raw.strides.add(axis)) };
@@ -263,29 +322,57 @@ impl<'py> NumpySource<'py> {
                     valid = false;
                     break;
                 }
-                let next = isize::try_from(coordinate)
-                    .ok()
-                    .and_then(|coordinate| coordinate.checked_mul(stride))
-                    .and_then(|delta| offset.checked_add(delta));
-                if let Some(next) = next {
-                    offset = next;
-                } else {
-                    valid = false;
-                    break;
-                }
+                strides[axis] = stride;
             }
         }
-        let metadata_valid = valid;
-        let physical = if valid {
-            (raw.buf as usize)
-                .checked_add_signed(offset)
-                .filter(|address| root.contains(*address as *const u8, self.width))
-                .and_then(|address| address.checked_sub(root.raw.buf as usize))
-                .and_then(|offset| offset.checked_add(start))
-        } else {
-            None
-        };
-        valid = physical.is_some();
+        if !valid {
+            drop(source);
+            drop(root);
+            return Err(errors::builtin_message::<PyBufferError>(
+                py,
+                "NumPy storage no longer matches its prepared shape or dtype",
+            ));
+        }
+        Ok(NativeView {
+            root,
+            source,
+            dimensions,
+            lengths,
+            strides,
+            width: self.width,
+        })
+    }
+
+    /// Copy only this bounded native fragment, releasing its export before
+    /// writers, signal checks, Python calls, or recursive field processing.
+    fn copy_cell_range(
+        &self,
+        row: usize,
+        column: usize,
+        start: usize,
+        destination: &mut [u8],
+    ) -> PyResult<()> {
+        let py = self.owner.py();
+        if start
+            .checked_add(destination.len())
+            .is_none_or(|end| end > self.width)
+        {
+            return Err(errors::builtin_message::<PyIndexError>(
+                py,
+                "NumPy fragment is outside its prepared item width",
+            ));
+        }
+        let view = self.native_view()?;
+        if row >= view.lengths[0] || column >= view.lengths[1] {
+            drop(view);
+            return Err(errors::builtin_message::<PyIndexError>(
+                py,
+                "NumPy source coordinate is outside its prepared shape",
+            ));
+        }
+        let physical = view
+            .offset(row, column)
+            .and_then(|offset| offset.checked_add(start));
         if let Some(offset) = physical.filter(|_| !destination.is_empty()) {
             // SAFETY: the complete selected item lies in the retained root's
             // actual contiguous export. Derive the copied pointer from that
@@ -296,25 +383,87 @@ impl<'py> NumpySource<'py> {
             // to the producer's synchronization contract.
             unsafe {
                 std::ptr::copy_nonoverlapping(
-                    root.raw.buf.cast::<u8>().add(offset),
+                    view.root.raw.buf.cast::<u8>().add(offset),
                     destination.as_mut_ptr(),
                     destination.len(),
                 );
             }
         }
-        // SAFETY: this descriptor came from one successful export and is
-        // released exactly once while attached. No borrowed bytes survive.
-        unsafe { pyo3::ffi::PyBuffer_Release(&mut raw) };
-        drop(root);
-        if !valid {
-            if metadata_valid {
-                return Err(super::allocation::bounds_error(py));
-            }
-            return Err(errors::builtin_message::<PyBufferError>(
-                py,
-                "NumPy storage no longer matches its prepared shape or dtype",
-            ));
+        drop(view);
+        if physical.is_none() {
+            return Err(super::allocation::bounds_error(py));
         }
+        Ok(())
+    }
+
+    /// Copy a bounded machine-value run without executing any future value's
+    /// conversion, encoding or Python hook. A future bad coordinate truncates
+    /// the run: its error is reported only if that actual cell is requested.
+    fn read_primitive_block(
+        &mut self,
+        start: usize,
+        total: usize,
+        columns: usize,
+        budget: &IoBudget,
+    ) -> PyResult<()> {
+        let py = self.owner.py();
+        crate::input::check(py, budget)?;
+        let count = (total - start).min(PRIMITIVE_BLOCK);
+        let length = count * self.width;
+        let mut block = self.primitive.take().unwrap_or(PrimitiveBlock {
+            start,
+            bytes: Vec::new(),
+        });
+        block.bytes.clear();
+        block
+            .bytes
+            .try_reserve_exact(length)
+            .map_err(|_| errors::memory_error(py))?;
+        let view = self.native_view()?;
+        let row = start / columns;
+        let column = start % columns;
+        let first = view.offset(row, column);
+        let mut copied = 0;
+        if let Some(offset) = first {
+            // A full positive contiguous span needs only one range proof and
+            // one native copy. Other layouts retain per-coordinate proofs.
+            // SAFETY: offset came from this actual root and names one item.
+            let pointer = unsafe { view.root.raw.buf.cast::<u8>().add(offset) };
+            if view.contiguous() && view.root.contains(pointer, length) {
+                // SAFETY: the complete source span is proven above. Reserve
+                // finished before exports were acquired. The destination is
+                // unique spare storage for exactly length initialized bytes.
+                unsafe { std::ptr::copy_nonoverlapping(pointer, block.bytes.as_mut_ptr(), length) };
+                copied = length;
+            } else {
+                for index in start..start + count {
+                    let Some(offset) = view.offset(index / columns, index % columns) else {
+                        break;
+                    };
+                    // SAFETY: each complete item was checked against the
+                    // root's actual allocation, even for negative/zero or
+                    // transposed strides. Both offsets fit the reserved run;
+                    // no callback, allocation or checkpoint occurs here.
+                    unsafe {
+                        std::ptr::copy_nonoverlapping(
+                            view.root.raw.buf.cast::<u8>().add(offset),
+                            block.bytes.as_mut_ptr().add(copied),
+                            self.width,
+                        );
+                    }
+                    copied += self.width;
+                }
+            }
+        }
+        drop(view);
+        if copied == 0 {
+            return Err(super::allocation::bounds_error(py));
+        }
+        // SAFETY: precisely this prefix was initialized by the bounded copies
+        // above, and copied never exceeds the reserved target length.
+        unsafe { block.bytes.set_len(copied) };
+        block.start = start;
+        self.primitive = Some(block);
         Ok(())
     }
 
@@ -483,7 +632,7 @@ impl<'py> PreparedSource<'py> for NumpySource<'py> {
                 return visitor.python(&value, output, None);
             }
         };
-        let b = self.cell_bytes(row, column)?;
+        let b = self.cell_bytes(row, column, budget)?;
         let result = match kind {
             Kind::I8 => scalar::integer(output, i8::from_ne_bytes([b[0]]), context.limit),
             Kind::I16 => scalar::integer(output, i16::from_ne_bytes([b[0], b[1]]), context.limit),

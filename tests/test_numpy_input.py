@@ -642,3 +642,114 @@ def test_numpy_long_fixed_width_value_preserves_the_actual_signal_exception(kind
         assert "args[1]" in "\n".join(getattr(caught.value, "__notes__", ()))
     finally:
         alarm.close()
+
+
+@pytest.mark.parametrize("size", [31, 32, 1024, 1025])
+def test_numpy_primitive_runs_keep_every_value_at_short_and_block_boundaries(size: int) -> None:
+    value = np.arange(size, dtype=np.int64) - 17
+    expected = [b"\x03SELECT " + str(i - 17).encode("ascii") for i in range(size)]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == expected
+
+
+@pytest.mark.parametrize("layout", ["native", "fortran", "transpose", "reverse", "zero_stride", "unaligned", "big_endian"])
+def test_numpy_primitive_runs_preserve_actual_two_dimensional_layout(layout: str) -> None:
+    value = np.arange(35 * 41, dtype=np.int64).reshape((35, 41))
+    if layout == "fortran":
+        value = np.asfortranarray(value)
+    elif layout == "transpose":
+        value = value.T
+    elif layout == "reverse":
+        value = value[::-1, ::-1]
+    elif layout == "zero_stride":
+        value = np.broadcast_to(value[:1, :1], value.shape)
+    elif layout == "unaligned":
+        original = value
+        value = np.ndarray(original.shape, dtype="i8", buffer=bytearray(original.nbytes + 1), offset=1)
+        value[:] = original
+    elif layout == "big_endian":
+        value = value.astype(">i8")
+    sql = "SELECT " + ",".join(["%s"] * value.shape[1])
+    expected = [b"\x03SELECT " + b",".join(str(int(cell)).encode("ascii") for cell in row) for row in value]
+    assert _sqlaero._bind_sql(sql, value) == expected
+
+
+@pytest.mark.parametrize("dtype", [np.float16, np.float32, np.float64])
+def test_numpy_primitive_float_runs_keep_actual_bits_and_per_cell_nonfinite_rules(dtype: type) -> None:
+    value = np.resize(np.array([0.1, -0.0, float("nan"), float("inf"), -float("inf"), 1.5], dtype=dtype), 1025)
+    actual = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert len(actual) == len(value)
+    for cell, request in zip(value, actual, strict=True):
+        raw = request.removeprefix(b"\x03SELECT ")
+        native = float(cell)
+        if math.isfinite(native):
+            assert float(raw).hex() == native.hex()
+        else:
+            assert raw == b"NULL"
+
+
+@pytest.mark.parametrize("kind", ["M8", "m8"])
+def test_numpy_primitive_time_runs_keep_nat_and_complete_units(kind: str) -> None:
+    ticks = np.arange(1025, dtype=np.int64)
+    ticks[17] = np.iinfo(np.int64).min
+    value = ticks.view(f"{kind}[2D]")
+    actual = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert len(actual) == 1025
+    assert actual[17] == b"\x03SELECT NULL"
+    if kind == "M8":
+        assert actual[0] == b"\x03SELECT '1970-01-01 00:00:00'"
+        assert actual[1024] == b"\x03SELECT '1975-08-11 00:00:00'"
+    else:
+        assert actual[0] == b"\x03SELECT '00:00:00'"
+        assert actual[1024] == b"\x03SELECT '49152:00:00'"
+
+
+def test_numpy_future_out_of_allocation_cell_is_not_reported_at_an_earlier_valid_row() -> None:
+    root = np.arange(20, dtype=np.int64)
+    invalid = np.lib.stride_tricks.as_strided(root, shape=(64,), strides=(root.itemsize,))
+    with pytest.raises(BufferError, match="physical allocation") as caught:
+        _sqlaero._bind_sql("SELECT %s", invalid, many=True)
+    assert "args[20]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
+def test_numpy_primitive_run_keeps_the_original_operation_deadline() -> None:
+    from sqlaero._sqlaero import OperationalTimeoutError
+    value = np.arange(1000000, dtype=np.int64)
+    with pytest.raises(OperationalTimeoutError) as caught:
+        _sqlaero._bind_sql("SELECT %s", (value,), timeout_ns=5_000_000)
+    assert caught.value.code == 65544
+
+
+def test_numpy_shared_primitive_input_has_independent_native_runs_per_thread() -> None:
+    script = r"""
+import concurrent.futures,sys,threading
+before=getattr(sys,'_is_gil_enabled',lambda:True)()
+import numpy as np
+from sqlaero import _sqlaero
+assert getattr(sys,'_is_gil_enabled',lambda:True)()==before
+source=np.arange(1025,dtype=np.int64)
+expected=b'('+b','.join(str(i).encode('ascii') for i in range(1025))+b')'
+barrier=threading.Barrier(4)
+def run(index):
+    encoder=_sqlaero._prepare_encoder()
+    barrier.wait(timeout=10)
+    for _ in range(4):
+        assert encoder.encode(source).to_bytes()==expected
+    return index
+with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
+    assert sorted(pool.map(run,range(4)))==list(range(4))
+assert getattr(sys,'_is_gil_enabled',lambda:True)()==before
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_numpy_primitive_runs_keep_the_arrow_owners_physical_bounds() -> None:
+    pa = pytest.importorskip("pyarrow")
+    source = pa.array(np.arange(1300, dtype=np.int64)).slice(100, 1025).to_numpy(zero_copy_only=True)
+    assert _sqlaero._bind_sql("SELECT %s", source, many=True) == [
+        b"\x03SELECT " + str(i).encode("ascii") for i in range(100, 1125)
+    ]
+    invalid = np.lib.stride_tricks.as_strided(source, shape=(1400,), strides=(source.itemsize,))
+    with pytest.raises(BufferError, match="physical allocation") as caught:
+        _sqlaero._bind_sql("SELECT %s", invalid, many=True)
+    assert "args[1200]" in "\n".join(getattr(caught.value, "__notes__", ()))

@@ -503,7 +503,7 @@ impl Column<'_> {
                 ..
             } => {
                 let py = categories.py();
-                let code = codes.signed_at(row)?;
+                let code = codes.signed_at(row, budget)?;
                 if code == -1 {
                     return writer::append(output, b"NULL", context.limit)
                         .map_err(|error| errors::wire(py, error));
@@ -522,7 +522,7 @@ impl Column<'_> {
             }
             Self::Time { ticks, unit, .. } => {
                 let py = ticks.owner().py();
-                let value = ticks.signed_at(row)?;
+                let value = ticks.signed_at(row, budget)?;
                 if value != i64::MIN && !context.utc_confirmed {
                     return Err(errors::client(
                         py,
@@ -550,7 +550,7 @@ struct Masked<'py> {
     length: usize,
     dtype: Bound<'py, PyAny>,
     python_string: bool,
-    current: Option<Block<'py>>,
+    current: Option<Box<Block<'py>>>,
 }
 struct Block<'py> {
     start: usize,
@@ -597,19 +597,22 @@ impl<'py> Masked<'py> {
             let data = call_keywords(&piece, c"to_numpy", &keywords)?;
             let data = numpy_source(api, &data, budget, length)?;
             crate::input::check(py, budget)?;
-            self.current = Some(Block {
-                start,
-                length,
-                data,
-                mask,
-            });
+            self.current = Some(crate::input::boxed(
+                py,
+                Block {
+                    start,
+                    length,
+                    data,
+                    mask,
+                },
+            )?);
         }
         let block = self
             .current
             .as_mut()
             .ok_or_else(|| invalid(py, "Pandas nullable block preparation failed"))?;
         let local = row - block.start;
-        if block.mask.bool_at(local)? {
+        if block.mask.bool_at(local, budget)? {
             writer::append(output, b"NULL", context.limit).map_err(|error| errors::wire(py, error))
         } else {
             block
