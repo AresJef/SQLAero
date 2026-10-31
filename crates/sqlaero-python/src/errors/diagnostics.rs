@@ -699,12 +699,12 @@ impl ErrorInfo {
         let os_errno = self
             .os_errno
             .map(|value| {
-                // SAFETY: Python is attached; i32 fits c_long on supported targets.
+                // SAFETY: Python is attached; i32 fits i64 on every supported target.
                 // The constructor returns a new integer or its original error.
                 unsafe {
                     Bound::<PyAny>::from_owned_ptr_or_err(
                         py,
-                        pyo3::ffi::PyLong_FromLong(value.into()),
+                        pyo3::ffi::PyLong_FromLongLong(i64::from(value)),
                     )
                 }
             })

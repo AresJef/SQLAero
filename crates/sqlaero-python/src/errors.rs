@@ -87,10 +87,13 @@ pub(crate) fn module<'py>(py: Python<'py>, name: &CStr) -> PyResult<Bound<'py, P
 /// Prepare the shared driver-error keywords without unchecked conversions.
 fn error_keywords(py: Python<'_>, code: u32, server: bool) -> PyResult<Bound<'_, PyDict>> {
     let keywords = dictionary(py)?;
-    // SAFETY: u32 fits c_ulong on every supported target. Python is attached
+    // SAFETY: u32 fits u64 on every supported target. Python is attached
     // and this normal constructor returns an owned integer or its actual error.
     let code = unsafe {
-        Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyLong_FromUnsignedLong(code.into()))?
+        Bound::<PyAny>::from_owned_ptr_or_err(
+            py,
+            pyo3::ffi::PyLong_FromUnsignedLongLong(u64::from(code)),
+        )?
     };
     keywords.set_item(PyString::from_bytes(py, b"code")?, code)?;
     keywords.set_item(PyString::from_bytes(py, b"is_server_error")?, server)?;

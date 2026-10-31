@@ -232,13 +232,20 @@ impl ScalarTypes {
                 error
             });
         }
-        Err(crate::errors::builtin_message::<PyTypeError>(
-            py,
-            format!(
-                "unsupported exact escape type: {}",
-                value.get_type().name()?
-            ),
-        ))
+        Err(unsupported(value))
+    }
+}
+
+/// Keep fallible error formatting outside the common scalar visitor's frame.
+#[cold]
+#[inline(never)]
+fn unsupported(value: &Bound<'_, PyAny>) -> PyErr {
+    match value.get_type().name() {
+        Ok(name) => errors::builtin_message::<PyTypeError>(
+            value.py(),
+            format!("unsupported exact escape type: {name}"),
+        ),
+        Err(error) => error,
     }
 }
 
