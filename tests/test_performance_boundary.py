@@ -27,7 +27,7 @@ def test_mixed_valid_and_misspelled_case_ids_do_not_silently_reduce_coverage(tmp
 
 @pytest.mark.parametrize("value", [
     None, True, 123, -0.0, Decimal("1.2300"), "a'\\\x00中文", b"\x00'\\",
-    bytearray(b"abc"), date(2024, 2, 29), datetime(2024, 2, 29, 3, 4, 5),
+    date(2024, 2, 29), datetime(2024, 2, 29, 3, 4, 5),
     time(3, 4, 5, 123), timedelta(days=-4, microseconds=5),
     [], (), [1, "x", None], (True, [2, ("中",)]),
 ])

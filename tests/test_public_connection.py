@@ -252,6 +252,35 @@ def test_actual_connect_bind_and_independent_buffered_cursors(connection: Connec
 
 
 @requires_mysql
+@pytest.mark.parametrize('many', [False, True])
+@pytest.mark.parametrize('itemize', [False, True])
+@pytest.mark.parametrize('empty', [False, True])
+def test_bytearray_rejection_preserves_old_result_and_does_not_execute(
+    connection: Connection, many: bool, itemize: bool, empty: bool,
+) -> None:
+    marker = connection.cursor()
+    marker.execute('SET @sqlaero_rejected_input = 0')
+    current = connection.cursor()
+    current.execute('SELECT 1 AS saved UNION ALL SELECT 2')
+    saved = current.columns
+    value = bytearray() if empty else bytearray(b'private binary')
+    args = [[value]] if many else [value] if itemize else value
+    with pytest.raises(TypeError, match='unsupported exact escape type: bytearray') as caught:
+        if many and itemize:
+            current.executemany('SELECT %s INTO @sqlaero_rejected_input', args)  # type: ignore[arg-type]
+        else:
+            current.execute('SELECT %s INTO @sqlaero_rejected_input', args, many=many, itemize=itemize)  # type: ignore[arg-type]
+    assert current.columns is saved and current.row_count == 2
+    assert current.fetchall() == ((1,), (2,))
+    assert 'current request was not sent' in '\n'.join(getattr(caught.value, '__notes__', []))
+    marker.execute('SELECT @sqlaero_rejected_input')
+    assert marker.fetchone() == (0,)
+    assert connection.ping()
+    current.close()
+    marker.close()
+
+
+@requires_mysql
 def test_old_result_survives_local_failure_but_not_a_started_failed_request(connection: Connection) -> None:
     cursor = connection.cursor()
     cursor.execute('SELECT 1 UNION ALL SELECT 2')
@@ -617,7 +646,8 @@ def test_unexpected_multi_results_are_drained_and_update_actual_session_facts(co
 
 @requires_mysql
 @pytest.mark.parametrize('label', ['84', '97'])
-def test_native_complete_row_splitting_and_failed_call_prefix(label: str) -> None:
+@pytest.mark.parametrize('bad_value', [object(), bytearray(b'unsupported')], ids=['object', 'bytearray'])
+def test_native_complete_row_splitting_and_failed_call_prefix(label: str, bad_value: object) -> None:
     from sqlaero.errors import SQLAeroError
     with live(label, max_allowed_packet='2KB') as connection:
         cursor = connection.cursor()
@@ -629,7 +659,7 @@ def test_native_complete_row_splitting_and_failed_call_prefix(label: str) -> Non
         assert cursor.fetchone() == (100,)
         cursor.execute('TRUNCATE TABLE split_public')
         broken: list[object] = [(index, 'x' * 100) for index in range(100)]
-        broken[70] = (70, object())
+        broken[70] = (70, bad_value)
         with pytest.raises(TypeError) as caught:
             cursor.executemany('INSERT INTO split_public VALUES (%s,%s)', broken)  # type: ignore[arg-type]
         assert cursor.row_count is None and cursor.rowcount == -1 and cursor.description is None
@@ -1170,7 +1200,7 @@ def test_fixed_seed_values_round_trip_through_the_public_request_path(connection
         assert cursor.fetchone() == (expected,)
     cursor.use_timedelta = False
     cursor.execute('SELECT CAST(%s AS TIME(6)),CAST(%s AS BINARY),CAST(%s AS BINARY)',
-                   (time(3, 4, 5, 123456), b'\x00\xffquote\'\\', bytearray(b'\x80\x00')))
+                   (time(3, 4, 5, 123456), b'\x00\xffquote\'\\', b'\x80\x00'))
     assert cursor.fetchone() == (time(3, 4, 5, 123456), b'\x00\xffquote\'\\', b'\x80\x00')
     cursor.use_timedelta = True
     cursor.execute('SELECT CAST(%s AS TIME(6)),CAST(%s AS DECIMAL(65,30)),%s,%s',

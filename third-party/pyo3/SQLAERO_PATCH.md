@@ -13,6 +13,12 @@ PyDict::new panicked on NULL before SQLAeroError's constructor was entered.
 The public constructor and argument-copying semantics remain unchanged.
 There is no dependency version upgrade or platform-specific branch.
 
+The repository's existing LF checkout policy also normalizes CRLF in four
+upstream files (`src/call.rs`, `src/impl_/deprecated.rs`,
+`src/pyclass/guard.rs`, `tests/test_class_init.rs`). This is line-ending-only;
+the archive hash and per-file originals are retained in the task evidence.
+Local final builds use that same canonical LF source as Actions and the sdist.
+
 `SQLAERO_PATCH.diff` is the complete implementation difference from the fixed
 archive. SQLAero's isolated public-constructor and driver-error regression tests
 exercise this path in GIL and real free-threaded installations.

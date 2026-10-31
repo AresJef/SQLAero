@@ -16,22 +16,55 @@ MYSQL_DIFFERENCES: dict[str, dict[int, str | None]] = {
 }
 
 
-@pytest.mark.parametrize("value", [b"", b"12", b"\x00\xff'\\", bytearray(b"\x00a\xff")])
-def test_binary_values_use_ordinary_binary_string_semantics(value: bytes | bytearray) -> None:
+class UnsupportedBytearray(bytearray):
+    def __bytes__(self) -> bytes:
+        raise AssertionError('Escape must not implicitly convert unsupported input')
+
+    def __repr__(self) -> str:
+        raise AssertionError('diagnostics must not format unsupported mutable input')
+
+
+@pytest.mark.parametrize('source', [bytearray(), bytearray(range(256)),
+                                  bytearray(b'x' * 262145), UnsupportedBytearray(b'private')])
+def test_bytearray_is_rejected_at_every_scalar_encoding_entry(source: bytearray) -> None:
+    for encode in (_sqlaero._encode_scalar, _sqlaero._encode_value,
+                   _sqlaero._prepare_encoder().encode):
+        with pytest.raises(TypeError, match='unsupported exact escape type'):
+            encode(source)
+
+
+@pytest.mark.parametrize('many', [False, True])
+@pytest.mark.parametrize('itemize', [False, True])
+@pytest.mark.parametrize('nested', [False, True])
+def test_bytearray_rejection_uses_the_shared_binding_path(
+    many: bool, itemize: bool, nested: bool,
+) -> None:
+    source = bytearray(b'private payload')
+    value: object = (1, [source]) if nested else source
+    args = [[value]] if many else [value] if itemize else value
+    with pytest.raises(TypeError, match='unsupported exact escape type: bytearray') as caught:
+        _sqlaero._bind_sql('SELECT %s', args, many=many, itemize=itemize)
+    notes = '\n'.join(getattr(caught.value, '__notes__', []))
+    assert 'while binding args' in notes and 'current request was not sent' in notes
+    assert 'private payload' not in notes
+
+
+@pytest.mark.parametrize("value", [b"", b"12", b"\x00\xff'\\"])
+def test_binary_values_use_ordinary_binary_string_semantics(value: bytes) -> None:
     assert _sqlaero._encode_scalar(value) == b"CAST(X'" + value.hex().upper().encode("ascii") + b"' AS BINARY)"
 
 
 @pytest.mark.parametrize("length", [0, 1, 31, 32, 33, 262143, 262144, 262145, 524305])
-def test_bytearray_snapshot_keeps_binary_work_window_contents(length: int) -> None:
-    source = bytearray((bytes(range(256)) * ((length + 255) // 256))[:length])
+def test_bytes_keep_binary_work_window_contents(length: int) -> None:
+    source = (bytes(range(256)) * ((length + 255) // 256))[:length]
     expected = b"CAST(X'" + source.hex().upper().encode("ascii") + b"' AS BINARY)"
     assert _sqlaero._encode_scalar(source) == expected
     assert _sqlaero._bind_sql("SELECT %s", [source]) == [b"\x03SELECT " + expected]
 
 
 @pytest.mark.parametrize("length", [0, 1, 31, 32, 33, 262145])
-def test_bytearray_limit_uses_complete_binary_width_and_current_request(length: int) -> None:
-    source = bytearray(b"\x00" * length)
+def test_bytes_limit_uses_complete_binary_width_and_current_request(length: int) -> None:
+    source = b"\x00" * length
     expected = b"CAST(X'" + b"00" * length + b"' AS BINARY)"
     assert len(expected) == 2 * length + 19
     assert _sqlaero._encode_scalar(source, limit=len(expected)) == expected
@@ -45,12 +78,11 @@ def test_bytearray_limit_uses_complete_binary_width_and_current_request(length: 
     assert binding.value.code == 65538
 
 
-def test_completed_binary_owner_is_independent_of_mutable_source() -> None:
-    source = bytearray(bytes(range(256)) * 1025)
+def test_completed_binary_owner_keeps_its_independent_contents() -> None:
+    source = bytes(range(256)) * 1025
     expected = b"CAST(X'" + source.hex().upper().encode("ascii") + b"' AS BINARY)"
     owner = _sqlaero._prepare_encoder().encode(source)
-    source.clear()
-    source.extend(b"replacement")
+    del source
     assert owner.to_bytes() == expected
 
 
@@ -58,7 +90,7 @@ def test_shared_stable_nested_input_can_use_one_encoder_concurrently() -> None:
     from concurrent.futures import ThreadPoolExecutor
     from threading import Barrier
 
-    source = bytearray(bytes(range(256)) * 1025)
+    source = bytes(range(256)) * 1025
     value = (True, [source, ("中", None)])
     expected = b"(1,(CAST(X'" + source.hex().upper().encode("ascii") + b"' AS BINARY),('" + "中".encode() + b"',NULL)))"
     encoder = _sqlaero._prepare_encoder()
@@ -74,53 +106,6 @@ def test_shared_stable_nested_input_can_use_one_encoder_concurrently() -> None:
         for future in futures:
             future.result(timeout=20)
 
-
-@pytest.mark.parametrize('sizes', [(31, 33), (262175, 524305)], ids=['inline-spill', 'work-windows'])
-def test_concurrent_bytearray_resize_cannot_invalidate_a_native_read(sizes: tuple[int, int]) -> None:
-    """Isolate contract-violating input; only safety and valid bytes are asserted."""
-    import subprocess
-    import sys
-    import textwrap
-
-    code = textwrap.dedent("""
-        import sys
-        from threading import Event, Thread
-        from sqlaero import _sqlaero
-
-        sizes = (int(sys.argv[1]), int(sys.argv[2]))
-        variants = (b'a' * sizes[0], b'b' * sizes[1])
-        source = bytearray(variants[0])
-        encoder = _sqlaero._prepare_encoder()
-        ready = Event()
-        stop = Event()
-
-        def mutate() -> None:
-            ready.set()
-            while not stop.is_set():
-                for value in variants:
-                    source[:] = value
-
-        worker = Thread(target=mutate)
-        worker.start()
-        try:
-            assert ready.wait(10)
-            for _ in range(64):
-                try:
-                    result = encoder.encode(source).to_bytes()
-                except ValueError as error:
-                    assert 'bytearray length changed while binding' in str(error)
-                    continue
-                assert result.startswith(b"CAST(X'") and result.endswith(b"' AS BINARY)")
-                assert len(result) in {2 * size + 19 for size in sizes}
-                assert set(bytes.fromhex(result[7:-12].decode('ascii'))) <= {97, 98}
-        finally:
-            stop.set()
-            worker.join(10)
-            assert not worker.is_alive()
-    """)
-    result = subprocess.run([sys.executable, "-c", code, *(str(size) for size in sizes)], capture_output=True, text=True,
-                            timeout=30, check=False)
-    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_utf8_quoting_keeps_unicode_patterns_and_both_sql_modes() -> None:

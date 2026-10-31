@@ -152,6 +152,75 @@ def test_concurrent_cold_key_readers_reuse_one_complete_publication(
     assert source.closed is closed
 
 
+def test_key_tuple_gc_reentry_reuses_complete_values() -> None:
+    import gc
+
+    source = result([field(b'id')] * 512)
+    columns = source.columns
+    observed: list[tuple[str, ...]] = []
+    active = False
+
+    def observe(phase: str, _info: dict[str, int]) -> None:
+        if active and phase == 'start' and not observed:
+            observed.append(columns.keys)
+
+    old = gc.get_threshold()
+    gc.collect()
+    gc.callbacks.append(observe)
+    try:
+        gc.set_threshold(1, 1, 1)
+        active = True
+        keys = columns.keys
+        gc.collect()
+        assert observed and all(value is keys for value in observed)
+    finally:
+        active = False
+        gc.callbacks.remove(observe)
+        gc.set_threshold(*old)
+    assert keys is columns.keys and keys[0] == 'id.1' and keys[-1] == 'id.512'
+
+
+@pytest.mark.parametrize('interrupt', [False, True])
+def test_cold_key_preparation_survives_signal_reentry_or_interruption(interrupt: bool) -> None:
+    from types import FrameType
+    from _native_signal import NativeAlarm
+
+    # Real-format metadata stresses the existing progress boundary; this is a
+    # private malformed-server robustness fixture, not a legal SQL alias claim.
+    label = b'x' * 16384
+    source = result([field(label)] * 512)
+    columns = source.columns
+    entered = False
+    observed: list[tuple[str, ...]] = []
+    original = KeyboardInterrupt('original metadata preparation interruption')
+
+    def on_signal(_number: int, _frame: FrameType | None) -> None:
+        if not entered:
+            return
+        alarm.cancel()
+        if interrupt:
+            raise original
+        observed.append(columns.keys)
+
+    alarm = NativeAlarm(on_signal)
+    try:
+        alarm.start(0.001, 0.001, wait_ready=True)
+        entered = True
+        if interrupt:
+            with pytest.raises(KeyboardInterrupt) as caught:
+                _ = columns.keys
+            assert caught.value is original
+        else:
+            keys = columns.keys
+            assert observed and all(value is keys for value in observed)
+    finally:
+        entered = False
+        alarm.close()
+    keys = columns.keys
+    assert keys is columns.keys
+    assert keys[0] == 'x' * 16384 + '.1' and keys[-1] == 'x' * 16384 + '.512'
+
+
 def test_optional_flags_types_numeric_facts_and_description() -> None:
     value = result([
         field(b"price", type_code=246, flags=1 | 32 | 64 | 512 | 2 | 4 | 8,

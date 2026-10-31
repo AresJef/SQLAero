@@ -110,9 +110,11 @@ Memory-size settings accept byte integers or forms such as `64MB` / `64MiB`.
 `execute(sql)` sends original SQL without interpolation. Explicit args, including
 `None`, bind `%s` positions outside SQL quotes/comments; `None` is SQL NULL.
 Named placeholders are not supported. Exact built-in scalar inputs are None,
-bool, int, float, Decimal, str, bytes, bytearray, date, datetime, time and timedelta;
+bool, int, float, Decimal, str, bytes, date, datetime, time and timedelta;
 exact list/tuple provide positional, nested and batch structure. Third-party
-arrays/tables, arbitrary subclasses and memoryview are outside this first version.
+arrays/tables, arbitrary subclasses, bytearray and memoryview are unsupported.
+For mutable binary sources, callers may synchronize their own access and pass
+an already created immutable `bytes` value. Escape performs no implicit conversion.
 Nonfinite float/Decimal values become NULL. Aware datetime inputs normalize to
 UTC and require a reliably confirmed UTC session.
 `datetime.time` inputs preserve their clock fields and microseconds, ignore

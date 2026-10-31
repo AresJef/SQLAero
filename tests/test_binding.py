@@ -129,20 +129,18 @@ def test_sql_encoding_error_keeps_the_original_sql_character_position() -> None:
     assert (caught.value.encoding, caught.value.start, caught.value.end) == ("latin1", 12, 13)
 
 
-@pytest.mark.parametrize("source", ["中" * 200000, bytes(range(256)) * 2000, bytearray(bytes(range(256)) * 2000)],
-                         ids=['unicode', 'bytes', 'bytearray'])
-def test_large_scalar_fragments_keep_exact_contents(source: str | bytes | bytearray) -> None:
+@pytest.mark.parametrize("source", ["中" * 200000, bytes(range(256)) * 2000],
+                         ids=['unicode', 'bytes'])
+def test_large_scalar_fragments_keep_exact_contents(source: str | bytes) -> None:
     literal = _sqlaero._encode_scalar(source)
     assert _sqlaero._bind_sql("SELECT %s", [source]) == [b"\x03SELECT " + literal]
 
 
-@pytest.mark.parametrize("kind", ["text", "bytes", "bytearray"])
+@pytest.mark.parametrize("kind", ["text", "bytes"])
 def test_large_binding_checks_the_original_operation_deadline(kind: str) -> None:
-    source: str | bytes | bytearray = "'" * (16 * 1024 * 1024)
+    source: str | bytes = "'" * (16 * 1024 * 1024)
     if kind != "text":
         source = source.encode()
-        if kind == "bytearray":
-            source = bytearray(source)
     with pytest.raises(OperationalTimeoutError):
         _sqlaero._bind_sql("SELECT %s", [source], timeout_ns=5_000_000)
 
@@ -151,15 +149,13 @@ class InterruptedBinding(Exception):
     """An actual user signal exception, preserved without library wrapping."""
 
 
-@pytest.mark.parametrize("kind", ["text", "bytes", "bytearray"])
+@pytest.mark.parametrize("kind", ["text", "bytes"])
 def test_large_binding_returns_to_python_signal_checks(kind: str) -> None:
     """Arm inside binding and require interruption at the following large leaf."""
-    source: str | bytes | bytearray = "'" * (31 * 1024 * 1024)
+    source: str | bytes = "'" * (31 * 1024 * 1024)
     if kind != "text":
         source = source.encode()
-        if kind == "bytearray":
-            source = bytearray(source)
-    # All three encodings, the first datetime, and the SQL prefix fit the
+    # Both encodings, the first datetime, and the SQL prefix fit the
     # existing 64 MiB request bound; no resource failure substitutes for a signal.
     assert 2 * len(source) + 128 < 64 * 1024 * 1024
     original = InterruptedBinding("original signal handler")
@@ -258,12 +254,12 @@ def test_callback_removing_a_later_position_keeps_known_source_location(many: bo
     )
 
 
-def test_bytearray_failure_preview_is_bounded_and_keeps_original_length() -> None:
-    source = bytearray(b"\x00\xff'\\" * 1025)
+def test_bytes_failure_preview_is_bounded_and_keeps_original_length() -> None:
+    source = b"\x00\xff'\\" * 1025
     with pytest.raises(OperationalError) as caught:
         _sqlaero._bind_sql("SELECT %s", [source], limit=30)
     notes = "\n".join(getattr(caught.value, "__notes__", []))
-    assert "failed escape input: bytearray b'" in notes
+    assert "failed escape input: bytes b'" in notes
     assert f"original length {len(source)}" in notes
     assert "[truncated]" in notes and "while binding args[0]" in notes
     assert len(notes) < 500
@@ -278,7 +274,7 @@ def test_current_tuple_row_keeps_children_alive_after_callback_clears_batch() ->
             source.clear()
             return timedelta(0)
 
-    source.append((datetime(2024, 1, 1, tzinfo=ClearingZone()), bytearray(b"\x00\xff"), (1, "x")))
+    source.append((datetime(2024, 1, 1, tzinfo=ClearingZone()), b"\x00\xff", (1, "x")))
     assert _sqlaero._bind_sql("SELECT %s,%s,%s", source, many=True) == [
         b"\x03SELECT '2024-01-01 00:00:00',CAST(X'00FF' AS BINARY),(1,'x')"
     ]

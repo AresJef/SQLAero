@@ -6,7 +6,7 @@ from os import PathLike
 from typing import Any, TypeAlias
 
 _EscapeScalar: TypeAlias = (
-    None | bool | int | float | Decimal | str | bytes | bytearray
+    None | bool | int | float | Decimal | str | bytes
     | date | datetime | time | timedelta
 )
 # Mutable list invariance makes a fully recursive public union reject ordinary

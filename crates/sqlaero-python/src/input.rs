@@ -1,19 +1,16 @@
 //! Exact Python scalar readers; no Python objects cross into the native core.
 
 use crate::errors;
-use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError, PyValueError};
+use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
-use pyo3::sync::critical_section::with_critical_section;
 use pyo3::types::{
-    PyBool, PyByteArray, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess,
-    PyFloat, PyInt, PyString, PyTime, PyTimeAccess, PyTuple, PyType, PyTzInfoAccess,
+    PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyFloat, PyInt,
+    PyString, PyTime, PyTimeAccess, PyTuple, PyType, PyTzInfoAccess,
 };
-use smallvec::SmallVec;
 use sqlaero_core::bind::scalar::{Clock, Date, ScalarError};
 use sqlaero_core::bind::{Context, scalar, writer};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
-use sqlaero_core::protocol::framing::WireError;
 use sqlaero_core::transport::deadline::IoBudget;
 
 /// Module-owned immutable type references; there is no process-global Python
@@ -66,19 +63,6 @@ impl ScalarTypes {
                 value.cast::<PyBytes>()?.as_bytes(),
                 32,
             ));
-        }
-        if value.is_exact_instance_of::<PyByteArray>() {
-            let array = value.cast::<PyByteArray>()?;
-            let (preview, copied, length) = with_critical_section(array, || {
-                // SAFETY: the bytearray is protected and stays owned. Only a
-                // bounded native copy occurs before the slice is discarded.
-                let source = unsafe { array.as_bytes() };
-                let mut preview = [0; 32];
-                let copied = source.len().min(preview.len());
-                preview[..copied].copy_from_slice(&source[..copied]);
-                (preview, copied, source.len())
-            });
-            return Ok(binary_preview(&name, &preview[..copied], length));
         }
         if value.is_exact_instance_of::<PyInt>() {
             let bits = errors::integer_bit_length(value)?.extract::<u64>()?;
@@ -187,9 +171,6 @@ impl ScalarTypes {
                 limit,
                 budget,
             );
-        }
-        if value.is_exact_instance_of::<PyByteArray>() {
-            return binary_bytearray(value.cast::<PyByteArray>()?, output, limit, budget);
         }
         if value.is_exact_instance_of::<PyDateTime>() {
             let datetime = value.cast::<PyDateTime>()?;
@@ -391,87 +372,6 @@ fn codec_error(
 }
 
 const WORK_BYTES: usize = 256 * 1024;
-
-/// Copy and consume one mutable scalar without an unprotected Python view.
-/// Callers keep mutable inputs stable; this is not an atomic snapshot across
-/// the short copy windows. The completed Rust buffer is independently owned.
-// Free-threaded object-lock work stays out of the common scalar visitor.
-#[inline(never)]
-fn binary_bytearray(
-    source: &Bound<'_, PyByteArray>,
-    output: &mut Vec<u8>,
-    limit: usize,
-    budget: Option<&IoBudget>,
-) -> PyResult<()> {
-    let py = source.py();
-    let mut short = [0u8; 32];
-    let (length, copied) = with_critical_section(source, || {
-        let length = source.len();
-        let mut copied = length == 0;
-        if length <= short.len() {
-            writer::binary_width(output.len(), length, limit)?;
-            if length != 0 {
-                // SAFETY: source stays owned and protected throughout this
-                // bounded native copy. The checked length fits the local
-                // array; no allocation, Python call, or detach follows the
-                // acquired view before the copy ends.
-                let current = unsafe { source.as_bytes() };
-                if current.len() == length {
-                    short[..length].copy_from_slice(current);
-                    copied = true;
-                }
-            }
-        }
-        // Only native state escapes the guard; Python errors stay outside.
-        Ok::<_, WireError>((length, copied))
-    })
-    .map_err(|error| errors::wire(py, error))?;
-    if length <= short.len() {
-        if !copied {
-            return Err(crate::errors::builtin_message::<PyValueError>(
-                py,
-                "bytearray length changed while binding; current request was not sent",
-            ));
-        }
-        return binary(py, &short[..length], output, limit, budget);
-    }
-    if length > WORK_BYTES {
-        checkpoint(py, budget)?;
-    }
-    writer::binary_width(output.len(), length, limit).map_err(|error| errors::wire(py, error))?;
-    let mut snapshot = SmallVec::<[u8; 32]>::new();
-    snapshot
-        .try_reserve_exact(length)
-        .map_err(|_| errors::memory_error(py))?;
-    for start in (0..length).step_by(WORK_BYTES) {
-        if length > WORK_BYTES {
-            checkpoint(py, budget)?;
-        }
-        let end = start + (length - start).min(WORK_BYTES);
-        let copied = with_critical_section(source, || {
-            // SAFETY: source remains owned and its object lock (or the GIL)
-            // protects this freshly acquired slice. No Python call, callback,
-            // detach, or reference drop occurs before the native copy ends.
-            let current = unsafe { source.as_bytes() };
-            if current.len() != length {
-                return false;
-            }
-            let Some(chunk) = current.get(start..end) else {
-                return false;
-            };
-            // Reservation above covers every chunk, so this cannot allocate.
-            snapshot.extend_from_slice(chunk);
-            true
-        });
-        if !copied {
-            return Err(crate::errors::builtin_message::<PyValueError>(
-                py,
-                "bytearray length changed while binding; current request was not sent",
-            ));
-        }
-    }
-    binary(py, &snapshot, output, limit, budget)
-}
 
 #[inline(never)]
 fn binary(

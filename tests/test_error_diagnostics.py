@@ -549,6 +549,27 @@ def test_integer_subclass_width_cannot_change_the_actual_error_code(number: int,
     assert count == 2 and caught.value is primary
 
 
+@pytest.mark.parametrize('returned', [None, 'not-an-integer', -1])
+@pytest.mark.parametrize('boundary', ['error-code', 'retry-rule'])
+def test_invalid_subclass_width_results_keep_existing_version_errors(returned: object, boundary: str) -> None:
+    import sys
+    from sqlaero.retry import RetryRule
+
+    class Code(int):
+        def bit_length(self) -> object:  # type: ignore[override]
+            return returned
+
+    value = Code(123)
+    construct = (lambda: SQLAeroError(code=value)) if boundary == 'error-code' else (
+        lambda: RetryRule(error_codes=value))
+    if sys.version_info < (3, 13):
+        with pytest.raises(OverflowError if returned == -1 else TypeError):
+            construct()
+    else:
+        result = construct()
+        assert result.code == 123 if isinstance(result, SQLAeroError) else result.error_codes == (123,)
+
+
 def test_snapshot_graph_stays_private_until_all_relationships_are_complete() -> None:
     """GC inspection must not expose nodes which capture will still mutate."""
     import subprocess

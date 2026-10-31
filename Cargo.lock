@@ -1243,7 +1243,7 @@ dependencies = [
 
 [[package]]
 name = "sqlaero-core"
-version = "0.2.0-beta.3"
+version = "0.2.0-beta.4"
 dependencies = [
  "aws-lc-rs",
  "core-foundation",
@@ -1272,7 +1272,7 @@ dependencies = [
 
 [[package]]
 name = "sqlaero-python"
-version = "0.2.0-beta.3"
+version = "0.2.0-beta.4"
 dependencies = [
  "getrandom 0.3.4",
  "jiter",

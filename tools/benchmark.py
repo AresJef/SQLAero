@@ -99,7 +99,6 @@ def cases() -> list[Case]:
         "decimal": [Decimal("123.4500"), Decimal("-0.000001"), Decimal("NaN")],
         "str": ["abcdefghijklmnop", "a'\"\\\n\r\x00\x1a", "中文🙂é"],
         "bytes": [b"abcdefghijklmnop", b"a'\\\x00\xff"],
-        "bytearray": [bytearray(b"abcdefghijklmnop"), bytearray(b"\x00\xff'")],
         "date": [date(2024, 2, 29), date(1, 1, 1)],
         "datetime": [datetime(2024, 2, 29, 12, 34, 56, 123456),
                      datetime(2024, 2, 29, 12, 34, tzinfo=timezone(timedelta(hours=8)))],
@@ -137,11 +136,11 @@ def cases() -> list[Case]:
     for size in (1, 100, 1000, 10000):
         for variant, text in (("ascii", "a"), ("unicode", "中🙂"), ("special", "'\\\x00")):
             result.append(Case(f"escape/str/{variant}/codepoints{size}", (text * size)[:size]))
-        for kind in ("bytes", "bytearray"):
+        for kind in ("bytes",):
             for variant, content in (("ascii", b"a"), ("special", b"'\\\x00\xff")):
                 payload = (content * size)[:size]
                 result.append(Case(f"escape/{kind}/{variant}/bytes{size}",
-                                   payload if kind == "bytes" else bytearray(payload)))
+                                   payload))
     result.extend([
         Case("escape/empty/list", []), Case("escape/empty/tuple", ()),
         Case("escape/str/no-backslash/scalar", "a'\\\x00", no_backslash=True),
@@ -194,10 +193,6 @@ def cases() -> list[Case]:
     for mode in ("snapshot-cold", "snapshot-cached", "notes-cached", "additional-cached",
                  "code-small", "code-large"):
         result.append(Case(f"diagnostic/{mode}", mode, "diagnostic"))
-    for size in (262145, 1048576):
-        result.append(Case(f"escape/bytearray/snapshot/bytes{size}", bytearray(b"a" * size)))
-    for size in (0, 31, 32, 33):
-        result.append(Case(f"escape/bytearray/inline/bytes{size}", bytearray(b"a" * size)))
     # Widths immediately beyond the existing stack specialization need direct
     # comparisons too; the original 32-column and all older cases stay intact.
     for server in ("84", "97"):
