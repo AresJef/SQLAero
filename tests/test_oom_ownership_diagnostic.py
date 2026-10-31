@@ -4,6 +4,7 @@ import hashlib
 import json
 import subprocess
 import sys
+import shutil
 import pytest
 
 
@@ -62,19 +63,49 @@ print('stdlib completed', failures, successes)
             _testcapi.remove_mem_hooks()
 ''', '''        result = _testcapi.call_with_nomemory(offset, offset + 1, operation)
 ''')
+    methodcaller = stdlib_scoped.replace('import traceback\n',
+        'import traceback\nfrom operator import methodcaller\nfrom functools import partial\n')
+    methodcaller = methodcaller.replace('operation = stack.format',
+                                        "operation = partial(methodcaller('format'), stack)")
+    no_package = "assert not any(name == 'sqlaero' or name.startswith('sqlaero.') for name in sys.modules)"
+    imported = methodcaller.replace(no_package, 'import sqlaero')
+    enums = methodcaller.replace(no_package, '''from enum import IntEnum
+Server = IntEnum('Server', {'ER_TEST_' + str(i): 1000 + i for i in range(2046)})
+Client = IntEnum('Client', {'CLIENT_TEST_' + str(i): 65536 + i for i in range(19)})''')
+    full = stdlib_scoped.replace('import traceback\n', 'import traceback\nfrom functools import partial\n')
+    full = full.replace('''    except ValueError as error:
+        stack = traceback.StackSummary.extract(traceback.walk_tb(error.__traceback__),
+                                               capture_locals=False, lookup_lines=False)
+    operation = stack.format''', '''    except ValueError as error:
+        saved = error
+    operation = partial(traceback.format_exception, saved)''')
+    assert full != stdlib_scoped and 'format_exception' in full
     records: list[dict[str, object]] = []
     for name, program in (('exact-original-untraced', original),
-                          ('native-scoped-untraced-256', native),
-                          ('stdlib-legacy-untraced-256', stdlib),
-                          ('stdlib-scoped-untraced-256', stdlib_scoped)):
+                          ('stdlib-methodcaller-untraced-256', methodcaller),
+                          ('stdlib-import-methodcaller-untraced-256', imported),
+                          ('stdlib-enum-methodcaller-untraced-256', enums),
+                          ('stdlib-full-format-untraced-256', full)):
         assert 'faulthandler' not in program
-        for repeat in range(4):
+        for repeat in range(1 if name == 'exact-original-untraced' else 4):
             result = subprocess.run([sys.executable, '-'], input=program.encode(),
                                     capture_output=True, timeout=30, check=False)
             records.append({'variant': name, 'repeat': repeat, 'exit': result.returncode,
                             'source_sha256': hashlib.sha256(program.encode()).hexdigest(),
                             'stdout': result.stdout.decode(errors='replace')[-1500:],
                             'stderr': result.stderr.decode(errors='replace')[-1500:]})
+    debugger = shutil.which('gdb')
+    if debugger is not None:
+        result = subprocess.run([
+            debugger, '-q', '--batch', '-ex', 'run', '-ex', 'thread apply all bt 30',
+            '-ex', 'frame 2', '-ex', 'info registers rax rbx rbp r12 r13 r14 r15',
+            '-ex', 'disassemble /r PyList_New', '-ex', 'x/16gx $rbx',
+            '--args', sys.executable, '-',
+        ], input=original.encode(), capture_output=True, timeout=60, check=False)
+        records.append({'variant': 'gdb-exact-list-allocation', 'repeat': 0,
+                        'exit': result.returncode,
+                        'stdout': result.stdout.decode(errors='replace')[-40000:],
+                        'stderr': result.stderr.decode(errors='replace')[-2000:]})
     # Expected crash observations are recorded, never relabelled as safe.
     with capsys.disabled():
         print('Untraced ownership diagnosis: ' + json.dumps(records), flush=True)
