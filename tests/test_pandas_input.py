@@ -60,18 +60,18 @@ def test_pandas_vector_roles_match_logical_typed_cells(constructor: type, many: 
 
 @pytest.mark.parametrize("dtype", ["Int8", "Int16", "Int32", "Int64", "UInt8", "UInt16", "UInt32", "UInt64"])
 def test_pandas_standalone_nullable_integer_array_uses_typed_data_and_mask(dtype: str) -> None:
-    value = pd.array([1, None, 2], dtype=dtype)
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 1", b"\x03SELECT NULL", b"\x03SELECT 2"]
+    value = pd.array([1, None, 2] * 11, dtype=dtype)
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 1", b"\x03SELECT NULL", b"\x03SELECT 2"] * 11
 
 
 def test_pandas_nullable_uint64_preserves_the_unsigned_maximum() -> None:
-    value = pd.array([2**64 - 1, None, 0], dtype="UInt64")
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 18446744073709551615", b"\x03SELECT NULL", b"\x03SELECT 0"]
+    value = pd.array([2**64 - 1, None, 0] * 11, dtype="UInt64")
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 18446744073709551615", b"\x03SELECT NULL", b"\x03SELECT 0"] * 11
 
 
 @pytest.mark.parametrize("dtype", ["Float32", "Float64"])
 def test_pandas_nullable_float_mask_and_binary_value_are_distinct(dtype: str) -> None:
-    value = pd.array([0.1, None, -0.0], dtype=dtype)
+    value = pd.array([0.1, None, -0.0] * 11, dtype=dtype)
     rows = _sqlaero._bind_sql("SELECT %s", value, many=True)
     assert float(rows[0].removeprefix(b"\x03SELECT ")).hex() == float(value[0]).hex()
     assert rows[1] == b"\x03SELECT NULL"
@@ -79,8 +79,8 @@ def test_pandas_nullable_float_mask_and_binary_value_are_distinct(dtype: str) ->
 
 
 def test_pandas_standalone_boolean_array_uses_its_null_mask() -> None:
-    value = pd.array([True, None, False], dtype="boolean")
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 1", b"\x03SELECT NULL", b"\x03SELECT 0"]
+    value = pd.array([True, None, False] * 11, dtype="boolean")
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 1", b"\x03SELECT NULL", b"\x03SELECT 0"] * 11
 
 
 @pytest.mark.parametrize("storage", ["python", "pyarrow"])
@@ -517,6 +517,10 @@ assert getattr(sys, '_is_gil_enabled', lambda: True)() == before
 value = pd.Series(pd.array([1,None,3],dtype='Int64'))
 sources = [(value, [b'\x03SELECT 1',b'\x03SELECT NULL',b'\x03SELECT 3'])]
 sources.append((
+    pd.array([1,None,3]*12,dtype='Int64'),
+    [b'\x03SELECT 1',b'\x03SELECT NULL',b'\x03SELECT 3']*12,
+))
+sources.append((
     pd.Categorical.from_codes([0,-1,1]*12, categories=pd.Index([7,9],dtype='int64')),
     [b'\x03SELECT 7',b'\x03SELECT NULL',b'\x03SELECT 9']*12,
 ))
@@ -583,6 +587,265 @@ assert 'pyarrow' not in sys.modules
 """
     result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("state", ["absent", "unimported", "none", "loaded", "later"])
+def test_pandas_nullable_arrow_bridge_keeps_optional_module_states(state: str) -> None:
+    if state in ("loaded", "later"):
+        pytest.importorskip("pyarrow")
+    script = r"""
+import builtins,importlib.abc,sys,types
+state = sys.argv[1]
+before = getattr(sys, '_is_gil_enabled', lambda: True)()
+class NoArrow(importlib.abc.MetaPathFinder):
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == 'pyarrow' or fullname.startswith('pyarrow.'):
+            raise ModuleNotFoundError('pyarrow intentionally unavailable during Pandas import',name=fullname)
+blocker = NoArrow()
+sys.meta_path.insert(0,blocker)
+import pandas as pd
+from sqlaero import _sqlaero
+assert 'pyarrow' not in sys.modules
+assert getattr(sys, '_is_gil_enabled', lambda: True)() == before
+if state == 'none':
+    sys.modules['pyarrow'] = None
+elif state in ('unimported','later','loaded'):
+    sys.meta_path.remove(blocker)
+if state == 'loaded':
+    import pyarrow
+original_import = builtins.__import__
+def guarded_import(name,*args,**kwargs):
+    if (name == 'pyarrow' or name.startswith('pyarrow.')) and not isinstance(sys.modules.get('pyarrow'),types.ModuleType):
+        raise AssertionError('Escape must not probe-import an optional provider')
+    return original_import(name,*args,**kwargs)
+builtins.__import__ = guarded_import
+value = pd.array([1,None,3]*12,dtype='Int64')
+expected = [b'\x03SELECT 1',b'\x03SELECT NULL',b'\x03SELECT 3']*12
+assert _sqlaero._bind_sql('SELECT %s',value,many=True) == expected
+if state == 'none':
+    assert 'pyarrow' in sys.modules and sys.modules['pyarrow'] is None
+elif state != 'loaded':
+    assert 'pyarrow' not in sys.modules
+if state == 'later':
+    builtins.__import__ = original_import
+    import pyarrow
+    builtins.__import__ = guarded_import
+    assert _sqlaero._bind_sql('SELECT %s',value,many=True) == expected
+assert getattr(sys, '_is_gil_enabled', lambda: True)() == before
+"""
+    result = subprocess.run([sys.executable, "-c", script, state], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("count", [1023, 1024, 1025])
+def test_pandas_nullable_native_preparation_remains_bounded_to_current_piece(monkeypatch: pytest.MonkeyPatch, count: int) -> None:
+    pytest.importorskip("pyarrow")
+    value = pd.array([None if index % 17 == 0 else index for index in range(count)], dtype="Int64")
+    lengths: list[int] = []
+    original_arrow = pd.arrays.IntegerArray.__arrow_array__
+    original_mask = pd.arrays.IntegerArray.isna
+    def exported(array: Any, type: Any = None) -> Any:
+        lengths.append(len(array))
+        return original_arrow(array, type=type)
+    def masked(array: Any) -> Any:
+        lengths.append(len(array))
+        return original_mask(array)
+    monkeypatch.setattr(pd.arrays.IntegerArray, "__arrow_array__", exported)
+    monkeypatch.setattr(pd.arrays.IntegerArray, "isna", masked)
+    expected = [b"\x03SELECT " + (b"NULL" if index % 17 == 0 else str(index).encode()) for index in range(count)]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == expected
+    assert lengths == ([count] if count <= 1024 else [1024, 1])
+
+
+@pytest.mark.parametrize("reverse", [False, True])
+def test_pandas_nullable_boolean_strides_keep_data_and_mask_bit_boundaries(reverse: bool) -> None:
+    pytest.importorskip("pyarrow")
+    indices = np.arange(2062)
+    value = pd.arrays.BooleanArray(indices % 3 == 0, indices % 7 == 0)[5:2055:2]
+    positions = list(range(5, 2055, 2))
+    if reverse:
+        value = value[::-1]
+        positions.reverse()
+    expected = [
+        b"\x03SELECT " + (b"NULL" if index % 7 == 0 else b"1" if index % 3 == 0 else b"0")
+        for index in positions
+    ]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == expected
+
+
+def test_pandas_nullable_unaligned_floating_storage_keeps_mask_and_exact_value() -> None:
+    pytest.importorskip("pyarrow")
+    backing = bytearray(36 * 8 + 1)
+    data = np.ndarray((36,), dtype=np.float64, buffer=backing, offset=1)
+    data[:] = np.arange(36) * 0.25
+    value = pd.arrays.FloatingArray(data, np.arange(36) % 7 == 6)
+    rows = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    for index, row in enumerate(rows):
+        if index % 7 == 6:
+            assert row == b"\x03SELECT NULL"
+        else:
+            assert float(row.removeprefix(b"\x03SELECT ")).hex() == (index * 0.25).hex()
+
+
+@pytest.mark.parametrize("kind", ["integer", "floating", "boolean"])
+def test_pandas_nullable_all_missing_blocks_never_use_valid_looking_payload(kind: str) -> None:
+    pytest.importorskip("pyarrow")
+    mask = np.ones(1025, dtype=np.bool_)
+    if kind == "integer":
+        value = pd.arrays.IntegerArray(np.full(1025, -123, dtype=np.int64), mask)
+    elif kind == "floating":
+        value = pd.arrays.FloatingArray(np.full(1025, 1.5, dtype=np.float64), mask)
+    else:
+        value = pd.arrays.BooleanArray(np.ones(1025, dtype=np.bool_), mask)
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT NULL"] * 1025
+
+
+@pytest.mark.parametrize(("dtype", "small", "maximum", "expected"), [
+    (np.float32, 2.0**-149, 3.4028234663852886e38, ["0x1.99999a0000000p-4", "-0x0.0p+0", "0x1.0000000000000p-149", "0x1.fffffe0000000p+127", None, None, None, None]),
+    (np.float64, 5e-324, 1.7976931348623157e308, ["0x1.999999999999ap-4", "-0x0.0p+0", "0x0.0000000000001p-1022", "0x1.fffffffffffffp+1023", None, None, None, None]),
+])
+def test_pandas_nullable_native_float_keeps_subnormals_extremes_and_invalid_slots(dtype: type, small: float, maximum: float, expected: list[str | None]) -> None:
+    pytest.importorskip("pyarrow")
+    data = np.array([0.1, -0.0, small, maximum, float("nan"), float("inf"), -float("inf"), 9.0] * 5, dtype=dtype)
+    mask = np.array([False] * 7 + [True], dtype=np.bool_)
+    value = pd.arrays.FloatingArray(data, np.tile(mask, 5))
+    rows = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    actual = [None if row == b"\x03SELECT NULL" else float(row.removeprefix(b"\x03SELECT ")).hex() for row in rows]
+    assert actual == expected * 5
+
+
+@pytest.mark.parametrize("error_type", [MemoryError, KeyboardInterrupt])
+def test_pandas_nullable_preparation_keeps_original_error_without_fallback(monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]) -> None:
+    pytest.importorskip("pyarrow")
+    value = pd.array([1, None, 3] * 12, dtype="Int64")
+    calls: list[str] = []
+    original = error_type("original nullable block preparation")
+    def exported(*args: Any, **kwargs: Any) -> Any:
+        calls.append("arrow")
+        raise original
+    def masked(*args: Any, **kwargs: Any) -> Any:
+        calls.append("mask")
+        raise original
+    monkeypatch.setattr(pd.arrays.IntegerArray, "__arrow_array__", exported)
+    monkeypatch.setattr(pd.arrays.IntegerArray, "isna", masked)
+    with pytest.raises(error_type) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert caught.value is original
+    # I44 exercises mask; the candidate exercises Arrow. Either route makes
+    # exactly one failed preparation, never a second try after a real error.
+    assert len(calls) == 1
+
+
+def test_pandas_nullable_late_block_error_keeps_original_cause_and_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("pyarrow")
+    value = pd.array(range(1025), dtype="Int64")
+    calls: list[str] = []
+    original = MemoryError("original late nullable block preparation")
+    original_arrow = pd.arrays.IntegerArray.__arrow_array__
+    original_mask = pd.arrays.IntegerArray.isna
+    def exported(array: Any, type: Any = None) -> Any:
+        calls.append("arrow")
+        if len(calls) == 2:
+            raise original
+        return original_arrow(array, type=type)
+    def masked(array: Any) -> Any:
+        calls.append("mask")
+        if len(calls) == 2:
+            raise original
+        return original_mask(array)
+    monkeypatch.setattr(pd.arrays.IntegerArray, "__arrow_array__", exported)
+    monkeypatch.setattr(pd.arrays.IntegerArray, "isna", masked)
+    with pytest.raises(MemoryError) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert caught.value is original
+    assert len(calls) == 2
+    assert "args[1024]" in "\n".join(getattr(caught.value, "__notes__", []))
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_pandas_nullable_real_array_subclass_keeps_its_mask_and_conversion_hooks(fail: bool) -> None:
+    pytest.importorskip("pyarrow")
+    calls: list[str] = []
+    original = RuntimeError("original nullable subclass mask")
+    class Array(pd.arrays.IntegerArray):
+        def __arrow_array__(self, type: Any = None) -> Any:
+            raise AssertionError("a real EA subclass must keep its existing path")
+        def isna(self) -> Any:
+            calls.append("mask")
+            if fail:
+                raise original
+            parent: Any = super()
+            return parent.isna()
+        def to_numpy(self, *args: Any, **kwargs: Any) -> Any:
+            calls.append("numpy")
+            parent: Any = super()
+            return parent.to_numpy(*args, **kwargs)
+    value = pd.Series(Array(np.arange(36, dtype=np.int64), np.zeros(36, dtype=np.bool_)))
+    assert type(value.array) is Array
+    calls.clear()
+    if fail:
+        with pytest.raises(RuntimeError) as caught:
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
+        assert caught.value is original
+        assert calls == ["mask"]
+    else:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT " + str(index).encode() for index in range(36)]
+        assert calls == ["mask", "numpy"]
+
+
+def test_pandas_nullable_block_preparation_uses_the_original_operation_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    import time
+    pytest.importorskip("pyarrow")
+    value = pd.array(range(1025), dtype="Int64")
+    # Prepare optional type identities before starting the tested budget.
+    assert _sqlaero._encode_value(pd.array([1], dtype="Int64")).to_bytes() == b"(1)"
+    calls: list[str] = []
+    original_arrow = pd.arrays.IntegerArray.__arrow_array__
+    original_mask = pd.arrays.IntegerArray.isna
+    def exported(array: Any, type: Any = None) -> Any:
+        calls.append("arrow")
+        time.sleep(0.1)
+        return original_arrow(array, type=type)
+    def masked(array: Any) -> Any:
+        calls.append("mask")
+        time.sleep(0.1)
+        return original_mask(array)
+    monkeypatch.setattr(pd.arrays.IntegerArray, "__arrow_array__", exported)
+    monkeypatch.setattr(pd.arrays.IntegerArray, "isna", masked)
+    with pytest.raises(_sqlaero.OperationalTimeoutError) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True, timeout_ns=50_000_000)
+    assert caught.value.is_server_error is False
+    assert len(calls) == 1
+
+
+def test_pandas_nullable_native_blocks_keep_the_original_signal_exception() -> None:
+    from datetime import datetime, timedelta, tzinfo
+    from types import FrameType
+    from _native_signal import NativeAlarm
+    pytest.importorskip("pyarrow")
+    value = pd.array(np.arange(100_000, dtype=np.int64), dtype="Int64")
+    class InterruptedNullable(Exception):
+        pass
+    original = InterruptedNullable("original nullable block signal")
+    interrupted = False
+    def interrupt(signum: int, frame: FrameType | None) -> None:
+        nonlocal interrupted
+        if interrupted or frame is None or frame.f_code is not test_pandas_nullable_native_blocks_keep_the_original_signal_exception.__code__:
+            return
+        interrupted = True
+        alarm.cancel()
+        raise original
+    class Arm(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta:
+            alarm.start(0.0001, 0.0001, wait_ready=True)
+            return timedelta(0)
+    alarm = NativeAlarm(interrupt)
+    try:
+        with pytest.raises(InterruptedNullable) as caught:
+            _sqlaero._bind_sql("SELECT %s,%s", [datetime(2024, 1, 1, tzinfo=Arm()), value])
+        assert caught.value is original
+    finally:
+        alarm.close()
 
 
 def test_pandas_cold_preparation_failure_keeps_the_original_and_can_retry() -> None:

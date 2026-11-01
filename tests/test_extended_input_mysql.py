@@ -139,6 +139,31 @@ def test_multi_index_owned_signed_tuple_uses_public_cursor_and_current_context(l
 
 @requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
+def test_nullable_primitive_blocks_keep_actual_values_across_statement_rollover(label: str) -> None:
+    pd = pytest.importorskip("pandas")
+    np = pytest.importorskip("numpy")
+    pytest.importorskip("pyarrow")
+    numbers = [None if index % 7 == 6 else index - 500 for index in range(1025)]
+    amounts = [None if index % 11 == 10 else float(np.float32(0.1 if index % 2 else 1.25)) for index in range(1025)]
+    flags = [None if index % 13 == 12 else bool(index % 2) for index in range(1025)]
+    source = pd.DataFrame({
+        "x": pd.array(numbers, dtype="Int64"),
+        "y": pd.array(amounts, dtype="Float32"),
+        "z": pd.array(flags, dtype="boolean"),
+    })
+    expected = tuple((number, amount, None if flag is None else int(flag))
+                     for number, amount, flag in zip(numbers, amounts, flags))
+    with live(label, max_allowed_packet="2KB") as connection, connection.cursor() as cursor:
+        cursor.execute("CREATE TEMPORARY TABLE nullable_block_probe "
+                       "(pos INT AUTO_INCREMENT PRIMARY KEY,x BIGINT,y DOUBLE,z TINYINT)")
+        assert cursor.execute("INSERT INTO nullable_block_probe(x,y,z) VALUES (%s,%s,%s)", source) == 1025
+        assert cursor.row_count == 1025 and cursor.warning_count == 0
+        cursor.execute("SELECT x,y,z FROM nullable_block_probe ORDER BY pos")
+        assert cursor.fetchall() == expected
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("provider", ["numpy", "pandas", "arrow", "polars", "pandas-category-python", "pandas-category-pyarrow"])
 def test_typed_table_rollover_preserves_every_actual_row(label: str, provider: str) -> None:
     count = 600 if provider == "pandas-category-python" else 100

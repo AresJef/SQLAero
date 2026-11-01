@@ -443,6 +443,15 @@ impl SourceTypes {
                     length,
                     dtype: numpy_dtype,
                     python_string,
+                    arrow_nullable: (!python_string
+                        && length >= 32
+                        && self
+                            .arrays
+                            .iter()
+                            .skip(1)
+                            .take(3)
+                            .any(|typ| storage.get_type().is(typ.bind(py))))
+                    .then(|| storage.get_type()),
                     current: None,
                 }))
             }
@@ -751,6 +760,7 @@ impl<'py> Category<'py> {
                         length: self.labels,
                         dtype: py.get_type::<PyAny>().into_any(),
                         python_string: true,
+                        arrow_nullable: None,
                         current: None,
                     }),
                     Family::Arrow => {
@@ -979,11 +989,19 @@ struct Masked<'py> {
     length: usize,
     dtype: Bound<'py, PyAny>,
     python_string: bool,
-    current: Option<Box<Block<'py>>>,
+    arrow_nullable: Option<Bound<'py, PyType>>,
+    current: Option<Block<'py>>,
 }
 struct Block<'py> {
     start: usize,
     length: usize,
+    values: BlockValues<'py>,
+}
+enum BlockValues<'py> {
+    Numpy(Box<NumpyBlock<'py>>),
+    Arrow(Box<arrow::Prepared<'py>>),
+}
+struct NumpyBlock<'py> {
     data: NumpySource<'py>,
     mask: NumpySource<'py>,
 }
@@ -1009,46 +1027,81 @@ impl<'py> Masked<'py> {
             let length = (self.length - start).min(1024);
             let slice = bounded_slice(py, start, start + length)?;
             let piece = self.owner.get_item(slice)?;
-            let mask = errors::attribute(&piece, c"isna")?.call0()?;
-            let mask = numpy_source(api, &mask, budget, length)?;
-            let keywords = errors::dictionary(py)?;
-            keywords.set_item(
-                pyo3::types::PyString::from_bytes(py, b"dtype")?,
-                &self.dtype,
-            )?;
-            keywords.set_item(pyo3::types::PyString::from_bytes(py, b"copy")?, false)?;
-            let missing = if self.python_string {
-                py.None().into_bound(py)
+            // Exact standard nullable arrays may export this bounded piece.
+            // Do not import an optional provider to discover whether it exists.
+            // The current block owns its export; Context is read only at write.
+            let values = if self
+                .arrow_nullable
+                .as_ref()
+                .is_some_and(|typ| piece.get_type().is(typ))
+                && loaded_arrow(py)?
+            {
+                let exported = errors::attribute(&piece, c"__arrow_array__")?.call0()?;
+                crate::input::check(py, budget)?;
+                let source =
+                    arrow::prepare_exported(&piece, &exported, Shape::Vector { length }, budget)?;
+                crate::input::check(py, budget)?;
+                BlockValues::Arrow(crate::input::boxed(py, source)?)
             } else {
-                crate::input::python_index(py, 0)?
+                let mask = errors::attribute(&piece, c"isna")?.call0()?;
+                let mask = numpy_source(api, &mask, budget, length)?;
+                let keywords = errors::dictionary(py)?;
+                keywords.set_item(
+                    pyo3::types::PyString::from_bytes(py, b"dtype")?,
+                    &self.dtype,
+                )?;
+                keywords.set_item(pyo3::types::PyString::from_bytes(py, b"copy")?, false)?;
+                let missing = if self.python_string {
+                    py.None().into_bound(py)
+                } else {
+                    crate::input::python_index(py, 0)?
+                };
+                keywords.set_item(pyo3::types::PyString::from_bytes(py, b"na_value")?, missing)?;
+                let data = call_keywords(&piece, c"to_numpy", &keywords)?;
+                let data = numpy_source(api, &data, budget, length)?;
+                crate::input::check(py, budget)?;
+                BlockValues::Numpy(crate::input::boxed(py, NumpyBlock { data, mask })?)
             };
-            keywords.set_item(pyo3::types::PyString::from_bytes(py, b"na_value")?, missing)?;
-            let data = call_keywords(&piece, c"to_numpy", &keywords)?;
-            let data = numpy_source(api, &data, budget, length)?;
-            crate::input::check(py, budget)?;
-            self.current = Some(crate::input::boxed(
-                py,
-                Block {
-                    start,
-                    length,
-                    data,
-                    mask,
-                },
-            )?);
+            // The small range header stays local; only the chosen payload is
+            // boxed. Both routes retain one fallible state allocation.
+            self.current = Some(Block {
+                start,
+                length,
+                values,
+            });
         }
         let block = self
             .current
             .as_mut()
             .ok_or_else(|| invalid(py, "Pandas nullable block preparation failed"))?;
         let local = row - block.start;
-        if block.mask.bool_at(local, budget)? {
-            writer::append(output, b"NULL", context.limit).map_err(|error| errors::wire(py, error))
-        } else {
-            block
-                .data
-                .write_cell(local, 0, output, context, budget, visitor)
+        match &mut block.values {
+            BlockValues::Arrow(source) => {
+                source.write_cell(local, 0, output, context, budget, visitor)
+            }
+            BlockValues::Numpy(source) => {
+                if source.mask.bool_at(local, budget)? {
+                    writer::append(output, b"NULL", context.limit)
+                        .map_err(|error| errors::wire(py, error))
+                } else {
+                    source
+                        .data
+                        .write_cell(local, 0, output, context, budget, visitor)
+                }
+            }
         }
     }
+}
+
+/// A real, already loaded optional module, not an installed distribution probe.
+/// Absence and the conventional None import blocker retain the NumPy route.
+/// Recheck on block preparation; a prior absence is not a permanent decision.
+fn loaded_arrow(py: Python<'_>) -> PyResult<bool> {
+    let sys = errors::module(py, c"sys")?;
+    let modules = errors::attribute(sys.as_any(), c"modules")?.cast_into::<PyDict>()?;
+    Ok(modules
+        .get_item(pyo3::types::PyString::from_bytes(py, b"pyarrow")?)?
+        .is_some_and(|module| module.is_instance_of::<PyModule>()))
 }
 
 fn require_vector(source: &NumpySource<'_>) -> PyResult<usize> {

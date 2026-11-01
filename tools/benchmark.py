@@ -343,9 +343,11 @@ def typed_cases() -> list[Case]:
                       'Categorical-python': pd.Categorical.from_codes(np.where(mask, -1, index % 3), categories=pd.Index(pd.array(['ascii', "中文'", 'x'], dtype=pd.StringDtype(storage='python')))),
                       'IntegerArray': pd.array(index + 7, dtype='Int64'),
                       'FloatingArray': pd.array(np.resize(np.array([0.1, -0.0, 1.5], dtype='f4'), n), dtype='Float32'),
+                      'IntegerArray-uint64': pd.array(np.resize(np.array([0, np.iinfo('u8').max], dtype='u8'), n), dtype='UInt64'),
+                      'FloatingArray-f64': pd.array(np.resize(np.array([0.1, -0.0, 1.5], dtype='f8'), n), dtype='Float64'),
                       'BooleanArray': pd.array(index % 2 == 0, dtype='boolean'),
                       'StringArray': pd.array(text, dtype=pd.StringDtype(storage='python'))}
-            for name in ('IntegerArray', 'FloatingArray', 'BooleanArray', 'StringArray'):
+            for name in ('IntegerArray', 'FloatingArray', 'BooleanArray', 'StringArray', 'IntegerArray-uint64', 'FloatingArray-f64'):
                 arrays[name][mask] = pd.NA
             if pa is not None:
                 arrays['ArrowStringArray'] = pd.array(text, dtype=pd.StringDtype(storage='pyarrow'))
