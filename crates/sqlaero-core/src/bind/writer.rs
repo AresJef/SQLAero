@@ -75,10 +75,36 @@ pub fn binary_fragment(output: &mut Vec<u8>, value: &[u8], limit: usize) -> Resu
 }
 
 /// Append native hex pairs after the caller checked the exact output width.
+// Keep the original short loop at its caller: the unified bulk helper was
+// measurably outlined on the common small-value path. Only long writes pay a
+// separate bulk call and the fixed initialized-region preparation.
+#[inline(always)]
 fn append_hex(output: &mut Vec<u8>, value: &[u8]) {
+    if value.len() >= 128 {
+        append_hex_bulk(output, value);
+        return;
+    }
     const HEX: &[u8; 16] = b"0123456789ABCDEF";
     for byte in value {
         output.extend_from_slice(&[HEX[usize::from(byte >> 4)], HEX[usize::from(byte & 15)]]);
+    }
+}
+
+#[inline(never)]
+fn append_hex_bulk(output: &mut Vec<u8>, value: &[u8]) {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let start = output.len();
+    // The caller checked and reserved the full width before this private call.
+    let end = start + value.len() * 2;
+    output.resize(end, 0);
+    for (pair, byte) in output[start..end]
+        .as_chunks_mut::<2>()
+        .0
+        .iter_mut()
+        .zip(value)
+    {
+        pair[0] = HEX[usize::from(byte >> 4)];
+        pair[1] = HEX[usize::from(byte & 15)];
     }
 }
 
@@ -144,23 +170,40 @@ mod tests {
 
     #[test]
     fn complete_and_fragmented_binary_writes_preserve_every_byte() {
-        let bytes: Vec<u8> = (0..=255).collect();
-        let expected = format!(
-            "CAST(X'{}' AS BINARY)",
-            bytes
-                .iter()
-                .map(|byte| format!("{byte:02X}"))
-                .collect::<String>()
-        );
-        let mut complete = Vec::new();
-        binary(&mut complete, &bytes, expected.len()).unwrap();
-        assert_eq!(complete, expected.as_bytes());
-        let mut fragmented = Vec::new();
-        binary_start(&mut fragmented, bytes.len(), expected.len()).unwrap();
-        for fragment in bytes.chunks(17) {
-            binary_fragment(&mut fragmented, fragment, expected.len()).unwrap();
+        for bytes in [
+            Vec::new(),
+            vec![0],
+            (0..127).collect(),
+            (0..128).collect(),
+            (0..129).collect(),
+            (0..=255).collect::<Vec<u8>>(),
+        ] {
+            let prefix = b"\x03SELECT ";
+            let literal = format!(
+                "CAST(X'{}' AS BINARY)",
+                bytes
+                    .iter()
+                    .map(|byte| format!("{byte:02X}"))
+                    .collect::<String>()
+            );
+            let mut expected = prefix.to_vec();
+            expected.extend_from_slice(literal.as_bytes());
+            let mut rejected = prefix.to_vec();
+            assert!(binary(&mut rejected, &bytes, expected.len() - 1).is_err());
+            assert_eq!(rejected, prefix);
+            let mut complete = prefix.to_vec();
+            binary(&mut complete, &bytes, expected.len()).unwrap();
+            assert_eq!(complete, expected);
+            for fragment_size in [17, 128] {
+                let mut fragmented = prefix.to_vec();
+                binary_start(&mut fragmented, bytes.len(), expected.len()).unwrap();
+                binary_fragment(&mut fragmented, b"", expected.len()).unwrap();
+                for fragment in bytes.chunks(fragment_size) {
+                    binary_fragment(&mut fragmented, fragment, expected.len()).unwrap();
+                }
+                binary_end(&mut fragmented, expected.len()).unwrap();
+                assert_eq!(fragmented, complete);
+            }
         }
-        binary_end(&mut fragmented, expected.len()).unwrap();
-        assert_eq!(fragmented, complete);
     }
 }
