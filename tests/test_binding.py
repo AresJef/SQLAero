@@ -309,3 +309,22 @@ def test_nested_encoder_keeps_live_owners_when_callback_removes_external_root(
     assert owner.to_bytes() == b"(('2024-01-01 00:00:00',7))"
     assert holder == []
     assert calls == ["offset"]
+
+
+def test_recursive_list_shrink_keeps_the_checked_getter_failure_location() -> None:
+    source: list[object] = []
+    calls: list[str] = []
+
+    class ClearingZone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta:
+            calls.append("offset")
+            source.clear()
+            return timedelta(0)
+
+    source.extend([datetime(2024, 1, 1, tzinfo=ClearingZone()), 7])
+    with pytest.raises(IndexError) as caught:
+        _sqlaero._bind_sql("SELECT %s", (source,))
+    assert calls == ["offset"]
+    assert "while binding args[0][1]; current request was not sent" in "\n".join(
+        getattr(caught.value, "__notes__", [])
+    )

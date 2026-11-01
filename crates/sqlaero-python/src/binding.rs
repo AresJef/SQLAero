@@ -604,8 +604,8 @@ impl Visit<'_> {
         Ok(())
     }
 
-    // The sampled canonical traversal should not pay a second loop frame.
-    // Ownership, lazy getters and every check remain in this single body.
+    // Keep canonical entry/exit on its existing inlined traversal path.
+    // Ownership and entry/exit stay here; the item loop remains shared below.
     #[inline(always)]
     fn sequence(
         &mut self,
@@ -638,20 +638,34 @@ impl Visit<'_> {
         let result = (|| {
             writer::append(output, b"(", self.context.limit)
                 .map_err(|error| errors::wire(py, error))?;
-            for index in 0..sequence.len() {
-                if index != 0 {
-                    writer::append(output, b",", self.context.limit)
-                        .map_err(|error| errors::wire(py, error))?;
+            // Select one static getter for this container, while preserving
+            // the original length observation after the opening write.
+            match sequence {
+                Sequence::List(value) => {
+                    self.sequence_items(py, value.len(), output, |visit, index, output| {
+                        let item = value.get_item(index).inspect_err(|_| {
+                            visit.path.push(index);
+                        })?;
+                        visit.value(&item, output, Some(index))
+                    })
                 }
-                sequence.with_item(index, |value| {
-                    let value = value.inspect_err(|_| {
-                        self.path.push(index);
-                    })?;
-                    self.value(value, output, Some(index))
-                })?;
+                Sequence::Tuple(value) => {
+                    self.sequence_items(py, value.len(), output, |visit, index, output| {
+                        let item = value.get_borrowed_item(index).inspect_err(|_| {
+                            visit.path.push(index);
+                        })?;
+                        visit.value(&item, output, Some(index))
+                    })
+                }
+                _ => self.sequence_items(py, sequence.len(), output, |visit, index, output| {
+                    sequence.with_item(index, |value| {
+                        let value = value.inspect_err(|_| {
+                            visit.path.push(index);
+                        })?;
+                        visit.value(value, output, Some(index))
+                    })
+                }),
             }
-            writer::append(output, b")", self.context.limit)
-                .map_err(|error| errors::wire(py, error))
         })();
         if aliased {
             self.active.pop();
@@ -662,6 +676,23 @@ impl Visit<'_> {
             self.path.pop();
         }
         result
+    }
+
+    fn sequence_items(
+        &mut self,
+        py: Python<'_>,
+        width: usize,
+        output: &mut Vec<u8>,
+        mut value: impl FnMut(&mut Self, usize, &mut Vec<u8>) -> PyResult<()>,
+    ) -> PyResult<()> {
+        for index in 0..width {
+            if index != 0 {
+                writer::append(output, b",", self.context.limit)
+                    .map_err(|error| errors::wire(py, error))?;
+            }
+            value(self, index, output)?;
+        }
+        writer::append(output, b")", self.context.limit).map_err(|error| errors::wire(py, error))
     }
 
     #[cold]
