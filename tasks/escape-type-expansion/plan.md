@@ -471,6 +471,16 @@ I20于05:49Z附近局部采用：实际新I19/C16短栈与otool确认sequence→
 
 本次直接C16在原6固定见证＋原2成本＋新3种nested规模组成的11项上下文完整新控制与双轮24周期，不相乘历史倍率；原见证成员不变并证明分档，F0六同包见证全部仍满足。C16 nested100/1000/10000仍双轮可信慢约8.03/7.45/7.2%，INSERT中心4.69%/4.83%但CI跨5%仍U，均保留待最终恢复，不宣称全局通过。B另核普通类型原getter无新增hook且C16也曾拥有Sequence，排除了无据“所有drop都新冗余”判断；在允许更完整产品收敛后，交一个私有三variant borrowed View，canonical只借已有owner、Other继续原owned策略且唯一遍历循环不复制，无unsafe/trait框架/公共生命周期改动。A已独立只读复核owner/GC/NoGIL/alias/PreparedRow无必修问题；下一单元只验证这一后续候选，不混入I20或另铺路线。
 
+I21 borrowed &Bound View不采用：仅私有借用三variant复用唯一遍历、无unsafe/trait/公共API变化，A独立安全核对；4个新“清外部根引用＋GC仍保活”例先在I20两ABI通过。新包Clippy/Pyright、GIL954/t853、MySQL40/t32、360F0同输出均通过，但159预试156有效，nested仅快约2%，same intlist约慢5.2%、same inttuple约慢8.3%，稳定跨5%；3个无关控制缺口保留不重试，未跑已否决配置完整正式保护。全部负面源/包/数据保留。
+
+I22只做一次公开Borrowed token的表示收敛：两exact variant改持Copy Borrowed而非&Bound，四处as_borrowed；保持actualowner/getter/Other/唯一loop/alias/错误/检查点，无unsafe/inline/traits。固定PyO3官方源码确认API与lifetime/Copy行为；这只是减少间接层的待实测假说，不把它认作已证退步根因。Clippy与两ABI954/t853实包通过，native313=12d2eaf3d8497d768a08afad72813a2160ec309bfd28fe2ee7f9416ba8011fd0、t314=a70bce6220dd04ac86ca81550ef6543c6b0608c2e018cc91240ab95fdb3f4bbc；待预试判断。若关键成本不改善，停止该View表示路线、保留I20，继续其他有据优化，不能停止Goal。
+
+T660自查于2026-11-01T06:02:42Z：有效11h01m27s、余额60h58m33s；C池7h28m15s，原8h仍未用尽，追加24h性能专用及D10h/E4h保留。当前最佳I20/57c1b5f，400源hash已与提交/实测包核对；其局部159双轮PASS，但C16三种nested正式仍7%–8%可信退步，INSERT累计4.7%–4.8%为U，未豁免。最近窗口先采用真实小收益、再明确拒绝View第一表示，没有把功能通过当性能通过；源码推演仍偏长、简报有超60秒间隙，需要立即纠偏：停止后续理论铺陈，先完成I22预试和保留/撤回决定，下一单元预计5分钟。下一T690固定06:31:15Z。
+
+I22不采用并结束借用View表示路线：实包Clippy、GIL954/t853通过；159项预试158有效，只有timestamp控制失败保留不修；int tuple仍可信慢约8.5%，nested仅快约1%–1.4%，未给无价值配置跑完整正式或伪称MySQL/F0复核。生产binding已按hash核查恢复I20，保留4个已在I20基准及I21/I22真实通过的GC owner回归测试。不能把表示/元数据变小当收益；更少引用不是自动更快。
+
+下一有据动作改变的是实测额外调用，而非继续View表示：C16将遍历放value内，当前最新短栈与反汇编确认独立sequence调用。只对现有单一sequence体给一次明确内联意图，原owned Sequence/方法/错误/loop/checkpoint不动；使用I13消除紧凑reader及I17分离bulk已验证的方法，但必须读回实际callsite且按完整成本决定，不开inline参数搜索或padding布局碰运气。原先对局部View任务的“无inline”约束不冒充用户硬约束，本次按A05限定一次新实测路径；若没有实际消除或无有用收益则停止该配置，不停止Goal。
+
 ### 11.2 30分钟自查与有限恢复
 
 每T+30、T+60……有效分钟自查，阶段切换、重复拒绝、超时、余量动用可合并触发。每次用不超过约90秒说明：已获成果／证据；当前最佳身份；各池已用及余额；U／可信退步和真实阻碍；是否偏离“快速开发、快速迭代”；继续／换法／停止局部路线及下一有界检查点。普通进度不逐项请求批准。

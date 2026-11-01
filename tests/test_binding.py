@@ -279,3 +279,33 @@ def test_current_tuple_row_keeps_children_alive_after_callback_clears_batch() ->
         b"\x03SELECT '2024-01-01 00:00:00',CAST(X'00FF' AS BINARY),(1,'x')"
     ]
     assert source == []
+
+
+@pytest.mark.parametrize("outer_kind", ["list", "tuple"])
+@pytest.mark.parametrize("inner_kind", ["list", "tuple"])
+def test_nested_encoder_keeps_live_owners_when_callback_removes_external_root(
+    outer_kind: str, inner_kind: str,
+) -> None:
+    """Borrow traversal state without borrowing a mutable container slot."""
+    import gc
+
+    holder: list[object] = []
+    calls: list[str] = []
+
+    class ClearingZone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta:
+            calls.append("offset")
+            holder.clear()
+            gc.collect()
+            return timedelta(0)
+
+    cells: list[object] = [datetime(2024, 1, 1, tzinfo=ClearingZone()), 7]
+    inner = cells if inner_kind == "list" else tuple(cells)
+    root = [inner] if outer_kind == "list" else (inner,)
+    holder.append(root)
+    del root, inner, cells
+
+    owner = _sqlaero._prepare_encoder().encode(holder[0])
+    assert owner.to_bytes() == b"(('2024-01-01 00:00:00',7))"
+    assert holder == []
+    assert calls == ["offset"]
