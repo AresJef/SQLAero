@@ -14,6 +14,53 @@ from sqlaero._sqlaero import DataError, ProgrammingError
 np = pytest.importorskip("numpy")
 
 
+@pytest.mark.parametrize("kind", ["array", "record"])
+def test_numpy_allocation_callback_keeps_its_actual_argument_error_and_retry(kind: str) -> None:
+    script = r'''
+import sys
+import weakref
+import numpy as np
+from sqlaero import _sqlaero as native
+
+state = getattr(sys, '_is_gil_enabled', lambda: True)()
+encoder = native._prepare_encoder()
+assert encoder.encode(np.int64(7)).to_bytes() == b'7'
+if sys.argv[1] == 'array':
+    value = np.array([1, 2], dtype=np.int64)
+    expected = b'(1,2)'
+else:
+    value = np.array([(7, 'a')], dtype=[('i', 'i8'), ('s', 'U16')]).view(np.recarray)[0]
+    expected = b"(7,'a')"
+
+original = MemoryError('actual allocation-owner callback')
+reference = weakref.ref
+calls = []
+def fail(owner, *args, **kwargs):
+    if isinstance(owner, np.ndarray):
+        calls.append(owner)
+        raise original
+    return reference(owner, *args, **kwargs)
+
+weakref.ref = fail
+try:
+    try:
+        encoder.encode(value)
+    except MemoryError as caught:
+        assert caught is original
+    else:
+        raise AssertionError('the real owner callback was skipped')
+finally:
+    weakref.ref = reference
+assert len(calls) == 1
+assert encoder.encode(value).to_bytes() == expected
+assert getattr(sys, '_is_gil_enabled', lambda: True)() == state
+'''
+    completed = subprocess.run(
+        [sys.executable, "-c", script, kind], capture_output=True, text=True, timeout=20,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+
+
 @pytest.mark.parametrize("dtype", [
     np.int8, np.int16, np.int32, np.int64, np.longlong,
     np.uint8, np.uint16, np.uint32, np.uint64, np.ulonglong,
