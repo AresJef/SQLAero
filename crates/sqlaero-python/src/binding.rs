@@ -614,7 +614,24 @@ impl Visit<'_> {
         if let Some(index) = child {
             self.path.push(index);
         }
-        self.enter_sequence(py, sequence)?;
+        // Exact containers have one identity and cannot carry a normalized
+        // alias. Keep their entry on the original checked enter path without
+        // the generic normalization wrapper. A Sequence's strategy is immutable
+        // during traversal, so retain its alias fact for the matching exit.
+        let aliased = match sequence {
+            Sequence::List(value) => {
+                self.enter(py, value.as_ptr() as usize)?;
+                false
+            }
+            Sequence::Tuple(value) => {
+                self.enter(py, value.as_ptr() as usize)?;
+                false
+            }
+            _ => {
+                self.enter_sequence(py, sequence)?;
+                sequence.alias().is_some()
+            }
+        };
         let result = (|| {
             writer::append(output, b"(", self.context.limit)
                 .map_err(|error| errors::wire(py, error))?;
@@ -633,7 +650,7 @@ impl Visit<'_> {
             writer::append(output, b")", self.context.limit)
                 .map_err(|error| errors::wire(py, error))
         })();
-        if sequence.alias().is_some() {
+        if aliased {
             self.active.pop();
         }
         self.active.pop();
