@@ -473,22 +473,17 @@ impl<'py> NumpySource<'py> {
         Ok(())
     }
 
-    /// Reuse a small S/U item's already owned bytes for padding and writing.
-    /// Object slots never enter this path. Larger and short inputs preserve
-    /// their existing bounded source-fragment reader without a new allocation.
-    fn copy_cell_range(
+    /// Borrow one complete S/U item from the existing bounded owned run.
+    /// No source export survives this call; checkpoints may safely run while
+    /// the returned bytes are borrowed. Object slots never enter this path.
+    fn owned_cell(
         &mut self,
         row: usize,
         column: usize,
-        start: usize,
-        destination: &mut [u8],
         budget: &IoBudget,
-    ) -> PyResult<()> {
+    ) -> PyResult<Option<&[u8]>> {
         let eligible = matches!(self.kind, ArrayKind::Bytes | ArrayKind::Unicode)
-            && (1..=RAW_BLOCK_BYTES).contains(&self.width)
-            && start
-                .checked_add(destination.len())
-                .is_some_and(|end| end <= self.width);
+            && (1..=RAW_BLOCK_BYTES).contains(&self.width);
         if eligible {
             let (rows, columns) = match self.shape {
                 Shape::Vector { length } => (length, 1),
@@ -507,20 +502,32 @@ impl<'py> NumpySource<'py> {
                 }) {
                     self.read_block(index, total, columns, budget)?;
                 }
-                let copied = self.raw.as_ref().and_then(|block| {
-                    let offset = index
-                        .checked_sub(block.start)?
-                        .checked_mul(self.width)?
-                        .checked_add(start)?;
-                    block
-                        .bytes
-                        .get(offset..offset.checked_add(destination.len())?)
-                });
-                if let Some(copied) = copied {
-                    destination.copy_from_slice(copied);
-                    return Ok(());
-                }
+                return Ok(self.raw.as_ref().and_then(|block| {
+                    let offset = index.checked_sub(block.start)?.checked_mul(self.width)?;
+                    block.bytes.get(offset..offset.checked_add(self.width)?)
+                }));
             }
+        }
+        Ok(None)
+    }
+
+    /// Larger and short inputs preserve the original source-fragment reader.
+    /// Unicode still consumes bounded copies for its existing scalar fallback.
+    fn copy_cell_range(
+        &mut self,
+        row: usize,
+        column: usize,
+        start: usize,
+        destination: &mut [u8],
+        budget: &IoBudget,
+    ) -> PyResult<()> {
+        if let Some(end) = start.checked_add(destination.len())
+            && end <= self.width
+            && let Some(cell) = self.owned_cell(row, column, budget)?
+            && let Some(fragment) = cell.get(start..end)
+        {
+            destination.copy_from_slice(fragment);
+            return Ok(());
         }
         self.copy_source_range(row, column, start, destination)
     }
@@ -579,6 +586,30 @@ impl<'py> NumpySource<'py> {
         budget: &IoBudget,
     ) -> PyResult<()> {
         let py = self.owner.py();
+        if let Some(cell) = self.owned_cell(row, column, budget)? {
+            // Preserve the original reverse padding windows and write checks,
+            // but borrow the already owned cell rather than copying it twice.
+            let mut length = 0;
+            let mut end = cell.len();
+            while end > 0 {
+                crate::input::check(py, budget)?;
+                let start = end.saturating_sub(4096);
+                if let Some(last) = cell[start..end].iter().rposition(|byte| *byte != 0) {
+                    length = start + last + 1;
+                    break;
+                }
+                end = start;
+            }
+            writer::binary_start(output, length, context.limit)
+                .map_err(|error| errors::wire(py, error))?;
+            for fragment in cell[..length].chunks(4096) {
+                crate::input::check(py, budget)?;
+                writer::binary_fragment(output, fragment, context.limit)
+                    .map_err(|error| errors::wire(py, error))?;
+            }
+            return writer::binary_end(output, context.limit)
+                .map_err(|error| errors::wire(py, error));
+        }
         let length = self.content_width(row, column, budget)?;
         writer::binary_start(output, length, context.limit)
             .map_err(|error| errors::wire(py, error))?;

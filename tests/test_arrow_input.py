@@ -276,6 +276,80 @@ def test_arrow_all_integer_widths_preserve_their_logical_values(dtype: object) -
     assert _sqlaero._encode_value(value).to_bytes() == b"(0,NULL,17)"
 
 
+@pytest.mark.parametrize("length", [1, 100, 1000])
+@pytest.mark.parametrize("table", [False, True], ids=["vector", "table"])
+def test_arrow_short_and_long_int64_sources_keep_nulls_and_exact_extremes(length: int, table: bool) -> None:
+    values = [None if index % 7 == 6 else (-(2**63) if index % 2 else 2**63 - 1) for index in range(length)]
+    array = pa.array(values, type=pa.int64())
+    if table:
+        value = pa.table({"left": array, "right": array})
+        rows = [b"NULL,NULL" if item is None else f"{item},{item}".encode() for item in values]
+        expected = [b"\x03SELECT " + row for row in rows]
+        assert _sqlaero._bind_sql("SELECT %s,%s", value) == expected
+    else:
+        expected = b"(" + b",".join(b"NULL" if item is None else str(item).encode() for item in values) + b")"
+        assert _sqlaero._encode_value(array).to_bytes() == expected
+
+
+def test_arrow_long_int64_table_reprepares_typed_views_at_each_actual_chunk() -> None:
+    left = list(range(100))
+    right = [None if index % 9 == 8 else -index for index in left]
+    value = pa.table({
+        "left": pa.chunked_array([left[:40], left[40:]], type=pa.int64()),
+        "right": pa.chunked_array([right[:50], right[50:]], type=pa.int64()),
+    })
+    # The union of column boundaries produces 40/10/50-row exported chunks;
+    # the middle short chunk must retain the ordinary per-cell writer.
+    expected = [b"\x03SELECT " + str(a).encode() + b"," + (b"NULL" if b is None else str(b).encode())
+                for a, b in zip(left, right, strict=True)]
+    assert _sqlaero._bind_sql("SELECT %s,%s", value) == expected
+    assert _sqlaero._bind_sql("SELECT %s,%s", value.slice(5, 80)) == expected[5:85]
+
+
+def test_arrow_nullable_struct_parent_keeps_its_value_and_recordbatch_nulls() -> None:
+    logical = [None if index % 7 == 6 else {"left": index, "right": -index} for index in range(40)]
+    value = pa.array(logical, type=pa.struct([("left", pa.int64()), ("right", pa.int64())]))
+    cells = [b"NULL" if item is None else f"({item['left']},{item['right']})".encode() for item in logical]
+    assert _sqlaero._encode_value(value).to_bytes() == b"(" + b",".join(cells) + b")"
+    rows = pa.RecordBatch.from_struct_array(value)
+    expected = [b"\x03SELECT NULL,NULL" if item is None else f"\x03SELECT {item['left']},{item['right']}".encode()
+                for item in logical]
+    assert _sqlaero._bind_sql("SELECT %s,%s", rows) == expected
+
+
+def test_arrow_long_mixed_table_does_not_encode_a_future_bad_string_early() -> None:
+    value = pa.table({"left": list(range(70)), "right": ["ok"] * 64 + ["🙂"] + ["ok"] * 5})
+    with pytest.raises(UnicodeEncodeError) as caught:
+        _sqlaero._bind_sql("SELECT %s,%s", value, charset="ascii")
+    assert caught.value.object == "🙂"
+    assert "args[64][1]" in "\n".join(getattr(caught.value, "__notes__", []))
+
+
+def test_arrow_long_int64_writer_retains_the_current_output_limit() -> None:
+    value = pa.array([2**63 - 1] * 40, type=pa.int64())
+    with pytest.raises(_sqlaero.OperationalError):
+        _sqlaero._bind_sql("SELECT %s", (value,), limit=40)
+
+
+@pytest.mark.parametrize("failure", [False, True], ids=["success", "limit-failure"])
+def test_arrow_owned_typed_views_release_the_real_shared_buffer_on_every_exit(failure: bool) -> None:
+    np = pytest.importorskip("numpy")
+    storage = np.arange(40, dtype=np.int64)
+    reference = weakref.ref(storage)
+    value = pa.array(storage)
+    del storage
+    gc.collect()
+    assert reference() is not None
+    if failure:
+        with pytest.raises(_sqlaero.OperationalError):
+            _sqlaero._bind_sql("SELECT %s", (value,), limit=20)
+    else:
+        assert _sqlaero._encode_value(value).to_bytes() == b"(" + b",".join(str(index).encode() for index in range(40)) + b")"
+    del value
+    gc.collect()
+    assert reference() is None
+
+
 @pytest.mark.parametrize("dtype", [pa.float32(), pa.float64()])
 def test_arrow_floats_preserve_source_value_negative_zero_and_nonfinite_policy(dtype: object) -> None:
     value = pa.array([0.1, -0.0, float("nan"), float("inf"), -float("inf")], type=dtype)
@@ -578,13 +652,16 @@ def test_unsupported_arrow_schema_is_not_hidden_by_empty_or_null_data(value: obj
         _sqlaero._bind_sql("SELECT 1", value)
 
 
-@pytest.mark.parametrize("dictionary", [False, True], ids=["chunked", "cached-dictionary"])
-def test_arrow_repeated_shared_immutable_input_has_independent_stream_owners(dictionary: bool) -> None:
+@pytest.mark.parametrize("kind", ["chunked", "cached-dictionary", "typed-int64"])
+def test_arrow_repeated_shared_immutable_input_has_independent_stream_owners(kind: str) -> None:
     # Each call exports and consumes its own capsule. Sharing the Python source
     # cannot make another call observe an already consumed or released capsule.
-    if dictionary:
+    if kind == "cached-dictionary":
         value = pa.DictionaryArray.from_arrays(pa.array([0] * 40, type=pa.int8()), pa.array(["label"]))
         expected = b"(" + b",".join([b"'label'"] * 40) + b")"
+    elif kind == "typed-int64":
+        value = pa.array(list(range(40)), type=pa.int64())
+        expected = b"(" + b",".join(str(index).encode() for index in range(40)) + b")"
     else:
         value = pa.chunked_array([[1, None], [], [-3, 4]])
         expected = b"(1,NULL,-3,4)"

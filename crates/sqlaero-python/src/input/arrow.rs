@@ -137,10 +137,118 @@ enum Storage {
 /// the Python owner and token keep provider access/release in the right domain.
 pub(crate) struct Prepared<'py> {
     storage: Storage,
-    dictionary: Option<Box<dictionary::Cache>>,
+    fast_path: Option<Box<FastPath>>,
     field: Field,
     shape: Shape,
     owner: Bound<'py, PyAny>,
+}
+
+/// These strategies are mutually exclusive for one validated source schema.
+/// A generic source owns neither, keeping the original Prepared header small.
+enum FastPath {
+    Dictionary(dictionary::Cache),
+    Int64(Int64Views),
+}
+
+/// Public typed arrays retain their own buffers and validity/offset metadata.
+/// This replaces repeated dynamic downcasts, not the original root ownership
+/// or the producer's required buffer-lifetime and input-stability contract.
+enum Int64Views {
+    Vector(Int64Array),
+    Table(Vec<Int64Array>),
+}
+
+impl Int64Views {
+    fn prepare(
+        py: Python<'_>,
+        array: &ArrayRef,
+        shape: Shape,
+        budget: &IoBudget,
+    ) -> PyResult<Option<Self>> {
+        // Tiny chunks cannot amortize new strategy/column allocations. This
+        // also keeps long sources made of many tiny chunks on the old path.
+        if array.len() < 32 {
+            return Ok(None);
+        }
+        let views = match shape {
+            Shape::Vector { .. } if matches!(array.data_type(), DataType::Int64) => {
+                let values = array
+                    .as_any()
+                    .downcast_ref::<Int64Array>()
+                    .ok_or_else(|| invalid(py, "Arrow logical and physical array types differ"))?;
+                Self::Vector(values.clone())
+            }
+            Shape::Table { columns, .. } if columns != 0 => {
+                let DataType::Struct(fields) = array.data_type() else {
+                    return Ok(None);
+                };
+                // Nullable Struct parents and nested Struct vectors retain
+                // their existing visitor. No parent validity is discarded.
+                if fields.len() != columns || array.null_count() != 0 {
+                    return Ok(None);
+                }
+                for (index, field) in fields.iter().enumerate() {
+                    if index != 0 && index.is_multiple_of(64) {
+                        super::check(py, budget)?;
+                    }
+                    if !matches!(field.data_type(), DataType::Int64) {
+                        return Ok(None);
+                    }
+                }
+                let data = array
+                    .as_any()
+                    .downcast_ref::<StructArray>()
+                    .ok_or_else(|| invalid(py, "Arrow table did not produce a Struct array"))?;
+                let mut values = Vec::new();
+                values
+                    .try_reserve_exact(columns)
+                    .map_err(|_| errors::memory_error(py))?;
+                for column in 0..columns {
+                    if column != 0 && column.is_multiple_of(64) {
+                        super::check(py, budget)?;
+                    }
+                    let value = data
+                        .column(column)
+                        .as_any()
+                        .downcast_ref::<Int64Array>()
+                        .ok_or_else(|| {
+                            invalid(py, "Arrow logical and physical array types differ")
+                        })?;
+                    values.push(value.clone());
+                }
+                Self::Table(values)
+            }
+            _ => return Ok(None),
+        };
+        Ok(Some(views))
+    }
+
+    fn write(
+        &self,
+        py: Python<'_>,
+        row: usize,
+        column: usize,
+        output: &mut Vec<u8>,
+        context: &Context,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        visitor.checkpoint(py, 1)?;
+        let values = match self {
+            Self::Vector(values) => values,
+            Self::Table(columns) => columns
+                .get(column)
+                .ok_or_else(|| invalid(py, "Arrow source column is outside its prepared schema"))?,
+        };
+        if row >= values.len() {
+            return Err(invalid(py, "Arrow child index is outside its array"));
+        }
+        if values.is_null(row) {
+            writer::append(output, b"NULL", context.limit).map_err(|error| errors::wire(py, error))
+        } else {
+            scalar::integer(output, values.value(row), context.limit)
+                .map_err(|error| errors::wire(py, error))
+        }
+    }
 }
 
 fn invalid(py: Python<'_>, message: impl AsRef<str>) -> PyErr {
@@ -421,9 +529,16 @@ pub(crate) fn prepare_exported<'py>(
             .map_err(|error| invalid(py, error.to_string()))?;
         let array = make_array(data);
         validate_root_shape(py, &array, shape)?;
+        let fast_path = if let Some(cache) = dictionary::Cache::for_schema(&field, shape) {
+            Some(super::boxed(py, FastPath::Dictionary(cache))?)
+        } else {
+            Int64Views::prepare(py, &array, shape, budget)?
+                .map(|views| super::boxed(py, FastPath::Int64(views)))
+                .transpose()?
+        };
         return Ok(Prepared {
             storage: Storage::Single(array),
-            dictionary: dictionary::Cache::for_schema(py, &field, shape)?,
+            fast_path,
             field,
             shape,
             owner: owner.clone(),
@@ -474,7 +589,9 @@ pub(crate) fn prepare_exported<'py>(
             start: 0,
             end: 0,
         },
-        dictionary: dictionary::Cache::for_schema(py, &field, shape)?,
+        fast_path: dictionary::Cache::for_schema(&field, shape)
+            .map(|cache| super::boxed(py, FastPath::Dictionary(cache)))
+            .transpose()?,
         field,
         shape,
         owner: owner.clone(),
@@ -635,13 +752,24 @@ impl Prepared<'_> {
                     data.validate()
                         .map_err(|error| invalid(py, error.to_string()))?;
                     let array = make_array(data);
-                    *start = *end;
-                    *end = end
+                    let next_end = end
                         .checked_add(array.len())
                         .ok_or_else(|| invalid(py, "Arrow stream length overflows usize"))?;
+                    let next_fast_path =
+                        if matches!(self.fast_path.as_deref(), Some(FastPath::Dictionary(_))) {
+                            None
+                        } else {
+                            Int64Views::prepare(py, &array, self.shape, budget)?
+                                .map(|views| super::boxed(py, FastPath::Int64(views)))
+                                .transpose()?
+                        };
+                    *start = *end;
+                    *end = next_end;
                     *current = Some(array);
-                    if let Some(cache) = &mut self.dictionary {
+                    if let Some(FastPath::Dictionary(cache)) = self.fast_path.as_deref_mut() {
                         cache.clear_chunk();
+                    } else {
+                        self.fast_path = next_fast_path;
                     }
                 }
                 let array = current
@@ -676,24 +804,14 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         if index >= array.len() {
             return Err(invalid(py, "Arrow source row is outside its current array"));
         }
-        if let Shape::Table { columns, .. } = self.shape {
+        let table = if let Shape::Table { columns, .. } = self.shape {
             if column >= columns {
                 return Err(invalid(
                     py,
                     "Arrow source column is outside its prepared schema",
                 ));
             }
-            let data = array
-                .as_any()
-                .downcast_ref::<StructArray>()
-                .ok_or_else(|| invalid(py, "Arrow table did not produce a Struct array"))?;
-            let value = data.column(column);
-            if let Some(cache) = &mut self.dictionary
-                && cache.has_column(column)
-            {
-                return cache.write(py, column, value, index, output, context, budget, visitor);
-            }
-            write_value(py, value, index, output, context, budget, visitor)
+            true
         } else {
             if column != 0 {
                 return Err(invalid(
@@ -701,11 +819,47 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
                     "Arrow vector has only one logical cell per element",
                 ));
             }
-            if let Some(cache) = &mut self.dictionary {
-                return cache.write(py, 0, &array, index, output, context, budget, visitor);
+            false
+        };
+        match self.fast_path.as_deref_mut() {
+            Some(FastPath::Int64(views)) => {
+                views.write(py, index, column, output, context, visitor)
             }
-            write_value(py, &array, index, output, context, budget, visitor)
+            Some(FastPath::Dictionary(cache)) => {
+                let value = cell_array(py, &array, table, column)?;
+                if !table || cache.has_column(column) {
+                    cache.write(py, column, value, index, output, context, budget, visitor)
+                } else {
+                    write_value(py, value, index, output, context, budget, visitor)
+                }
+            }
+            None => write_value(
+                py,
+                cell_array(py, &array, table, column)?,
+                index,
+                output,
+                context,
+                budget,
+                visitor,
+            ),
         }
+    }
+}
+
+fn cell_array<'a>(
+    py: Python<'_>,
+    array: &'a ArrayRef,
+    table: bool,
+    column: usize,
+) -> PyResult<&'a ArrayRef> {
+    if table {
+        let data = array
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .ok_or_else(|| invalid(py, "Arrow table did not produce a Struct array"))?;
+        Ok(data.column(column))
+    } else {
+        Ok(array)
     }
 }
 

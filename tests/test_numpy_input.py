@@ -790,6 +790,21 @@ def test_numpy_fixed_width_runs_and_original_large_fragments_agree_at_byte_cap(d
     assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [expected] * 33
 
 
+@pytest.mark.parametrize("content", [b"", b"x" * 4096 + b"\x00y"])
+def test_numpy_owned_binary_cell_keeps_padding_and_fragment_boundaries(content: bytes) -> None:
+    value = np.full(33, content, dtype="S8192")
+    literal = b"CAST(X'" + content.hex().upper().encode("ascii") + b"' AS BINARY)"
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT " + literal] * 33
+
+
+def test_numpy_owned_binary_cell_keeps_the_request_limit_and_failure_position() -> None:
+    from sqlaero._sqlaero import OperationalError
+    value = np.full(33, b"a\x00b", dtype="S16")
+    with pytest.raises(OperationalError) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True, limit=30)
+    assert "args[0]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
 @pytest.mark.parametrize("dtype", ["S16", "U16"])
 def test_numpy_fixed_width_future_bad_coordinate_is_reported_only_at_that_row(dtype: str) -> None:
     root = np.full(20, "a", dtype=dtype)
@@ -826,3 +841,36 @@ def test_numpy_cached_unicode_connection_codec_error_stays_at_the_referenced_cel
     assert caught.value.object == "中"
     assert (caught.value.start, caught.value.end) == (0, 1)
     assert "args[37]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
+@pytest.mark.parametrize("layout", ["vector", "reverse", "matrix", "transpose", "fortran"])
+def test_numpy_object_owning_and_view_exports_keep_each_public_conversion(layout: str) -> None:
+    calls: list[int] = []
+    class ObservedInt(int):
+        def __int__(self) -> int:
+            converted = int.__int__(self) + 1
+            calls.append(converted)
+            return converted
+    shape = (64,) if layout in ("vector", "reverse") else (8, 8)
+    original = np.empty(shape, dtype=object, order="F" if layout == "fortran" else "C")
+    for index in range(64):
+        original.flat[index] = ObservedInt(index)
+    assert calls == []
+    value = original
+    numbers = np.arange(64, dtype=np.int64).reshape(shape)
+    if layout == "reverse":
+        value = original[::-1]
+        numbers = numbers[::-1]
+    elif layout == "transpose":
+        value = original.T
+        numbers = numbers.T
+    assert bool(value.flags.owndata) is (layout not in ("reverse", "transpose"))
+    if value.ndim == 1:
+        expected = [b"\x03SELECT " + str(int(cell) + 1).encode("ascii") for cell in numbers]
+        actual = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    else:
+        sql = "SELECT " + ",".join(["%s"] * value.shape[1])
+        expected = [b"\x03SELECT " + b",".join(str(int(cell) + 1).encode("ascii") for cell in row) for row in numbers]
+        actual = _sqlaero._bind_sql(sql, value)
+    assert actual == expected
+    assert calls == [int(cell) + 1 for cell in numbers.flat]

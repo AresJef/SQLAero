@@ -251,9 +251,9 @@ pub fn utc(
     ))
 }
 
-fn padded(
+fn padded<T: itoa::Integer>(
     output: &mut Vec<u8>,
-    value: u128,
+    value: T,
     minimum: usize,
     limit: usize,
 ) -> Result<(), WireError> {
@@ -267,18 +267,18 @@ fn padded(
 }
 
 fn date_body(output: &mut Vec<u8>, value: Date, limit: usize) -> Result<(), WireError> {
-    padded(output, value.year as u128, 4, limit)?;
+    padded(output, value.year, 4, limit)?;
     append(output, b"-", limit)?;
-    padded(output, u128::from(value.month), 2, limit)?;
+    padded(output, value.month, 2, limit)?;
     append(output, b"-", limit)?;
-    padded(output, u128::from(value.day), 2, limit)
+    padded(output, value.day, 2, limit)
 }
 fn clock_body(
     output: &mut Vec<u8>,
     hours: u128,
-    minutes: u128,
-    seconds: u128,
-    micros: u128,
+    minutes: u8,
+    seconds: u8,
+    micros: u32,
     limit: usize,
 ) -> Result<(), WireError> {
     padded(output, hours, 2, limit)?;
@@ -310,9 +310,9 @@ pub fn date_time(
         clock_body(
             output,
             u128::from(clock.hour),
-            u128::from(clock.minute),
-            u128::from(clock.second),
-            u128::from(clock.microsecond),
+            clock.minute,
+            clock.second,
+            clock.microsecond,
             limit,
         )?;
     }
@@ -341,9 +341,10 @@ pub fn duration(output: &mut Vec<u8>, micros: i128, limit: usize) -> Result<(), 
     clock_body(
         output,
         magnitude / 3_600_000_000,
-        magnitude / 60_000_000 % 60,
-        magnitude / 1_000_000 % 60,
-        magnitude % 1_000_000,
+        // Remainders prove these component widths, even for i128::MIN.
+        (magnitude / 60_000_000 % 60) as u8,
+        (magnitude / 1_000_000 % 60) as u8,
+        (magnitude % 1_000_000) as u32,
         limit,
     )?;
     append(output, b"'", limit)

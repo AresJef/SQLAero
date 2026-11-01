@@ -36,6 +36,21 @@ def test_exact_scalar_values(value: object, expected: bytes) -> None:
     assert _sqlaero._encode_scalar(value) == expected
 
 
+@pytest.mark.parametrize("value", [2**64 + 17, -(2**64 + 17), 2**215 - 1, -(2**215 - 1)])
+def test_bounded_native_integer_transfer_preserves_the_full_signed_value(value: int) -> None:
+    expected = str(value).encode("ascii")
+    assert _sqlaero._encode_scalar(value) == expected
+    assert _sqlaero._encode_value(value).to_bytes() == expected
+
+
+@pytest.mark.parametrize("value", [2**255, -(2**255), 2**256 + 1, -(2**256 + 1)])
+def test_bounded_native_integer_transfer_never_consumes_truncated_low_bits(value: int) -> None:
+    with pytest.raises(DataError) as caught:
+        _sqlaero._encode_value(value)
+    assert caught.value.code == 65536
+    assert caught.value.is_server_error is False
+
+
 @pytest.mark.parametrize("value", [10**65, -(10**65), pytest.param(10**10000, id="oversized-integer"), Decimal("1e-66"), Decimal("1e65")])
 def test_numeric_range_has_a_real_client_data_error(value: object) -> None:
     with pytest.raises(DataError) as caught:

@@ -197,9 +197,9 @@ pub(crate) fn integer_value(value: &Bound<'_, PyAny>) -> PyResult<BigInt> {
 }
 
 /// Read an int into checked signed storage derived from a bit-capacity hint.
-/// The C conversion rejects insufficient capacity; success preserves the whole
-/// original signed value, even when the supplied hint understates its width.
-#[cfg(not(Py_3_13))]
+/// Insufficient capacity is rejected before consuming any truncated value;
+/// success preserves the whole original signed value, even when the supplied
+/// hint understates its width. The caller chooses the maximum native storage.
 #[inline]
 pub(crate) fn integer_value_with_bits(value: &Bound<'_, PyInt>, bits: usize) -> PyResult<BigInt> {
     if bits == 0 {
@@ -211,11 +211,12 @@ pub(crate) fn integer_value_with_bits(value: &Bound<'_, PyInt>, bits: usize) -> 
         .try_reserve_exact(digits)
         .map_err(|_| memory_error(value.py()))?;
     // SAFETY: value is a live int and Python remains attached. The native
-    // reservation proves the full u32 byte count fits its allocation
-    // layout. On success CPython writes every byte in signed little-endian
-    // form; on error len stays zero.
-    // This is the pinned PyO3's 3.12 fallback, without private layout reads.
+    // reservation proves the full byte count fits both its allocation and
+    // Py_ssize_t. Success initializes all requested signed little-endian
+    // bytes; errors and truncation leave len zero. The 3.12 call is the same
+    // narrow fallback as pinned PyO3, without private layout reads.
     unsafe {
+        #[cfg(not(Py_3_13))]
         if pyo3::ffi::_PyLong_AsByteArray(
             value.as_ptr().cast(),
             buffer.as_mut_ptr().cast(),
@@ -225,6 +226,27 @@ pub(crate) fn integer_value_with_bits(value: &Bound<'_, PyInt>, bits: usize) -> 
         ) == -1
         {
             return Err(PyErr::fetch(value.py()));
+        }
+        #[cfg(Py_3_13)]
+        {
+            let capacity = digits * std::mem::size_of::<u32>();
+            let required = pyo3::ffi::PyLong_AsNativeBytes(
+                value.as_ptr(),
+                buffer.as_mut_ptr().cast(),
+                capacity as pyo3::ffi::Py_ssize_t,
+                pyo3::ffi::Py_ASNATIVEBYTES_LITTLE_ENDIAN,
+            );
+            if required < 0 {
+                return Err(PyErr::fetch(value.py()));
+            }
+            // Unlike the 3.12 conversion, this public API reports truncation
+            // through its returned size without raising an exception.
+            if required as usize > capacity {
+                return Err(builtin_message::<pyo3::exceptions::PyOverflowError>(
+                    value.py(),
+                    "integer does not fit its bounded native storage",
+                ));
+            }
         }
         buffer.set_len(digits);
     }

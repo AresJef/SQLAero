@@ -352,11 +352,11 @@ S00规划完成；正式Goal创建时间经工具核实为2026-10-31T19:20:28Z�
 | S17／组合检查 | **F0已于2026-10-31T22:34:27Z封存**：源4a76be9，e13两ABI完整实包GIL1607PASS＋1平台NA、NoGIL1524PASS＋10已说明缺provider／平台项；66核心单元、严格fmt／Clippy／Pyright通过 | 截止F0累计3h33m12s；A62m41s、B150m31s；比A+B原26h少22h26m48s。节余按第4节优先供后续有据优化，D/E14h保留 | [F0唯一身份](../../evidence/escape-type-expansion/run-20261031T192028Z/core/F0.json)。e10/e11完整功能证据及e12编译失败保留，未混包安装。交叉核查后共用fallible Box/格式化与借用唯一序列策略收拢；e12因转发签名遗漏失败未安装，父曾提前启动构建的执行顺序已纠正，e13明确等Clippy成功后构建 |
 
 | S21先导 | GitHub已授权repo/workflow；任务分支已推送，两个关键平台Actions均已成功。新增固定provider准备复用原工具，82项工具测试通过 | B阶段前移适用CI先导，不算最终48矩阵 | Windows ARM64／3.13先导run41246596098、musl ARM64／3.14t先导run41246589675均完成原wheel＋sdist实际安装。先导c5de139源不同于最终F0，不能改署最终通过。NumPy/Pandas当前runner48格可用；PyArrow缺Windows ARM64六格，Polars runtime缺16个t格；明确能力边界，不能把全部48当provider覆盖。官方文件证据agent-b/provider-wheel-metadata.json |
-| O01–O16／S18–S24 | F0封存后开始C池；O01短热路、O03原生分类、O04有界primitive块已局部采用，当前最佳52c169a；两个O02试验及O05借用试验均撤回；I01三项集成候选正在实包验证，尚未采用 | C池32h从22:34:27Z起累计，含新增24h专用；D10h/E4h保留 | 不拿新TypeError或旧Python输出算收益；仍需完整C16→最终与F0→最终对照、适用48组合／96次安装及交付 |
+| O01–O16／S18–S24 | F0封存后开始C池；O01短热路、O03原生分类、O04有界primitive块已局部采用，当前最佳I02／46f0f8c；两个O02试验及O05借用试验均撤回；I01预试后收敛为已采用I02 | C池32h从22:34:27Z起累计，含新增24h专用；D10h/E4h保留 | 不拿新TypeError或旧Python输出算收益；仍需完整C16→最终与F0→最终对照、适用48组合／96次安装及交付 |
 
 2026-10-31T22:34:27Z预算记录：前置19m13s＋19:20:28Z以来连续实施＝有效3h33m12s，余额68h26m48s。A池主要阶段记62m41s，B池至F0记150m31s，C池现在开始；正常编译／CI与并行agent区间取并集。新增24h仍完整保留在C池，没有用于上述功能检查。无暂停／用户等待扣除区间。T210自查于22:31Z附近已汇报，下一T240约23:01:15Z；原72h不刷新。
 
-当前恢复入口：F0为e13/4a76be9及F0.json内两native hash；原C16六ABI及主.venv保持。当前最佳为I02集成组合及performance/i02-integration-width/local-decision.json；两任务env已装同一已采用I02，wheel／native身份见其identity-cp313.json与identity-cp314t.json。I01/I02均在严格Clippy实际退出0后才构建，400生产文件构建前后hash相符；O04/52c169a继续完整保留回退。两关键CI先导均通过并已读回artifact，最终同源48／96安装另验；测速窗口不构建／压力。本轮仍不发行。
+当前恢复入口：F0为e13/4a76be9及F0.json内两native hash；原C16六ABI及主.venv保持。当前最佳为I05集成组合及performance/i05-native-reuse/local-decision.json；I02已采用包独立封存，wheel／native身份见其identity-cp313.json与identity-cp314t.json；当前最佳已升级I05，三ABI构建／两ABI安装及3.12独立解包身份已读回；两任务env运行同一I05，I02／46f0f8c继续封存回退，实载身份分别见各候选identity文件。I01/I02均在严格Clippy实际退出0后才构建，400生产文件构建前后hash相符；O04/52c169a继续完整保留回退。两关键CI先导均通过并已读回artifact，最终同源48／96安装另验；测速窗口不构建／压力。本轮仍不发行。
 
 
 O01已按用户本轮取舍授权纳入当前最佳：仅恢复精确list的owned getter短热路，生产改动4行。F0→O01主／独各24真实周期、各768完整组、零质量拒绝；16局部场景为15个1%保护PASS、0可信FAIL、1个原U（varied int tuple独立CI成本上沿约1.07%，主轮PASS，中心近持平）。长int list约快1.117倍，float／str／bytes list约快1.06–1.08倍，varied str tuple约快1.064倍。两ABI各555定向功能通过。原U保留，最终C16直接比较和完整矩阵不豁免；[采用事实](../../evidence/escape-type-expansion/run-20261031T192028Z/performance/o01/local-decision.json)。下一步在现有benchmark补必要新类型输入工厂及真实fingerprint，控制在单一runner，不建工具框架；随后先用实际输入测出新reader慢点。F0包已封存不覆盖，当前安装环境为O01，主.venv仍C16。
@@ -384,6 +384,20 @@ I02于2026-11-01T00:59Z附近局部采用：I01预试的时间路径没有清晰
 I02对O04的72项主／独各24真实周期、各3456完整组收齐，拒绝均按原槽完整补回。准备两轮各有一项off-CPU无效控制；身份、n及全部门槛相同，预试／控制按场景保存适用来源，正式样本全部新采，没有拼预试入成绩。另对计划7.2固定六个F0见证直接完成主／独24周期：全部95%下界均证明耗时下降至少5%，因此新增路径适用原5%档，旧路径仍1%。适用门槛下71局部PASS、0可信FAIL、1旧空list U；空list两轮中心成本0.983%／0.767%、原始中位差约1.2ns，按本轮A05仅接受这一产物的局部U，不称统计PASS、不豁免最终C16全保护。原统一1%结果59PASS／2FAIL／11U全部保留；其中NumPy bool N1000相对O04慢约4.4%（多0.94–1.01μs）、反向float32慢约1.3–1.5%，没有以平均抵消它们。
 
 I02直接对O04双轮收益：S N1000约2.73倍、U约2.25–2.28倍、NumPy datetime约1.708倍／duration约2倍；Polars i64单元素约1.36倍、str约1.33倍、分类单元素约1.23–1.24倍；Pandas／Arrow／Polars时间表约1.61／1.76／1.73倍。所有倍率属于实际集成包，不串乘历史倍率。下一步A只试同owner/root的重复export复用，B只试长Arrow Int64当前chunk typed视图；父迁移已走通的小整数格式化宽度经验到原有标准时间writer，均先小试、无可靠收益即撤回。最终同源完整验收与C16/F0全报告继续保留。
+
+T360自查于2026-11-01T01:00:53Z提前22秒与I02采用合并：有效5h59m38s、余额66h00m22s；C池2h26m26s，仍处原8h部分，新增24h性能池未挪用，D10h/E4h保持。采用源46f0f8c的400生产hash与两ABI构建manifest一致，旧O04完整保留。下一单元约20–30分钟：A同owner/root重复export、B长Arrow Int64 typed视图、父原生小数值宽度迁移到标准时间writer；每路先定向小试，无收益就撤，独占正式测速。下一T390固定01:31:15Z。
+
+O07/O08/O09源码于01:08Z附近集成I03，均经严格Clippy／Pyright／两ABI构建：GIL781PASS＋2个未启用native实例标志的skip，NoGIL686PASS＋上述2skip／1个缺Polars provider；已另开实例标志补齐，GIL40PASS、NoGIL32PASS／8个真实缺Polars。360新增场景与F0同输出。111项有效4周期预试显示O08 i64列约1.37倍、表1.54倍，O09标准时间容器约1.05–1.14倍；O07目标owning Object近持平未明、StringArray约1.10倍，同时组合reverse Object约慢7%。只按这一组合证据收敛一次I04：恢复O07两个生产文件至I02，保留5个行为保护测试，留下O08/O09，不把组合成本未核实地归因O07。原I03包／源／全部负面值保留。首条拟测Polars/chunked ID并不存在，命令在采样前报错，已保留错误与原清单并仅删除不存在ID，不改runner或功能范围。I04正在两ABI构建，随后最小定向功能及同111项对照；新路线调查耗时已足，停止扩散理论，先判当前组合。
+
+T390自查于2026-11-01T01:33:05Z安全边界补报（较01:31:15晚110秒）：有效6h31m50s、余额65h28m10s；C池2h58m38s，仍在原8h内，追加24h及D/E14h保持。过去窗口有约束内新源码／两ABI功能与具体负面试验成果，但部分后续源码推演偏长，已停止提前铺路线，先限一次I04完整采用决定（预计5分钟）。I04严格Clippy及两ABI实包703／608项通过，已恢复原NumPy导出实现；111项预试与后续正式对照进行中，原I03不采用／不改署。下一T420仍02:01:15Z，不顺延。
+
+I04主／独111项各24周期、各5328完整组收齐：I64列约1.37倍、表1.53倍，标准日期／时间／时长容器约1.06–1.15倍；Object反向恢复，但原1%旧int长list约慢2.4%，Arrow dictionary约慢8%、分类表约慢6.9%，另8项按临时旧1%／新增5%仍U，因此I04不采用，原始全部保留。新的有据动作只收拢O08真实互斥状态：一个Option<Box<FastPath>>代两Option，恢复原Prepared头大小；首次严格Clippy实报Cache424B／Int64Views96B，未构建／不加豁免；按真实尺寸将8列头收成首次实际使用时fallible Vec，保留上限与chunk/context清理，随后严格Clippy通过。
+
+并行的O10只给S借已有Rust owned单元省重复复制、保持4096检查窗／原limit；O11只SQL大int的3.13+固定32B一次原生读取，移除冗余Python bit_length与泛型尺寸查询，复用符号规范化及原216bit／65digit writer政策，i64/u64及3.12旧路径、任意精度错误码／RetryRule保持。I05于01:52Z附近已封存400生产hash、三ABI同源构建：GIL925PASS、NoGIL830PASS（两原native标志skip已另补齐，PL module缺失单列）；MySQL GIL40／NoGIL32PASS＋8个真实缺PL；3.12新进程从独立解包wheel加载hash核验后213PASS，未改原baseline venv，不冒称3.12真实pip安装。3.12首probe仅SDK framework路径不匹配导致dyld失败，任务内补已知SDK symlink后恢复，非产品崩溃。I05现按原111项预试，先完成具体采用判断，不改质量／不加新工具。
+
+T420自查于2026-11-01T02:01:44Z安全边界补报：有效7h00m29s、余额64h59m31s；C池3h27m17s，仍在原8h部分，新增24h及D/E14h保持。I05本地111主／独已收齐，原C16固定见证双轮完成、F0最后独轮当时在跑；下一动作是完成具体采用保存，不提前再铺理论路线。下一T450仍02:31:15Z。
+
+I05局部采用：111项主／独各24真实周期、各5328完整组，原C16六个固定见证中varied int tuple两轮95%区间均证明≥5%耗时下降；新增F0六固定见证也全部双轮满足，因此两类按预先规则用5%保护，未事后换见证。109局部PASS、0可信FAIL、2U：Arrow dictionary主U／独PASS（中心成本4.27%／4.38%，主CI成本上沿约5.27%）；Polars低基数分类表两轮U（中心5.81%／5.55%，不是“只有变快不稳定”，CI跨5%）。基于本轮A05，仅接受这一产物及两项局部U，保留原U及全部原1%结果，不称统计PASS；最终完整C16/F0直接比较仍须完成。保留O07/I03/I04所有负面值及首版尺寸失败，无布局碰运气／lint豁免。相对I02直接双轮：S1000约2.82倍、大int约1.17倍、Arrow i64表约1.53倍、标准时间容器约1.06–1.15倍；int同值长list约慢2.4%、dictionary约慢4.3%、分类表约慢5.6–5.8%均不隐藏。完整证据performance/i05-native-reuse/local-decision.json。
 
 ### 11.2 30分钟自查与有限恢复
 

@@ -25,12 +25,12 @@ struct Labels {
     bytes: usize,
 }
 
-/// Eight small label tables plus at most 16 KiB of encoded bytes. Ordinary
-/// primitive sources do not allocate or populate this optional strategy.
+/// At most eight lazily allocated label tables and 16 KiB of encoded bytes.
+/// Ordinary primitive sources never allocate or populate this strategy.
 pub(super) struct Cache {
     mask: u8,
     context: Option<(&'static str, bool)>,
-    columns: [Option<Labels>; COLUMNS],
+    columns: Vec<Option<Labels>>,
     bytes: usize,
 }
 
@@ -40,11 +40,7 @@ fn text_dictionary(dtype: &DataType) -> bool {
 }
 
 impl Cache {
-    pub(super) fn for_schema(
-        py: Python<'_>,
-        field: &Field,
-        shape: Shape,
-    ) -> PyResult<Option<Box<Self>>> {
+    pub(super) fn for_schema(field: &Field, shape: Shape) -> Option<Self> {
         let rows = match shape {
             Shape::Vector { length } => length,
             Shape::Table { rows, .. } => rows,
@@ -53,7 +49,7 @@ impl Cache {
         // A short input cannot amortize the cache's fixed strategy/table
         // allocation. Keep those existing paths free of new preparation work.
         if rows < 32 {
-            return Ok(None);
+            return None;
         }
         let mask = if matches!(shape, Shape::Table { .. }) {
             match field.data_type() {
@@ -72,18 +68,14 @@ impl Cache {
             u8::from(text_dictionary(field.data_type()))
         };
         if mask == 0 {
-            return Ok(None);
+            return None;
         }
-        crate::input::boxed(
-            py,
-            Self {
-                mask,
-                context: None,
-                columns: std::array::from_fn(|_| None),
-                bytes: 0,
-            },
-        )
-        .map(Some)
+        Some(Self {
+            mask,
+            context: None,
+            columns: Vec::new(),
+            bytes: 0,
+        })
     }
 
     pub(super) fn has_column(&self, column: usize) -> bool {
@@ -91,7 +83,9 @@ impl Cache {
     }
 
     pub(super) fn clear_chunk(&mut self) {
-        self.columns = std::array::from_fn(|_| None);
+        for column in &mut self.columns {
+            *column = None;
+        }
         self.bytes = 0;
     }
 
@@ -130,6 +124,12 @@ impl Cache {
             // may release its producer; subsequent value access is reacquired.
             self.clear_chunk();
             self.context = Some(key);
+        }
+        if self.columns.is_empty() {
+            self.columns
+                .try_reserve_exact(COLUMNS)
+                .map_err(|_| errors::memory_error(py))?;
+            self.columns.resize_with(COLUMNS, || None);
         }
         let slot = &mut self.columns[column];
         if !slot
