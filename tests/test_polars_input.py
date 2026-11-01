@@ -59,13 +59,13 @@ def test_polars_native_float_value_negative_zero_and_nonfinite_policy(dtype: obj
 
 
 @pytest.mark.parametrize("length", [1, 100, 1000])
-@pytest.mark.parametrize("kind", ["float32", "boolean"])
+@pytest.mark.parametrize("kind", ["float32", "float64", "boolean"])
 def test_polars_short_and_long_primitive_series_share_the_native_arrow_policy(length: int, kind: str) -> None:
     pattern: list[float | bool | None]
-    if kind == "float32":
+    if kind in ("float32", "float64"):
         pattern = [0.5, -0.0, float("nan"), float("inf"), -float("inf"), None]
         values = [pattern[index % len(pattern)] for index in range(length)]
-        source = pl.Series(values, dtype=pl.Float32)
+        source = pl.Series(values, dtype=pl.Float32 if kind == "float32" else pl.Float64)
         tokens = [b"0.5e0", b"-0.0e0", b"NULL", b"NULL", b"NULL", b"NULL"]
     else:
         pattern = [True, None, False]

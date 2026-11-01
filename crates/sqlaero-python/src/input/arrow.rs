@@ -18,7 +18,7 @@ use arrow_array::{
     TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt8Array,
     UInt16Array, UInt32Array, UInt64Array, make_array,
 };
-use arrow_buffer::{BooleanBuffer, NullBuffer, ScalarBuffer};
+use arrow_buffer::{ArrowNativeType, BooleanBuffer, NullBuffer, ScalarBuffer};
 use arrow_data::{ByteView, validate_binary_view};
 use arrow_schema::{DataType, Field, TimeUnit as ArrowTimeUnit, ffi::FFI_ArrowSchema};
 use pyo3::exceptions::{PyBufferError, PyTypeError};
@@ -149,8 +149,9 @@ pub(crate) struct Prepared<'py> {
 enum FastPath {
     Dictionary(dictionary::Cache),
     Int64(Int64Views),
-    Float32(Float32Reader),
+    Float32(FloatReader<f32>),
     Boolean(BooleanReader),
+    Float64(FloatReader<f64>),
 }
 
 /// Public typed arrays retain their own buffers and validity/offset metadata.
@@ -254,14 +255,15 @@ impl Int64Views {
     }
 }
 
-/// Own only the two public buffers used by the Float32 vector reader. Their
-/// logical slices already contain the source offsets; never apply them twice.
-struct Float32Reader {
-    values: ScalarBuffer<f32>,
+/// Own only the two public buffers used by the native float vector readers.
+/// Logical slices already contain source offsets; never apply them twice.
+/// The two primitive instantiations convert to binary64 statically.
+struct FloatReader<T: ArrowNativeType + Into<f64>> {
+    values: ScalarBuffer<T>,
     nulls: Option<NullBuffer>,
 }
 
-impl Float32Reader {
+impl<T: ArrowNativeType + Into<f64>> FloatReader<T> {
     fn write(
         &self,
         py: Python<'_>,
@@ -284,7 +286,7 @@ impl Float32Reader {
                 .get(row)
                 .copied()
                 .ok_or_else(|| invalid(py, "Arrow child index is outside its array"))?;
-            scalar::float(output, f64::from(value), context.limit)
+            scalar::float(output, value.into(), context.limit)
                 .map_err(|error| errors::wire(py, error))
         }
     }
@@ -349,13 +351,27 @@ fn native_fast_path(
         return Ok(None);
     }
     if !matches!(array.data_type(), DataType::Float32) {
-        return Ok(BooleanReader::prepare(array).map(FastPath::Boolean));
+        if let Some(reader) = BooleanReader::prepare(array) {
+            return Ok(Some(FastPath::Boolean(reader)));
+        }
+        if matches!(array.data_type(), DataType::Float64) {
+            // Keep any future physical mismatch on the generic value path;
+            // an unused or NULL value must not acquire an earlier type error.
+            let Some(values) = array.as_any().downcast_ref::<Float64Array>() else {
+                return Ok(None);
+            };
+            return Ok(Some(FastPath::Float64(FloatReader {
+                values: values.values().clone(),
+                nulls: values.nulls().cloned(),
+            })));
+        }
+        return Ok(None);
     }
     let values = array
         .as_any()
         .downcast_ref::<Float32Array>()
         .ok_or_else(|| invalid(py, "Arrow logical and physical array types differ"))?;
-    Ok(Some(FastPath::Float32(Float32Reader {
+    Ok(Some(FastPath::Float32(FloatReader {
         values: values.values().clone(),
         nulls: values.nulls().cloned(),
     })))
@@ -937,6 +953,7 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
             }
             Some(FastPath::Float32(reader)) => reader.write(py, index, output, context, visitor),
             Some(FastPath::Boolean(reader)) => reader.write(py, index, output, context, visitor),
+            Some(FastPath::Float64(reader)) => reader.write(py, index, output, context, visitor),
             Some(FastPath::Dictionary(cache)) => {
                 let value = cell_array(py, &array, table, column)?;
                 if !table || cache.has_column(column) {

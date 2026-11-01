@@ -384,10 +384,10 @@ def test_arrow_long_mixed_table_does_not_encode_a_future_bad_string_early() -> N
     assert "args[64][1]" in "\n".join(getattr(caught.value, "__notes__", []))
 
 
-@pytest.mark.parametrize("kind", ["int64", "float32", "boolean"])
+@pytest.mark.parametrize("kind", ["int64", "float32", "float64", "boolean"])
 def test_arrow_long_typed_writer_retains_the_current_output_limit(kind: str) -> None:
-    if kind == "float32":
-        value = pa.array([0.5] * 40, type=pa.float32())
+    if kind in ("float32", "float64"):
+        value = pa.array([0.5] * 40, type=pa.float32() if kind == "float32" else pa.float64())
     elif kind == "boolean":
         value = pa.array([True] * 40, type=pa.bool_())
     else:
@@ -404,15 +404,15 @@ def test_arrow_int64_list_span_limit_fails_at_the_actual_late_child() -> None:
 
 
 @pytest.mark.parametrize("failure", [False, True], ids=["success", "limit-failure"])
-@pytest.mark.parametrize("kind", ["int64", "float32", "boolean", "dictionary"])
+@pytest.mark.parametrize("kind", ["int64", "float32", "float64", "boolean", "dictionary"])
 def test_arrow_owned_typed_views_release_the_real_shared_buffer_on_every_exit(failure: bool, kind: str) -> None:
     np = pytest.importorskip("numpy")
     if kind == "dictionary":
         storage = np.zeros(40, dtype=np.int16)
         value = pa.DictionaryArray.from_arrays(pa.array(storage), pa.array(["label"]))
         expected = b"(" + b",".join([b"'label'"] * 40) + b")"
-    elif kind == "float32":
-        storage = np.full(40, 0.5, dtype=np.float32)
+    elif kind in ("float32", "float64"):
+        storage = np.full(40, 0.5, dtype=np.float32 if kind == "float32" else np.float64)
         value = pa.array(storage)
         expected = b"(" + b",".join([b"0.5e0"] * 40) + b")"
     elif kind == "boolean":
@@ -470,6 +470,25 @@ def test_arrow_float32_prepared_vectors_keep_source_precision_and_sliced_nulls(l
                 assert math.copysign(1.0, actual) == math.copysign(1.0, expected)
 
 
+@pytest.mark.parametrize("length", [1, 31, 32, 40])
+def test_arrow_float64_prepared_vectors_keep_exact_binary64_bits_and_sliced_nulls(length: int) -> None:
+    pattern: list[float | None] = [0.1, 0.0, -0.0, 5e-324, -5e-324,
+                                   sys.float_info.max, -sys.float_info.max, None,
+                                   float("nan"), float("inf"), -float("inf")]
+    values = [pattern[index % len(pattern)] for index in range(length)]
+    source = pa.array([None] * 9 + values, type=pa.float64()).slice(9, length)
+    parts = _sqlaero._encode_value(source).to_bytes()[1:-1].split(b",")
+    assert len(parts) == length
+    for token, original in zip(parts, values, strict=True):
+        if original is None or not math.isfinite(original):
+            assert token == b"NULL"
+        else:
+            # Python float is already the binary64 source. Its independent
+            # hex oracle includes the full significand and the sign of zero.
+            assert float(token).hex() == original.hex()
+            assert b"e" in token.lower()
+
+
 @pytest.mark.parametrize("length", [1, 31, 32, 100, 1000])
 @pytest.mark.parametrize("offset", [1, 9])
 def test_arrow_prepared_boolean_vectors_keep_bit_and_validity_offsets(length: int, offset: int) -> None:
@@ -479,12 +498,12 @@ def test_arrow_prepared_boolean_vectors_keep_bit_and_validity_offsets(length: in
     assert _sqlaero._encode_value(source).to_bytes() == expected
 
 
-@pytest.mark.parametrize("kind", ["float32", "boolean"])
+@pytest.mark.parametrize("kind", ["float32", "float64", "boolean"])
 def test_arrow_primitive_views_reprepare_across_empty_long_and_short_chunks(kind: str) -> None:
     values: list[float | bool | None]
-    if kind == "float32":
+    if kind in ("float32", "float64"):
         values = [None if index % 7 == 6 else index * 0.125 for index in range(100)]
-        dtype = pa.float32()
+        dtype = pa.float32() if kind == "float32" else pa.float64()
     else:
         values = [None if index % 7 == 6 else bool(index % 2) for index in range(100)]
         dtype = pa.bool_()
@@ -495,7 +514,7 @@ def test_arrow_primitive_views_reprepare_across_empty_long_and_short_chunks(kind
     for token, value in zip(parts, values[5:85], strict=True):
         if value is None:
             assert token == b"NULL"
-        elif kind == "float32":
+        elif kind in ("float32", "float64"):
             assert float(token) == value
         else:
             assert token == (b"1" if value else b"0")
@@ -548,7 +567,7 @@ def test_arrow_long_value_keeps_the_original_operation_deadline(binary: bool) ->
         _sqlaero._bind_sql("SELECT %s", source, timeout_ns=5_000_000)
 
 
-@pytest.mark.parametrize("kind", ["utf8", "binary", "list-int64", "boolean"])
+@pytest.mark.parametrize("kind", ["utf8", "binary", "list-int64", "boolean", "float64"])
 def test_arrow_long_value_preserves_the_actual_signal_exception(kind: str) -> None:
     class InterruptedArrow(Exception):
         pass
@@ -558,6 +577,8 @@ def test_arrow_long_value_preserves_the_actual_signal_exception(kind: str) -> No
         source = pa.array([[0] * 1_000_000], type=pa.list_(pa.int64()))
     elif kind == "boolean":
         source = pa.array([True, None, False] * 350_000, type=pa.bool_())
+    elif kind == "float64":
+        source = pa.array([0.5, None, -0.0] * 350_000, type=pa.float64())
     elif kind == "binary":
         source = pa.array([b"x" * (16 * 1024 * 1024)])
     else:
@@ -806,7 +827,7 @@ def test_unsupported_arrow_schema_is_not_hidden_by_empty_or_null_data(value: obj
         _sqlaero._bind_sql("SELECT 1", value)
 
 
-@pytest.mark.parametrize("kind", ["chunked", "cached-dictionary", "typed-int64", "typed-float32", "typed-boolean"])
+@pytest.mark.parametrize("kind", ["chunked", "cached-dictionary", "typed-int64", "typed-float32", "typed-float64", "typed-boolean"])
 def test_arrow_repeated_shared_immutable_input_has_independent_stream_owners(kind: str) -> None:
     # Each call exports and consumes its own capsule. Sharing the Python source
     # cannot make another call observe an already consumed or released capsule.
@@ -816,8 +837,8 @@ def test_arrow_repeated_shared_immutable_input_has_independent_stream_owners(kin
     elif kind == "typed-int64":
         value = pa.array(list(range(40)), type=pa.int64())
         expected = b"(" + b",".join(str(index).encode() for index in range(40)) + b")"
-    elif kind == "typed-float32":
-        value = pa.array([0.5] * 40, type=pa.float32())
+    elif kind in ("typed-float32", "typed-float64"):
+        value = pa.array([0.5] * 40, type=pa.float32() if kind == "typed-float32" else pa.float64())
         expected = b"(" + b",".join([b"0.5e0"] * 40) + b")"
     elif kind == "typed-boolean":
         value = pa.array([True, None, False, True] * 10, type=pa.bool_())
