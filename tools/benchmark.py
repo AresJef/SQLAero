@@ -376,6 +376,7 @@ def typed_cases() -> list[Case]:
         if pa is not None:
             vectors = {'i64': pa.array(index, type=pa.int64()),
                        'f32': pa.array([i % 100 + 0.1 for i in index], type=pa.float32()),
+                       'f64': pa.array([i % 100 + 0.1 for i in index], type=pa.float64()),
                        'bool-null': pa.array(flags, type=pa.bool_()), 'nullable-i64': pa.array(nullable, type=pa.int64()),
                        'timestamp-ns-utc': pa.array(ticks, type=pa.timestamp('ns', tz='UTC')),
                        'duration-ns': pa.array(spans, type=pa.duration('ns')),
@@ -393,6 +394,7 @@ def typed_cases() -> list[Case]:
         if pl is not None:
             vectors = {'i64': pl.Series('v', index, dtype=pl.Int64),
                        'f32': pl.Series('v', [i % 100 + 0.1 for i in index], dtype=pl.Float32),
+                       'f64': pl.Series('v', [i % 100 + 0.1 for i in index], dtype=pl.Float64),
                        'bool-null': pl.Series('v', flags, dtype=pl.Boolean),
                        'nullable-i64': pl.Series('v', nullable, dtype=pl.Int64),
                        'timestamp-ns-utc': pl.Series('v', ticks, dtype=pl.Datetime('ns', 'UTC')),
@@ -1462,17 +1464,17 @@ def parallel(args: argparse.Namespace) -> None:
             or args.cycles <= 0 or type(args.python_work) is not int or args.python_work < 0
             or not math.isfinite(args.seconds) or args.seconds <= 0):
         raise ValueError('Positive calls/cycles/budget and nonnegative integer python-work are required')
+    before_import = gil_state()
+    if before_import['free_threaded_build'] and before_import['gil_enabled']:
+        raise RuntimeError('Free-threaded parallel measurement requires the GIL disabled before import')
     collection = {case.id: case for case in cases()}
     if args.case[0] not in collection:
         raise ValueError(f'Unknown case ID: {args.case[0]}')
     case = collection[args.case[0]]
     if case.family not in {'escape', 'bind', 'fetch', 'batch', 'roundtrip'}:
         raise ValueError(f'Parallel does not support task family {case.family}')
-    before_import = gil_state()
     if not gc.isenabled():
         raise RuntimeError('Parallel measurement requires normal automatic GC to remain enabled')
-    if before_import['free_threaded_build'] and before_import['gil_enabled']:
-        raise RuntimeError('Free-threaded parallel measurement requires the GIL disabled before import')
     native = load_native(args.package)
     after_import = gil_state()
     if after_import['free_threaded_build'] and after_import['gil_enabled']:
