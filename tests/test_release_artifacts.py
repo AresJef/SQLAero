@@ -281,23 +281,24 @@ def test_provider_gap_cannot_relax_a_gil_runtime_or_baseline_requirement(tmp_pat
         release_artifacts.test_totals(report, 'macos-arm64', capabilities)
 
 
-def test_joint_provider_observation_gap_is_limited_to_its_three_real_cases(tmp_path: Path) -> None:
+def test_joint_provider_observation_gap_is_limited_to_its_five_real_cases(tmp_path: Path) -> None:
     from xml.etree import ElementTree
     report = tmp_path / 'tests.xml'
     write_skips(report, PARALLEL_NAMES, 'tests.test_benchmark_parallel', PARALLEL_REASON)
     tree = ElementTree.parse(report)
     root = tree.getroot()
-    for mode in ('success', 'early-schema-failure', 'repeat-consumption'):
+    for mode in ('success', 'early-schema-failure', 'repeat-consumption',
+                 'cached-dictionary-success', 'cached-dictionary-encoding-failure'):
         case = ElementTree.SubElement(root, 'testcase', classname='tests.test_polars_input',
             name=f'test_c_array_consumption_owns_both_releases_on_every_exit[{mode}]')
         ElementTree.SubElement(case, 'skipped', message='C Array release observation needs both optional providers')
-    root.set('tests', '23')
-    root.set('skipped', '23')
+    root.set('tests', '25')
+    root.set('skipped', '25')
     tree.write(report)
     capabilities = tmp_path / 'providers.json'
     capabilities.write_text(json.dumps({'platform': 'windows-arm64', 'free_threaded': False,
         'unavailable': {'pyarrow': 'NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64'}}))
-    assert release_artifacts.test_totals(report, 'windows-arm64', capabilities)['skipped'] == 23
+    assert release_artifacts.test_totals(report, 'windows-arm64', capabilities)['skipped'] == 25
     root.findall('testcase')[-1].set('name', 'test_unrelated_polars_behavior')
     tree.write(report)
     with pytest.raises(AssertionError):

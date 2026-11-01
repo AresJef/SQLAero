@@ -1,7 +1,6 @@
 //! Exact temporal tick decomposition without Python objects or floating point.
 
 use super::{scalar::ScalarError, writer};
-use std::fmt::{self, Write};
 
 /// Original source unit; calendar months and years remain distinct from days.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -59,9 +58,38 @@ impl Stamp {
         }
     }
 
-    fn add(&mut self, args: fmt::Arguments<'_>) -> Result<(), ScalarError> {
-        self.write_fmt(args)
-            .map_err(|_| ScalarError::Range("temporal text exceeds its native formatting bound"))
+    fn append(&mut self, text: &[u8]) -> Result<(), ScalarError> {
+        let end = self
+            .length
+            .checked_add(text.len())
+            .ok_or_else(stamp_bound)?;
+        let target = self
+            .bytes
+            .get_mut(self.length..end)
+            .ok_or_else(stamp_bound)?;
+        target.copy_from_slice(text);
+        self.length = end;
+        Ok(())
+    }
+
+    /// Write ASCII digits directly; padding never allocates or uses fmt.
+    fn padded<T: itoa::Integer>(&mut self, value: T, minimum: usize) -> Result<(), ScalarError> {
+        let mut buffer = itoa::Buffer::new();
+        let text = buffer.format(value).as_bytes();
+        let zeroes = minimum.saturating_sub(text.len());
+        let end = self
+            .length
+            .checked_add(zeroes)
+            .and_then(|n| n.checked_add(text.len()))
+            .ok_or_else(stamp_bound)?;
+        let target = self
+            .bytes
+            .get_mut(self.length..end)
+            .ok_or_else(stamp_bound)?;
+        target[..zeroes].fill(b'0');
+        target[zeroes..].copy_from_slice(text);
+        self.length = end;
+        Ok(())
     }
 
     fn finish(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError> {
@@ -69,14 +97,8 @@ impl Stamp {
     }
 }
 
-impl Write for Stamp {
-    fn write_str(&mut self, value: &str) -> fmt::Result {
-        let end = self.length.checked_add(value.len()).ok_or(fmt::Error)?;
-        let target = self.bytes.get_mut(self.length..end).ok_or(fmt::Error)?;
-        target.copy_from_slice(value.as_bytes());
-        self.length = end;
-        Ok(())
-    }
+fn stamp_bound() -> ScalarError {
+    ScalarError::Range("temporal text exceeds its native formatting bound")
 }
 
 fn range() -> ScalarError {
@@ -141,11 +163,22 @@ fn civil(days: i128) -> Result<(i128, u8, u8), ScalarError> {
 
 fn date(stamp: &mut Stamp, year: i128, month: u8, day: u8) -> Result<(), ScalarError> {
     if year < 0 {
-        stamp.add(format_args!("-{:04}", year.unsigned_abs()))?;
-    } else {
-        stamp.add(format_args!("{year:04}"))?;
+        stamp.append(b"-")?;
     }
-    stamp.add(format_args!("-{month:02}-{day:02}"))
+    stamp.padded(year.unsigned_abs(), 4)?;
+    stamp.append(b"-")?;
+    stamp.padded(month, 2)?;
+    stamp.append(b"-")?;
+    stamp.padded(day, 2)
+}
+
+/// Callers supply a nonnegative, already decomposed second count.
+fn clock(stamp: &mut Stamp, second: u128) -> Result<(), ScalarError> {
+    stamp.padded(second / 3_600, 2)?;
+    stamp.append(b":")?;
+    stamp.padded((second / 60 % 60) as u8, 2)?;
+    stamp.append(b":")?;
+    stamp.padded((second % 60) as u8, 2)
 }
 
 fn fraction(stamp: &mut Stamp, mut value: u32, mut precision: usize) -> Result<(), ScalarError> {
@@ -156,7 +189,8 @@ fn fraction(stamp: &mut Stamp, mut value: u32, mut precision: usize) -> Result<(
         value /= 10;
         precision -= 1;
     }
-    stamp.add(format_args!(".{value:0precision$}"))
+    stamp.append(b".")?;
+    stamp.padded(value, precision)
 }
 
 /// Write an epoch date/time or elapsed duration, preserving necessary nanoseconds.
@@ -174,7 +208,7 @@ pub fn write(
 ) -> Result<(), ScalarError> {
     let value = scaled(ticks, multiplier)?;
     let mut stamp = Stamp::new();
-    stamp.add(format_args!("'"))?;
+    stamp.append(b"'")?;
     match kind {
         TimeKind::DateTime => {
             let (year, month, day, second, part, precision) = match unit {
@@ -211,12 +245,8 @@ pub fn write(
                 }
             };
             date(&mut stamp, year, month, day)?;
-            stamp.add(format_args!(
-                " {:02}:{:02}:{:02}",
-                second / 3_600,
-                second / 60 % 60,
-                second % 60,
-            ))?;
+            stamp.append(b" ")?;
+            clock(&mut stamp, second as u128)?;
             fraction(&mut stamp, part, precision)?;
         }
         TimeKind::Duration => {
@@ -228,18 +258,13 @@ pub fn write(
                 _ => seconds(absolute, unit)?,
             };
             if negative {
-                stamp.add(format_args!("-"))?;
+                stamp.append(b"-")?;
             }
-            stamp.add(format_args!(
-                "{:02}:{:02}:{:02}",
-                second / 3_600,
-                second / 60 % 60,
-                second % 60,
-            ))?;
+            clock(&mut stamp, second as u128)?;
             fraction(&mut stamp, part, precision)?;
         }
     }
-    stamp.add(format_args!("'"))?;
+    stamp.append(b"'")?;
     stamp.finish(output, limit)
 }
 
@@ -261,14 +286,10 @@ pub fn write_clock(
         ));
     }
     let mut stamp = Stamp::new();
-    stamp.add(format_args!(
-        "'{:02}:{:02}:{:02}",
-        second / 3_600,
-        second / 60 % 60,
-        second % 60
-    ))?;
+    stamp.append(b"'")?;
+    clock(&mut stamp, second as u128)?;
     fraction(&mut stamp, part, precision)?;
-    stamp.add(format_args!("'"))?;
+    stamp.append(b"'")?;
     stamp.finish(output, limit)
 }
 
@@ -279,9 +300,9 @@ pub fn write_clock(
 pub fn write_date(output: &mut Vec<u8>, days: i64, limit: usize) -> Result<(), ScalarError> {
     let (year, month, day) = civil(i128::from(days))?;
     let mut stamp = Stamp::new();
-    stamp.add(format_args!("'"))?;
+    stamp.append(b"'")?;
     date(&mut stamp, year, month, day)?;
-    stamp.add(format_args!("'"))?;
+    stamp.append(b"'")?;
     stamp.finish(output, limit)
 }
 
@@ -332,6 +353,35 @@ pub fn write_components(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wide_years_and_duration_hours_keep_exact_ascii_and_atomic_limits() {
+        assert_eq!(
+            value(i64::MAX, TimeUnit::Year, u64::MAX, TimeKind::DateTime),
+            "'170141183460469231704017187605319780275-01-01 00:00:00'"
+        );
+        assert_eq!(
+            value(-i64::MAX, TimeUnit::Year, u64::MAX, TimeKind::DateTime),
+            "'-170141183460469231704017187605319776335-01-01 00:00:00'"
+        );
+        assert_eq!(
+            value(i64::MAX, TimeUnit::Second, u64::MAX, TimeKind::Duration),
+            "'47261439850130342140004774334811049:31:45'"
+        );
+        let mut output = b"prefix".to_vec();
+        assert!(
+            write(
+                &mut output,
+                1,
+                TimeUnit::Nanosecond,
+                1,
+                TimeKind::DateTime,
+                30
+            )
+            .is_err()
+        );
+        assert_eq!(output, b"prefix");
+    }
 
     fn value(ticks: i64, unit: TimeUnit, multiplier: u64, kind: TimeKind) -> String {
         let mut out = Vec::new();

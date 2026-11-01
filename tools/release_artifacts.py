@@ -274,6 +274,8 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
                                  'test_c_array_consumption_owns_both_releases_on_every_exit[success]',
                                  'test_c_array_consumption_owns_both_releases_on_every_exit[early-schema-failure]',
                                  'test_c_array_consumption_owns_both_releases_on_every_exit[repeat-consumption]',
+                                 'test_c_array_consumption_owns_both_releases_on_every_exit[cached-dictionary-success]',
+                                 'test_c_array_consumption_owns_both_releases_on_every_exit[cached-dictionary-encoding-failure]',
                              }
                              and skipped.get('message') == 'C Array release observation needs both optional providers')
             baseline_skips += int(unix_socket or parallel)

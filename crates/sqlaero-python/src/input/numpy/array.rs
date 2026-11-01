@@ -3,7 +3,7 @@
 //! NumPy requires callers to keep shared storage stable. A private view is used
 //! only while preparing metadata. Each new native read reacquires the original
 //! source because even a retained view/export can be invalidated by setstate.
-//! Primitive values can reuse an already copied, bounded Rust-owned block;
+//! Fixed-width values can reuse an already copied, bounded Rust-owned block;
 //! such bytes no longer borrow mutable NumPy memory.
 //! Weak references guard normal resize, not arbitrary external NumPy/C writers.
 
@@ -19,12 +19,14 @@ use sqlaero_core::bind::{Context, scalar, writer};
 use sqlaero_core::protocol::framing::WireError;
 use sqlaero_core::transport::deadline::IoBudget;
 
-const PRIMITIVE_BLOCK: usize = 1024;
-const PRIMITIVE_MINIMUM: usize = 32;
+const RAW_BLOCK_ITEMS: usize = 1024;
+const RAW_BLOCK_BYTES: usize = 8192;
+const RAW_BLOCK_MINIMUM: usize = 32;
 
 /// A small logical run already read from NumPy. This is machine data, never
 /// SQL or Python values, and cannot be invalidated by a later Python callback.
-struct PrimitiveBlock {
+/// Only numeric, S and U storage participates; Object slots are never copied.
+struct RawBlock {
     start: usize,
     bytes: Vec<u8>,
 }
@@ -95,7 +97,7 @@ pub(crate) struct NumpySource<'py> {
     width: usize,
     swap: bool,
     temporal: Option<(TimeUnit, u64, TimeKind)>,
-    primitive: Option<PrimitiveBlock>,
+    raw: Option<RawBlock>,
 }
 
 impl<'py> NumpySource<'py> {
@@ -189,7 +191,7 @@ impl<'py> NumpySource<'py> {
             width,
             swap: !native_order,
             temporal,
-            primitive: None,
+            raw: None,
         })
     }
 
@@ -205,24 +207,24 @@ impl<'py> NumpySource<'py> {
             .then(|| row.checked_mul(columns)?.checked_add(column))
             .flatten();
         if let (Some(total), Some(index)) = (total, index)
-            && total >= PRIMITIVE_MINIMUM
+            && total >= RAW_BLOCK_MINIMUM
         {
-            if !self.primitive.as_ref().is_some_and(|block| {
+            if !self.raw.as_ref().is_some_and(|block| {
                 index >= block.start && index - block.start < block.bytes.len() / self.width
             }) {
-                self.read_primitive_block(index, total, columns, budget)?;
+                self.read_block(index, total, columns, budget)?;
             }
-            let copied = self.primitive.as_ref().and_then(|block| {
+            let copied = self.raw.as_ref().and_then(|block| {
                 let start = index.checked_sub(block.start)?.checked_mul(self.width)?;
                 block.bytes.get(start..start.checked_add(self.width)?)
             });
             if let Some(copied) = copied {
                 bytes[..self.width].copy_from_slice(copied);
             } else {
-                self.copy_cell_range(row, column, 0, &mut bytes[..self.width])?;
+                self.copy_source_range(row, column, 0, &mut bytes[..self.width])?;
             }
         } else {
-            self.copy_cell_range(row, column, 0, &mut bytes[..self.width])?;
+            self.copy_source_range(row, column, 0, &mut bytes[..self.width])?;
         }
         if self.swap {
             bytes[..self.width].reverse();
@@ -345,7 +347,7 @@ impl<'py> NumpySource<'py> {
 
     /// Copy only this bounded native fragment, releasing its export before
     /// writers, signal checks, Python calls, or recursive field processing.
-    fn copy_cell_range(
+    fn copy_source_range(
         &self,
         row: usize,
         column: usize,
@@ -396,10 +398,10 @@ impl<'py> NumpySource<'py> {
         Ok(())
     }
 
-    /// Copy a bounded machine-value run without executing any future value's
+    /// Copy a bounded raw-value run without executing any future value's
     /// conversion, encoding or Python hook. A future bad coordinate truncates
     /// the run: its error is reported only if that actual cell is requested.
-    fn read_primitive_block(
+    fn read_block(
         &mut self,
         start: usize,
         total: usize,
@@ -408,9 +410,13 @@ impl<'py> NumpySource<'py> {
     ) -> PyResult<()> {
         let py = self.owner.py();
         crate::input::check(py, budget)?;
-        let count = (total - start).min(PRIMITIVE_BLOCK);
+        // Both callers prove 0 < width <= RAW_BLOCK_BYTES. Primitive widths
+        // remain at most eight, retaining their existing 1024-item strategy.
+        let count = (total - start)
+            .min(RAW_BLOCK_ITEMS)
+            .min(RAW_BLOCK_BYTES / self.width);
         let length = count * self.width;
-        let mut block = self.primitive.take().unwrap_or(PrimitiveBlock {
+        let mut block = self.raw.take().unwrap_or(RawBlock {
             start,
             bytes: Vec::new(),
         });
@@ -463,13 +469,68 @@ impl<'py> NumpySource<'py> {
         // above, and copied never exceeds the reserved target length.
         unsafe { block.bytes.set_len(copied) };
         block.start = start;
-        self.primitive = Some(block);
+        self.raw = Some(block);
         Ok(())
+    }
+
+    /// Reuse a small S/U item's already owned bytes for padding and writing.
+    /// Object slots never enter this path. Larger and short inputs preserve
+    /// their existing bounded source-fragment reader without a new allocation.
+    fn copy_cell_range(
+        &mut self,
+        row: usize,
+        column: usize,
+        start: usize,
+        destination: &mut [u8],
+        budget: &IoBudget,
+    ) -> PyResult<()> {
+        let eligible = matches!(self.kind, ArrayKind::Bytes | ArrayKind::Unicode)
+            && (1..=RAW_BLOCK_BYTES).contains(&self.width)
+            && start
+                .checked_add(destination.len())
+                .is_some_and(|end| end <= self.width);
+        if eligible {
+            let (rows, columns) = match self.shape {
+                Shape::Vector { length } => (length, 1),
+                Shape::Table { rows, columns } => (rows, columns),
+                Shape::Record { .. } => (0, 0),
+            };
+            let total = rows.checked_mul(columns);
+            let index = (row < rows && column < columns)
+                .then(|| row.checked_mul(columns)?.checked_add(column))
+                .flatten();
+            if let (Some(total), Some(index)) = (total, index)
+                && total >= RAW_BLOCK_MINIMUM
+            {
+                if !self.raw.as_ref().is_some_and(|block| {
+                    index >= block.start && index - block.start < block.bytes.len() / self.width
+                }) {
+                    self.read_block(index, total, columns, budget)?;
+                }
+                let copied = self.raw.as_ref().and_then(|block| {
+                    let offset = index
+                        .checked_sub(block.start)?
+                        .checked_mul(self.width)?
+                        .checked_add(start)?;
+                    block
+                        .bytes
+                        .get(offset..offset.checked_add(destination.len())?)
+                });
+                if let Some(copied) = copied {
+                    destination.copy_from_slice(copied);
+                    return Ok(());
+                }
+            }
+        }
+        self.copy_source_range(row, column, start, destination)
     }
 
     fn element(&self, row: usize, column: usize) -> PyResult<Bound<'py, PyAny>> {
         let py = self.owner.py();
-        self.copy_cell_range(row, column, 0, &mut [])?;
+        // A real Python getter needs current source validation even when an
+        // earlier S/U snapshot exists. In particular, Unicode's exceptional
+        // scalar fallback must not inherit a cached empty-fragment shortcut.
+        self.copy_source_range(row, column, 0, &mut [])?;
         let row = crate::input::python_index(py, row)?;
         match self.shape {
             Shape::Vector { .. } => self.owner.get_item(row),
@@ -487,7 +548,7 @@ impl<'py> NumpySource<'py> {
 
     /// NumPy removes only terminal all-zero storage padding, preserving NULs
     /// inside the logical element. Unicode padding is counted in UCS4 units.
-    fn content_width(&self, row: usize, column: usize, budget: &IoBudget) -> PyResult<usize> {
+    fn content_width(&mut self, row: usize, column: usize, budget: &IoBudget) -> PyResult<usize> {
         let py = self.owner.py();
         let mut end = self.width;
         let mut chunk = [0u8; 4096];
@@ -495,7 +556,7 @@ impl<'py> NumpySource<'py> {
             crate::input::check(py, budget)?;
             let start = end.saturating_sub(chunk.len());
             let length = end - start;
-            self.copy_cell_range(row, column, start, &mut chunk[..length])?;
+            self.copy_cell_range(row, column, start, &mut chunk[..length], budget)?;
             if let Some(last) = chunk[..length].iter().rposition(|byte| *byte != 0) {
                 let bytes = start + last + 1;
                 return Ok(if matches!(self.kind, ArrayKind::Unicode) {
@@ -510,7 +571,7 @@ impl<'py> NumpySource<'py> {
     }
 
     fn write_bytes(
-        &self,
+        &mut self,
         row: usize,
         column: usize,
         output: &mut Vec<u8>,
@@ -526,7 +587,7 @@ impl<'py> NumpySource<'py> {
         while start < length {
             crate::input::check(py, budget)?;
             let take = (length - start).min(chunk.len());
-            self.copy_cell_range(row, column, start, &mut chunk[..take])?;
+            self.copy_cell_range(row, column, start, &mut chunk[..take], budget)?;
             writer::binary_fragment(output, &chunk[..take], context.limit)
                 .map_err(|error| errors::wire(py, error))?;
             start += take;
@@ -535,7 +596,7 @@ impl<'py> NumpySource<'py> {
     }
 
     fn write_unicode(
-        &self,
+        &mut self,
         row: usize,
         column: usize,
         output: &mut Vec<u8>,
@@ -566,7 +627,7 @@ impl<'py> NumpySource<'py> {
         while start < length {
             crate::input::check(py, budget)?;
             let take = (length - start).min(chunk.len());
-            self.copy_cell_range(row, column, start, &mut chunk[..take])?;
+            self.copy_cell_range(row, column, start, &mut chunk[..take], budget)?;
             // A UCS4 point requires at most four UTF-8 bytes; this one bounded
             // reservation makes the following pushes allocation-free.
             text.try_reserve(take)

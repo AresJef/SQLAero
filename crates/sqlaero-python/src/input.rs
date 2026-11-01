@@ -69,6 +69,7 @@ pub(crate) struct ScalarTypes {
     struct_time: Py<PyType>,
     numpy: std::sync::OnceLock<numpy::NumpyTypes>,
     pandas: std::sync::OnceLock<pandas::PandasTypes>,
+    polars: std::sync::OnceLock<polars::PolarsTypes>,
 }
 
 impl ScalarTypes {
@@ -183,6 +184,7 @@ impl ScalarTypes {
                 .unbind(),
             numpy: std::sync::OnceLock::new(),
             pandas: std::sync::OnceLock::new(),
+            polars: std::sync::OnceLock::new(),
         })
     }
 
@@ -374,6 +376,24 @@ impl ScalarTypes {
         let candidate = pandas::PandasTypes::new(py)?;
         let _ = self.pandas.set(candidate);
         Ok(self.pandas.get())
+    }
+
+    /// Retain complete provider identities without caching absence or holding
+    /// a publish lock during Python preparation and losing-candidate drops.
+    pub(crate) fn polars_types(
+        &self,
+        py: Python<'_>,
+        budget: &IoBudget,
+    ) -> PyResult<Option<&polars::PolarsTypes>> {
+        if let Some(types) = self.polars.get() {
+            return Ok(Some(types));
+        }
+        check(py, budget)?;
+        let Some(candidate) = polars::PolarsTypes::loaded(py)? else {
+            return Ok(None);
+        };
+        let _ = self.polars.set(candidate);
+        Ok(self.polars.get())
     }
 
     fn write_pandas(

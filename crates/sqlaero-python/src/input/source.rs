@@ -41,7 +41,9 @@ pub(crate) fn prepare<'py>(
             return Ok(Some(super::boxed(value.py(), source)?));
         }
     }
-    if let Some(source) = super::polars::prepare(value, budget)? {
+    if let Some(polars) = types.polars_types(value.py(), budget)?
+        && let Some(source) = polars.prepare(value, budget)?
+    {
         return Ok(Some(super::boxed(value.py(), source)?));
     }
     if let Some(source) = super::arrow::prepare(value, budget)? {

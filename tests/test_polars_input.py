@@ -465,3 +465,165 @@ def test_polars_native_path_does_not_need_pyarrow_python_package() -> None:
         text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+@pytest.mark.parametrize("stage", ["entry", "dtype"])
+def test_polars_cold_type_failure_preserves_original_error_and_can_retry(stage: str) -> None:
+    script = r"""
+import polars as pl
+from sqlaero import _sqlaero
+value=pl.Series([7],dtype=pl.Int64)
+encoder=_sqlaero._prepare_encoder()
+stage=STAGE
+name='Series' if stage=='entry' else 'Int64'
+saved=getattr(pl,name)
+original_getattr=getattr(pl,'__getattr__',None)
+marker=RuntimeError('original Polars '+stage+' preparation failure')
+reads=[]
+def missing(attribute):
+    if attribute==name:
+        reads.append(attribute)
+        raise marker
+    if original_getattr is not None:
+        return original_getattr(attribute)
+    raise AttributeError(attribute)
+delattr(pl,name)
+pl.__getattr__=missing
+try:
+    if stage=='dtype':
+        class Unrelated: pass
+        try:
+            encoder.encode(Unrelated())
+        except TypeError:
+            pass
+        else:
+            raise AssertionError('unrelated source must remain unsupported')
+        assert reads==[], 'unrelated input must not prepare Polars dtype identities'
+        original_clone=pl.Series.clone
+        clone_error=ValueError('clone remains before dtype preparation')
+        def broken_clone(_value):
+            raise clone_error
+        pl.Series.clone=broken_clone
+        try:
+            try:
+                encoder.encode(value)
+            except ValueError as error:
+                assert error is clone_error
+            else:
+                raise AssertionError('actual clone failure must be preserved')
+            assert reads==[]
+        finally:
+            pl.Series.clone=original_clone
+    try:
+        encoder.encode(value)
+    except RuntimeError as error:
+        assert error is marker
+    else:
+        raise AssertionError('actual preparation failure must be preserved')
+    assert reads==[name]
+finally:
+    setattr(pl,name,saved)
+    if original_getattr is None:
+        delattr(pl,'__getattr__')
+    else:
+        pl.__getattr__=original_getattr
+assert encoder.encode(value).to_bytes()==b'(7)'
+""".replace("STAGE", repr(stage))
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("missing_module", [False, True], ids=["none", "absent"])
+def test_polars_missing_provider_is_not_imported_or_negatively_cached(missing_module: bool) -> None:
+    script = r"""
+import sys
+import polars as pl
+from sqlaero import _sqlaero
+value=pl.Series([7],dtype=pl.Int64)
+encoder=_sqlaero._prepare_encoder()
+module=sys.modules.pop('polars')
+if not MISSING:
+    sys.modules['polars']=None
+try:
+    try:
+        encoder.encode(value)
+    except TypeError:
+        pass
+    else:
+        raise AssertionError('an unavailable provider must not be imported')
+    assert sys.modules.get('polars') is None
+finally:
+    sys.modules['polars']=module
+assert encoder.encode(value).to_bytes()==b'(7)'
+""".replace("MISSING", str(missing_module))
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_polars_complete_dtype_candidates_publish_without_holding_python_locks() -> None:
+    script = r"""
+from concurrent.futures import ThreadPoolExecutor
+import threading
+import polars as pl
+from sqlaero import _sqlaero
+value=pl.Series([7],dtype=pl.Int64)
+encoder=_sqlaero._prepare_encoder()
+# UInt16 belongs to the prepared type table, but this Int64 input's required
+# dynamic Polars dtype getter does not query it.
+saved=pl.UInt16
+original_getattr=getattr(pl,'__getattr__',None)
+barrier=threading.Barrier(4,timeout=10)
+reads=[]
+def slow_dtype(name):
+    if name=='UInt16':
+        reads.append(1)
+        barrier.wait()
+        return saved
+    if original_getattr is not None:
+        return original_getattr(name)
+    raise AttributeError(name)
+del pl.UInt16
+pl.__getattr__=slow_dtype
+try:
+    with ThreadPoolExecutor(max_workers=4) as workers:
+        result=list(workers.map(lambda _:encoder.encode(value).to_bytes(),range(4)))
+    assert result==[b'(7)']*4 and reads==[1]*4, (result, reads)
+    assert encoder.encode(value).to_bytes()==b'(7)'
+    assert reads==[1]*4, 'positive cache must not rebuild dtype identities'
+finally:
+    pl.UInt16=saved
+    if original_getattr is None:
+        delattr(pl,'__getattr__')
+    else:
+        pl.__getattr__=original_getattr
+"""
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30, check=False)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_polars_positive_type_cache_keeps_clone_method_lookup_dynamic(monkeypatch: pytest.MonkeyPatch) -> None:
+    value = pl.Series([7], dtype=pl.Int64)
+    encoder = _sqlaero._prepare_encoder()
+    assert encoder.encode(value).to_bytes() == b"(7)"
+    original = ValueError("current public clone must still run")
+
+    def clone(_value: object) -> object:
+        raise original
+
+    monkeypatch.setattr(pl.Series, "clone", clone)
+    with pytest.raises(ValueError) as caught:
+        encoder.encode(value)
+    assert caught.value is original
+
+
+def test_polars_positive_type_cache_does_not_cache_dtype_base_type_results(monkeypatch: pytest.MonkeyPatch) -> None:
+    value = pl.Series([7], dtype=pl.Int64)
+    encoder = _sqlaero._prepare_encoder()
+    assert encoder.encode(value).to_bytes() == b"(7)"
+
+    def changed_base(_dtype: type[object]) -> object:
+        return pl.Int128
+
+    monkeypatch.setattr(pl.Int64, "base_type", classmethod(changed_base))
+    with pytest.raises(TypeError, match="unsupported Polars"):
+        encoder.encode(value)

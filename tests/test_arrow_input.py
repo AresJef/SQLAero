@@ -163,7 +163,7 @@ def test_arrow_repeated_dictionary_strings_keep_actual_encoding_and_null_labels(
 
 
 def test_arrow_repeated_dictionary_labels_are_independent_across_columns_and_chunks() -> None:
-    chunks = []
+    chunks: list[Any] = []
     for labels in (["a'", "b\\"], ["b\\", "a'"]):
         chunks.append(pa.DictionaryArray.from_arrays(pa.array([0, 0, 1, None, 1] * 8), pa.array(labels)))
     left = pa.chunked_array(chunks)

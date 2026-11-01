@@ -753,3 +753,76 @@ def test_numpy_primitive_runs_keep_the_arrow_owners_physical_bounds() -> None:
     with pytest.raises(BufferError, match="physical allocation") as caught:
         _sqlaero._bind_sql("SELECT %s", invalid, many=True)
     assert "args[1200]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
+@pytest.mark.parametrize(("dtype", "shape", "layout"), [
+    ("S16", (33, 1), "native"),
+    ("S16", (25, 41), "reverse"),
+    ("U16", (27, 19), "reverse"),
+    (">U16", (25, 41), "transpose"),
+])
+def test_numpy_fixed_width_owned_runs_keep_padding_nul_and_logical_layout(
+    dtype: str, shape: tuple[int, int], layout: str,
+) -> None:
+    binary = np.dtype(dtype).kind == "S"
+    pattern = [b"", b"a", b"a\x00b", b"'\\"] if binary else ["", "中文", "a\x00b", "'\\🙂"]
+    value = np.resize(np.array(pattern, dtype=dtype), shape)
+    if layout == "reverse":
+        value = value[::-1, ::-1]
+    elif layout == "transpose":
+        value = value.T
+    expected = [
+        b"\x03SELECT " + b",".join(
+            _sqlaero._encode_scalar(bytes(cell) if binary else str(cell)) for cell in row
+        ) for row in value
+    ]
+    sql = "SELECT " + ",".join(["%s"] * value.shape[1])
+    assert _sqlaero._bind_sql(sql, value) == expected
+
+
+@pytest.mark.parametrize("dtype", ["S8192", "S8193", "U2048", "U2049"])
+def test_numpy_fixed_width_runs_and_original_large_fragments_agree_at_byte_cap(dtype: str) -> None:
+    binary = np.dtype(dtype).kind == "S"
+    count = np.dtype(dtype).itemsize if binary else np.dtype(dtype).itemsize // 4
+    content = b"a" * (count - 1) + b"b" if binary else "中" * (count - 1) + "x"
+    value = np.full(33, content, dtype=dtype)
+    expected = b"\x03SELECT " + _sqlaero._encode_scalar(content)
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [expected] * 33
+
+
+@pytest.mark.parametrize("dtype", ["S16", "U16"])
+def test_numpy_fixed_width_future_bad_coordinate_is_reported_only_at_that_row(dtype: str) -> None:
+    root = np.full(20, "a", dtype=dtype)
+    invalid = np.lib.stride_tricks.as_strided(root, shape=(64,), strides=(root.itemsize,))
+    with pytest.raises(BufferError, match="physical allocation") as caught:
+        _sqlaero._bind_sql("SELECT %s", invalid, many=True)
+    assert "args[20]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
+def test_numpy_cached_unicode_surrogate_keeps_the_original_exception_and_late_position() -> None:
+    value = np.full(64, "ok", dtype="U2")
+    value[37] = "\ud800"
+    with pytest.raises(UnicodeEncodeError) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert caught.value.object == "\ud800"
+    assert (caught.value.start, caught.value.end) == (0, 1)
+    assert "args[37]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
+@pytest.mark.parametrize(("no_backslash", "literal"), [
+    (False, b"'a\\'\\\\b'"),
+    (True, b"'a''\\b'"),
+])
+def test_numpy_cached_unicode_uses_the_actual_backslash_mode(no_backslash: bool, literal: bytes) -> None:
+    value = np.full(64, "a'\\b", dtype="U16")
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, no_backslash=no_backslash) == [b"\x03SELECT " + literal] * 64
+
+
+def test_numpy_cached_unicode_connection_codec_error_stays_at_the_referenced_cell() -> None:
+    value = np.full(64, "ascii", dtype="U16")
+    value[37] = "中"
+    with pytest.raises(UnicodeEncodeError) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True, charset="latin1")
+    assert caught.value.object == "中"
+    assert (caught.value.start, caught.value.end) == (0, 1)
+    assert "args[37]" in "\n".join(getattr(caught.value, "__notes__", ()))
