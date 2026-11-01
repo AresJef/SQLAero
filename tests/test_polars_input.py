@@ -448,6 +448,52 @@ def test_polars_object_values_are_never_exported_as_pointer_binary() -> None:
     ]
 
 
+@pytest.mark.parametrize("error_type", [None, MemoryError, KeyboardInterrupt], ids=["success", "memory", "interrupt"])
+def test_polars_object_item_lookup_stays_dynamic_and_preserves_original_errors(
+    monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException] | None
+) -> None:
+    events: list[tuple[str, int]] = []
+    original = error_type("original Polars Object item error") if error_type is not None else None
+
+    class Label(str):
+        def __str__(self) -> str:
+            index = int(str.__str__(self))
+            events.append(("convert", index))
+            return f"v{index}"
+
+    value = pl.Series("objects", [Label("0"), Label("1"), Label("2")], dtype=pl.Object)
+    real_item = cast(Callable[..., Any], pl.Series.item)
+
+    def later(array: Any, index: int) -> Any:
+        assert type(index) is int
+        events.append(("later", index))
+        if index == 1 and original is not None:
+            raise original
+        return real_item(array, index)
+
+    def first(array: Any, index: int) -> Any:
+        assert type(index) is int
+        events.append(("first", index))
+        monkeypatch.setattr(pl.Series, "item", later)
+        return real_item(array, index)
+
+    events.clear()
+    monkeypatch.setattr(pl.Series, "item", first)
+    if original is not None:
+        with pytest.raises(type(original)) as caught:
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
+        assert caught.value is original
+        assert "args[1]" in "\n".join(getattr(caught.value, "__notes__", []))
+        assert events == [("first", 0), ("convert", 0), ("later", 1)]
+    else:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [
+            b"\x03SELECT 'v0'", b"\x03SELECT 'v1'", b"\x03SELECT 'v2'"
+        ]
+        assert events == [
+            ("first", 0), ("convert", 0), ("later", 1), ("convert", 1), ("later", 2), ("convert", 2)
+        ]
+
+
 def test_polars_object_rejects_excluded_types_through_common_escape() -> None:
     with pytest.raises(TypeError):
         _sqlaero._encode_value(pl.Series([bytearray(b"x")], dtype=pl.Object))
