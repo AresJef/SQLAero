@@ -818,6 +818,17 @@ def test_numpy_owned_unicode_cell_keeps_padding_endian_and_fragment_boundaries(
     assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [expected] * 33
 
 
+@pytest.mark.parametrize("dtype", ["U2048", ">U2048"])
+def test_numpy_owned_unicode_scratch_keeps_each_cell_when_lengths_grow_and_shrink(dtype: str) -> None:
+    pattern = ["", "x" * 1500, "中", "", "a\x00b", "🙂" * 1500, "'\\"]
+    value = np.resize(np.array(pattern, dtype=dtype), (37, 4))
+    expected = [
+        b"\x03SELECT " + b",".join(_sqlaero._encode_scalar(str(cell)) for cell in row)
+        for row in value
+    ]
+    assert _sqlaero._bind_sql("SELECT %s,%s,%s,%s", value) == expected
+
+
 def test_numpy_owned_swapped_unicode_cell_keeps_the_canonical_surrogate_error() -> None:
     value = np.full(64, "ok", dtype=">U16")
     value[37] = "\ud800"

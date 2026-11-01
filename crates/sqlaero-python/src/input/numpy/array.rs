@@ -31,6 +31,11 @@ struct RawBlock {
     bytes: Vec<u8>,
 }
 
+/// Keep reusable Unicode capacity behind a small, lazily allocated handle.
+struct UnicodeScratch {
+    text: String,
+}
+
 /// Only the copying window owns these fresh exports. Metadata is copied into
 /// native coordinates before any source address is formed; no Python call,
 /// allocation or checkpoint occurs while reading their bytes.
@@ -98,6 +103,8 @@ pub(crate) struct NumpySource<'py> {
     swap: bool,
     temporal: Option<(TimeUnit, u64, TimeKind)>,
     raw: Option<RawBlock>,
+    // A single small handle; only eligible Unicode writers allocate storage.
+    utf8: Option<Box<UnicodeScratch>>,
 }
 
 impl<'py> NumpySource<'py> {
@@ -192,6 +199,7 @@ impl<'py> NumpySource<'py> {
             swap: !native_order,
             temporal,
             raw: None,
+            utf8: None,
         })
     }
 
@@ -636,23 +644,39 @@ impl<'py> NumpySource<'py> {
     ) -> PyResult<()> {
         let py = self.owner.py();
         let swap = self.swap;
+        let mut scratch = self.utf8.take();
         if let Some(cell) = self.owned_cell(row, column, budget)? {
-            let text =
-                Self::owned_unicode_text(py, cell, swap, output.len(), context.limit, budget)?;
-            // The helper returns owned UTF-8, so the cell borrow has ended
+            let valid = Self::owned_unicode_text(
+                py,
+                cell,
+                swap,
+                output.len(),
+                context.limit,
+                budget,
+                &mut scratch,
+            )?;
+            // The helper only retains owned UTF-8, so the cell borrow has ended
             // before either the codec or the exceptional real getter runs.
-            if let Some(text) = text {
-                return crate::input::text_utf8(py, &text, output, context, Some(budget));
+            let result = if valid {
+                let text = scratch.as_ref().map_or("", |scratch| scratch.text.as_str());
+                crate::input::text_utf8(py, text, output, context, Some(budget))
+            } else {
+                let source = self.element(row, column)?;
+                crate::input::text(
+                    source.cast::<PyString>()?,
+                    output,
+                    context,
+                    true,
+                    Some(budget),
+                )
+            };
+            if let Some(scratch) = scratch.as_deref_mut() {
+                scratch.text.clear();
             }
-            let source = self.element(row, column)?;
-            return crate::input::text(
-                source.cast::<PyString>()?,
-                output,
-                context,
-                true,
-                Some(budget),
-            );
+            self.utf8 = scratch;
+            return result;
         }
+        self.utf8 = scratch;
         let length = self.content_width(row, column, budget)?;
         // Every logical non-padding code point needs at least one output byte
         // for the supported client codecs. Reject this known minimum before
@@ -708,7 +732,7 @@ impl<'py> NumpySource<'py> {
     }
 
     /// Decode an already owned UCS4 cell without intermediate fragment copies.
-    /// None requests the original canonical scalar's exceptional conversion.
+    /// False requests the original canonical scalar's exceptional conversion.
     fn owned_unicode_text(
         py: Python<'_>,
         cell: &[u8],
@@ -716,7 +740,8 @@ impl<'py> NumpySource<'py> {
         output_length: usize,
         limit: usize,
         budget: &IoBudget,
-    ) -> PyResult<Option<String>> {
+        scratch: &mut Option<Box<UnicodeScratch>>,
+    ) -> PyResult<bool> {
         let mut length = 0;
         let mut end = cell.len();
         while end > 0 {
@@ -742,24 +767,48 @@ impl<'py> NumpySource<'py> {
                 },
             ));
         }
-        let mut text = String::new();
-        for fragment in cell[..length].chunks(4096) {
-            crate::input::check(py, budget)?;
-            text.try_reserve(fragment.len())
-                .map_err(|_| errors::memory_error(py))?;
-            for &bytes in fragment.as_chunks::<4>().0 {
-                let point = if swap {
-                    u32::from_ne_bytes(bytes).swap_bytes()
-                } else {
-                    u32::from_ne_bytes(bytes)
-                };
-                let Some(character) = char::from_u32(point) else {
-                    return Ok(None);
-                };
-                text.push(character);
+        if length == 0 {
+            if let Some(scratch) = scratch.as_deref_mut() {
+                scratch.text.clear();
+            }
+            return Ok(true);
+        }
+        // Preserve the first decode checkpoint before either allocation.
+        crate::input::check(py, budget)?;
+        if scratch.is_none() {
+            *scratch = Some(crate::input::boxed(
+                py,
+                UnicodeScratch {
+                    text: String::new(),
+                },
+            )?);
+        }
+        if let Some(scratch) = scratch.as_deref_mut() {
+            let text = &mut scratch.text;
+            text.clear();
+            for (index, fragment) in cell[..length].chunks(4096).enumerate() {
+                if index != 0 {
+                    crate::input::check(py, budget)?;
+                }
+                // Exact growth avoids amortized doubling past the original
+                // 8KiB cell cap; UTF-8 length cannot exceed these UCS4 bytes.
+                text.try_reserve_exact(fragment.len())
+                    .map_err(|_| errors::memory_error(py))?;
+                for &bytes in fragment.as_chunks::<4>().0 {
+                    let point = if swap {
+                        u32::from_ne_bytes(bytes).swap_bytes()
+                    } else {
+                        u32::from_ne_bytes(bytes)
+                    };
+                    let Some(character) = char::from_u32(point) else {
+                        text.clear();
+                        return Ok(false);
+                    };
+                    text.push(character);
+                }
             }
         }
-        Ok(Some(text))
+        Ok(true)
     }
 }
 

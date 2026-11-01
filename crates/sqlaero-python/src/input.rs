@@ -538,7 +538,14 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
         {
             return Err(error);
         }
-        return scalar::integer(output, compact, limit).map_err(|e| errors::wire(py, e));
+        // Reuse the native-width formatting already used by small temporal
+        // fields; the checked conversion preserves every signed boundary.
+        return if let Ok(narrow) = i32::try_from(compact) {
+            scalar::integer(output, narrow, limit)
+        } else {
+            scalar::integer(output, compact, limit)
+        }
+        .map_err(|e| errors::wire(py, e));
     }
     integer_wide(value, output, limit, overflow)
 }
