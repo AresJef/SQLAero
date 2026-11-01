@@ -4,7 +4,7 @@
 
 工作目录：`/Users/jef/.codex/worktrees/beta-native-integration/SQLAero`。
 
-当前最佳：**I37产品`890a542`；`e4207c1`仅增加独立时间边界测试。已装任务GIL／NoGIL包均为I37；I38拒绝并保留负面证据。最终验收未完成。**
+Current adopted best: **I40 product `8e90732`, native cp313 `41c8c227`, cp314t `e47cca20`. Effective local194/C16fixed11/F0fixed36 all double5P. Full final acceptance pending; I37 rollback and I38 negative evidence retained.**
 
 ## 1. 必须执行的核心 instruction
 
@@ -636,6 +636,8 @@ I40 singlebounded45-60min actualF64reader candidate follows completedI39diagnost
 T1080 scheduled13:01:15Z, recorded 2026-11-01T13:02:03.882933+00:00: used18h00m48s, remaining53h59m12s, actualCwork13h38m26s, added24h performance-onlyused05h38m26s; originalA/Bsavings21h37m38s,D10h/E4h preserved, Goalactualactive verified13:00:30Z. CurrentadoptedI37/890a542; e4207c1testonly and2289fb7minimalrunner/factorywork do not changenative. I40f64candidate1003GIL/899t/core67+newintegrationtests/fmtClippyPyright/MySQL40-32/366sameoutputs PASS;194mainall5P,ind192P+2PD-bindUcenters0.944/2.381%, n8/6fixedselected2 freshcontrols/128main/indresolution<=7min underway (mainnowboth5P0.197/1.547%, indepnearcompletion). TargetArrow/PLf64N1000~1.12/1.09x. DirectC16fixed11/F0fixed36mainindall5P actualnew856context; no inheritedoldI37R or claimedcausalrepair.
 
 Nextconcreteunit sealactualI40decision and source/wheel/hash; boundedread-onlynative-docfreezecheck before expensivefullperformance, avoid recompilingnativeforlatermisseddocstring. Averifiedoldall490identitiesinnew856unchanged andactualC16isoldcontractB/a0d6cff4; exact490not480, original24cycles, CPU250ms/nonCPU21s originalrules, trueMySQLroot/protocol retained. Planonefull490direct map80-95min plus20-30mincausalrecovery tofindglobaloldcosts before any further productroute, notnewtool/framework orordinaryCIchargedtoadded24h. Originalcp31222+6 separate, final366F0/sixABI/NoGIL1-2-4/48wheel+sdist96install/docs/rollback stillrequired. Stop theoreticalexpansion now, use fullmapfor prioritization. User safety/precision/maintainability prerequisites unchanged and no local failure stops project. NextT1110fixed13:31:15Z.
+
+I40 adopted product 8e9073263750dad00b67585c4cd88adb6bd96acb; all401production+8test committed/source hashes verified. Baseline14GIL/10t+PLNA; candidate1003GIL/899t/static/core67+2integration/MySQL40-32/all366F0outputs PASS. Reuse one private FloatReader<f32/f64> with exact std conversion and original owner/null/offset/bounds/checkpoint/limits; no unsafe/dependency/Pythoncache/extra percell branch or external type adaptation. Effective194 local main/ind all5P after fixedtwo PD128 recovery: intcost0.197/0.443%,mixed1.547/1.745%; originals kept. DirectC16fixed11 andF0fixed36 bothdouble5P. Arrowf64N1000~1.121/1.124x,PL1.092/1.089x. New856 runner1707a297, original850fingerprints unchanged, no oldtimes mixed. No currentR/U exception; oldI37costs not inherited or called causal repairs. Narrow native-doc review no requirednative/runtime/pyi changes; README history pending only. Next exact490 full map80-95min plus bounded20-30min recovery, then prioritize actualglobalcosts; all final518/366/6ABI/NoGIL/48+sdist96installs remain. Adoption-record first script encoding SyntaxError occurred before writes while product was committed; corrected with ASCII-only record and explicit exit-status gates.
 
 ### 11.2 30分钟自查与有限恢复
 
