@@ -291,6 +291,18 @@ pub fn decimal(data: &[u8]) -> Result<(), ContentError> {
     } else {
         data
     };
+    // Grammar validation still examines every byte. Necessary integer plus
+    // fractional places cannot exceed the number of digits, which cannot
+    // exceed this sign-stripped byte length. Small inputs need no zero
+    // accounting; long inputs retain the existing single-pass value policy.
+    if data.len() <= 65 {
+        decimal_text::<false>(data)
+    } else {
+        decimal_text::<true>(data)
+    }
+}
+
+fn decimal_text<const CHECK_PRECISION: bool>(data: &[u8]) -> Result<(), ContentError> {
     let mut point = false;
     let mut digits = 0usize;
     let mut integer_places = 0usize;
@@ -301,25 +313,30 @@ pub fn decimal(data: &[u8]) -> Result<(), ContentError> {
             point = true;
         } else if byte.is_ascii_digit() {
             digits += 1;
-            if point {
-                fraction += 1;
-                if *byte != b'0' {
-                    necessary_fraction = fraction;
+            if CHECK_PRECISION {
+                if point {
+                    fraction += 1;
+                    if *byte != b'0' {
+                        necessary_fraction = fraction;
+                    }
+                } else if integer_places != 0 || *byte != b'0' {
+                    integer_places += 1;
                 }
-            } else if integer_places != 0 || *byte != b'0' {
-                integer_places += 1;
             }
         } else {
             return Err(ContentError("invalid MySQL Decimal text"));
         }
     }
-    if digits == 0 || (point && fraction == 0) {
+    // The shared grammar permits at most one point, with a digit before it.
+    // A point without following digits is therefore exactly a final dot.
+    // Keep this before precision rejection, including oversized "99...9.".
+    if digits == 0 || data.last() == Some(&b'.') {
         return Err(ContentError("incomplete MySQL Decimal text"));
     }
     // Leading integer zeroes and trailing fractional zeroes carry formatting
     // or scale, not additional necessary precision. Keep the original text for
     // the output boundary; only its exact-value domain is validated here.
-    if integer_places.saturating_add(necessary_fraction) > 65 {
+    if CHECK_PRECISION && integer_places.saturating_add(necessary_fraction) > 65 {
         return Err(ContentError(
             "MySQL Decimal exceeds 65 necessary decimal places",
         ));
