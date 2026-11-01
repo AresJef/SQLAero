@@ -178,10 +178,19 @@ impl SourceTypes {
                     }
                 }
                 if eligible
-                    && let Some(source) =
+                    && let Some(levels) =
                         self.multi_column(value, &candidates, length, &api, budget)?
                 {
-                    let source = crate::input::boxed(py, source)?;
+                    let source = crate::input::boxed(
+                        py,
+                        Multi {
+                            owner: value.clone(),
+                            length,
+                            levels,
+                            numpy: api,
+                            numpy_extension: self.numpy_extension.bind(py).clone(),
+                        },
+                    )?;
                     crate::input::check(py, budget)?;
                     return Ok(Some(source));
                 } else {
@@ -244,11 +253,12 @@ impl SourceTypes {
         length: usize,
         api: &NumpyArrayApi,
         budget: &IoBudget,
-    ) -> PyResult<Option<Multi<'py>>> {
+    ) -> PyResult<Option<Vec<MultiLevel<'py>>>> {
         let py = owner.py();
         if levels.is_empty() {
             return Ok(None);
         }
+        let mut signed = SmallVec::<[Option<Bound<'py, PyAny>>; 8]>::new();
         for level in levels {
             crate::input::check(py, budget)?;
             if !level.get_type().is(self.index.bind(py)) {
@@ -266,6 +276,18 @@ impl SourceTypes {
             if !matches!(kind, "i" | "u" | "f" | "b" | "O") {
                 return Ok(None);
             }
+            signed.push(
+                if kind == "i"
+                    && matches!(
+                        errors::attribute(&dtype, c"itemsize")?.extract::<usize>()?,
+                        1 | 2 | 4 | 8
+                    )
+                {
+                    Some(storage)
+                } else {
+                    None
+                },
+            );
         }
         let codes = errors::attribute(owner, c"codes")?;
         if codes.len()? != levels.len() {
@@ -300,16 +322,14 @@ impl SourceTypes {
                 owner: levels[position].clone(),
                 length: levels[position].len()?,
                 codes: numpy_source(api, &code, budget, length)?,
+                prepare_signed: signed[position].take(),
+                signed: None,
             });
         }
         if prepared.len() != levels.len() {
             return Ok(None);
         }
-        Ok(Some(Multi {
-            owner: owner.clone(),
-            length,
-            levels: prepared,
-        }))
+        Ok(Some(prepared))
     }
 
     fn frame<'py>(
@@ -789,12 +809,93 @@ struct MultiLevel<'py> {
     owner: Bound<'py, PyAny>,
     length: usize,
     codes: NumpySource<'py>,
+    prepare_signed: Option<Bound<'py, PyAny>>,
+    signed: Option<Box<NumpySource<'py>>>,
+}
+
+impl<'py> MultiLevel<'py> {
+    fn value(
+        &mut self,
+        position: usize,
+        api: &NumpyArrayApi,
+        numpy_extension: &Bound<'py, PyType>,
+        budget: &IoBudget,
+    ) -> PyResult<OwnedLeaf<'py>> {
+        let py = self.owner.py();
+        // The caller has checked every code in this actual row. Preparing a
+        // signed label reader now cannot mask the original whole-row fallback
+        // for a missing, negative or out-of-range code.
+        if let Some(storage) = self.prepare_signed.take()
+            && storage.get_type().is(numpy_extension)
+        {
+            crate::input::check(py, budget)?;
+            let keywords = errors::dictionary(py)?;
+            keywords.set_item(pyo3::types::PyString::from_bytes(py, b"copy")?, false)?;
+            let converted = call_keywords(&storage, c"to_numpy", &keywords)?;
+            crate::input::check(py, budget)?;
+            if api.accepts(&converted) {
+                let dtype = errors::attribute(&converted, c"dtype")?;
+                if errors::attribute(&dtype, c"kind")?.extract::<&str>()? == "i"
+                    && matches!(
+                        errors::attribute(&dtype, c"itemsize")?.extract::<usize>()?,
+                        1 | 2 | 4 | 8
+                    )
+                {
+                    self.signed = Some(crate::input::boxed(
+                        py,
+                        numpy_source(api, &converted, budget, self.length)?,
+                    )?);
+                }
+            }
+        }
+        if let Some(source) = &mut self.signed {
+            return Ok(OwnedLeaf::Signed(source.signed_at(position, budget)?));
+        }
+        self.owner
+            .get_item(crate::input::python_index(py, position)?)
+            .map(OwnedLeaf::Python)
+    }
+}
+
+/// At most eight current-row leaves, all acquired before any tuple output or
+/// conversion. This is neither a recursive value tree nor a SQL/value cache.
+enum OwnedLeaf<'py> {
+    Signed(i64),
+    Python(Bound<'py, PyAny>),
+}
+
+impl OwnedLeaf<'_> {
+    fn write(
+        &self,
+        py: Python<'_>,
+        index: usize,
+        output: &mut Vec<u8>,
+        context: &Context,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        match self {
+            Self::Python(value) => visitor.python(value, output, Some(index)),
+            Self::Signed(value) => {
+                visitor.push_index(py, index)?;
+                let result = visitor.checkpoint(py, 1).and_then(|()| {
+                    scalar::integer(output, *value, context.limit)
+                        .map_err(|error| errors::wire(py, error))
+                });
+                if result.is_ok() {
+                    visitor.pop_index();
+                }
+                result
+            }
+        }
+    }
 }
 
 struct Multi<'py> {
     owner: Bound<'py, PyAny>,
     length: usize,
     levels: Vec<MultiLevel<'py>>,
+    numpy: NumpyArrayApi,
+    numpy_extension: Bound<'py, PyType>,
 }
 
 impl<'py> PreparedSource<'py> for Multi<'py> {
@@ -849,13 +950,9 @@ impl<'py> PreparedSource<'py> for Multi<'py> {
             };
             positions.push(position);
         }
-        let mut labels = SmallVec::<[Bound<'_, PyAny>; 8]>::new();
-        for (level, position) in self.levels.iter().zip(positions) {
-            labels.push(
-                level
-                    .owner
-                    .get_item(crate::input::python_index(py, position)?)?,
-            );
+        let mut labels = SmallVec::<[OwnedLeaf<'_>; 8]>::new();
+        for (level, position) in self.levels.iter_mut().zip(positions) {
+            labels.push(level.value(position, &self.numpy, &self.numpy_extension, budget)?);
         }
         // The original MultiIndex getter obtains every label before its tuple
         // reaches Visit. Keep that order, without constructing a Python tuple.
@@ -868,7 +965,7 @@ impl<'py> PreparedSource<'py> for Multi<'py> {
                     writer::append(output, b",", context.limit)
                         .map_err(|error| errors::wire(py, error))?;
                 }
-                visitor.python(label, output, Some(index))?;
+                label.write(py, index, output, context, visitor)?;
             }
             writer::append(output, b")", context.limit).map_err(|error| errors::wire(py, error))
         })();

@@ -107,6 +107,38 @@ def table_input(provider: str, rows: list[tuple[int, object]], *, objects: bool 
 
 @requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
+def test_multi_index_owned_signed_tuple_uses_public_cursor_and_current_context(label: str) -> None:
+    pd = pytest.importorskip("pandas")
+    numbers = [-9223372036854775808, 9223372036854775807]
+    text = ["first'\\value", "next'\\value"]
+    codes = [0, 1] * 18
+    source = pd.MultiIndex(
+        levels=[pd.Index(numbers, dtype="int64"), pd.Index(text, dtype=object)],
+        codes=[codes, codes],
+    )
+    expected = tuple((numbers[code], text[code]) for code in codes)
+    with live(label) as connection, connection.cursor() as cursor:
+        cursor.execute("CREATE TEMPORARY TABLE multi_leaf_probe (pos INT AUTO_INCREMENT PRIMARY KEY,id BIGINT,value VARCHAR(128))")
+        assert cursor.execute("INSERT INTO multi_leaf_probe(id,value) VALUES %s", source, many=True, itemize=False) == 36
+        assert cursor.row_count == 36
+        cursor.execute("SELECT id,value FROM multi_leaf_probe ORDER BY pos")
+        assert cursor.fetchall() == expected
+        cursor.execute("TRUNCATE TABLE multi_leaf_probe")
+        cursor.execute("DROP PROCEDURE IF EXISTS sqlaero_multi_change_context")
+        cursor.execute("CREATE PROCEDURE sqlaero_multi_change_context(IN input_id BIGINT,IN input_value VARCHAR(128)) "
+                       "BEGIN INSERT INTO multi_leaf_probe(id,value) VALUES(input_id,input_value); "
+                       "SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'; END")
+        try:
+            cursor.execute("SET SESSION sql_mode=''")
+            cursor.execute("CALL sqlaero_multi_change_context%s", source, many=True, itemize=False)
+            cursor.execute("SELECT id,value FROM multi_leaf_probe ORDER BY pos")
+            assert cursor.fetchall() == expected
+        finally:
+            cursor.execute("DROP PROCEDURE IF EXISTS sqlaero_multi_change_context")
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("provider", ["numpy", "pandas", "arrow", "polars", "pandas-category-python", "pandas-category-pyarrow"])
 def test_typed_table_rollover_preserves_every_actual_row(label: str, provider: str) -> None:
     count = 600 if provider == "pandas-category-python" else 100

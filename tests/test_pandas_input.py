@@ -208,6 +208,163 @@ def test_pandas_multi_index_gets_all_labels_before_converting_them(monkeypatch: 
     assert events == ["get:0", "get:1", "convert:a", "convert:b"] * 33
 
 
+@pytest.mark.parametrize(("dtype", "numbers"), [
+    ("int8", [-128, 127]),
+    ("int16", [-32768, 32767]),
+    ("int32", [-2147483648, 2147483647]),
+    ("int64", [-9223372036854775808, 9223372036854775807]),
+])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_pandas_multi_index_signed_widths_keep_random_codes_and_object_labels(dtype: str, numbers: list[int], reverse: bool) -> None:
+    first = [1, 0, 1, 1, 0, 0] * 6
+    second = [0, 1, 1, 0, 1, 0] * 6
+    value = pd.MultiIndex(
+        levels=[pd.Index(np.array(numbers, dtype=dtype)), pd.Index(["a", "b"], dtype=object)],
+        codes=[first, second],
+    )[1:35]
+    pairs = list(zip(first[1:35], second[1:35]))
+    if reverse:
+        value = value[::-1]
+        pairs.reverse()
+    expected = [
+        b"\x03SELECT (" + str(numbers[a]).encode() + b"," + [b"'a'", b"'b'"][b] + b")"
+        for a, b in pairs
+    ]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == expected
+
+
+@pytest.mark.parametrize(("many", "itemize"), [(False, False), (False, True), (True, False), (True, True)])
+def test_pandas_multi_index_signed_and_object_values_keep_all_binding_roles(many: bool, itemize: bool) -> None:
+    value = pd.MultiIndex(
+        levels=[pd.Index([-7, 9], dtype=np.int64), pd.Index(["a", "b"], dtype=object)],
+        codes=[[1, 0] * 17, [0, 1] * 17],
+    )
+    cells = [b"(9,'a')", b"(-7,'b')"] * 17
+    if many:
+        sql = "SELECT %s"
+        expected = [b"\x03SELECT " + cell for cell in cells]
+    elif itemize:
+        sql = "SELECT " + ",".join(["%s"] * len(cells))
+        expected = [b"\x03SELECT " + b",".join(cells)]
+    else:
+        sql = "SELECT %s"
+        expected = [b"\x03SELECT (" + b",".join(cells) + b")"]
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == expected
+
+
+def test_pandas_multi_index_signed_leaf_keeps_unsigned_and_float_values_exact() -> None:
+    value = pd.MultiIndex(
+        levels=[
+            pd.Index([-9223372036854775808, 9223372036854775807], dtype=np.int64),
+            pd.Index(np.array([0, 18446744073709551615], dtype=np.uint64)),
+            pd.Index(np.array([-0.0, 0.1], dtype=np.float64)),
+        ],
+        codes=[[0, 1] * 17, [1, 0] * 17, [0, 1] * 17],
+    )
+    rows = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    expected_signed = [b"-9223372036854775808", b"9223372036854775807"] * 17
+    expected_unsigned = [b"18446744073709551615", b"0"] * 17
+    expected_float = ["-0x0.0p+0", "0x1.999999999999ap-4"] * 17
+    for row, signed, unsigned, floating in zip(rows, expected_signed, expected_unsigned, expected_float):
+        first, second, third = row.removeprefix(b"\x03SELECT (").removesuffix(b")").split(b",")
+        assert (first, second) == (signed, unsigned)
+        assert float(third).hex() == floating
+
+
+def test_pandas_multi_index_signed_and_object_gets_every_label_before_conversion(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+    class Label(str):
+        def __str__(self) -> str:
+            text = str.__str__(self)
+            events.append("convert:" + text)
+            return text
+    value = pd.MultiIndex(
+        levels=[pd.Index([7], dtype=np.int64), pd.Index([Label("a")], dtype=object), pd.Index([Label("b")], dtype=object)],
+        codes=[[0] * 35, [0] * 35, [0] * 35],
+    )
+    targets = {id(value.levels[1]): "a", id(value.levels[2]): "b"}
+    getter = pd.Index.__getitem__
+    def observed(index: Any, key: Any) -> Any:
+        if id(index) in targets:
+            events.append("get:" + targets[id(index)])
+        return getter(index, key)
+    monkeypatch.setattr(pd.Index, "__getitem__", observed)
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT (7,'a','b')"] * 35
+    assert events == ["get:a", "get:b", "convert:a", "convert:b"] * 35
+
+
+@pytest.mark.parametrize("error_type", [MemoryError, KeyboardInterrupt])
+def test_pandas_multi_index_later_object_getter_error_precedes_tuple_output_limit(monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]) -> None:
+    value = pd.MultiIndex(
+        levels=[pd.Index([7], dtype=np.int64), pd.Index(["a"], dtype=object)],
+        codes=[[0] * 35, [0] * 35],
+    )
+    target = value.levels[1]
+    original = error_type("original later MultiIndex label getter")
+    getter = pd.Index.__getitem__
+    def observed(index: Any, key: Any) -> Any:
+        if index is target:
+            raise original
+        return getter(index, key)
+    monkeypatch.setattr(pd.Index, "__getitem__", observed)
+    # The SQL prefix fits, but even '(' would exceed this limit. The original
+    # later label getter still wins: all labels precede any tuple output.
+    with pytest.raises(error_type) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True, limit=len(b"\x03SELECT "))
+    assert caught.value is original
+
+
+def test_pandas_multi_index_signed_leaf_is_owned_before_later_object_getter(monkeypatch: pytest.MonkeyPatch) -> None:
+    value = pd.MultiIndex(
+        levels=[pd.Index([7], dtype=np.int64), pd.Index(["a"], dtype=object)],
+        codes=[[0] + [-1] * 34, [0] * 35],
+    )
+    target = value.levels[1]
+    numbers = value.levels[0].to_numpy(copy=False)
+    numbers.setflags(write=True)
+    getter = pd.Index.__getitem__
+    changed = False
+    def observed(index: Any, key: Any) -> Any:
+        nonlocal changed
+        if index is target and not changed:
+            changed = True
+            numbers[0] = 99
+        return getter(index, key)
+    monkeypatch.setattr(pd.Index, "__getitem__", observed)
+    rows = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert rows == [b"\x03SELECT (7,'a')"] + [b"\x03SELECT (NULL,'a')"] * 34
+    assert changed
+
+
+@pytest.mark.parametrize("code", [-1, -2, 3])
+def test_pandas_multi_index_whole_row_fallback_does_not_prepare_signed_labels(monkeypatch: pytest.MonkeyPatch, code: int) -> None:
+    value = pd.MultiIndex(
+        levels=[pd.Index([10, 20, 30], dtype=np.int64), pd.Index(["a"], dtype=object)],
+        codes=[[code] + [-1] * 34, [0] * 35], verify_integrity=False,
+    )
+    def unexpected(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("invalid/missing row must not prepare a signed label reader")
+    monkeypatch.setattr(pd.arrays.NumpyExtensionArray, "to_numpy", unexpected)
+    if code == 3:
+        with pytest.raises(IndexError):
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
+    else:
+        first = b"NULL" if code == -1 else b"20"
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == (
+            [b"\x03SELECT (" + first + b",'a')"] + [b"\x03SELECT (NULL,'a')"] * 34
+        )
+
+
+def test_pandas_multi_index_native_signed_limit_error_keeps_the_child_position() -> None:
+    value = pd.MultiIndex(
+        levels=[pd.Index([-9223372036854775808], dtype=np.int64), pd.Index(["a"], dtype=object)],
+        codes=[[0] * 35, [0] * 35],
+    )
+    with pytest.raises(_sqlaero.OperationalError) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True, limit=len(b"\x03SELECT (123"))
+    assert "args[0][0]" in "\n".join(getattr(caught.value, "__notes__", []))
+
+
 @pytest.mark.parametrize("wrappers", [62, 63])
 def test_pandas_multi_index_keeps_the_original_tuple_depth(wrappers: int) -> None:
     value: object = pd.MultiIndex(
@@ -366,6 +523,10 @@ sources.append((
 sources.append((
     pd.Categorical.from_codes([0,-1,1]*172, categories=pd.Index(pd.array(['a','b'],dtype=pd.StringDtype(storage='python')))),
     [b"\x03SELECT 'a'",b'\x03SELECT NULL',b"\x03SELECT 'b'"]*172,
+))
+sources.append((
+    pd.MultiIndex(levels=[pd.Index([7,9],dtype='int64'),pd.Index(['a','b'],dtype=object)],codes=[[0,1]*18,[0,1]*18]),
+    [b"\x03SELECT (7,'a')",b"\x03SELECT (9,'b')"]*18,
 ))
 barrier = threading.Barrier(4)
 def run(index):

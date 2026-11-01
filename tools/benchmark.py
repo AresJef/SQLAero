@@ -360,7 +360,10 @@ def typed_cases() -> list[Case]:
                        'DatetimeIndex': utc.tz_localize(None), 'DatetimeIndex-utc': utc,
                        'TimedeltaIndex': pd.to_timedelta(index * 1001 - 500000001, unit='ns'),
                        'CategoricalIndex': pd.CategoricalIndex(arrays['Categorical']),
-                       'MultiIndex': pd.MultiIndex.from_arrays([index // 3, pd.Index(text, dtype=object)])}
+                       'MultiIndex': pd.MultiIndex.from_arrays([index // 3, pd.Index(text, dtype=object)]),
+                       'MultiIndex-object': pd.MultiIndex.from_arrays([pd.Index(index // 3, dtype=object), pd.Index(text, dtype=object)]),
+                       'MultiIndex-unsigned': pd.MultiIndex.from_arrays([pd.Index((index // 3).astype('u8')), pd.Index(text, dtype=object)]),
+                       'MultiIndex-float': pd.MultiIndex.from_arrays([pd.Index((index // 3).astype('f8') / 10), pd.Index(text, dtype=object)])}
             for name, value in indices.items():
                 add('pandas', f'{name}/N{n}', value)
 
