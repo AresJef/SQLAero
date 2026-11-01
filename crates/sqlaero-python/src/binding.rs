@@ -604,6 +604,9 @@ impl Visit<'_> {
         Ok(())
     }
 
+    // The sampled canonical traversal should not pay a second loop frame.
+    // Ownership, lazy getters and every check remain in this single body.
+    #[inline(always)]
     fn sequence(
         &mut self,
         sequence: &Sequence<'_>,
