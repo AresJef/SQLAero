@@ -457,6 +457,12 @@ I17于05:07Z附近局部采用：147个原24周期场景＋一个固定128周期
 
 同包核心writer3测试、严格Clippy、GIL937／t836功能、实际MySQL40／32（8缺PL）、F0新增360同输出通过；Python文件未变，复用I15 Pyright。新旧6次信号定向与一次严格警告检查亦通过，原NoGIL单次signal14警告仍是未证明消除的记录。C16直接nested itemize=False独轮CI下界0.952165略低于5%边0.952381、中心约慢4.58%，仍U不豁免；最终全部累计矩阵与同源48/96安装待D阶段。下一单元只集成B的Dictionary typed-key及最小真实快路测试，A已对安全／API／字节账独立只读交叉核对，无必修问题，不将静态审查当编译/运行。S22另记：README旧V23“多数更快”的历史概括需最终按真实版本/边界更新，不重开V23竞速或把旧计时当新成绩。
 
+I18未采用：Dictionary owned PrimitiveArray key reader实际Clippy/Pyright、GIL950/t849、MySQL40/t32与360F0同输出通过，但159项双轮中Arrow i64列中心约慢5.19%/4.94%、RecordBatch约慢4.71%/4.90%，2项双U／1项单U，未直接采用或豁免。13个新增实例及40行真实Context测试均先在I17实包通过，避免由新实现生成预期；A独立核对过源身份、NULL/坏key、字节账、FFI释放和公共API。全部I18源/包/数据保留。
+
+I19于05:28Z附近局部采用：一次第一性原理收敛，key reader只clone已有公共owned ScalarBuffer，保留严格source Arc、原NULL权威/offset/checked key/label边界及clear/checkpoint；不复制数据或增加unsafe。显式直依赖原已锁定arrow-buffer60.1.0/defaultfeaturesfalse，离线逐节点核对198个package版本/source/checksum及其他依赖完全未变，只增加本库直接edge；许可证原已完整列入notice。159项主／独各24真实周期、各7632完整组，适用5%全PASS、零可信FAIL/U，无新例外。C16与F0原固定见证同包直接核对分档，不换见证；原1%全数据保留local-decision.json。
+
+同包严格Clippy、GIL950/t849定向、实际MySQL40/t32（8缺PL单列，含同次40行Dictionary确认quotingContext变化）、F0新增360同输出均通过；Python不变复用I18 Pyright零错误/4原警告。相对I17直接双轮Arrow Dictionary列1.0625/1.0550倍、分类表1.0687/1.0700倍，Polars分类列1.047/1.050倍、表1.052/1.050倍；Arrow int64表约慢2.99%且双轮守线，成本明确保留。C16直接nested itemize=False中心约慢4.87%、双轮CI仍跨5%，未豁免；下一步用既有234项旧Escape/Bind广诊断更新当前实测慢点，随后按收益排序做共用路径恢复。最终完整性能和同源48/96安装仍待完成。
+
 ### 11.2 30分钟自查与有限恢复
 
 每T+30、T+60……有效分钟自查，阶段切换、重复拒绝、超时、余量动用可合并触发。每次用不超过约90秒说明：已获成果／证据；当前最佳身份；各池已用及余额；U／可信退步和真实阻碍；是否偏离“快速开发、快速迭代”；继续／换法／停止局部路线及下一有界检查点。普通进度不逐项请求批准。

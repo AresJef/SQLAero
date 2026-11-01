@@ -151,7 +151,14 @@ def test_typed_rows_use_confirmed_changed_quoting_context(label: str, provider: 
         source = pd.Series(values)
     elif provider == "arrow":
         pa = pytest.importorskip("pyarrow")
-        source = pa.chunked_array([values[:1], values[1:]], type=pa.string())
+        labels = values
+        values = (labels * 14)[:40]
+        # Keep one long dictionary across the first confirmed mode change;
+        # a chunk rollover would clear the cache independently of Context.
+        source = pa.DictionaryArray.from_arrays(
+            pa.array([index % 3 for index in range(40)], type=pa.int8()),
+            pa.array(labels),
+        )
     else:
         pl = pytest.importorskip("polars")
         source = pl.concat([pl.Series(values[:1]), pl.Series(values[1:])], rechunk=False)

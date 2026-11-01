@@ -7,7 +7,11 @@
 
 use std::sync::Arc;
 
-use arrow_array::ArrayRef;
+use arrow_array::types::{
+    Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type, UInt16Type, UInt32Type, UInt64Type,
+};
+use arrow_array::{ArrayRef, DictionaryArray};
+use arrow_buffer::ScalarBuffer;
 use arrow_schema::{DataType, Field};
 use pyo3::prelude::*;
 use sqlaero_core::bind::{Context, writer};
@@ -20,9 +24,109 @@ const LABELS: usize = 64;
 const BYTES: usize = 16 * 1024;
 
 struct Labels {
+    source: ArrayRef,
+    keys: KeyReader,
     values: ArrayRef,
     encoded: Vec<Option<Vec<u8>>>,
     bytes: usize,
+}
+
+/// Owned buffers retain the already sliced key offsets and imported owner.
+/// Validity stays authoritative in the exact retained source array.
+/// Preparing them never inspects a future key or an unreferenced label.
+enum KeyReader {
+    Int8(ScalarBuffer<i8>),
+    Int16(ScalarBuffer<i16>),
+    Int32(ScalarBuffer<i32>),
+    Int64(ScalarBuffer<i64>),
+    UInt8(ScalarBuffer<u8>),
+    UInt16(ScalarBuffer<u16>),
+    UInt32(ScalarBuffer<u32>),
+    UInt64(ScalarBuffer<u64>),
+}
+
+impl KeyReader {
+    fn prepare(py: Python<'_>, array: &ArrayRef) -> PyResult<Self> {
+        macro_rules! keys {
+            ($kind:ty, $variant:ident) => {{
+                let dictionary = array
+                    .as_any()
+                    .downcast_ref::<DictionaryArray<$kind>>()
+                    .ok_or_else(|| invalid(py, "Arrow Dictionary physical key type differs"))?;
+                Ok(Self::$variant(dictionary.keys().values().clone()))
+            }};
+        }
+        match array.data_type() {
+            DataType::Dictionary(key, _) => match key.as_ref() {
+                DataType::Int8 => keys!(Int8Type, Int8),
+                DataType::Int16 => keys!(Int16Type, Int16),
+                DataType::Int32 => keys!(Int32Type, Int32),
+                DataType::Int64 => keys!(Int64Type, Int64),
+                DataType::UInt8 => keys!(UInt8Type, UInt8),
+                DataType::UInt16 => keys!(UInt16Type, UInt16),
+                DataType::UInt32 => keys!(UInt32Type, UInt32),
+                DataType::UInt64 => keys!(UInt64Type, UInt64),
+                _ => Err(invalid(py, "unsupported Arrow Dictionary key type")),
+            },
+            _ => Err(invalid(py, "Arrow value is not a Dictionary")),
+        }
+    }
+
+    fn label(&self, py: Python<'_>, index: usize, length: usize) -> PyResult<usize> {
+        macro_rules! key {
+            ($keys:expr) => {{
+                let keys = $keys;
+                let key = keys
+                    .get(index)
+                    .copied()
+                    .ok_or_else(|| invalid(py, "Arrow child index is outside its array"))?;
+                usize::try_from(key)
+                    .map_err(|_| invalid(py, "Arrow Dictionary key is negative or exceeds usize"))?
+            }};
+        }
+        let label = match self {
+            Self::Int8(keys) => key!(keys),
+            Self::Int16(keys) => key!(keys),
+            Self::Int32(keys) => key!(keys),
+            Self::Int64(keys) => key!(keys),
+            Self::UInt8(keys) => key!(keys),
+            Self::UInt16(keys) => key!(keys),
+            Self::UInt32(keys) => key!(keys),
+            Self::UInt64(keys) => key!(keys),
+        };
+        if label >= length {
+            return Err(invalid(
+                py,
+                "Arrow Dictionary key is outside the current dictionary",
+            ));
+        }
+        Ok(label)
+    }
+}
+
+impl Labels {
+    /// Return only a newly written label's length; the caller retains the
+    /// shared byte cap and performs the same fallible copy after encoding.
+    fn write(
+        &self,
+        py: Python<'_>,
+        label: usize,
+        output: &mut Vec<u8>,
+        context: &Context,
+        budget: &IoBudget,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<Option<usize>> {
+        if let Some(encoded) = &self.encoded[label] {
+            // A cached label still charges the actual bounded copy.
+            visitor.checkpoint(py, encoded.len())?;
+            writer::append(output, encoded, context.limit)
+                .map_err(|error| errors::wire(py, error))?;
+            return Ok(None);
+        }
+        let start = output.len();
+        write_value(py, &self.values, label, output, context, budget, visitor)?;
+        Ok(Some(output.len() - start))
+    }
 }
 
 /// At most eight lazily allocated label tables and 16 KiB of encoded bytes.
@@ -114,61 +218,79 @@ impl Cache {
             return writer::append(output, b"NULL", context.limit)
                 .map_err(|error| errors::wire(py, error));
         }
-        let (values, label) = dictionary_label(py, array, index)?;
-        if values.len() > LABELS || !text_dictionary(array.data_type()) {
-            return write_value(py, values, label, output, context, budget, visitor);
-        }
-        let key = (context.codec.name(), context.no_backslash_escapes);
-        if self.context != Some(key) {
-            // No raw data slice exists here. Dropping a previous dictionary
-            // may release its producer; subsequent value access is reacquired.
-            self.clear_chunk();
-            self.context = Some(key);
-        }
-        if self.columns.is_empty() {
-            self.columns
-                .try_reserve_exact(COLUMNS)
-                .map_err(|_| errors::memory_error(py))?;
-            self.columns.resize_with(COLUMNS, || None);
-        }
-        let slot = &mut self.columns[column];
-        if !slot
-            .as_ref()
-            .is_some_and(|labels| Arc::ptr_eq(&labels.values, values))
-        {
-            let mut encoded = Vec::new();
-            encoded
-                .try_reserve_exact(values.len())
-                .map_err(|_| errors::memory_error(py))?;
-            encoded.resize_with(values.len(), || None);
-            if let Some(previous) = slot.take() {
-                self.bytes -= previous.bytes;
+        let prepared_label = match self.columns.get(column).and_then(Option::as_ref) {
+            Some(labels)
+                if Arc::ptr_eq(&labels.source, array)
+                    && self.context
+                        == Some((context.codec.name(), context.no_backslash_escapes)) =>
+            {
+                Some(labels.keys.label(py, index, labels.values.len())?)
             }
-            *slot = Some(Labels {
-                values: values.clone(),
-                encoded,
-                bytes: 0,
-            });
-        }
-        let labels = slot
+            _ => None,
+        };
+        let label = if let Some(label) = prepared_label {
+            label
+        } else {
+            // Resolve and validate this actual key before any old slot is
+            // cleared, preserving cold/changed-context error ordering.
+            let (values, label) = dictionary_label(py, array, index)?;
+            if values.len() > LABELS || !text_dictionary(array.data_type()) {
+                return write_value(py, values, label, output, context, budget, visitor);
+            }
+            let key = (context.codec.name(), context.no_backslash_escapes);
+            if self.context != Some(key) {
+                self.clear_chunk();
+                self.context = Some(key);
+            }
+            if self.columns.is_empty() {
+                self.columns
+                    .try_reserve_exact(COLUMNS)
+                    .map_err(|_| errors::memory_error(py))?;
+                self.columns.resize_with(COLUMNS, || None);
+            }
+            let slot = &mut self.columns[column];
+            if !slot
+                .as_ref()
+                .is_some_and(|labels| Arc::ptr_eq(&labels.values, values))
+            {
+                let mut encoded = Vec::new();
+                encoded
+                    .try_reserve_exact(values.len())
+                    .map_err(|_| errors::memory_error(py))?;
+                encoded.resize_with(values.len(), || None);
+                let keys = KeyReader::prepare(py, array)?;
+                if let Some(previous) = slot.take() {
+                    self.bytes -= previous.bytes;
+                }
+                *slot = Some(Labels {
+                    source: array.clone(),
+                    keys,
+                    values: values.clone(),
+                    encoded,
+                    bytes: 0,
+                });
+            }
+            let labels = slot
+                .as_mut()
+                .ok_or_else(|| invalid(py, "Arrow label cache was not prepared"))?;
+            if !Arc::ptr_eq(&labels.source, array) {
+                let keys = KeyReader::prepare(py, array)?;
+                labels.source = array.clone();
+                labels.keys = keys;
+            }
+            label
+        };
+        let labels = self.columns[column]
             .as_mut()
             .ok_or_else(|| invalid(py, "Arrow label cache was not prepared"))?;
-        if let Some(encoded) = &labels.encoded[label] {
-            // Account for the actual bounded copy, retaining signal/deadline
-            // progress even when UTF-8 validation and escaping are reused.
-            visitor.checkpoint(py, encoded.len())?;
-            return writer::append(output, encoded, context.limit)
-                .map_err(|error| errors::wire(py, error));
-        }
-        let start = output.len();
-        write_value(py, values, label, output, context, budget, visitor)?;
-        let length = output.len() - start;
-        if length <= BYTES - self.bytes {
+        if let Some(length) = labels.write(py, label, output, context, budget, visitor)?
+            && length <= BYTES - self.bytes
+        {
             let mut encoded = Vec::new();
             encoded
                 .try_reserve_exact(length)
                 .map_err(|_| errors::memory_error(py))?;
-            encoded.extend_from_slice(&output[start..]);
+            encoded.extend_from_slice(&output[output.len() - length..]);
             labels.encoded[label] = Some(encoded);
             labels.bytes += length;
             self.bytes += length;

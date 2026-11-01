@@ -237,9 +237,26 @@ def test_arrow_small_and_large_dictionary_sources_keep_their_exact_labels(length
 @pytest.mark.parametrize(
     "dtype", [pa.int8(), pa.int16(), pa.int32(), pa.int64(), pa.uint8(), pa.uint16(), pa.uint32(), pa.uint64()]
 )
-def test_arrow_dictionary_all_key_widths_resolve_actual_labels(dtype: object) -> None:
-    value = pa.DictionaryArray.from_arrays(pa.array([1, None, 0], type=dtype), pa.array(["a", "b"]))
-    assert _sqlaero._encode_value(value).to_bytes() == b"('b',NULL,'a')"
+@pytest.mark.parametrize("length", [3, 40])
+def test_arrow_dictionary_all_key_widths_resolve_actual_labels(dtype: object, length: int) -> None:
+    codes = ([1, None, 0] * ((length + 2) // 3))[:length]
+    keys = pa.array([None] + codes, type=dtype)
+    value = pa.DictionaryArray.from_arrays(keys, pa.array(["a", "b"])).slice(1, length)
+    tokens = [b"'b'", b"NULL", b"'a'"]
+    expected = b"(" + b",".join(tokens[index % 3] for index in range(length)) + b")"
+    assert _sqlaero._encode_value(value).to_bytes() == expected
+
+
+def test_arrow_dictionary_chunks_with_shared_values_keep_their_own_keys() -> None:
+    labels = pa.array(["left", "right"])
+    first = pa.DictionaryArray.from_arrays(pa.array([0, 1, None, 0] * 10, type=pa.int16()), labels)
+    second = pa.DictionaryArray.from_arrays(pa.array([1, 0, None, 1] * 10, type=pa.int16()), labels)
+    # Both exported chunks remain long enough to prepare their own readers.
+    value = pa.chunked_array([first, second]).slice(1, 78)
+    tokens = ([b"'left'", b"'right'", b"NULL", b"'left'"] * 10
+              + [b"'right'", b"'left'", b"NULL", b"'right'"] * 10)
+    expected = b"(" + b",".join(tokens[1:79]) + b")"
+    assert _sqlaero._encode_value(value).to_bytes() == expected
 
 
 def test_arrow_dictionary_nested_labels_keep_their_logical_value_and_validity() -> None:
@@ -354,10 +371,14 @@ def test_arrow_long_typed_writer_retains_the_current_output_limit(kind: str) -> 
 
 
 @pytest.mark.parametrize("failure", [False, True], ids=["success", "limit-failure"])
-@pytest.mark.parametrize("kind", ["int64", "float32", "boolean"])
+@pytest.mark.parametrize("kind", ["int64", "float32", "boolean", "dictionary"])
 def test_arrow_owned_typed_views_release_the_real_shared_buffer_on_every_exit(failure: bool, kind: str) -> None:
     np = pytest.importorskip("numpy")
-    if kind == "float32":
+    if kind == "dictionary":
+        storage = np.zeros(40, dtype=np.int16)
+        value = pa.DictionaryArray.from_arrays(pa.array(storage), pa.array(["label"]))
+        expected = b"(" + b",".join([b"'label'"] * 40) + b")"
+    elif kind == "float32":
         storage = np.full(40, 0.5, dtype=np.float32)
         value = pa.array(storage)
         expected = b"(" + b",".join([b"0.5e0"] * 40) + b")"
@@ -680,10 +701,16 @@ def test_arrow_invalid_string_view_is_checked_before_native_access(view: bytes, 
 
 
 @pytest.mark.parametrize("key", [-1, 2])
-def test_arrow_dictionary_rejects_invalid_actual_key(key: int) -> None:
-    value = pa.DictionaryArray.from_arrays(pa.array([key], type=pa.int8()), pa.array(["a", "b"]), safe=False)
+@pytest.mark.parametrize("prefix", [0, 39], ids=["cold", "prepared-reader"])
+def test_arrow_dictionary_rejects_invalid_actual_key(key: int, prefix: int) -> None:
+    keys = pa.array([0] * prefix + [key], type=pa.int8())
+    value = pa.DictionaryArray.from_arrays(keys, pa.array(["a", "b"]), safe=False)
     with pytest.raises(TypeError, match="[Dd]ictionary"):
         _sqlaero._encode_value(value)
+    if prefix:
+        with pytest.raises(TypeError, match="[Dd]ictionary") as caught:
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
+        assert "args[39]" in "\n".join(getattr(caught.value, "__notes__", ()))
 
 
 @pytest.mark.parametrize("many", [False, True])
