@@ -68,7 +68,7 @@ pub fn float(output: &mut Vec<u8>, value: f64, limit: usize) -> Result<(), WireE
     }
     let mut buffer = zmij::Buffer::new();
     let text = buffer.format_finite(value).as_bytes();
-    let suffix = !text.contains(&b'e') && !text.contains(&b'E');
+    let suffix = memchr::memchr2(b'e', b'E', text).is_none();
     reserve(output, text.len() + if suffix { 2 } else { 0 }, limit)?;
     output.extend_from_slice(text);
     if suffix {
