@@ -140,6 +140,17 @@ impl<'py> Sequence<'py> {
             Self::Normalized { inner, .. } => inner.len(),
         }
     }
+    /// Keep ordinary positional/outer-row reads independent of the lazy
+    /// iterator state machine. Every access still returns a checked owner.
+    #[inline]
+    pub(crate) fn row_item(&self, index: usize) -> PyResult<Bound<'py, PyAny>> {
+        match self {
+            Self::List(value) => value.get_item(index),
+            Self::Tuple(value) => value.get_item(index),
+            _ => self.get(index),
+        }
+    }
+
     pub(crate) fn get(&self, index: usize) -> PyResult<Bound<'py, PyAny>> {
         match self {
             Self::List(v) => v.get_item(index),

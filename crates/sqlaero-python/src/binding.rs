@@ -148,7 +148,7 @@ impl<'py> Rows<'py> {
         }
         let (value, outer, path) = match &self.outer {
             Some(outer) if !self.empty => {
-                let value = outer.get(index)?;
+                let value = outer.row_item(index)?;
                 (value, Some(outer.identity()), smallvec![index])
             }
             _ => (self.root.clone(), None, SmallVec::new()),
@@ -349,7 +349,7 @@ impl Row<'_, '_> {
         let mut cursor = 0;
         for index in 0..width {
             let source = if let Some(row) = row {
-                row.get(index).inspect_err(|error| {
+                row.row_item(index).inspect_err(|error| {
                     errors::note(
                         py,
                         error,

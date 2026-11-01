@@ -525,6 +525,9 @@ fn binary_preview(name: &str, preview: &[u8], length: usize) -> String {
     )
 }
 
+// The sampled primitive hot path should not pay an extra reader call.
+// Wide allocation/conversion remains in the separate non-inlined helper.
+#[inline(always)]
 fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyResult<()> {
     let py = value.py();
     let mut overflow = 0;
@@ -538,14 +541,7 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
         {
             return Err(error);
         }
-        // Reuse the native-width formatting already used by small temporal
-        // fields; the checked conversion preserves every signed boundary.
-        return if let Ok(narrow) = i32::try_from(compact) {
-            scalar::integer(output, narrow, limit)
-        } else {
-            scalar::integer(output, compact, limit)
-        }
-        .map_err(|e| errors::wire(py, e));
+        return scalar::integer(output, compact, limit).map_err(|e| errors::wire(py, e));
     }
     integer_wide(value, output, limit, overflow)
 }
