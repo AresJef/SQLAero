@@ -18,7 +18,7 @@ use arrow_array::{
     TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt8Array,
     UInt16Array, UInt32Array, UInt64Array, make_array,
 };
-use arrow_buffer::{NullBuffer, ScalarBuffer};
+use arrow_buffer::{BooleanBuffer, NullBuffer, ScalarBuffer};
 use arrow_data::{ByteView, validate_binary_view};
 use arrow_schema::{DataType, Field, TimeUnit as ArrowTimeUnit, ffi::FFI_ArrowSchema};
 use pyo3::exceptions::{PyBufferError, PyTypeError};
@@ -150,6 +150,7 @@ enum FastPath {
     Dictionary(dictionary::Cache),
     Int64(Int64Views),
     Float32(Float32Reader),
+    Boolean(BooleanReader),
 }
 
 /// Public typed arrays retain their own buffers and validity/offset metadata.
@@ -289,8 +290,52 @@ impl Float32Reader {
     }
 }
 
-/// Keep existing native strategies first. Only long primitive Float32 vectors
-/// prepare an additional data/validity owner, after the current chunk is valid.
+/// Retain only the public bit-packed data and validity used by this reader.
+/// Each buffer already carries its own bit offset and logical slice length.
+struct BooleanReader {
+    values: BooleanBuffer,
+    nulls: Option<NullBuffer>,
+}
+
+impl BooleanReader {
+    fn prepare(array: &ArrayRef) -> Option<Self> {
+        if !matches!(array.data_type(), DataType::Boolean) {
+            return None;
+        }
+        // A future physical mismatch keeps the generic value's late failure.
+        let values = array.as_any().downcast_ref::<BooleanArray>()?;
+        Some(Self {
+            values: values.values().clone(),
+            nulls: values.nulls().cloned(),
+        })
+    }
+
+    fn write(
+        &self,
+        py: Python<'_>,
+        row: usize,
+        output: &mut Vec<u8>,
+        context: &Context,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        visitor.checkpoint(py, 1)?;
+        if row >= self.values.len() {
+            return Err(invalid(py, "Arrow child index is outside its array"));
+        }
+        // Consult the actual mask every time and never read a NULL data bit.
+        // Only the owned Rust metadata survives the checkpoint above.
+        if self.nulls.as_ref().is_some_and(|nulls| nulls.is_null(row)) {
+            writer::append(output, b"NULL", context.limit).map_err(|error| errors::wire(py, error))
+        } else {
+            let value = self.values.value(row);
+            scalar::integer(output, u8::from(value), context.limit)
+                .map_err(|error| errors::wire(py, error))
+        }
+    }
+}
+
+/// Keep existing native strategies first. Only long primitive vectors prepare
+/// an additional data/validity owner, after the current chunk is valid.
 fn native_fast_path(
     py: Python<'_>,
     array: &ArrayRef,
@@ -300,11 +345,11 @@ fn native_fast_path(
     if let Some(views) = Int64Views::prepare(py, array, shape, budget)? {
         return Ok(Some(FastPath::Int64(views)));
     }
-    if !matches!(shape, Shape::Vector { length } if length >= 32)
-        || array.len() < 32
-        || !matches!(array.data_type(), DataType::Float32)
-    {
+    if !matches!(shape, Shape::Vector { length } if length >= 32) || array.len() < 32 {
         return Ok(None);
+    }
+    if !matches!(array.data_type(), DataType::Float32) {
+        return Ok(BooleanReader::prepare(array).map(FastPath::Boolean));
     }
     let values = array
         .as_any()
@@ -891,6 +936,7 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
                 views.write(py, index, column, output, context, visitor)
             }
             Some(FastPath::Float32(reader)) => reader.write(py, index, output, context, visitor),
+            Some(FastPath::Boolean(reader)) => reader.write(py, index, output, context, visitor),
             Some(FastPath::Dictionary(cache)) => {
                 let value = cell_array(py, &array, table, column)?;
                 if !table || cache.has_column(column) {

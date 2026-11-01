@@ -548,7 +548,7 @@ def test_arrow_long_value_keeps_the_original_operation_deadline(binary: bool) ->
         _sqlaero._bind_sql("SELECT %s", source, timeout_ns=5_000_000)
 
 
-@pytest.mark.parametrize("kind", ["utf8", "binary", "list-int64"])
+@pytest.mark.parametrize("kind", ["utf8", "binary", "list-int64", "boolean"])
 def test_arrow_long_value_preserves_the_actual_signal_exception(kind: str) -> None:
     class InterruptedArrow(Exception):
         pass
@@ -556,6 +556,8 @@ def test_arrow_long_value_preserves_the_actual_signal_exception(kind: str) -> No
     original = InterruptedArrow("original Arrow signal")
     if kind == "list-int64":
         source = pa.array([[0] * 1_000_000], type=pa.list_(pa.int64()))
+    elif kind == "boolean":
+        source = pa.array([True, None, False] * 350_000, type=pa.bool_())
     elif kind == "binary":
         source = pa.array([b"x" * (16 * 1024 * 1024)])
     else:
