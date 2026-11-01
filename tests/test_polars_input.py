@@ -58,6 +58,24 @@ def test_polars_native_float_value_negative_zero_and_nonfinite_policy(dtype: obj
     assert parts[2:] == [b"NULL", b"NULL", b"NULL"]
 
 
+@pytest.mark.parametrize("length", [1, 100, 1000])
+@pytest.mark.parametrize("kind", ["float32", "boolean"])
+def test_polars_short_and_long_primitive_series_share_the_native_arrow_policy(length: int, kind: str) -> None:
+    pattern: list[float | bool | None]
+    if kind == "float32":
+        pattern = [0.5, -0.0, float("nan"), float("inf"), -float("inf"), None]
+        values = [pattern[index % len(pattern)] for index in range(length)]
+        source = pl.Series(values, dtype=pl.Float32)
+        tokens = [b"0.5e0", b"-0.0e0", b"NULL", b"NULL", b"NULL", b"NULL"]
+    else:
+        pattern = [True, None, False]
+        values = [pattern[index % len(pattern)] for index in range(length)]
+        source = pl.Series(values, dtype=pl.Boolean)
+        tokens = [b"1", b"NULL", b"0"]
+    expected = b"(" + b",".join(tokens[index % len(tokens)] for index in range(length)) + b")"
+    assert _sqlaero._encode_value(source).to_bytes() == expected
+
+
 @pytest.mark.parametrize("unit,fraction", [("ms", ".999"), ("us", ".999999"), ("ns", ".999999999")])
 @pytest.mark.parametrize("zone", [None, "Asia/Shanghai"])
 def test_polars_datetime_keeps_epoch_value_in_utc(unit: str, fraction: str, zone: str | None) -> None:

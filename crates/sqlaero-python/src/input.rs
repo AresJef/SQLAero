@@ -540,6 +540,19 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
         }
         return scalar::integer(output, compact, limit).map_err(|e| errors::wire(py, e));
     }
+    integer_wide(value, output, limit, overflow)
+}
+
+/// Keep owned big-integer storage and error construction off the compact
+/// integer writer's frame. The public conversion and range policy are shared.
+#[inline(never)]
+fn integer_wide(
+    value: &Bound<'_, PyAny>,
+    output: &mut Vec<u8>,
+    limit: usize,
+    overflow: i32,
+) -> PyResult<()> {
+    let py = value.py();
     if overflow > 0 {
         match value.extract::<u64>() {
             Ok(unsigned) => {

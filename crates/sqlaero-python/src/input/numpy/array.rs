@@ -512,7 +512,7 @@ impl<'py> NumpySource<'py> {
     }
 
     /// Larger and short inputs preserve the original source-fragment reader.
-    /// Unicode still consumes bounded copies for its existing scalar fallback.
+    /// Writers without an owned-cell fast path consume bounded source copies.
     fn copy_cell_range(
         &mut self,
         row: usize,
@@ -635,6 +635,24 @@ impl<'py> NumpySource<'py> {
         budget: &IoBudget,
     ) -> PyResult<()> {
         let py = self.owner.py();
+        let swap = self.swap;
+        if let Some(cell) = self.owned_cell(row, column, budget)? {
+            let text =
+                Self::owned_unicode_text(py, cell, swap, output.len(), context.limit, budget)?;
+            // The helper returns owned UTF-8, so the cell borrow has ended
+            // before either the codec or the exceptional real getter runs.
+            if let Some(text) = text {
+                return crate::input::text_utf8(py, &text, output, context, Some(budget));
+            }
+            let source = self.element(row, column)?;
+            return crate::input::text(
+                source.cast::<PyString>()?,
+                output,
+                context,
+                true,
+                Some(budget),
+            );
+        }
         let length = self.content_width(row, column, budget)?;
         // Every logical non-padding code point needs at least one output byte
         // for the supported client codecs. Reject this known minimum before
@@ -687,6 +705,61 @@ impl<'py> NumpySource<'py> {
             start += take;
         }
         crate::input::text_utf8(py, &text, output, context, Some(budget))
+    }
+
+    /// Decode an already owned UCS4 cell without intermediate fragment copies.
+    /// None requests the original canonical scalar's exceptional conversion.
+    fn owned_unicode_text(
+        py: Python<'_>,
+        cell: &[u8],
+        swap: bool,
+        output_length: usize,
+        limit: usize,
+        budget: &IoBudget,
+    ) -> PyResult<Option<String>> {
+        let mut length = 0;
+        let mut end = cell.len();
+        while end > 0 {
+            crate::input::check(py, budget)?;
+            let start = end.saturating_sub(4096);
+            if let Some(last) = cell[start..end].iter().rposition(|byte| *byte != 0) {
+                length = (start + last + 1).div_ceil(4) * 4;
+                break;
+            }
+            end = start;
+        }
+        // Keep the original minimum-width rejection before UTF-8 allocation
+        // or the canonical getter for an invalid UCS4 point.
+        let minimum = output_length
+            .checked_add(length / 4)
+            .and_then(|length| length.checked_add(2));
+        if minimum.is_none_or(|minimum| minimum > limit) {
+            return Err(errors::wire(
+                py,
+                WireError::Limit {
+                    required: minimum.unwrap_or(usize::MAX),
+                    limit,
+                },
+            ));
+        }
+        let mut text = String::new();
+        for fragment in cell[..length].chunks(4096) {
+            crate::input::check(py, budget)?;
+            text.try_reserve(fragment.len())
+                .map_err(|_| errors::memory_error(py))?;
+            for &bytes in fragment.as_chunks::<4>().0 {
+                let point = if swap {
+                    u32::from_ne_bytes(bytes).swap_bytes()
+                } else {
+                    u32::from_ne_bytes(bytes)
+                };
+                let Some(character) = char::from_u32(point) else {
+                    return Ok(None);
+                };
+                text.push(character);
+            }
+        }
+        Ok(Some(text))
     }
 }
 

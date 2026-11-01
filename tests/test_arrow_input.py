@@ -325,18 +325,37 @@ def test_arrow_long_mixed_table_does_not_encode_a_future_bad_string_early() -> N
     assert "args[64][1]" in "\n".join(getattr(caught.value, "__notes__", []))
 
 
-def test_arrow_long_int64_writer_retains_the_current_output_limit() -> None:
-    value = pa.array([2**63 - 1] * 40, type=pa.int64())
+@pytest.mark.parametrize("kind", ["int64", "float32", "boolean"])
+def test_arrow_long_typed_writer_retains_the_current_output_limit(kind: str) -> None:
+    if kind == "float32":
+        value = pa.array([0.5] * 40, type=pa.float32())
+    elif kind == "boolean":
+        value = pa.array([True] * 40, type=pa.bool_())
+    else:
+        value = pa.array([2**63 - 1] * 40, type=pa.int64())
     with pytest.raises(_sqlaero.OperationalError):
         _sqlaero._bind_sql("SELECT %s", (value,), limit=40)
 
 
 @pytest.mark.parametrize("failure", [False, True], ids=["success", "limit-failure"])
-def test_arrow_owned_typed_views_release_the_real_shared_buffer_on_every_exit(failure: bool) -> None:
+@pytest.mark.parametrize("kind", ["int64", "float32", "boolean"])
+def test_arrow_owned_typed_views_release_the_real_shared_buffer_on_every_exit(failure: bool, kind: str) -> None:
     np = pytest.importorskip("numpy")
-    storage = np.arange(40, dtype=np.int64)
+    if kind == "float32":
+        storage = np.full(40, 0.5, dtype=np.float32)
+        value = pa.array(storage)
+        expected = b"(" + b",".join([b"0.5e0"] * 40) + b")"
+    elif kind == "boolean":
+        # Bit-packed Arrow storage has a real external owner even though
+        # converting NumPy bool_ elements would normally copy them.
+        storage = np.full(5, 0x55, dtype=np.uint8)
+        value = pa.Array.from_buffers(pa.bool_(), 40, [None, pa.py_buffer(storage)])
+        expected = b"(" + b",".join([b"1", b"0"] * 20) + b")"
+    else:
+        storage = np.arange(40, dtype=np.int64)
+        value = pa.array(storage)
+        expected = b"(" + b",".join(str(index).encode() for index in range(40)) + b")"
     reference = weakref.ref(storage)
-    value = pa.array(storage)
     del storage
     gc.collect()
     assert reference() is not None
@@ -344,7 +363,7 @@ def test_arrow_owned_typed_views_release_the_real_shared_buffer_on_every_exit(fa
         with pytest.raises(_sqlaero.OperationalError):
             _sqlaero._bind_sql("SELECT %s", (value,), limit=20)
     else:
-        assert _sqlaero._encode_value(value).to_bytes() == b"(" + b",".join(str(index).encode() for index in range(40)) + b")"
+        assert _sqlaero._encode_value(value).to_bytes() == expected
     del value
     gc.collect()
     assert reference() is None
@@ -358,6 +377,58 @@ def test_arrow_floats_preserve_source_value_negative_zero_and_nonfinite_policy(d
     assert float(parts[0]) == value[0].as_py()
     assert float(parts[1]) == 0.0 and math.copysign(1.0, float(parts[1])) < 0
     assert parts[2:] == [b"NULL", b"NULL", b"NULL"]
+
+
+@pytest.mark.parametrize("length", [1, 31, 32, 100, 1000])
+def test_arrow_float32_prepared_vectors_keep_source_precision_and_sliced_nulls(length: int) -> None:
+    pattern: list[float | None] = [0.1, -0.0, float("nan"), float("inf"), -float("inf"), None,
+                                   1.5, -1.5, 2.0**-149, (2.0 - 2.0**-23) * 2.0**127]
+    values = [pattern[index % len(pattern)] for index in range(length)]
+    source = pa.array([None] * 9 + values, type=pa.float32()).slice(9, length)
+    parts = _sqlaero._encode_value(source).to_bytes()[1:-1].split(b",")
+    assert len(parts) == length
+    for token, original in zip(parts, values, strict=True):
+        if original is None or not math.isfinite(original):
+            assert token == b"NULL"
+        else:
+            # The independent IEEE binary32 round-trip defines the source
+            # value; no SQLAero writer generates this test's expectation.
+            expected = struct.unpack("=f", struct.pack("=f", original))[0]
+            actual = float(token)
+            assert actual == expected
+            if expected == 0.0:
+                assert math.copysign(1.0, actual) == math.copysign(1.0, expected)
+
+
+@pytest.mark.parametrize("length", [1, 31, 32, 100, 1000])
+@pytest.mark.parametrize("offset", [1, 9])
+def test_arrow_prepared_boolean_vectors_keep_bit_and_validity_offsets(length: int, offset: int) -> None:
+    values = [None if index % 7 == 6 else index % 3 != 1 for index in range(length)]
+    source = pa.array([False] * offset + values, type=pa.bool_()).slice(offset, length)
+    expected = b"(" + b",".join(b"NULL" if value is None else b"1" if value else b"0" for value in values) + b")"
+    assert _sqlaero._encode_value(source).to_bytes() == expected
+
+
+@pytest.mark.parametrize("kind", ["float32", "boolean"])
+def test_arrow_primitive_views_reprepare_across_empty_long_and_short_chunks(kind: str) -> None:
+    values: list[float | bool | None]
+    if kind == "float32":
+        values = [None if index % 7 == 6 else index * 0.125 for index in range(100)]
+        dtype = pa.float32()
+    else:
+        values = [None if index % 7 == 6 else bool(index % 2) for index in range(100)]
+        dtype = pa.bool_()
+    chunks: list[Any] = [pa.array(values[:40], type=dtype), pa.array([], type=dtype),
+                        pa.array(values[40:50], type=dtype), pa.array([], type=dtype), pa.array(values[50:], type=dtype)]
+    source = pa.chunked_array(chunks).slice(5, 80)
+    parts = _sqlaero._encode_value(source).to_bytes()[1:-1].split(b",")
+    for token, value in zip(parts, values[5:85], strict=True):
+        if value is None:
+            assert token == b"NULL"
+        elif kind == "float32":
+            assert float(token) == value
+        else:
+            assert token == (b"1" if value else b"0")
 
 
 @pytest.mark.parametrize("dtype", [pa.string(), pa.large_string(), pa.string_view()])
@@ -652,7 +723,7 @@ def test_unsupported_arrow_schema_is_not_hidden_by_empty_or_null_data(value: obj
         _sqlaero._bind_sql("SELECT 1", value)
 
 
-@pytest.mark.parametrize("kind", ["chunked", "cached-dictionary", "typed-int64"])
+@pytest.mark.parametrize("kind", ["chunked", "cached-dictionary", "typed-int64", "typed-float32", "typed-boolean"])
 def test_arrow_repeated_shared_immutable_input_has_independent_stream_owners(kind: str) -> None:
     # Each call exports and consumes its own capsule. Sharing the Python source
     # cannot make another call observe an already consumed or released capsule.
@@ -662,6 +733,12 @@ def test_arrow_repeated_shared_immutable_input_has_independent_stream_owners(kin
     elif kind == "typed-int64":
         value = pa.array(list(range(40)), type=pa.int64())
         expected = b"(" + b",".join(str(index).encode() for index in range(40)) + b")"
+    elif kind == "typed-float32":
+        value = pa.array([0.5] * 40, type=pa.float32())
+        expected = b"(" + b",".join([b"0.5e0"] * 40) + b")"
+    elif kind == "typed-boolean":
+        value = pa.array([True, None, False, True] * 10, type=pa.bool_())
+        expected = b"(" + b",".join([b"1", b"NULL", b"0", b"1"] * 10) + b")"
     else:
         value = pa.chunked_array([[1, None], [], [-3, 4]])
         expected = b"(1,NULL,-3,4)"

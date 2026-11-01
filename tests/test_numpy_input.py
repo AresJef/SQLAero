@@ -805,6 +805,37 @@ def test_numpy_owned_binary_cell_keeps_the_request_limit_and_failure_position() 
     assert "args[0]" in "\n".join(getattr(caught.value, "__notes__", ()))
 
 
+@pytest.mark.parametrize(("dtype", "content"), [
+    ("U2048", ""),
+    (">U2048", "x" * 1024 + "\x00中🙂"),
+    ("<U2048", "x" * 1024 + "\x00中🙂"),
+])
+def test_numpy_owned_unicode_cell_keeps_padding_endian_and_fragment_boundaries(
+    dtype: str, content: str,
+) -> None:
+    value = np.full(33, content, dtype=dtype)
+    expected = b"\x03SELECT " + _sqlaero._encode_scalar(content)
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [expected] * 33
+
+
+def test_numpy_owned_swapped_unicode_cell_keeps_the_canonical_surrogate_error() -> None:
+    value = np.full(64, "ok", dtype=">U16")
+    value[37] = "\ud800"
+    with pytest.raises(UnicodeEncodeError) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert caught.value.object == "\ud800"
+    assert (caught.value.start, caught.value.end) == (0, 1)
+    assert "args[37]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
+def test_numpy_owned_unicode_cell_checks_the_minimum_limit_before_scalar_fallback() -> None:
+    from sqlaero._sqlaero import OperationalError
+    value = np.full(33, "\ud800", dtype="U16")
+    with pytest.raises(OperationalError) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True, limit=9)
+    assert "args[0]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
 @pytest.mark.parametrize("dtype", ["S16", "U16"])
 def test_numpy_fixed_width_future_bad_coordinate_is_reported_only_at_that_row(dtype: str) -> None:
     root = np.full(20, "a", dtype=dtype)

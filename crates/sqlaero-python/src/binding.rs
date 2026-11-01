@@ -533,10 +533,12 @@ impl Visit<'_> {
         }
         // Preserve the two exact-container checks in front of primitive
         // writes. Extended families are resolved only after scalar rejection.
-        let sequence = if value.is_exact_instance_of::<pyo3::types::PyList>()
-            || value.is_exact_instance_of::<pyo3::types::PyTuple>()
-        {
-            Sequence::from(value, self.types, &self.active)?
+        let sequence = if value.is_exact_instance_of::<pyo3::types::PyList>() {
+            Some(Sequence::List(value.cast::<pyo3::types::PyList>()?.clone()))
+        } else if value.is_exact_instance_of::<pyo3::types::PyTuple>() {
+            Some(Sequence::Tuple(
+                value.cast::<pyo3::types::PyTuple>()?.clone(),
+            ))
         } else {
             match self
                 .types
