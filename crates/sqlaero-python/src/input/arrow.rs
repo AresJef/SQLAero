@@ -18,6 +18,7 @@ use arrow_array::{
     TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt8Array,
     UInt16Array, UInt32Array, UInt64Array, make_array,
 };
+use arrow_buffer::{NullBuffer, ScalarBuffer};
 use arrow_data::{ByteView, validate_binary_view};
 use arrow_schema::{DataType, Field, TimeUnit as ArrowTimeUnit, ffi::FFI_ArrowSchema};
 use pyo3::exceptions::{PyBufferError, PyTypeError};
@@ -148,6 +149,7 @@ pub(crate) struct Prepared<'py> {
 enum FastPath {
     Dictionary(dictionary::Cache),
     Int64(Int64Views),
+    Float32(Float32Reader),
 }
 
 /// Public typed arrays retain their own buffers and validity/offset metadata.
@@ -249,6 +251,69 @@ impl Int64Views {
                 .map_err(|error| errors::wire(py, error))
         }
     }
+}
+
+/// Own only the two public buffers used by the Float32 vector reader. Their
+/// logical slices already contain the source offsets; never apply them twice.
+struct Float32Reader {
+    values: ScalarBuffer<f32>,
+    nulls: Option<NullBuffer>,
+}
+
+impl Float32Reader {
+    fn write(
+        &self,
+        py: Python<'_>,
+        row: usize,
+        output: &mut Vec<u8>,
+        context: &Context,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        visitor.checkpoint(py, 1)?;
+        if row >= self.values.len() {
+            return Err(invalid(py, "Arrow child index is outside its array"));
+        }
+        // Read the actual retained validity bitmap on every call. NULL never
+        // reads the value buffer, and no borrowed buffer survives a callback.
+        if self.nulls.as_ref().is_some_and(|nulls| nulls.is_null(row)) {
+            writer::append(output, b"NULL", context.limit).map_err(|error| errors::wire(py, error))
+        } else {
+            let value = self
+                .values
+                .get(row)
+                .copied()
+                .ok_or_else(|| invalid(py, "Arrow child index is outside its array"))?;
+            scalar::float(output, f64::from(value), context.limit)
+                .map_err(|error| errors::wire(py, error))
+        }
+    }
+}
+
+/// Keep existing native strategies first. Only long primitive Float32 vectors
+/// prepare an additional data/validity owner, after the current chunk is valid.
+fn native_fast_path(
+    py: Python<'_>,
+    array: &ArrayRef,
+    shape: Shape,
+    budget: &IoBudget,
+) -> PyResult<Option<FastPath>> {
+    if let Some(views) = Int64Views::prepare(py, array, shape, budget)? {
+        return Ok(Some(FastPath::Int64(views)));
+    }
+    if !matches!(shape, Shape::Vector { length } if length >= 32)
+        || array.len() < 32
+        || !matches!(array.data_type(), DataType::Float32)
+    {
+        return Ok(None);
+    }
+    let values = array
+        .as_any()
+        .downcast_ref::<Float32Array>()
+        .ok_or_else(|| invalid(py, "Arrow logical and physical array types differ"))?;
+    Ok(Some(FastPath::Float32(Float32Reader {
+        values: values.values().clone(),
+        nulls: values.nulls().cloned(),
+    })))
 }
 
 fn invalid(py: Python<'_>, message: impl AsRef<str>) -> PyErr {
@@ -532,8 +597,8 @@ pub(crate) fn prepare_exported<'py>(
         let fast_path = if let Some(cache) = dictionary::Cache::for_schema(&field, shape) {
             Some(super::boxed(py, FastPath::Dictionary(cache))?)
         } else {
-            Int64Views::prepare(py, &array, shape, budget)?
-                .map(|views| super::boxed(py, FastPath::Int64(views)))
+            native_fast_path(py, &array, shape, budget)?
+                .map(|views| super::boxed(py, views))
                 .transpose()?
         };
         return Ok(Prepared {
@@ -759,8 +824,8 @@ impl Prepared<'_> {
                         if matches!(self.fast_path.as_deref(), Some(FastPath::Dictionary(_))) {
                             None
                         } else {
-                            Int64Views::prepare(py, &array, self.shape, budget)?
-                                .map(|views| super::boxed(py, FastPath::Int64(views)))
+                            native_fast_path(py, &array, self.shape, budget)?
+                                .map(|views| super::boxed(py, views))
                                 .transpose()?
                         };
                     *start = *end;
@@ -825,6 +890,7 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
             Some(FastPath::Int64(views)) => {
                 views.write(py, index, column, output, context, visitor)
             }
+            Some(FastPath::Float32(reader)) => reader.write(py, index, output, context, visitor),
             Some(FastPath::Dictionary(cache)) => {
                 let value = cell_array(py, &array, table, column)?;
                 if !table || cache.has_column(column) {

@@ -499,6 +499,26 @@ I24于06:40Z附近局部采用：原159与新增3个现成Pandas ArrowStringArra
 
 新包C16／F0原固定见证主／独完整直接验证分档，未串乘倍率；F0 Binary直接约1.256／1.254倍。累计C16 bind itemizeFalse本包双轮已守5%；nested N100独轮可信慢5.372%（主U中心5.262%），N1000与N10000两轮仍U约4.87%–5.23%。这些不由局部收益抵消、不当PASS／不接受累计例外，留最终直接保护与有据恢复；I23与所有原始数据保留。本次没有新reader／缓存／类型分支扩张，仅合并同一短值两次读取，实测方法已同时覆盖Arrow／Pandas／Polars。
 
+I24当前F0 typed360只做一次4周期广诊断：直接复用现成Case／CLI／已核输出身份，重新采新产物控制、最多5分钟，不为不影响选点的控制缺口盲补；目的仅是确定下一单dtype的实测空间，不改署为最终360正式成绩。I06历史Float32 reader有约1.116倍已测收益但整包因Int64表+5.3%拒绝；I19最小ScalarBuffer方法已成功，只有当前数据仍支持才做单Float32有界迁移，不同时扩Boolean／其它dtype。
+
+I24 F0 typed360广诊断已在54.21秒完成4真实周期／2880完整组，全部控制合格、零质量拒绝／无效缺口。诊断358项守5%，Arrow List1000中心约慢4.37%为U、Polars Struct1000中心约快6.43%但区间宽为U，未称正式全保护。Arrow f32N1000现38.081μs、F0比1.00083／CI0.994687–1.011904，足以支持I06已跑通方法的单Float32最小ScalarBuffer迁移；Boolean／其它dtype不同时扩展。最大未改善项np.record list1000为3308.354μs、F0比0.9972，由A限8分钟只读定位，不开启第二产品候选。B仅在私有目录准备Float32补丁，主窗口统一集成／测速，不改工具。
+
+I25一次单Float32最小buffer迁移：保原Dictionary／Int64准备与写入，只在Prepared Vector且逻辑/实际chunk≥32时拥有现成ScalarBuffer<f32>，不缓存SQL值；root validity、checkedget、f64精确提升、双检查点与当前限额保留。真实范围包括原适配器交入的容器内Float32 Vector／Object Polars表原native列，未引外层来源flag；Table/Struct/List内部普通writer仍旧路。复用I06保留的精度／slice31/32／chunk／owner两出口／共享线程测试，不新建测试或策略框架；现成159场景新合同预试，预计20–25分钟含构建/完整成本。A对np.record3308μs慢点限时只读确认后暂pass：逐record准备与逐字段公开Python getter确有成本，但现有块reader不直接适配，dtype.names可变、getter可观察、Object槽不能生拷，尚无满足条件的直接迁移，不仓促开第二产品候选。
+
+I25原配置不采用：严格Clippy、GIL954／t853通过，159预试4周期／1272组、全部控制合格且零质量拒绝；Float32列约1.132倍，但Arrow Int64表可信慢5.875%，6项宽区间，不给已否决原配置跑完整正式保护。一次实际otool核对证明：I24没有Int64Views::write独立调用，I25在Prepared::write_cell新增该逐cell调用；不把相关性说成已证唯一原因。I26只给原31行Int64 reader一次明确内联要求，保Float32最小buffer，直接对I24当前最佳159测完整成本；必须读回调用消除，无效则停止该配置，不打开padding／inline参数搜索。原I25源、包与所有负面值保留，当前最佳仍I24/904a10d。
+
+I26也不采用并恢复I24：实际Int64逐cell调用已消除、严格Clippy及GIL954／t853通过，但158项有效预试中7项可信超5%（Arrow i64列约8.91%、chunked12.61%、dictionary5.58%、i64表11.95%、Polars i64列6.37%／表15.66%、RecordBatch12.34%），Float32仍约1.118倍。原PandasIntegerArrayN1控制缺口保留，不为已否决配置补测；无全正式重跑。调用消除不是完整根因，不能将所有残差归为必要安全成本；停止这次强制内联配置及同族inline／padding枚举。产品已按HEAD/400源hash恢复I24，I25/I26源码、包及全部负面值保留。后续仅有明确结构性隔离依据才再开有限试验，不能因局部失败停止Goal。
+
+T720自查于2026-11-01T07:01:55+00:00：有效12h00m40s、余额59h59m20s；C池08h27m28s，原8h已用尽，新增24h性能专用已用00h27m28s，D10h／E4h完整保留。当前最佳I24/904a10d，400源hash与提交／实包相符、两任务ABI已恢复I24；累计C16三种nested仍一项单轮R/其余U，不豁免。最近窗口采用I24（三provider真实7%–22%收益、162双轮5%全PASS）、54秒完成360有效广诊断；I25/I26虽功能通过但旧数值退步即撤回，没有无谓跑完整正式或补无关控制缺口。停止继续inline／padding枚举，唯一后续Float32候选以独立reader＋真实owned validity减少实际动态mask访问、移出共用热体，无新inline／unsafe／来源策略；由B限8分钟私有准备，若仍伤旧路则本轮pass该家族。np.record大点只读发现需额外字段／getter／NoGIL契约，不把它包装成可直接迁移。下一窗口完成这一结构性试验的保留／拒绝，再按当前实测选择另一点；记录与推演仍需更轻，保持短决策直接实测。下一T750固定07:31:15Z，不顺延。
+
+I27是一次有真实少工作依据的结构隔离：独立Float32Reader只持实际读取的public ScalarBuffer<f32>＋NullBuffer，common write_cell只委派，逐值读真实mask，减少原dynamic Array::is_null访问；旧Int64／Dictionary正文和I24 inline属性原样。没有padding／新inline/never／unsafe／额外全局Option／来源flag；所有row/NULL/offset／双checkpoint／limit／release语义保留，rootArc原路径不动。借现成159及13个既有精确行为实例验证，一次预试若无有用目标收益或旧路径仍超线，停止本轮Float32家族，转下一实测点，不补已拒绝配置全矩阵。预算预测20分钟含完整采用判断，属C池新增24h性能专用，D/E余量保持。
+
+I27原159主／独各24周期／7632完整组已齐：两轮158项守5%，仅Arrow i64表一U，中心成本4.7928%／4.7796%，CI分别0.952075–0.956284／0.950244–0.956077；Float32耗时降12.97%／12.73%，Polars Float32降6.07%／6.06%。无源码新改动，按A05仅该表保持原n27／原规则，以完整850输入、明确单请求历史一次128主／独、各最多180秒测清边界，原159上下文U保留且更差亦用，不把U当退步或PASS；预计5分钟。先收当前同包C16／F0固定见证及原Pandas3目标，整体预计8–10分钟，保最终D/E余量，不新工具或GC调整。
+
+I27于07:23Z附近局部采用：独立Float32Reader实际data／validity拥有与单行委派，无新inline/never/unsafe。原159主／独24周期各158PASS＋1Arrow i64表U；该表按预先固定的同n、完整850输入／明确单请求历史各128周期256组补齐，零质量拒绝，成本4.6208%／4.5669%、CI下界0.954558／0.955309，均守5%。有效158原24周期＋1替换128周期及原3Pandas目标全部162双轮5%PASS，原159上下文U与原1%/全部极值保留。ArrowFloat32耗时双轮降12.97%／12.73%（约1.149／1.146倍），PolarsFloat32降6.07%／6.06%，Dictionary成本3.33%／3.71%亦明确留数，不用平均抵消。严格Clippy、GIL954／t853、同包MySQL40／t32＋8缺PL、360F0严格同输出通过，Python未变复用I21 Pyright；I25/I26两条负面源码/包/数据完整保留。
+
+同包C16与F0原固定见证直接双轮证明分档，未串乘倍率。累计C16三种nested本包仍双轮可信慢5.61%–5.85%，另INSERT主U、bind itemizeFalse双U，未获累计例外、不记全局PASS。下一优先回到这一共用旧成本：A仅私有准备保原owned Sequence的入口getter选择＋唯一generic items loop，区别于I21/I22新View与O02getter抽出，不改getter/owner/entry/drop/错误次序；按一份候选实测，不能需要新框架／复制循环／layout指令。最终全性能／同源48/96仍待D阶段。
+
 ### 11.2 30分钟自查与有限恢复
 
 每T+30、T+60……有效分钟自查，阶段切换、重复拒绝、超时、余量动用可合并触发。每次用不超过约90秒说明：已获成果／证据；当前最佳身份；各池已用及余额；U／可信退步和真实阻碍；是否偏离“快速开发、快速迭代”；继续／换法／停止局部路线及下一有界检查点。普通进度不逐项请求批准。
