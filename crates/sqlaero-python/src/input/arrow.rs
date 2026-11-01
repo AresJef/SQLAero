@@ -1521,6 +1521,13 @@ fn write_list(
             "Arrow list offsets are outside the values array",
         ));
     }
+    // Prepare a borrowed typed owner once, without slicing or reading future
+    // cells. A physical mismatch retains the generic value's original timing.
+    let integers = if matches!(values.data_type(), DataType::Int64) {
+        values.as_any().downcast_ref::<Int64Array>()
+    } else {
+        None
+    };
     write_sequence(
         py,
         end - start,
@@ -1528,7 +1535,22 @@ fn write_list(
         context,
         visitor,
         |index, output, visitor| {
-            write_value(py, values, start + index, output, context, budget, visitor)
+            let row = start + index;
+            if let Some(integers) = integers {
+                visitor.checkpoint(py, 1)?;
+                if row >= integers.len() {
+                    return Err(invalid(py, "Arrow child index is outside its array"));
+                }
+                if integers.is_null(row) {
+                    writer::append(output, b"NULL", context.limit)
+                        .map_err(|error| errors::wire(py, error))
+                } else {
+                    scalar::integer(output, integers.value(row), context.limit)
+                        .map_err(|error| errors::wire(py, error))
+                }
+            } else {
+                write_value(py, values, row, output, context, budget, visitor)
+            }
         },
     )
 }

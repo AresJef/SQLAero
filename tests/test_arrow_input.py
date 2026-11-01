@@ -396,6 +396,13 @@ def test_arrow_long_typed_writer_retains_the_current_output_limit(kind: str) -> 
         _sqlaero._bind_sql("SELECT %s", (value,), limit=40)
 
 
+def test_arrow_int64_list_span_limit_fails_at_the_actual_late_child() -> None:
+    value = pa.array([[1, None, 2**63 - 1]], type=pa.list_(pa.int64()))
+    with pytest.raises(_sqlaero.OperationalError) as caught:
+        _sqlaero._bind_sql("SELECT %s", (value,), limit=20)
+    assert "args[0][0][2]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
 @pytest.mark.parametrize("failure", [False, True], ids=["success", "limit-failure"])
 @pytest.mark.parametrize("kind", ["int64", "float32", "boolean", "dictionary"])
 def test_arrow_owned_typed_views_release_the_real_shared_buffer_on_every_exit(failure: bool, kind: str) -> None:
@@ -541,13 +548,18 @@ def test_arrow_long_value_keeps_the_original_operation_deadline(binary: bool) ->
         _sqlaero._bind_sql("SELECT %s", source, timeout_ns=5_000_000)
 
 
-@pytest.mark.parametrize("binary", [False, True], ids=["utf8", "binary"])
-def test_arrow_long_value_preserves_the_actual_signal_exception(binary: bool) -> None:
+@pytest.mark.parametrize("kind", ["utf8", "binary", "list-int64"])
+def test_arrow_long_value_preserves_the_actual_signal_exception(kind: str) -> None:
     class InterruptedArrow(Exception):
         pass
 
     original = InterruptedArrow("original Arrow signal")
-    source = pa.array([b"x" * (16 * 1024 * 1024)]) if binary else pa.array(["'" * (16 * 1024 * 1024)])
+    if kind == "list-int64":
+        source = pa.array([[0] * 1_000_000], type=pa.list_(pa.int64()))
+    elif kind == "binary":
+        source = pa.array([b"x" * (16 * 1024 * 1024)])
+    else:
+        source = pa.array(["'" * (16 * 1024 * 1024)])
     interrupted = False
 
     def interrupt(signum: int, frame: FrameType | None) -> None:
