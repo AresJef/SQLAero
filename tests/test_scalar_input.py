@@ -4,6 +4,8 @@
 
 from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from decimal import Decimal, localcontext
+import subprocess
+import sys
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -83,6 +85,144 @@ def test_decimal_is_independent_of_the_current_rounding_context() -> None:
 ])
 def test_decimal_value_precision_is_independent_of_target_column_scale(value: Decimal, expected: bytes) -> None:
     assert _sqlaero._encode_scalar(value) == expected
+
+
+@pytest.mark.parametrize("capitals", [0, 1])
+def test_decimal_encoding_does_not_apply_context_traps_precision_or_capitals(capitals: int) -> None:
+    cases: tuple[tuple[str, bytes], ...] = (
+        ("1.234567890123456789000", b"1.234567890123456789"),
+        ("1e64", b"1" + b"0" * 64),
+        ("1e-65", b"0." + b"0" * 64 + b"1"),
+        ("0e999999999999999999", b"0"),
+        ("-0e999999999999999999", b"-0"),
+        ("0e-999999999999999999", b"0"),
+        ("-0e-999999999999999999", b"-0"),
+        ("-sNaN42", b"NULL"),
+        ("Infinity", b"NULL"),
+    )
+    with localcontext() as context:
+        context.prec = 1
+        context.capitals = capitals
+        for signal in context.traps:
+            context.traps[signal] = True
+        context.clear_flags()
+        for text, expected in cases:
+            assert _sqlaero._encode_value(Decimal(text)).to_bytes() == expected
+            assert not any(context.flags.values())
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("9" * 66, None),
+    ("0." + "1" * 65, b"0." + b"1" * 65),
+    ("0." + "1" * 66, None),
+    ("1." + "2" * 64, b"1." + b"2" * 64),
+    ("1." + "2" * 65, None),
+])
+def test_decimal_necessary_digits_respect_both_integral_and_fractional_boundaries(
+    text: str, expected: bytes | None,
+) -> None:
+    value = Decimal(text)
+    if expected is None:
+        with pytest.raises(DataError) as caught:
+            _sqlaero._encode_value(value)
+        assert caught.value.code == 65536
+        assert caught.value.is_server_error is False
+    else:
+        assert _sqlaero._encode_value(value).to_bytes() == expected
+
+
+@pytest.mark.parametrize(("text", "expected"), [
+    ("123" + "0" * 10000 + "e-10000", b"123"),
+    ("9" * 65 + "0" * 10000 + "e-10000", b"9" * 65),
+    ("0." + "1" * 65 + "0" * 10000, b"0." + b"1" * 65),
+])
+def test_decimal_redundant_long_coefficient_zeroes_do_not_change_the_exact_domain(
+    text: str, expected: bytes,
+) -> None:
+    assert _sqlaero._encode_value(Decimal(text)).to_bytes() == expected
+
+
+@pytest.mark.parametrize(("text", "sign", "preview", "count", "exponent"), [
+    ("1234567890" * 7, 0, "1, 2, 3, 4, 5, 6, 7, 8, 9, 0, 1, 2, 3, 4, 5, 6", 70, 0),
+    ("-" + "9876543210" * 7 + "e-70", 1, "9, 8, 7, 6, 5, 4, 3, 2, 1, 0, 9, 8, 7, 6, 5, 4", 70, -70),
+    ("1.00e65", 0, "1, 0, 0", 3, 63),
+])
+def test_decimal_range_notes_keep_original_coefficient_preview_count_and_exponent(
+    text: str, sign: int, preview: str, count: int, exponent: int,
+) -> None:
+    with pytest.raises(DataError) as caught:
+        _sqlaero._bind_sql("SELECT %s", (Decimal(text),))
+    notes = "\n".join(getattr(caught.value, "__notes__", ()))
+    truncated = " [truncated]" if count > 16 else ""
+    expected = (
+        f"failed Decimal components: sign={sign}, digits=[{preview}]{truncated} "
+        f"({count} digits), exponent={exponent}"
+    )
+    assert expected in notes
+    assert "while binding args[0]; current request was not sent" in notes
+    assert caught.value.code == 65536
+
+
+def test_real_decimal_subclass_uses_the_formal_base_value_without_its_string_hook() -> None:
+    class StringTrap(Decimal):
+        def __str__(self) -> str:
+            raise AssertionError("a real Decimal subclass must normalize to its base value")
+
+    assert _sqlaero._encode_value(StringTrap("1.2300")).to_bytes() == b"1.23"
+
+
+@pytest.mark.parametrize("provider", ["mutable", "pure-python"])
+def test_unqualified_decimal_type_keeps_live_as_tuple_hooks_in_a_fresh_interpreter(provider: str) -> None:
+    script = r'''
+import decimal
+import sys
+
+calls: list[str] = []
+if sys.argv[1] == "pure-python":
+    import _pydecimal
+    chosen = _pydecimal.Decimal
+    original_tuple = chosen.as_tuple
+    def parts(self: object) -> tuple[object, ...]:
+        calls.append("tuple")
+        return original_tuple(self)
+    chosen.as_tuple = parts
+else:
+    class MutableDecimal:
+        def __init__(self, value: object = None) -> None:
+            pass
+        def as_tuple(self) -> tuple[int, tuple[int, ...], int]:
+            calls.append("tuple")
+            return (0, (1, 2, 3, 0, 0), -2)
+    chosen = MutableDecimal
+
+def forbidden_string(self: object) -> str:
+    raise AssertionError("an unqualified Decimal class must not use str")
+chosen.__str__ = forbidden_string
+decimal.Decimal = chosen
+from sqlaero import _sqlaero
+
+value = chosen("123.00")
+assert _sqlaero._encode_value(value).to_bytes() == b"123"
+assert calls == ["tuple"], calls
+
+original = KeyboardInterrupt("actual live as_tuple failure")
+def failure(self: object) -> tuple[object, ...]:
+    calls.append("failure")
+    raise original
+chosen.as_tuple = failure
+try:
+    _sqlaero._encode_value(value)
+except KeyboardInterrupt as error:
+    assert error is original
+else:
+    raise AssertionError("the live as_tuple failure was bypassed")
+assert calls == ["tuple", "failure"], calls
+'''
+    completed = subprocess.run(
+        [sys.executable, "-c", script, provider],
+        capture_output=True, text=True, timeout=20, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
 
 
 def test_utc_normalization_preserves_calendar_endpoints_and_fold() -> None:

@@ -5,7 +5,7 @@ use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
 use pyo3::types::{
     PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyFloat, PyInt,
-    PyString, PyTime, PyTimeAccess, PyTuple, PyType, PyTzInfoAccess,
+    PyString, PyTime, PyTimeAccess, PyType, PyTzInfoAccess,
 };
 use sqlaero_core::bind::scalar::{Clock, Date, ScalarError};
 use sqlaero_core::bind::{Context, scalar, writer};
@@ -14,6 +14,7 @@ use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::deadline::IoBudget;
 
 pub(crate) mod arrow;
+mod decimal;
 pub(crate) mod numpy;
 pub(crate) mod pandas;
 pub(crate) mod polars;
@@ -65,6 +66,7 @@ pub(crate) fn actual_instance(value: &Bound<'_, PyAny>, base: &Bound<'_, PyType>
 #[pyclass(frozen)]
 pub(crate) struct ScalarTypes {
     decimal: Py<PyType>,
+    native_decimal: bool,
     utc: Py<PyAny>,
     struct_time: Py<PyType>,
     numpy: std::sync::OnceLock<numpy::NumpyTypes>,
@@ -174,10 +176,12 @@ impl ScalarTypes {
         let decimal = errors::module(py, c"decimal")?;
         let datetime = errors::module(py, c"datetime")?;
         let timezone = errors::attribute(datetime.as_any(), c"timezone")?;
+        let decimal_type =
+            errors::attribute(decimal.as_any(), c"Decimal")?.cast_into::<PyType>()?;
+        let native_decimal = decimal::native_type(&decimal_type)?;
         Ok(Self {
-            decimal: errors::attribute(decimal.as_any(), c"Decimal")?
-                .cast_into()?
-                .unbind(),
+            decimal: decimal_type.unbind(),
+            native_decimal,
             utc: errors::attribute(&timezone, c"utc")?.unbind(),
             struct_time: errors::attribute(errors::module(py, c"time")?.as_any(), c"struct_time")?
                 .cast_into::<PyType>()?
@@ -286,22 +290,8 @@ impl ScalarTypes {
                 .map(|()| true);
         }
         if value.get_type().is(self.decimal.bind(py)) {
-            let parts = value.call_method0(PyString::from_bytes(py, b"as_tuple")?)?;
-            let parts = parts.cast::<PyTuple>()?;
-            let exponent = parts.get_item(2)?;
-            if !exponent.is_exact_instance_of::<PyInt>() {
-                return writer::append(output, b"NULL", limit)
-                    .map_err(|e| errors::wire(py, e))
-                    .map(|()| true);
-            }
-            let negative = parts.get_item(0)?.extract::<u8>()? != 0;
-            let digits = parts.get_item(1)?.extract::<Vec<u8>>()?;
-            let exponent = exponent.extract::<i64>()?;
-            return scalar::decimal(output, negative, &digits, exponent, limit).map_err(|error| {
-                let error = scalar_error(py, error);
-                errors::note(py, &error, format!("failed Decimal components: sign={}, digits={:?}{} ({} digits), exponent={exponent}", u8::from(negative), &digits[..digits.len().min(16)], if digits.len() > 16 { " [truncated]" } else { "" }, digits.len()));
-                error
-            }).map(|()| true);
+            return decimal::write(value, self.native_decimal, output, context, budget)
+                .map(|()| true);
         }
         if self.write_pandas(value, output, context, budget)? {
             return Ok(true);
