@@ -41,6 +41,32 @@ def test_mixed_python_and_arrow_nesting_shares_one_logical_limit(native_levels: 
         assert caught.value.code == 65543
 
 
+@pytest.mark.parametrize("native_levels", [61, 62])
+def test_normalized_alias_python_and_arrow_share_the_exact_depth_boundary(native_levels: int) -> None:
+    class Normalized(list[object]):
+        pass
+
+    data: Any = 7
+    dtype = pa.int64()
+    for _ in range(native_levels):
+        data = [data]
+        dtype = pa.list_(dtype)
+    source = Normalized([[pa.array([data], type=dtype)]])
+    # One normalized container + one canonical List + one Arrow vector,
+    # followed by native_levels List values; the normalized alias adds zero.
+    logical_levels = 3 + native_levels
+    if logical_levels == 64:
+        assert _sqlaero._encode_value(source).to_bytes() == b"(" * 64 + b"7" + b")" * 64
+    else:
+        with pytest.raises(_sqlaero.DataError) as caught:
+            _sqlaero._encode_value(source)
+        assert caught.value.code == 65543
+        # The failing 65th entry has 64 single-element ancestors. The source
+        # path contains those real indexes, never an index for an alias owner.
+        expected_path = "args" + "[0]" * 64
+        assert f"{expected_path} exceeds 64 active container levels" in str(caught.value)
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [
