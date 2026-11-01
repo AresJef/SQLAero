@@ -89,6 +89,13 @@ def table_input(provider: str, rows: list[tuple[int, object]], *, objects: bool 
         pd = pytest.importorskip("pandas")
         return pd.DataFrame({"id": [row[0] for row in rows],
                              "value": pd.Series([row[1] for row in rows], dtype=object)})
+    if provider.startswith("pandas-category-"):
+        pd = pytest.importorskip("pandas")
+        storage = provider.removeprefix("pandas-category-")
+        if storage == "pyarrow":
+            pytest.importorskip("pyarrow")
+        values = pd.array([row[1] for row in rows], dtype=pd.StringDtype(storage=storage))
+        return pd.DataFrame({"id": [row[0] for row in rows], "value": pd.Categorical(values)})
     if provider == "arrow":
         pa = pytest.importorskip("pyarrow")
         return pa.table({"id": [row[0] for row in rows], "value": [row[1] for row in rows]})
@@ -100,14 +107,15 @@ def table_input(provider: str, rows: list[tuple[int, object]], *, objects: bool 
 
 @requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
-@pytest.mark.parametrize("provider", ["numpy", "pandas", "arrow", "polars"])
+@pytest.mark.parametrize("provider", ["numpy", "pandas", "arrow", "polars", "pandas-category-python", "pandas-category-pyarrow"])
 def test_typed_table_rollover_preserves_every_actual_row(label: str, provider: str) -> None:
-    rows: list[tuple[int, object]] = [(index, "x'\\" * 30) for index in range(100)]
+    count = 600 if provider == "pandas-category-python" else 100
+    rows: list[tuple[int, object]] = [(index, "x'\\" * 30) for index in range(count)]
     source = table_input(provider, rows)
     with live(label, max_allowed_packet="2KB") as connection, connection.cursor() as cursor:
         cursor.execute("CREATE TEMPORARY TABLE typed_rollover_probe (id INT PRIMARY KEY,value VARCHAR(128))")
-        assert cursor.execute("INSERT INTO typed_rollover_probe VALUES (%s,%s)", source) == 100
-        assert cursor.row_count == 100 and cursor.warning_count == 0
+        assert cursor.execute("INSERT INTO typed_rollover_probe VALUES (%s,%s)", source) == count
+        assert cursor.row_count == count and cursor.warning_count == 0
         cursor.execute("SELECT id,value FROM typed_rollover_probe ORDER BY id")
         assert cursor.fetchall() == tuple(rows)
 
@@ -140,7 +148,7 @@ def test_typed_later_callback_failure_keeps_original_and_confirmed_prefix(label:
 
 @requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
-@pytest.mark.parametrize("provider", ["numpy", "pandas", "arrow", "polars"])
+@pytest.mark.parametrize("provider", ["numpy", "pandas", "arrow", "polars", "pandas-category-python", "pandas-category-pyarrow"])
 def test_typed_rows_use_confirmed_changed_quoting_context(label: str, provider: str) -> None:
     values = ["first'\\value", "next'\\value", "last'\\value"]
     if provider == "numpy":
@@ -149,6 +157,15 @@ def test_typed_rows_use_confirmed_changed_quoting_context(label: str, provider: 
     elif provider == "pandas":
         pd = pytest.importorskip("pandas")
         source = pd.Series(values)
+    elif provider.startswith("pandas-category-"):
+        pd = pytest.importorskip("pandas")
+        storage = provider.removeprefix("pandas-category-")
+        if storage == "pyarrow":
+            pytest.importorskip("pyarrow")
+        labels = pd.Index(pd.array(values, dtype=pd.StringDtype(storage=storage)))
+        count = 600 if storage == "python" else 40
+        values = (values * ((count + 2) // 3))[:count]
+        source = pd.Categorical.from_codes([index % 3 for index in range(count)], categories=labels)
     elif provider == "arrow":
         pa = pytest.importorskip("pyarrow")
         labels = values

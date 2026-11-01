@@ -436,15 +436,53 @@ impl SourceTypes {
             Family::Categorical => {
                 let codes = errors::attribute(storage, c"codes")?;
                 let categories = errors::attribute(storage, c"categories")?;
-                self.family(&errors::attribute(&categories, c"dtype")?)?;
+                let dtype = errors::attribute(&categories, c"dtype")?;
+                let family = self.family(&dtype)?;
                 let labels = categories.len()?;
                 let codes = numpy_source(api, &codes, budget, length)?;
-                Ok(Column::Categorical {
-                    codes,
-                    categories,
-                    labels,
-                    length,
-                })
+                // Standard Index values may use the already validated native
+                // storage contract. Object labels and real Index subclasses
+                // retain their actual scalar getter and conversion protocols.
+                let native = if length >= 32
+                    && self
+                        .arrays
+                        .first()
+                        .is_some_and(|typ| storage.get_type().is(typ.bind(py)))
+                    && categories.get_type().is(self.index.bind(py))
+                {
+                    match family {
+                        Family::Numpy
+                            if matches!(
+                                errors::attribute(&dtype, c"kind")?.extract::<&str>()?,
+                                "i" | "u" | "f" | "b"
+                            ) =>
+                        {
+                            Some((self.numpy_extension.bind(py).clone(), family))
+                        }
+                        // Python strings still prepare mask/Object blocks;
+                        // short columns cannot amortize that fixed work.
+                        Family::PythonString if length >= 512 => {
+                            self.arrays.get(4).map(|typ| (typ.bind(py).clone(), family))
+                        }
+                        Family::Arrow if dtype.get_type().is(self.string_dtype.bind(py)) => {
+                            self.arrays.get(5).map(|typ| (typ.bind(py).clone(), family))
+                        }
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+                Ok(Column::Categorical(crate::input::boxed(
+                    py,
+                    Category {
+                        codes,
+                        categories,
+                        labels,
+                        length,
+                        prepare_native: native,
+                        native: None,
+                    },
+                )?))
             }
             Family::AwareTime => {
                 let unit = errors::attribute(&dtype, c"unit")?;
@@ -533,12 +571,7 @@ enum Column<'py> {
         owner: Bound<'py, PyAny>,
         length: usize,
     },
-    Categorical {
-        codes: NumpySource<'py>,
-        categories: Bound<'py, PyAny>,
-        labels: usize,
-        length: usize,
-    },
+    Categorical(Box<Category<'py>>),
     Time {
         ticks: NumpySource<'py>,
         unit: TimeUnit,
@@ -558,9 +591,9 @@ impl Column<'_> {
                 )),
             },
             Self::Masked(source) => Ok(source.length),
+            Self::Categorical(source) => Ok(source.length),
             Self::Range { length, .. }
             | Self::Python { length, .. }
-            | Self::Categorical { length, .. }
             | Self::Time { length, .. } => Ok(*length),
         }
     }
@@ -592,30 +625,7 @@ impl Column<'_> {
                 let value = owner.get_item(crate::input::python_index(owner.py(), row)?)?;
                 visitor.python(&value, output, None)
             }
-            Self::Categorical {
-                codes,
-                categories,
-                labels,
-                ..
-            } => {
-                let py = categories.py();
-                let code = codes.signed_at(row, budget)?;
-                if code == -1 {
-                    return writer::append(output, b"NULL", context.limit)
-                        .map_err(|error| errors::wire(py, error));
-                }
-                let code = usize::try_from(code)
-                    .ok()
-                    .filter(|code| *code < *labels)
-                    .ok_or_else(|| {
-                        errors::builtin_message::<PyValueError>(
-                            py,
-                            "Pandas categorical code must be -1 or a valid categories position",
-                        )
-                    })?;
-                let label = categories.get_item(crate::input::python_index(py, code)?)?;
-                visitor.python(&label, output, None)
-            }
+            Self::Categorical(source) => source.write(row, output, context, budget, visitor, api),
             Self::Time { ticks, unit, .. } => {
                 let py = ticks.owner().py();
                 let value = ticks.signed_at(row, budget)?;
@@ -638,6 +648,140 @@ impl Column<'_> {
                 )
             }
         }
+    }
+}
+
+/// One category column owns its codes, label owner and optional standard
+/// storage reader. No encoded label answers or raw Object slots are cached.
+struct Category<'py> {
+    codes: NumpySource<'py>,
+    categories: Bound<'py, PyAny>,
+    labels: usize,
+    length: usize,
+    prepare_native: Option<(Bound<'py, PyType>, Family)>,
+    native: Option<Box<Column<'py>>>,
+}
+
+impl<'py> Category<'py> {
+    fn write(
+        &mut self,
+        row: usize,
+        output: &mut Vec<u8>,
+        context: &Context,
+        budget: &IoBudget,
+        visitor: &mut dyn CellWriter,
+        api: &NumpyArrayApi,
+    ) -> PyResult<()> {
+        let py = self.categories.py();
+        let code = self.codes.signed_at(row, budget)?;
+        if code == -1 {
+            return writer::append(output, b"NULL", context.limit)
+                .map_err(|error| errors::wire(py, error));
+        }
+        let code = usize::try_from(code)
+            .ok()
+            .filter(|code| *code < self.labels)
+            .ok_or_else(|| {
+                errors::builtin_message::<PyValueError>(
+                    py,
+                    "Pandas categorical code must be -1 or a valid categories position",
+                )
+            })?;
+        // Resolve only after an actual valid reference. An all-missing input
+        // or bad first code must not export/read otherwise unused labels.
+        if let Some((typ, family)) = self.prepare_native.take() {
+            let storage = errors::attribute(&self.categories, c"array")?;
+            crate::input::check(py, budget)?;
+            if storage.get_type().is(&typ) {
+                if storage.len()? != self.labels {
+                    return Err(invalid(
+                        py,
+                        "Pandas categorical label storage length changed during encoding",
+                    ));
+                }
+                let source = match family {
+                    Family::Numpy => {
+                        let keywords = errors::dictionary(py)?;
+                        keywords
+                            .set_item(pyo3::types::PyString::from_bytes(py, b"copy")?, false)?;
+                        let converted = call_keywords(&storage, c"to_numpy", &keywords)?;
+                        crate::input::check(py, budget)?;
+                        let native = if api.accepts(&converted) {
+                            let dtype = errors::attribute(&converted, c"dtype")?;
+                            let kind = errors::attribute(&dtype, c"kind")?;
+                            let width =
+                                errors::attribute(&dtype, c"itemsize")?.extract::<usize>()?;
+                            matches!(
+                                (kind.extract::<&str>()?, width),
+                                ("i" | "u", 1 | 2 | 4 | 8) | ("f", 2 | 4 | 8) | ("b", 1)
+                            )
+                        } else {
+                            false
+                        };
+                        if !native {
+                            let label = self
+                                .categories
+                                .get_item(crate::input::python_index(py, code)?)?;
+                            return visitor.python(&label, output, None);
+                        }
+                        Column::Numpy(numpy_source(api, &converted, budget, self.labels)?)
+                    }
+                    Family::PythonString => Column::Masked(Masked {
+                        owner: storage,
+                        length: self.labels,
+                        dtype: py.get_type::<PyAny>().into_any(),
+                        python_string: true,
+                        current: None,
+                    }),
+                    Family::Arrow => {
+                        let exported = errors::attribute(&storage, c"__arrow_array__")?.call0()?;
+                        crate::input::check(py, budget)?;
+                        // Category codes are random access. A forward-only
+                        // stream cannot stand in for a label table; select a
+                        // single public array, or leave this column generic.
+                        let exported = if exported.hasattr(c"__arrow_c_array__")? {
+                            Some(exported)
+                        } else if exported.hasattr(c"num_chunks")?
+                            && errors::attribute(&exported, c"num_chunks")?.extract::<usize>()? == 1
+                        {
+                            let chunk = exported.call_method1(c"chunk", (0,))?;
+                            if chunk.hasattr(c"__arrow_c_array__")? {
+                                Some(chunk)
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        };
+                        let Some(exported) = exported else {
+                            let label = self
+                                .categories
+                                .get_item(crate::input::python_index(py, code)?)?;
+                            return visitor.python(&label, output, None);
+                        };
+                        Column::Arrow(arrow::prepare_exported(
+                            &storage,
+                            &exported,
+                            Shape::Vector {
+                                length: self.labels,
+                            },
+                            budget,
+                        )?)
+                    }
+                    _ => {
+                        return Err(invalid(py, "Pandas categorical label strategy is invalid"));
+                    }
+                };
+                self.native = Some(crate::input::boxed(py, source)?);
+            }
+        }
+        if let Some(source) = &mut self.native {
+            return source.write(code, output, context, budget, visitor, api);
+        }
+        let label = self
+            .categories
+            .get_item(crate::input::python_index(py, code)?)?;
+        visitor.python(&label, output, None)
     }
 }
 

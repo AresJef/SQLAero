@@ -339,6 +339,8 @@ def typed_cases() -> list[Case]:
             mask = index % 7 == 6
             text = np.resize(np.array(['ascii', "中文'", 'A\\B'], dtype='U16'), n)
             arrays = {'Categorical': pd.Categorical.from_codes(np.where(mask, -1, index % 3), categories=['ascii', "中文'", 'x']),
+                      'Categorical-numeric': pd.Categorical.from_codes(np.where(mask, -1, index % 3), categories=pd.Index([-9, 0, 7], dtype='int64')),
+                      'Categorical-python': pd.Categorical.from_codes(np.where(mask, -1, index % 3), categories=pd.Index(pd.array(['ascii', "中文'", 'x'], dtype=pd.StringDtype(storage='python')))),
                       'IntegerArray': pd.array(index + 7, dtype='Int64'),
                       'FloatingArray': pd.array(np.resize(np.array([0.1, -0.0, 1.5], dtype='f4'), n), dtype='Float32'),
                       'BooleanArray': pd.array(index % 2 == 0, dtype='boolean'),
@@ -481,6 +483,15 @@ def typed_cases() -> list[Case]:
             if schema == 'mixed':
                 result.append(Case(f'typed/{provider}/bind-mixed/R1000C4', value, 'bind',
                                    'INSERT INTO t VALUES (%s,%s,%s,%s)', True))
+        if pd is not None and schema.startswith('category'):
+            count = len(ints) if schema == 'category-high' else 3
+            codes = [-1 if index % 7 == 6 else index % count for index in ints]
+            for storage in ('numeric', 'python'):
+                labels = pd.Index(range(count), dtype='int64') if storage == 'numeric' else pd.Index(pd.array(
+                    [f'k{i}' for i in range(count)] if schema == 'category-high' else ['a', "中'", 'b'],
+                    dtype=pd.StringDtype(storage='python')))
+                value = pd.DataFrame({key: pd.Categorical.from_codes(codes, categories=labels) for key in logical})
+                add('pandas', f'frame-{schema}-{storage}/R1000C4', value)
     return result
 
 

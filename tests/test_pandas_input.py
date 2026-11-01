@@ -358,11 +358,21 @@ import pandas as pd
 from sqlaero import _sqlaero
 assert getattr(sys, '_is_gil_enabled', lambda: True)() == before
 value = pd.Series(pd.array([1,None,3],dtype='Int64'))
+sources = [(value, [b'\x03SELECT 1',b'\x03SELECT NULL',b'\x03SELECT 3'])]
+sources.append((
+    pd.Categorical.from_codes([0,-1,1]*12, categories=pd.Index([7,9],dtype='int64')),
+    [b'\x03SELECT 7',b'\x03SELECT NULL',b'\x03SELECT 9']*12,
+))
+sources.append((
+    pd.Categorical.from_codes([0,-1,1]*172, categories=pd.Index(pd.array(['a','b'],dtype=pd.StringDtype(storage='python')))),
+    [b"\x03SELECT 'a'",b'\x03SELECT NULL',b"\x03SELECT 'b'"]*172,
+))
 barrier = threading.Barrier(4)
 def run(index):
     barrier.wait(timeout=10)
     for _ in range(16):
-        assert _sqlaero._bind_sql('SELECT %s',value,many=True) == [b'\x03SELECT 1',b'\x03SELECT NULL',b'\x03SELECT 3']
+        for source, expected in sources:
+            assert _sqlaero._bind_sql('SELECT %s',source,many=True) == expected
     return index
 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
     assert sorted(pool.map(run,range(4))) == list(range(4))
@@ -547,6 +557,216 @@ def test_pandas_categorical_invalid_code_is_rejected_before_label_access(code: i
     value = pd.Categorical.from_codes([code], categories=["a", "b"], validate=False)
     with pytest.raises(ValueError, match="categorical code"):
         _sqlaero._encode_value(value)
+
+
+@pytest.mark.parametrize(("storage", "count"), [("numeric", 35), ("python", 35), ("python", 511), ("python", 512), ("pyarrow", 35)])
+@pytest.mark.parametrize(("many", "itemize"), [(False, False), (False, True), (True, False), (True, True)])
+def test_pandas_standard_categorical_labels_keep_all_four_binding_roles(storage: str, count: int, many: bool, itemize: bool) -> None:
+    if storage == "numeric":
+        labels = pd.Index(np.array([7, -9], dtype=np.int16))
+        tokens = [b"7", b"-9"]
+    else:
+        if storage == "pyarrow":
+            pytest.importorskip("pyarrow")
+        labels = pd.Index(pd.array(["ascii", "中'"], dtype=pd.StringDtype(storage=storage)))
+        tokens = [b"'ascii'", "'中\\''".encode()]
+    codes = ([0, -1, 1, 0, 1] * ((count + 4) // 5))[:count]
+    value = pd.Categorical.from_codes(codes, categories=labels)
+    cells = [b"NULL" if code == -1 else tokens[code] for code in codes]
+    if many:
+        sql = "SELECT %s"
+        expected = [b"\x03SELECT " + cell for cell in cells]
+    elif itemize:
+        sql = "SELECT " + ",".join(["%s"] * len(codes))
+        expected = [b"\x03SELECT " + b",".join(cells)]
+    else:
+        sql = "SELECT %s"
+        expected = [b"\x03SELECT (" + b",".join(cells) + b")"]
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == expected
+
+
+@pytest.mark.parametrize("wrapper", ["series", "index", "frame"])
+@pytest.mark.parametrize("unique", [False, True])
+def test_pandas_standard_category_wrappers_keep_slice_null_and_cardinality(wrapper: str, unique: bool) -> None:
+    count = 520
+    labels = pd.Index(pd.array([f"k{i}" for i in range(count if unique else 3)], dtype=pd.StringDtype(storage="python")))
+    codes = [-1 if i % 7 == 6 else i % len(labels) for i in range(count)]
+    value = pd.Categorical.from_codes(codes, categories=labels)[::-1]
+    cells = [b"NULL" if code == -1 else f"'k{code}'".encode() for code in codes[::-1]]
+    if wrapper == "series":
+        source = pd.Series(value, index=[object() for _ in range(count)])
+        sql = "SELECT %s"
+        expected = [b"\x03SELECT " + cell for cell in cells]
+    elif wrapper == "index":
+        source = pd.CategoricalIndex(value, name=object())
+        sql = "SELECT %s"
+        expected = [b"\x03SELECT " + cell for cell in cells]
+    else:
+        source = pd.DataFrame({f"c{column}": value for column in range(4)})
+        sql = "SELECT %s,%s,%s,%s"
+        expected = [b"\x03SELECT " + b",".join([cell] * 4) for cell in cells]
+    assert _sqlaero._bind_sql(sql, source, many=True) == expected
+
+
+def test_pandas_numeric_category_retains_uint64_width_and_float_bits() -> None:
+    wide = pd.Categorical.from_codes([0, 1] * 17, categories=pd.Index(np.array([0, 2**64 - 1], dtype=np.uint64)))
+    assert _sqlaero._bind_sql("SELECT %s", wide, many=True) == [b"\x03SELECT 0", b"\x03SELECT 18446744073709551615"] * 17
+    labels = pd.Index(np.array([-0.0, 0.1, 1.7976931348623157e308, float("inf"), -float("inf")], dtype=np.float64))
+    value = pd.Categorical.from_codes([0, 1, 2, 3, 4] * 7, categories=labels)
+    rows = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    expected = ["-0x0.0p+0", "0x1.999999999999ap-4", "0x1.fffffffffffffp+1023", None, None] * 7
+    actual = [None if row == b"\x03SELECT NULL" else float(row.removeprefix(b"\x03SELECT ")).hex() for row in rows]
+    assert actual == expected
+
+
+@pytest.mark.parametrize("storage", ["python", "pyarrow"])
+@pytest.mark.parametrize("referenced", [False, True])
+def test_pandas_category_only_encodes_referenced_native_string_labels(storage: str, referenced: bool) -> None:
+    if storage == "pyarrow":
+        pytest.importorskip("pyarrow")
+    labels = pd.Index(pd.array(["ok", "🙂"], dtype=pd.StringDtype(storage=storage)))
+    codes = [0] * 512 + ([1] if referenced else [0])
+    value = pd.Categorical.from_codes(codes, categories=labels)
+    if referenced:
+        with pytest.raises(UnicodeEncodeError) as caught:
+            _sqlaero._bind_sql("SELECT %s", value, many=True, charset="ascii")
+        assert caught.value.object == "🙂"
+        assert (caught.value.start, caught.value.end) == (0, 1)
+        assert "args[512]" in "\n".join(getattr(caught.value, "__notes__", []))
+    else:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True, charset="ascii") == [b"\x03SELECT 'ok'"] * 513
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_pandas_arrow_category_nonmonotonic_codes_do_not_rewind_a_stream(chunked: bool) -> None:
+    pa = pytest.importorskip("pyarrow")
+    pieces = [["a"], [], ["b", "c"]] if chunked else [["a", "b", "c"]]
+    storage = pd.arrays.ArrowStringArray(pa.chunked_array(pieces, type=pa.large_string()))
+    labels = pd.Index(storage)
+    value = pd.Categorical.from_codes([2, 0, 1, -1, 2, 0] * 6, categories=labels)
+    expected = [b"\x03SELECT 'c'", b"\x03SELECT 'a'", b"\x03SELECT 'b'", b"\x03SELECT NULL", b"\x03SELECT 'c'", b"\x03SELECT 'a'"] * 6
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == expected
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_pandas_object_category_keeps_every_real_label_conversion_and_original_error(fail: bool) -> None:
+    calls: list[str] = []
+    original = MemoryError("category original conversion")
+    class Label(str):
+        def __str__(self) -> str:
+            calls.append("convert")
+            if fail and len(calls) == 33:
+                raise original
+            return "wire"
+    class Unused:
+        def __repr__(self) -> str:
+            raise AssertionError("unreferenced category must remain untouched")
+    labels = pd.Index([Label("source"), Unused()], dtype=object)
+    value = pd.Categorical.from_codes([0] * 35, categories=labels)
+    calls.clear()
+    if fail:
+        with pytest.raises(MemoryError) as caught:
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
+        assert caught.value is original
+        assert calls == ["convert"] * 33
+    else:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 'wire'"] * 35
+        assert calls == ["convert"] * 35
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_pandas_category_labels_real_index_subclass_keeps_getter_and_error(fail: bool) -> None:
+    calls: list[int] = []
+    original = KeyboardInterrupt("category label Index getter")
+    class Labels(pd.RangeIndex):
+        def __getitem__(self, key: Any) -> Any:
+            calls.append(int(key))
+            if fail and len(calls) == 33:
+                raise original
+            parent: Any = super()
+            return parent.__getitem__(key)
+    labels = Labels(3)
+    value = pd.Categorical.from_codes([0, 1, 2] * 12, categories=labels)
+    assert type(value.categories) is Labels
+    calls.clear()
+    if fail:
+        with pytest.raises(KeyboardInterrupt) as caught:
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
+        assert caught.value is original
+        assert calls == ([0, 1, 2] * 11)
+    else:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 0", b"\x03SELECT 1", b"\x03SELECT 2"] * 12
+        assert calls == [0, 1, 2] * 12
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_pandas_real_categorical_index_subclass_keeps_values_once(fail: bool) -> None:
+    calls: list[int] = []
+    original = MemoryError("CategoricalIndex values original")
+    class Index(pd.CategoricalIndex):
+        @property
+        def values(self) -> Any:
+            calls.append(1)
+            if fail:
+                raise original
+            return np.full(35, 17, dtype=np.int64)
+    value = Index(["ignored"] * 35)
+    assert type(value) is Index
+    if fail:
+        with pytest.raises(MemoryError) as caught:
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
+        assert caught.value is original
+    else:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 17"] * 35
+    assert calls == [1]
+
+
+@pytest.mark.parametrize("first", [-2, -1])
+def test_pandas_category_bad_code_or_all_nulls_do_not_request_label_array(monkeypatch: pytest.MonkeyPatch, first: int) -> None:
+    value = pd.Categorical.from_codes([first] + [-1] * 34, categories=pd.Index([7, 9]), validate=False)
+    original: Any = pd.Index.array
+    target = value.categories
+    def array(index: Any) -> Any:
+        if index is target:
+            raise AssertionError("no valid code requests this label storage")
+        return original.__get__(index, type(index))
+    monkeypatch.setattr(pd.Index, "array", property(array))
+    if first == -2:
+        with pytest.raises(ValueError, match="categorical code"):
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
+    else:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT NULL"] * 35
+
+
+@pytest.mark.parametrize("returned", ["index", "category"])
+def test_pandas_category_unexpected_public_label_array_falls_back_without_recursion(monkeypatch: pytest.MonkeyPatch, returned: str) -> None:
+    value = pd.Categorical.from_codes([0, 1] * 17, categories=pd.Index([7, 9]))
+    original: Any = pd.Index.array
+    target = value.categories
+    def array(index: Any) -> Any:
+        if index is target:
+            return target if returned == "index" else value
+        return original.__get__(index, type(index))
+    monkeypatch.setattr(pd.Index, "array", property(array))
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 7", b"\x03SELECT 9"] * 17
+
+
+def test_pandas_native_category_keeps_late_bad_code_and_output_limit() -> None:
+    value = pd.Categorical.from_codes([0] * 34 + [2], categories=pd.Index([7, 9]), validate=False)
+    with pytest.raises(ValueError, match="categorical code") as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert "args[34]" in "\n".join(getattr(caught.value, "__notes__", []))
+    valid = pd.Categorical.from_codes([0] * 35, categories=pd.Index([7, 9]))
+    with pytest.raises(_sqlaero.OperationalError):
+        _sqlaero._bind_sql("SELECT %s", (valid,), limit=len(b"\x03SELECT (7,7,7"))
+
+
+@pytest.mark.parametrize("no_backslash", [False, True])
+def test_pandas_category_native_text_uses_current_quote_context(no_backslash: bool) -> None:
+    labels = pd.Index(pd.array(["A\\B'"], dtype=pd.StringDtype(storage="python")))
+    value = pd.Categorical.from_codes([0] * 513, categories=labels)
+    cell = b"'A\\B'''" if no_backslash else b"'A\\\\B\\''"
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, no_backslash=no_backslash) == [b"\x03SELECT " + cell] * 513
 
 
 @pytest.mark.parametrize("shape", [(1, 1), (1003, 3), (2, 33)])
