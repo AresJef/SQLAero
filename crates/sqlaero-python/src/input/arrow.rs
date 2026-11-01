@@ -997,15 +997,17 @@ fn byte_slice<'a>(py: Python<'_>, array: &'a ArrayRef, index: usize) -> PyResult
 }
 
 fn utf8<'a>(py: Python<'_>, bytes: &'a [u8], start: usize) -> PyResult<&'a str> {
-    std::str::from_utf8(bytes).map_err(|error| {
-        errors::builtin_format::<PyTypeError>(
-            py,
-            format_args!(
-                "Arrow UTF-8 value is invalid at byte {}",
-                start.saturating_add(error.valid_up_to())
-            ),
-        )
-    })
+    std::str::from_utf8(bytes).map_err(|error| utf8_error(py, error, start))
+}
+
+fn utf8_error(py: Python<'_>, error: std::str::Utf8Error, start: usize) -> PyErr {
+    errors::builtin_format::<PyTypeError>(
+        py,
+        format_args!(
+            "Arrow UTF-8 value is invalid at byte {}",
+            start.saturating_add(error.valid_up_to())
+        ),
+    )
 }
 
 fn write_bytes(
@@ -1020,22 +1022,27 @@ fn write_bytes(
         array.data_type(),
         DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View
     );
-    let length = byte_slice(py, array, index)?.len();
-    if length <= super::WORK_BYTES {
-        let result = {
-            let source = byte_slice(py, array, index)?;
-            if text {
-                context.codec.literal(
-                    utf8(py, source, 0)?,
-                    output,
-                    context.no_backslash_escapes,
-                    context.limit,
-                )
+    let (length, short) = {
+        let source = byte_slice(py, array, index)?;
+        let length = source.len();
+        let short = if length <= super::WORK_BYTES {
+            Some(if text {
+                std::str::from_utf8(source).map(|text| {
+                    context
+                        .codec
+                        .literal(text, output, context.no_backslash_escapes, context.limit)
+                })
             } else {
-                return writer::binary(output, source, context.limit)
-                    .map_err(|error| errors::wire(py, error));
-            }
+                Ok(writer::binary(output, source, context.limit).map_err(CodecError::Wire))
+            })
+        } else {
+            None
         };
+        (length, short)
+    };
+    // No external slice reaches Python error diagnosis or a later checkpoint.
+    if let Some(result) = short {
+        let result = result.map_err(|error| utf8_error(py, error, 0))?;
         return result.map_err(|error| {
             byte_codec_error(py, array, index, 0, error, context.codec.name(), budget)
         });
