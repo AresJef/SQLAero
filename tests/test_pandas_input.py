@@ -5,6 +5,7 @@
 import pytest
 import subprocess
 import sys
+from typing import Any
 
 from sqlaero import _sqlaero
 from sqlaero._sqlaero import DataError, ProgrammingError
@@ -123,6 +124,125 @@ def test_pandas_multi_index_tuple_is_one_logical_cell() -> None:
     assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT (1,'a')", b"\x03SELECT (2,'b')"]
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_pandas_multi_index_codes_keep_nulls_slices_and_one_tuple_cell(reverse: bool) -> None:
+    first = [index % 3 - 1 for index in range(35)]
+    second = [(index + 1) % 3 - 1 for index in range(35)]
+    value = pd.MultiIndex(
+        levels=[pd.Index([1, 2], dtype=np.int64), pd.Index(["a", "b"], dtype=object)],
+        codes=[first, second],
+    )[1:34]
+    pairs = list(zip(first[1:34], second[1:34]))
+    if reverse:
+        value = value[::-1]
+        pairs.reverse()
+    rows = [
+        b"(" + ([b"1", b"2"][a] if a >= 0 else b"NULL") + b"," +
+        ([b"'a'", b"'b'"][b] if b >= 0 else b"NULL") + b")"
+        for a, b in pairs
+    ]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT " + row for row in rows]
+    assert _sqlaero._encode_value(value).to_bytes() == b"(" + b",".join(rows) + b")"
+
+
+@pytest.mark.parametrize("code", [-2, 3])
+def test_pandas_multi_index_unusual_code_keeps_original_late_getter_behavior(code: int) -> None:
+    value = pd.MultiIndex(
+        levels=[pd.Index([10, 20, 30]), pd.Index(["a"], dtype=object)],
+        codes=[[0] * 39 + [code], [0] * 40], verify_integrity=False,
+    )
+    if code == -2:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == (
+            [b"\x03SELECT (10,'a')"] * 39 + [b"\x03SELECT (20,'a')"]
+        )
+    else:
+        with pytest.raises(IndexError) as caught:
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
+        assert "args[39]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_pandas_multi_index_real_subclass_values_hook_stays_once(fail: bool) -> None:
+    calls: list[int] = []
+    original = RuntimeError("actual MultiIndex values hook")
+    class Index(pd.MultiIndex):
+        @property
+        def values(self) -> Any:
+            calls.append(1)
+            if fail:
+                raise original
+            result = np.empty(33, dtype=object)
+            for index in range(33):
+                result[index] = (7, "hook")
+            return result
+    value = Index(levels=[[1], ["ignored"]], codes=[[0] * 33, [0] * 33])
+    assert type(value) is Index
+    if fail:
+        with pytest.raises(RuntimeError) as caught:
+            _sqlaero._encode_value(value)
+        assert caught.value is original
+    else:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT (7,'hook')"] * 33
+    assert calls == [1]
+
+
+def test_pandas_multi_index_gets_all_labels_before_converting_them(monkeypatch: pytest.MonkeyPatch) -> None:
+    events: list[str] = []
+    class Label(str):
+        def __str__(self) -> str:
+            text = str.__str__(self)
+            events.append("convert:" + text)
+            return text
+    value = pd.MultiIndex(
+        levels=[pd.Index([Label("a")], dtype=object), pd.Index([Label("b")], dtype=object)],
+        codes=[[0] * 33, [0] * 33],
+    )
+    indices = {id(level): index for index, level in enumerate(value.levels)}
+    getter = pd.Index.__getitem__
+    def observed(index: Any, key: Any) -> Any:
+        if id(index) in indices:
+            events.append("get:" + str(indices[id(index)]))
+        return getter(index, key)
+    monkeypatch.setattr(pd.Index, "__getitem__", observed)
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT ('a','b')"] * 33
+    assert events == ["get:0", "get:1", "convert:a", "convert:b"] * 33
+
+
+@pytest.mark.parametrize("wrappers", [62, 63])
+def test_pandas_multi_index_keeps_the_original_tuple_depth(wrappers: int) -> None:
+    value: object = pd.MultiIndex(
+        levels=[pd.Index([1]), pd.Index(["a"], dtype=object)], codes=[[0] * 33, [0] * 33],
+    )
+    for _ in range(wrappers):
+        value = [value]
+    if wrappers == 62:
+        middle = b"(" + b",".join([b"(1,'a')"] * 33) + b")"
+        assert _sqlaero._encode_value(value).to_bytes() == b"(" * wrappers + middle + b")" * wrappers
+    else:
+        with pytest.raises(DataError) as caught:
+            _sqlaero._encode_value(value)
+        assert caught.value.code == 65543
+
+
+def test_pandas_empty_multi_index_does_not_hide_unsupported_level_schema() -> None:
+    value = pd.MultiIndex(levels=[pd.period_range("2024-01-01", periods=0, freq="D"), []], codes=[[], []])
+    with pytest.raises(TypeError, match="declared Pandas extension dtype"):
+        _sqlaero._bind_sql("SELECT 1", value)
+
+
+@pytest.mark.parametrize("kind", ["time", "nested"])
+def test_pandas_complex_multi_index_levels_keep_the_original_tuple_reader(kind: str) -> None:
+    if kind == "time":
+        level = pd.DatetimeIndex(["2024-01-02 03:04:05.123456789"], tz="Asia/Shanghai")
+        literal = b"'2024-01-01 19:04:05.123456789'"
+    else:
+        level = pd.Index([(1, 2)], dtype=object, tupleize_cols=False)
+        literal = b"(1,2)"
+    value = pd.MultiIndex(levels=[level, pd.Index(["a"], dtype=object)], codes=[[0] * 33, [0] * 33])
+    expected = b"\x03SELECT (" + literal + b",'a')"
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [expected] * 33
+
+
 @pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
 def test_pandas_aware_index_keeps_utc_instants_across_dst(unit: str) -> None:
     value = pd.DatetimeIndex(["2024-11-03T05:30:00Z", "2024-11-03T06:30:00Z", None]).tz_convert("America/New_York").as_unit(unit)
@@ -187,7 +307,7 @@ def test_pandas_series_subclass_values_hook_runs_once_and_defines_values() -> No
     calls: list[int] = []
     class Series(pd.Series):
         @property
-        def values(self):
+        def values(self) -> Any:
             calls.append(1)
             return np.array([7, 8], dtype=np.int64)
     value = Series([1, 2])
@@ -343,7 +463,7 @@ def test_pandas_active_subclass_cycle_is_rejected_before_repeating_values_hook()
     storage = np.empty(1, dtype=object)
     class Series(pd.Series):
         @property
-        def values(self):
+        def values(self) -> Any:
             calls.append(1)
             return storage
     value = Series([None], dtype=object)
@@ -364,7 +484,7 @@ def test_pandas_actual_index_subclass_honors_values_once_and_keeps_its_exception
     original = RuntimeError("original Index values conversion")
     class Index(pd.RangeIndex):
         @property
-        def values(self):
+        def values(self) -> Any:
             calls.append(1)
             if fail:
                 raise original

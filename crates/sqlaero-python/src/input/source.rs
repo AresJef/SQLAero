@@ -38,7 +38,7 @@ pub(crate) fn prepare<'py>(
         if let Some(pandas) = types.pandas_types(value.py())?
             && let Some(source) = pandas.prepare(value, numpy, budget)?
         {
-            return Ok(Some(super::boxed(value.py(), source)?));
+            return Ok(Some(source));
         }
     }
     if let Some(polars) = types.polars_types(value.py(), budget)?

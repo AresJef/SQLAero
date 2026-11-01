@@ -2,6 +2,7 @@
 
 use crate::errors;
 use crate::input::numpy::{NumpyScalar, NumpyTypes};
+use crate::input::source::PreparedSource;
 use crate::input::temporal::{TimeKind, TimeUnit};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -10,7 +11,6 @@ use sqlaero_core::transport::deadline::IoBudget;
 use std::ffi::CStr;
 
 mod source;
-pub(crate) use source::PandasSource;
 
 /// Scalar facts are native before they enter the shared SQL writing path.
 pub(crate) enum PandasScalar {
@@ -52,7 +52,7 @@ impl PandasTypes {
         value: &Bound<'py, PyAny>,
         numpy: &NumpyTypes,
         budget: &IoBudget,
-    ) -> PyResult<Option<PandasSource<'py>>> {
+    ) -> PyResult<Option<Box<dyn PreparedSource<'py> + 'py>>> {
         self.sources.prepare(value, numpy, budget)
     }
 

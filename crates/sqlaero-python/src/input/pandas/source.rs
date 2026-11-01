@@ -10,6 +10,7 @@ use crate::input::{
 use pyo3::exceptions::{PyIndexError, PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple, PyType};
+use smallvec::SmallVec;
 use sqlaero_core::bind::{Context, scalar, writer};
 use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::deadline::IoBudget;
@@ -124,7 +125,7 @@ impl SourceTypes {
         value: &Bound<'py, PyAny>,
         numpy: &NumpyTypes,
         budget: &IoBudget,
-    ) -> PyResult<Option<PandasSource<'py>>> {
+    ) -> PyResult<Option<Box<dyn PreparedSource<'py> + 'py>>> {
         let py = value.py();
         let typ = value.get_type();
         let is_frame = typ.is(self.frame.bind(py));
@@ -164,13 +165,30 @@ impl SourceTypes {
                 }
             } else if typ.is(self.multi.bind(py)) {
                 let levels = errors::attribute(value, c"levels")?;
+                let mut candidates = SmallVec::<[Bound<'py, PyAny>; 8]>::new();
+                let mut eligible = length >= 32;
                 for level in levels.try_iter()? {
                     crate::input::check(py, budget)?;
-                    self.family(&errors::attribute(&level?, c"dtype")?)?;
+                    let level = level?;
+                    self.family(&errors::attribute(&level, c"dtype")?)?;
+                    if eligible && candidates.len() < 8 {
+                        candidates.push(level);
+                    } else {
+                        eligible = false;
+                    }
                 }
-                Column::Python {
-                    owner: value.clone(),
-                    length,
+                if eligible
+                    && let Some(source) =
+                        self.multi_column(value, &candidates, length, &api, budget)?
+                {
+                    let source = crate::input::boxed(py, source)?;
+                    crate::input::check(py, budget)?;
+                    return Ok(Some(source));
+                } else {
+                    Column::Python {
+                        owner: value.clone(),
+                        length,
+                    }
                 }
             } else if is_series && !typ.is(self.series.bind(py)) || is_index && !native_index {
                 // Exactly one observable values access for real subclasses.
@@ -208,11 +226,89 @@ impl SourceTypes {
             (Shape::Vector { length }, columns)
         };
         crate::input::check(py, budget)?;
-        Ok(Some(PandasSource {
-            owner: value.clone(),
-            shape,
-            columns,
-            numpy: api,
+        Ok(Some(crate::input::boxed(
+            py,
+            PandasSource {
+                owner: value.clone(),
+                shape,
+                columns,
+                numpy: api,
+            },
+        )?))
+    }
+
+    fn multi_column<'py>(
+        &self,
+        owner: &Bound<'py, PyAny>,
+        levels: &[Bound<'py, PyAny>],
+        length: usize,
+        api: &NumpyArrayApi,
+        budget: &IoBudget,
+    ) -> PyResult<Option<Multi<'py>>> {
+        let py = owner.py();
+        if levels.is_empty() {
+            return Ok(None);
+        }
+        for level in levels {
+            crate::input::check(py, budget)?;
+            if !level.get_type().is(self.index.bind(py)) {
+                return Ok(None);
+            }
+            let storage = errors::attribute(level, c"array")?;
+            if !storage.get_type().is(self.numpy_extension.bind(py)) {
+                return Ok(None);
+            }
+            let dtype = errors::attribute(level, c"dtype")?;
+            let kind = errors::attribute(&dtype, c"kind")?;
+            let kind = kind.extract::<&str>()?;
+            // Object labels still use the public getter and original visitor.
+            // Inferring their values here would scan unreferenced labels.
+            if !matches!(kind, "i" | "u" | "f" | "b" | "O") {
+                return Ok(None);
+            }
+        }
+        let codes = errors::attribute(owner, c"codes")?;
+        if codes.len()? != levels.len() {
+            return Ok(None);
+        }
+        let mut prepared = Vec::new();
+        prepared
+            .try_reserve_exact(levels.len())
+            .map_err(|_| errors::memory_error(py))?;
+        for (position, code) in codes.try_iter()?.enumerate() {
+            crate::input::check(py, budget)?;
+            if position >= levels.len() {
+                return Ok(None);
+            }
+            let code = code?;
+            if !api.accepts(&code)
+                || errors::attribute(&code, c"ndim")?.extract::<usize>()? != 1
+                || code.len()? != length
+            {
+                return Ok(None);
+            }
+            let dtype = errors::attribute(&code, c"dtype")?;
+            if errors::attribute(&dtype, c"kind")?.extract::<&str>()? != "i"
+                || !matches!(
+                    errors::attribute(&dtype, c"itemsize")?.extract::<usize>()?,
+                    1 | 2 | 4 | 8
+                )
+            {
+                return Ok(None);
+            }
+            prepared.push(MultiLevel {
+                owner: levels[position].clone(),
+                length: levels[position].len()?,
+                codes: numpy_source(api, &code, budget, length)?,
+            });
+        }
+        if prepared.len() != levels.len() {
+            return Ok(None);
+        }
+        Ok(Some(Multi {
+            owner: owner.clone(),
+            length,
+            levels: prepared,
         }))
     }
 
@@ -542,6 +638,98 @@ impl Column<'_> {
                 )
             }
         }
+    }
+}
+
+struct MultiLevel<'py> {
+    owner: Bound<'py, PyAny>,
+    length: usize,
+    codes: NumpySource<'py>,
+}
+
+struct Multi<'py> {
+    owner: Bound<'py, PyAny>,
+    length: usize,
+    levels: Vec<MultiLevel<'py>>,
+}
+
+impl<'py> PreparedSource<'py> for Multi<'py> {
+    fn owner(&self) -> &Bound<'py, PyAny> {
+        &self.owner
+    }
+
+    fn shape(&self) -> Shape {
+        Shape::Vector {
+            length: self.length,
+        }
+    }
+
+    fn write_cell(
+        &mut self,
+        row: usize,
+        column: usize,
+        output: &mut Vec<u8>,
+        context: &Context,
+        budget: &IoBudget,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        let py = self.owner.py();
+        if row >= self.length {
+            return Err(errors::builtin_message::<PyIndexError>(
+                py,
+                "Pandas row is outside its prepared shape",
+            ));
+        }
+        if column != 0 {
+            return Err(errors::builtin_message::<PyIndexError>(
+                py,
+                "Pandas column is outside its prepared shape",
+            ));
+        }
+        // Match the original PandasSource boundary checkpoint; the tuple
+        // checkpoint below remains separate after all labels are acquired.
+        visitor.checkpoint(py, 1)?;
+        // Both inline buffers are bounded by the qualified eight-level plan.
+        // Read this actual row only, before any label getter or SQL write.
+        let mut positions = SmallVec::<[usize; 8]>::new();
+        for level in &mut self.levels {
+            let code = level.codes.signed_at(row, budget)?;
+            let Some(position) = usize::try_from(code)
+                .ok()
+                .filter(|position| *position < level.length)
+            else {
+                // Includes -1: preserve the original np.nan leaf and all
+                // diagnostics, as well as unusual negative-code semantics.
+                let value = self.owner.get_item(crate::input::python_index(py, row)?)?;
+                return visitor.python(&value, output, None);
+            };
+            positions.push(position);
+        }
+        let mut labels = SmallVec::<[Bound<'_, PyAny>; 8]>::new();
+        for (level, position) in self.levels.iter().zip(positions) {
+            labels.push(
+                level
+                    .owner
+                    .get_item(crate::input::python_index(py, position)?)?,
+            );
+        }
+        // The original MultiIndex getter obtains every label before its tuple
+        // reaches Visit. Keep that order, without constructing a Python tuple.
+        visitor.checkpoint(py, 1)?;
+        visitor.enter_native(py)?;
+        let result = (|| {
+            writer::append(output, b"(", context.limit).map_err(|error| errors::wire(py, error))?;
+            for (index, label) in labels.iter().enumerate() {
+                if index != 0 {
+                    writer::append(output, b",", context.limit)
+                        .map_err(|error| errors::wire(py, error))?;
+                }
+                visitor.python(label, output, Some(index))?;
+            }
+            writer::append(output, b")", context.limit).map_err(|error| errors::wire(py, error))
+        })();
+        visitor.leave_native();
+        result
     }
 }
 
