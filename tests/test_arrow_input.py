@@ -25,6 +25,22 @@ from sqlaero import _sqlaero
 pa = pytest.importorskip("pyarrow")
 
 
+@pytest.mark.parametrize("native_levels", [62, 63])
+def test_mixed_python_and_arrow_nesting_shares_one_logical_limit(native_levels: int) -> None:
+    data: Any = 7
+    dtype = pa.int64()
+    for _ in range(native_levels):
+        data = [data]
+        dtype = pa.list_(dtype)
+    value = [pa.array([data], type=dtype)]
+    if native_levels == 62:
+        assert _sqlaero._encode_value(value).to_bytes() == b"(" * 64 + b"7" + b")" * 64
+    else:
+        with pytest.raises(_sqlaero.DataError) as caught:
+            _sqlaero._encode_value(value)
+        assert caught.value.code == 65543
+
+
 @pytest.mark.parametrize(
     ("value", "expected"),
     [

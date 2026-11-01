@@ -85,6 +85,23 @@ def test_normalization_retains_the_original_cycle_identity() -> None:
     assert seen == ["iterate"]
 
 
+@pytest.mark.parametrize("child_levels", [63, 64])
+def test_normalized_container_alias_does_not_add_a_logical_level(child_levels: int) -> None:
+    class Child(list[object]):
+        pass
+
+    value: object = 7
+    for _ in range(child_levels):
+        value = [value]
+    source = Child([value])
+    if child_levels == 63:
+        assert encoded(source) == b"(" * 64 + b"7" + b")" * 64
+    else:
+        with pytest.raises(_sqlaero.DataError) as caught:
+            encoded(source)
+        assert caught.value.code == 65543
+
+
 def test_formal_conversion_original_exception_is_not_replaced() -> None:
     original = KeyboardInterrupt("actual conversion error")
     class Child(int):

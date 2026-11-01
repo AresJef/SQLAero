@@ -135,12 +135,11 @@ impl<'py> Rows<'py> {
             };
             return Ok(Row {
                 value: self.root.clone(),
-                sequence: None,
                 outer: None,
                 path,
                 itemize: self.itemize,
                 zero_positions: self.empty || matches!(shape, Shape::Table { columns: 0, .. }),
-                native: Some(NativeRow {
+                input: RowInput::Native(NativeRow {
                     source: SourceRef::Borrowed(native.as_mut()),
                     row: native_row,
                 }),
@@ -162,22 +161,26 @@ impl<'py> Rows<'py> {
         } else {
             None
         };
-        let native = if sequence.is_none() && !self.empty {
-            source::prepare(&value, types, budget)?.map(|source| NativeRow {
-                source: SourceRef::Owned(source),
-                row: None,
-            })
+        let input = if let Some(sequence) = sequence {
+            RowInput::Sequence(sequence)
+        } else if !self.empty {
+            match source::prepare(&value, types, budget)? {
+                Some(source) => RowInput::Native(NativeRow {
+                    source: SourceRef::Owned(source),
+                    row: None,
+                }),
+                None => RowInput::Scalar,
+            }
         } else {
-            None
+            RowInput::Scalar
         };
         Ok(Row {
             value,
-            sequence,
+            input,
             outer,
             path,
             itemize: self.itemize,
             zero_positions: self.empty,
-            native,
         })
     }
     pub(crate) fn position(&self) -> usize {
@@ -239,10 +242,16 @@ struct NativeRow<'r, 'py> {
     row: Option<usize>,
 }
 
+/// A row has one prepared strategy; ordinary scalars need neither provider.
+enum RowInput<'r, 'py> {
+    Scalar,
+    Sequence(SequenceRef<'r, 'py>),
+    Native(NativeRow<'r, 'py>),
+}
+
 pub(crate) struct Row<'r, 'py> {
     value: Bound<'py, PyAny>,
-    sequence: Option<SequenceRef<'r, 'py>>,
-    native: Option<NativeRow<'r, 'py>>,
+    input: RowInput<'r, 'py>,
     outer: Option<usize>,
     path: SmallVec<[usize; 4]>,
     itemize: bool,
@@ -256,17 +265,16 @@ impl Row<'_, '_> {
         if !self.itemize {
             return 1;
         }
-        if let Some(native) = &self.native {
-            return match (native.source.shape(), native.row) {
+        match &self.input {
+            RowInput::Native(native) => match (native.source.shape(), native.row) {
                 (Shape::Vector { length }, None) => length,
                 (Shape::Record { fields }, _) => fields,
                 (Shape::Table { columns, .. }, Some(_)) => columns,
                 _ => 1,
-            };
+            },
+            RowInput::Sequence(value) => value.sequence().len(),
+            RowInput::Scalar => 1,
         }
-        self.sequence
-            .as_ref()
-            .map_or(1, |value| value.sequence().len())
     }
     pub(crate) fn bind(
         self,
@@ -334,7 +342,15 @@ impl Row<'_, '_> {
         if let Some(identity) = self.outer {
             visit.enter(py, identity)?;
         }
-        let sequence = self.sequence.take();
+        // Keep Sequence's original local-drop lifetime and NativeRow's
+        // original value-before-provider field-drop order.
+        let sequence = match std::mem::replace(&mut self.input, RowInput::Scalar) {
+            RowInput::Sequence(sequence) => Some(sequence),
+            input => {
+                self.input = input;
+                None
+            }
+        };
         let row = if self.itemize {
             sequence.as_ref().map(SequenceRef::sequence)
         } else {
@@ -343,7 +359,11 @@ impl Row<'_, '_> {
         if let Some(row) = row {
             visit.enter_sequence(py, row)?;
         }
-        if self.native.is_some() {
+        let mut native = match &mut self.input {
+            RowInput::Native(native) => Some(native),
+            _ => None,
+        };
+        if native.is_some() {
             visit.enter(py, self.value.as_ptr() as usize)?;
         }
         let mut cursor = 0;
@@ -373,7 +393,7 @@ impl Row<'_, '_> {
                     "binding position is unavailable",
                 ));
             }
-            let result = if let Some(native) = &mut self.native {
+            let result = if let Some(native) = native.as_deref_mut() {
                 let shape = native.source.shape();
                 let source_row = native.row;
                 if self.itemize {
