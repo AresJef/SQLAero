@@ -575,6 +575,12 @@ T900 self-check 2026-11-01T10:01:45.920941+00:00: effective used 15h00m30s, rema
 
 I33 full171 main/ind24 each8208groups is allstatistical5%PASS,zeroR/U. ArrowList100/1000~1.193/1.294x main and1.191/1.292x independent; Polars100/1000~1.142/1.264x and1.146/1.264x. CurrentdirectC16fixed11 hasno credibleR: mainN100U4.717%,indN100U5.129% andN1000U4.824%,otherwitnessesP. Thesearefreshcurrentartifactresults, I32threeoldRnotrewritten. Onefixedtwo-nested resolution now followsoriginalsame-n240/25,r5/5%/250ms/full850,explicit2requesthistory,freshcontrol+128main/indmax180s each/whole7min,allworseandoldUkept, no code/GC/toolchange. NewF0fixedoriginalsix+Binary+MI3+List6=16directmain/ind completesameartifact; requiredfinalfull518/360stillpending.
 
+I33 locally adopted 2026-11-01T10:15:00.714267+00:00. One borrowed Int64 reader per existing List/LargeList/FixedSizeList span; no new unsafe/clone/cache/framework/layout directive. New late-limit/signal cases first passed unchanged I32 both ABIs. Final971GIL/870t, strictfmt/Clippy/Pyright0errors4oldwarnings, MySQL40/t32+8missingPL and360F0outputs pass. All171 main/ind24truecycles each8208groups statistical5%PASS, zeroR/U. ArrowList100/1000 ratios1.193/1.294 main and1.191/1.292 independent; Polars1.142/1.264 and1.146/1.264.
+
+C16 fixed11 original N100U both/N1000indU kept. One same-n240/25/full850/explicit2history/freshcontrols128 main/ind complete512groups each; new worsevalues kept. N1000 now double5%PASS (cost4.532/4.673%). Effective10of11 double5%PASS. OnlyN100 mainU center5.041%/indR5.211%, extra354.4/299.8ns: A05 explicitly accepts this I33/source313260a0d75/t153150bf/C16case/conditions; U/R/CI/ranges retained in specific-cumulative-adoption-tradeoff.json. Not a futureartifact waiver and does not carry I32other3costs: current larger nested/INSERT statisticallypass. F0 originalsix+Binary+MI3+List6 all16double5%PASS; MI2x retained. Full518C16/360F0/6ABIs/NoGILthroughput/48wheel+sdist96installs remain necessary.
+
+Product commit 9a1ce5a799128a21b8091c517f647a5da48d4899 and all400production+7test blobs match compiled manifests. Adoption-record script initially had a Python3.9 f-string quote SyntaxError before any write; product was already validly committed. This retry writes/readbacks the missing decision without changing product/tests or rerunning performance. Preserve that operational mistake; do not label it sampling wait.
+
 ### 11.2 30分钟自查与有限恢复
 
 每T+30、T+60……有效分钟自查，阶段切换、重复拒绝、超时、余量动用可合并触发。每次用不超过约90秒说明：已获成果／证据；当前最佳身份；各池已用及余额；U／可信退步和真实阻碍；是否偏离“快速开发、快速迭代”；继续／换法／停止局部路线及下一有界检查点。普通进度不逐项请求批准。
