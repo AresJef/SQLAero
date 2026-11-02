@@ -1,10 +1,10 @@
 # SQLAero Escape 全类型接入、性能优化与验收计划
 
-状态：**Goal已由用户正式启动并处于active，A01–A05已批准；S01起点身份已核对；S06–S16全部类型已有本机GIL／适用NoGIL功能切片，S17本机完整功能F0已封存，S19–S20正式915项性能、六ABI功能/live及独立NoGIL/冷首次已完成；当前D池推进最终48组合与安装/交付，已修正精确跳过清单，正在核验Windows两项信号测试的观测边界。** 用户已确认总预算72有效小时，并明确新增24小时全部专用于性能优化；充分利用时间持续改进，尽可能测清统计未明。用户进一步授权仅本轮推进期间的合理请求及经合理论次优化、完整数据支持的合理代价取舍由主窗口决定；不豁免精度／安全／身份／统计门槛，不把FAIL／U改为PASS。本计划是执行顺序、预算和状态的唯一台账。
+状态：**本轮必要验收及本地交付已完成；A01–A05已执行。G01–G14已接入，F0封存、I54为最终唯一最佳。正式915项主／独适用5%保护、六ABI功能/live、独立NoGIL／冷首次均完成。最终同源fcfd28d的48组合／96安装及bundle、本地49哈希／manifest／provider读回全通过；下载的两种macOS包实际SQL52／44+8NA通过。报告、915行对照、48行平台时间和回退已保存，两个专用MySQL实例已停止，未发布。** 用户已确认总预算72有效小时，并明确新增24小时全部专用于性能优化；充分利用时间持续改进，尽可能测清统计未明。用户进一步授权仅本轮推进期间的合理请求及经合理论次优化、完整数据支持的合理代价取舍由主窗口决定；不豁免精度／安全／身份／统计门槛，不把FAIL／U改为PASS。本计划是执行顺序、预算和状态的唯一台账。
 
 工作目录：`/Users/jef/.codex/worktrees/beta-native-integration/SQLAero`。
 
-当前唯一最佳：**I54，产品提交 `50358a7`，cp313 native `020efd48`、cp312 `42f42bcb`、cp314t `fa877691`。CP312 复用既有固定宽度整数转移，删除 16 行重复版本路径；局部宽整数双轮可靠快约 1.15–1.17 倍，无新增 unsafe/API/缓存，准确性、安全和易维护性检查通过。最终原有 518／新增 397 项直接性能主／独全部适用 5% P、零可信超线、零 U；原严格 1% R/U、24 周期失败及旧局部取舍保留。固定 6 项精度恢复已于 07:07Z 完成，最新更差结果照用、不拼样本。I53 源码、六版实包、915 项累计 P 及六 ABI/live 证据为完整回退。I54 最终六 ABI 本机功能及真实 MySQL 已完成：普通四版各 1974P、t 两版各 1859P；工具增量四项又在六版完整 24 项工具集通过，去重后累计 1978/1863P，不重复计旧 20 项。独立输入NoGIL已完成81配置／243周期，冷首次已完成33组／66新worker；同源48组合／96次安装仍待完整通过，不能宣称整个项目最终验收通过。**
+当前唯一最佳：**I54，产品提交 `50358a7`，cp313 native `020efd48`、cp312 `42f42bcb`、cp314t `fa877691`。CP312 复用既有固定宽度整数转移，删除 16 行重复版本路径；局部宽整数双轮可靠快约 1.15–1.17 倍，无新增 unsafe/API/缓存，准确性、安全和易维护性检查通过。最终原有 518／新增 397 项直接性能主／独全部适用 5% P、零可信超线、零 U；原严格 1% R/U、24 周期失败及旧局部取舍保留。固定 6 项精度恢复已于 07:07Z 完成，最新更差结果照用、不拼样本。I53 源码、六版实包、915 项累计 P 及六 ABI/live 证据为完整回退。I54 最终六 ABI 本机功能及真实 MySQL 已完成：普通四版各 1974P、t 两版各 1859P；工具增量四项又在六版完整 24 项工具集通过，去重后累计 1978/1863P，不重复计旧 20 项。独立输入NoGIL已完成81配置／243周期，冷首次已完成33组／66新worker；最终同源fcfd28d的48组合／96安装及bundle已全通过，本地49文件／manifest／provider读回完成；专用资源已停止，本轮必要验收完成。**
 
 ## 1. 必须执行的核心 instruction
 
@@ -41,7 +41,7 @@
 
 ### 2.2 已核身份与证据边界
 
-| 对象 | 当前只读核查事实 |
+| 对象 | 规划时已核起点事实，非最终交付身份 |
 | --- | --- |
 | 工作树HEAD／分支 | `4433cdac72c8848e5de6191a6a491b0d33ee0c18`；`codex/gil-nogil-review-remediation`，正式实施建立独立codex分支或快照，不覆盖原交付 |
 | 冻结产品基准R0 | C16运行时源`02b9ecb525266bcccb33b25f5d4f39ceaae8dc92`，0.2.0b4；本轮R0不是旧修复项目的C_best12 |
@@ -354,11 +354,11 @@ S00规划完成；正式Goal创建时间经工具核实为2026-10-31T19:20:28Z�
 | S17／组合检查 | **F0已于2026-10-31T22:34:27Z封存**：源4a76be9，e13两ABI完整实包GIL1607PASS＋1平台NA、NoGIL1524PASS＋10已说明缺provider／平台项；66核心单元、严格fmt／Clippy／Pyright通过 | 截止F0累计3h33m12s；A62m41s、B150m31s；比A+B原26h少22h26m48s。节余按第4节优先供后续有据优化，D/E14h保留 | [F0唯一身份](../../evidence/escape-type-expansion/run-20261031T192028Z/core/F0.json)。e10/e11完整功能证据及e12编译失败保留，未混包安装。交叉核查后共用fallible Box/格式化与借用唯一序列策略收拢；e12因转发签名遗漏失败未安装，父曾提前启动构建的执行顺序已纠正，e13明确等Clippy成功后构建 |
 
 | S21先导 | GitHub已授权repo/workflow；任务分支已推送，两个关键平台Actions均已成功。新增固定provider准备复用原工具，82项工具测试通过 | B阶段前移适用CI先导，不算最终48矩阵 | Windows ARM64／3.13先导run41246596098、musl ARM64／3.14t先导run41246589675均完成原wheel＋sdist实际安装。先导c5de139源不同于最终F0，不能改署最终通过。NumPy/Pandas当前runner48格可用；PyArrow缺Windows ARM64六格，Polars runtime缺16个t格；明确能力边界，不能把全部48当provider覆盖。官方文件证据agent-b/provider-wheel-metadata.json |
-| C池滚动候选／S18–S24 | F0封存后开始C池；当前最佳I09／bd25a57集成组合；O02两路线、O05、O07及I03/I04/I06/I08原配置未采用，I07保持完整回退；O编号记录真实流水，不扩大预算 | C池32h从22:34:27Z起累计，含新增24h专用；D10h/E4h保留 | 不拿新TypeError或旧Python输出算收益；仍需完整C16→最终与F0→最终对照、适用48组合／96次安装及交付 |
+| C池最终／S18–S24 | I54产品50358a7，最终测试源码fcfd28d，401运行文件一致；F0／I53／C16均保留。915个ABI/场景主独适用5%P、0R/0U，原1%与历史R/U保留；六ABI/live及NoGIL243周期／冷33组完成 | C实际31h13m45s，新增性能实际23h13m45s，余46m14s不挪作普通CI／工具；原72h不刷新 | 同源run41417320597全部48原wheel／96安装及49文件bundle通过，本地完整hash/manifest/provider读回通过；平台48行耗时已存，当前仅S24收尾，不发布 |
 
 2026-10-31T22:34:27Z预算记录：前置19m13s＋19:20:28Z以来连续实施＝有效3h33m12s，余额68h26m48s。A池主要阶段记62m41s，B池至F0记150m31s，C池现在开始；正常编译／CI与并行agent区间取并集。新增24h仍完整保留在C池，没有用于上述功能检查。无暂停／用户等待扣除区间。T210自查于22:31Z附近已汇报，下一T240约23:01:15Z；原72h不刷新。
 
-当前恢复入口：F0为e13/4a76be9及F0.json内两native hash；原C16六ABI及主.venv保持。当前最佳为I09／bd25a57集成组合及performance/i09-unicode-width/local-decision.json；两任务env已安装同一I09，身份分别见identity-cp313.json与identity-cp314t.json，400生产hash构建前后相符。I07/4f71f14、I05/f217804、I02/46f0f8c、O04/52c169a的源和实包继续封存回退；I05另有3.12独立解包核验，不冒称I09已有3.12实包验收。两关键CI先导均通过并已读回artifact，最终同源48／96安装另验；测速窗口不构建／压力。本轮仍不发行。
+历史I09恢复记录（不是最终交付入口）：F0为e13/4a76be9及F0.json内两native hash；原C16六ABI及主.venv保持。当时最佳为I09／bd25a57集成组合及performance/i09-unicode-width/local-decision.json；当时两任务env已安装同一I09，身份分别见identity-cp313.json与identity-cp314t.json，400生产hash构建前后相符。I07/4f71f14、I05/f217804、I02/46f0f8c、O04/52c169a的源和实包继续封存回退；I05另有3.12独立解包核验，不冒称I09已有3.12实包验收。当时两关键CI先导通过，不改署最终同源48／96；最终入口以文首及最终报告为准。本轮不发行。
 
 
 O01已按用户本轮取舍授权纳入当前最佳：仅恢复精确list的owned getter短热路，生产改动4行。F0→O01主／独各24真实周期、各768完整组、零质量拒绝；16局部场景为15个1%保护PASS、0可信FAIL、1个原U（varied int tuple独立CI成本上沿约1.07%，主轮PASS，中心近持平）。长int list约快1.117倍，float／str／bytes list约快1.06–1.08倍，varied str tuple约快1.064倍。两ABI各555定向功能通过。原U保留，最终C16直接比较和完整矩阵不豁免；[采用事实](../../evidence/escape-type-expansion/run-20261031T192028Z/performance/o01/local-decision.json)。下一步在现有benchmark补必要新类型输入工厂及真实fingerprint，控制在单一runner，不建工具框架；随后先用实际输入测出新reader慢点。F0包已封存不覆盖，当前安装环境为O01，主.venv仍C16。
@@ -917,6 +917,14 @@ T2250自查：总目标/72h/安全维护门槛不变。I54运行401及正式915�
 Windows信号边界修正2026-11-02T08:44Z：Winx64/CP312预试41413430832已成功，原wheel与canonical sdist重建安装各1955P/24明确NA；固定2m nullable输入、真实OS alarm及严格frame/originalidentity无放宽，JUnit有界观测仍保留。WinARM/CP312原失败只缺args[1]，originalidentity已P；源码Row::fill在所有值退出后仍有最终check，因此同一CALL顶层帧不能证明signal属于第二个值。经主窗口和A独立只读核对，将两条验证义务准确分开：既有真实signal测试仍保护真实OS异常身份，既有S/U长值5ms deadline测试预热同kind后改两位置(7,source)，保护65544及args[1]。不新增产品补丁／in-native探针／类型例外，不豁免确定当前值失败的通用溯源。当前产品未改，cp312/cp313/cp314t定向六次实际deadline均args[1][0]；修改后的四个测试在六ABI各4P，Pyright使用正确SDK环境后0错误/4旧warnings；首次缺DYLD的启动失败单列保留。接下来仅原WinARM/CP312用既有工作流预试原包+sdist两安装，最多25分钟含排队；通过再开启一次最终同源48/96，旧失败不拼接新source最终结果。完整成本约25+90–125分钟及交付仍在D剩余约8h内，72h不追加，C剩余46m14不挪用。
 
 08:59Z有限恢复结果：WinARM/CP312预试41415289748已成功，原wheel和sdist各1639P/83明确NA，真实signalidentity与确定native的S/U两位置deadline/path均通过。上一完整902轮其余45平台成功、三平台失败；新增MacIntel/CP315原包进程被SIGALRM14终止(exit142)，不能记统计噪声或无条件重试。主窗口对当前helper做隔离child实际因果反例：屏蔽/排入owned pending/旧close/解除屏蔽，313/315/315t全-14且close后pending仍在；不冒称已证明远端完全相同时序。B独立只读同意最小生命周期修正，Apple sigaction官方说明SIG_IGN会丢弃current/pending。现helper统一close先标记closed、忽略自有signal、停止自有timer/sender、原样恢复旧handler；仅关闭后dispatch退休，active期间原真实OS测试强度不变。既有preflight增加隔离child直接回归DFL/IGN/callable/原mask/零timer/重复close/新signal仍到旧callable，无新skip清单／产品补丁／通用框架。六ABI各preflight+5项P、Pyright0错误/4旧warnings。该动作08:53:10至约09:00完成，计D普通CI，不挪C性能专用。下一采用当前测试源码直接完整48/96：两Windows实际单元已P；新POSIX机制有三个旧helper必死反例及六版预试，不再多跑一轮约40分钟MacIntel单组合后又重跑全矩阵。只开一次完整配置，预计75–125分钟＋读回25分钟，原D/E仍装得下；出现新独立问题再限定到其真实根因，不盲重跑。产品401哈希与I54全一致，正式性能/native不改署。
+
+T2280自查（计划2026-11-02T09:01:15Z）：I54唯一最佳产品50358a7，401运行文件哈希仍全部相同；正式915主/独适用5%全P、0R/0U，原1%R/U与历史失败保留；六ABI完整功能/live、NoGIL243周期/冷33组已有有效证据。最近30分钟集中修复已观察的测试义务/fixture缺口而非产品优化：Winx64 nullable固定2m实际双安装1955P/24NA；WinARM S/U异步identity与确定native deadline/path分开，双安装1639P/83NA；902轮第三MacIntel315 SIGALRM退出有三个ABI旧fixture因果反例，close只在结束后忽略/停源/恢复旧handler且closed回调退休，既有预检保护三种旧handler/原mask/零timer/idempotence/新signal，六ABI预检+5项P、Pyright0错误/4旧warnings。远端确切时序未证明，原exit142保留；不称产品吞signal或全部race消除。两位既有agent限定只读/自有测试协助，没开新agent/框架，产品安全/精度/维护性无例外。当前测试提交fcfd28dc81b，已推任务分支并开最终完整同源run41417320597(all48/original+sdist96,publishedfalse)。两Windows实际预试已P，POSIX有直接反例与六版修正证据，选择直接最终矩阵而非再串行40min同组合再全矩阵；预计75–125min+25min读回，在D余量内。局部失败继续限定到真实受影响面，不能停全Goal或盲重跑。C已暂结31h13m45，专用追加性能实际23h13m45，余46m14只为真实性能问题保留不转CI；D当前正常验收继续，E4h保留。已核完整915行CSV、46本地报告链接均有效，最终仍需48/96、所有包manifest/provider与平台用时、资源及交付。下一T2310固定09:31:15Z。 ActualUTC=2026-11-02T09:02:31.594996+00:00 totalused=38h01m16s remaining=33h58m43s Dactual=2h10m49s Dremaining=7h49m10s E=4h.
+
+T2310自查（计划2026-11-02T09:31:15Z）：当前最终源码fcfd28dc81b385783571f64a9da6546198940adb，运行401与I54产品50358a7/正式测量全一致；915双轮适用5%P、原1%R/U历史保留，安全/精度/易维护性无豁免。本区间只跟进最终48/96、canonical读回/报告与资源归属，不新增产品代码/候选/工具。完整run41417320597已39/48矩阵P、0F、其余9正常构建/测试，全部已开始，不依结果重新启动，旧两失败run和两个Windows预试独立保留。canonical sdist376de223d606...逐文件401P，精确final checkout的31测试资产（包含27顶层py、语义TSV、三typing文件）和两工具均读回P；首轮只glob27顶层后已在同一记录完整核实31，不把未核资产记P。正式bc2性能与新观察工具113各自身份不改署，local sixABI/NoGIL243/cold33有效证据复用，未重跑全性能。剩余工作：当前9任务/汇总manifest、49文件+96实载/provider/JUnit读回、平台构建测试时间、最终报告/回退/专用资源关闭；完整单元成本仍装得下D/E及72h。已只读确认本地专用fixture root为501非symlink，PIDs78091/78111程序为固定MySQL8.4/9.7、启动在本Goal内；最终包读回前不关。没有新增测量/重试框架，没有把CI等待转计新增24h性能。C暂结31h13m45（追加性能23h13m45），余46m14仅保留真实性能问题；主窗口选择继续当前矩阵，不用余额制造任务，不因局部慢队列停止全Goal。下一T2340固定10:01:15Z。 ActualUTC=2026-11-02T09:31:43.861606+00:00 used=38h30m28s remaining=33h29m31s Dactual=2h40m02s Dremaining=7h19m57s E=4h.
+
+Budget phase D -> E: 2026-11-02T09:51:23Z; D final actual 10781.275932s, C final actual 112425.724068s; A/B plus original general 16601.000000000004s; total 139808.0s. E4h final delivery starts now; original72h clock continuous, unused46m14 performance not shifted to CI/docs. All48/96CI and49hash/manifest/provider/native records read back; actual downloaded mac313 SQL52P/t314 SQL44P+8PLNA. Remaining final report, rollback/resource closure; no further product route or formal performance rerun.
+
+T2340收尾自查（计划2026-11-02T10:01:15Z）：本轮所有必要门槛已闭合：G01–G14/稳定Rust契约、准确性/安全/维护性、六ABI功能与真实SQL、正式915主独适用5%P零R/U、独立NoGIL243周期/冷33组、最终同源48/96及49文件bundle全部完成；provider PA WinARM6/PL t16明确NA，严格1%历史R/U/失败及既定外部运行时限制不改写。最终CI41417320597顺利耗时41m51，48行构建/测试/排队/总时已保存；49hash、48native内容、96身份/actualGIL/provider/XML本地读回一致，manifest只按唯一安装身份排序比较全字段（非减字段）。下载的两mac实包SQL52P/44P+8PLNA，nativehash匹配各自CI，未改署I54正式perf。63本地报告链接有效，401现运行文件与I54一致，31测试/两工具与fcfd精确checkout一致；当前只改唯一计划和本报告。两专用MySQL PID78091/78111已按原工具关闭/端口拒绝，48CI任务停止步骤全P；私有状态、I53/C16/F0回退、I54六包及所有旧数据保留。本轮无新增产品补丁、通用框架、发布/tag/main合并或安全维护例外。C31h13m45(追加性能23h13m45)已结，D2h59m41已结，E仅交付；未花预算不自动转任务，最后有界迁移核查无高把握新候选。下一完成docs-only保存/推任务分支/最终读回并将Goal complete，不继续优化/测试。 ActualUTC=2026-11-02T10:02:39.089041+00:00 actual=39h01m24s remaining=32h58m35s Eactual=0h11m16s.
 
 ### 11.2 30分钟自查与有限恢复
 
