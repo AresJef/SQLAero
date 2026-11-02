@@ -5,7 +5,7 @@
 import pytest
 import subprocess
 import sys
-from typing import Any
+from typing import Any, cast
 
 from sqlaero import _sqlaero
 from sqlaero._sqlaero import DataError, ProgrammingError
@@ -886,19 +886,31 @@ def test_pandas_nullable_block_preparation_uses_the_original_operation_deadline(
     assert len(calls) == 1
 
 
-def test_pandas_nullable_native_blocks_keep_the_original_signal_exception() -> None:
+def test_pandas_nullable_native_blocks_keep_the_original_signal_exception(request: pytest.FixtureRequest) -> None:
     from datetime import datetime, timedelta, tzinfo
+    import json
+    import time
     from types import FrameType
     from _native_signal import NativeAlarm
     pytest.importorskip("pyarrow")
-    value = pd.array(np.arange(100_000, dtype=np.int64), dtype="Int64")
+    # A real Windows console event may arrive after a 100k input has finished.
+    # Keep one bounded call long enough to exercise native work, without
+    # changing the strict caller-frame filter or the original exception.
+    value = pd.array(np.arange(2_000_000, dtype=np.int64), dtype="Int64")
     class InterruptedNullable(Exception):
         pass
     original = InterruptedNullable("original nullable block signal")
     interrupted = False
+    delivered = 0
+    ignored = 0
+    frames: list[str] = []
     def interrupt(signum: int, frame: FrameType | None) -> None:
-        nonlocal interrupted
+        nonlocal interrupted, delivered, ignored
+        delivered += 1
+        if len(frames) < 4:
+            frames.append(frame.f_code.co_name if frame is not None else "<none>")
         if interrupted or frame is None or frame.f_code is not test_pandas_nullable_native_blocks_keep_the_original_signal_exception.__code__:
+            ignored += 1
             return
         interrupted = True
         alarm.cancel()
@@ -908,12 +920,19 @@ def test_pandas_nullable_native_blocks_keep_the_original_signal_exception() -> N
             alarm.start(0.0001, 0.0001, wait_ready=True)
             return timedelta(0)
     alarm = NativeAlarm(interrupt)
+    started = time.perf_counter_ns()
     try:
         with pytest.raises(InterruptedNullable) as caught:
             _sqlaero._bind_sql("SELECT %s,%s", [datetime(2024, 1, 1, tzinfo=Arm()), value])
         assert caught.value is original
     finally:
         alarm.close()
+        item: pytest.Item = cast(Any, request).node
+        item.user_properties.append(("nullable_signal_observation", json.dumps({
+            "elements": len(value), "elapsed_ns": time.perf_counter_ns() - started,
+            "delivered": delivered, "ignored": ignored, "first_frames": frames,
+            "accepted": interrupted,
+        })))
 
 
 def test_pandas_cold_preparation_failure_keeps_the_original_and_can_retry() -> None:
