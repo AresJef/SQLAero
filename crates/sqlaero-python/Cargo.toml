@@ -15,6 +15,7 @@ crate-type = ["cdylib", "rlib"]
 pyo3.workspace = true
 sqlaero-core.workspace = true
 jiter.workspace = true
+itoa.workspace = true
 num-bigint.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true

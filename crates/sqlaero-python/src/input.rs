@@ -785,6 +785,43 @@ pub(crate) fn decimal_bytes(
             "Decimal coefficient must contain between 1 and 32 bytes",
         ));
     }
+    if signed_le.len() <= 16 {
+        // The source is signed little-endian two's complement. Extending its
+        // actual sign preserves every width, including the i128 minimum.
+        let fill = if signed_le[signed_le.len() - 1] & 0x80 == 0 {
+            0
+        } else {
+            0xff
+        };
+        let mut bytes = [fill; 16];
+        bytes[..signed_le.len()].copy_from_slice(signed_le);
+        let coefficient = i128::from_le_bytes(bytes);
+        let mut buffer = itoa::Buffer::new();
+        let text = match i64::try_from(coefficient) {
+            Ok(value) => buffer.format(value),
+            Err(_) => buffer.format(coefficient),
+        };
+        let negative = coefficient < 0;
+        let ascii = if negative {
+            &text.as_bytes()[1..]
+        } else {
+            text.as_bytes()
+        };
+        // i128 has at most 39 magnitude digits; format the signed value
+        // directly so i128::MIN never needs an overflowing abs conversion.
+        let mut digits = [0u8; 39];
+        for (digit, ascii) in digits.iter_mut().zip(ascii) {
+            *digit = *ascii - b'0';
+        }
+        return scalar::decimal(
+            output,
+            negative,
+            &digits[..ascii.len()],
+            -i64::from(scale),
+            context.limit,
+        )
+        .map_err(|error| scalar_error(py, error));
+    }
     let coefficient = num_bigint::BigInt::from_signed_bytes_le(signed_le);
     let (sign, digits) = coefficient.to_radix_be(10);
     scalar::decimal(
