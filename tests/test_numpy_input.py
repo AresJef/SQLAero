@@ -654,10 +654,13 @@ def test_numpy_record_callback_failure_preserves_the_original_exception_and_rele
 @pytest.mark.parametrize("kind", ["S", "U"])
 def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(kind: str) -> None:
     from sqlaero._sqlaero import OperationalTimeoutError
+    # Prepare the same provider before starting the tested operation budget.
+    _sqlaero._bind_sql("SELECT %s", np.array(["x"], dtype=f"{kind}1"))
     source = np.array(["'" * (8 * 1024 * 1024)], dtype=f"{kind}{8 * 1024 * 1024}")
     with pytest.raises(OperationalTimeoutError) as caught:
-        _sqlaero._bind_sql("SELECT %s", source, timeout_ns=5_000_000)
+        _sqlaero._bind_sql("SELECT %s,%s", (7, source), timeout_ns=5_000_000)
     assert caught.value.code == 65544
+    assert "args[1]" in "\n".join(getattr(caught.value, "__notes__", ()))
 
 
 @pytest.mark.parametrize("kind", ["S", "U"])
@@ -685,8 +688,9 @@ def test_numpy_long_fixed_width_value_preserves_the_actual_signal_exception(kind
     try:
         with pytest.raises(InterruptedArray) as caught:
             _sqlaero._bind_sql("SELECT %s,%s", (datetime(2024, 1, 1, tzinfo=Zone()), source))
+        # Delivery can reach a final check or return boundary outside a value;
+        # the deadline test separately verifies a known native value path.
         assert caught.value is original
-        assert "args[1]" in "\n".join(getattr(caught.value, "__notes__", ()))
     finally:
         alarm.close()
 
