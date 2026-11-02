@@ -14,10 +14,14 @@ the exact version from PyPI and repeat the
 applicable integration suite. Async remains future work.
 
 The development branch adds CPython 3.14t and 3.15t with the same API and Rust
-core. Source `296f6e4` passed build-only validation in all 48 platform/runtime
+core. Historical R0 source `296f6e4` completed build and installation validation
+in all 48 platform/runtime
 combinations, including 96 actual wheel and independently rebuilt
 source-distribution installations. The [CI run](https://github.com/AresJef/SQLAero/actions/runs/41115846043)
-records the final source and install checks. This work does not publish a new
+records that frozen source and its install checks; it does not validate later
+Escape input extensions or artifacts. Later checks use the existing
+[native build workflow](https://github.com/AresJef/SQLAero/actions/workflows/ci.yml),
+with each result bound to its recorded source. This work does not publish a new
 PyPI release. Local GIL performance costs and statistical uncertainty are
 recorded separately in the [execution plan](tasks/gil-nogil-support/plan.md)
 and its final reports; successful functional validation does not mean every
@@ -156,8 +160,9 @@ up to 65 necessary digits without imposing a target column's scale limit.
 Custom Arrow extensions/device storage, structured ndarrays other than record
 scalars, ndarray subclasses, Polars LazyFrame/Expr/nested Object, bytearray and
 memoryview remain outside this input contract. Provider wheel availability is
-separate from the kernel's GIL/NoGIL platform support; in particular, the fixed
-Polars runtime currently has no free-threaded wheel.
+separate from the kernel's 48 GIL/NoGIL platform/runtime combinations: fixed
+PyArrow 26.0.0 has no official Windows ARM64 wheel, and the fixed Polars 2.1.0
+runtime has no free-threaded wheel.
 
 Rows are tuples. Results are received into native storage, then converted lazily
 by fetch. A failed multi-row fetch leaves its original position unchanged.
@@ -210,9 +215,11 @@ for materializing 10,000 numeric/text rows. These are particular native phases,
 not promises about total application or network-query latency. Some smaller
 costs remained within the agreed 5% protection band.
 
-The older experimental escape implementation remains faster on most same-text
-escape microbenchmarks. Its Python-string return contract differs from this
-client's Rust request writer; no universal speed advantage is claimed.
+The historical shared-type, same-text microbenchmark comparison found the
+experimental escape implementation faster in most measured cases. Its
+Python-string return contract differs from this client's Rust request writer;
+that earlier comparison does not establish performance for the current expanded
+input types or later artifacts, and no universal speed advantage is claimed.
 Frozen experiments, private test credentials and local timing records are not
 runtime dependencies or distribution contents. Public error and retry guides,
 source tests and dependency notices accompany the new client.
