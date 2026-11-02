@@ -1198,9 +1198,24 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
             check = observer.cursor()
             check.execute(f'SELECT id FROM {name}')
             assert check.fetchall() == ((1,),)
+    except BaseException as error:
+        error.add_note(
+            f'cleanup overlap observation: connection.closed={connection.closed}; '
+            f'fetching={fetching.is_set()}; transaction_exited={exited.is_set()}'
+        )
+        raise
     finally:
+        primary = sys.exception()
         alarm.close()
-        setup.execute(f'DROP TABLE IF EXISTS {name}')
+        # An intended failure can retire the tested connection. Cleanup must
+        # neither depend on its continued usability nor replace the real cause.
+        try:
+            with live(label) as cleanup, cleanup.cursor() as cleanup_cursor:
+                cleanup_cursor.execute(f'DROP TABLE IF EXISTS {name}')
+        except Exception as error:
+            if primary is None:
+                raise
+            primary.add_note(f'isolated test cleanup also failed: {error}')
 
 
 @requires_mysql
