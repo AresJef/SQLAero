@@ -14,6 +14,29 @@ pd = pytest.importorskip("pandas")
 np = pytest.importorskip("numpy")
 
 
+@pytest.mark.parametrize("many", [False, True])
+@pytest.mark.parametrize("itemize", [False, True])
+@pytest.mark.parametrize("levels", [62, 63])
+def test_natural_dataframe_counts_the_root_and_current_row(
+    many: bool, itemize: bool, levels: int,
+) -> None:
+    cell: object = 7
+    for _ in range(levels):
+        cell = [cell]
+    storage = np.empty((1, 1), dtype=object)
+    storage[0, 0] = cell
+    source = pd.DataFrame(storage)
+    if levels == 63:
+        with pytest.raises(DataError) as caught:
+            _sqlaero._bind_sql("SELECT %s", source, many=many, itemize=itemize)
+        assert caught.value.code == 65543
+    else:
+        count = levels + (not itemize)
+        assert _sqlaero._bind_sql("SELECT %s", source, many=many, itemize=itemize) == [
+            b"\x03SELECT " + b"(" * count + b"7" + b")" * count,
+        ]
+
+
 @pytest.mark.parametrize("value", [pd.NA, pd.NaT])
 def test_pandas_missing_scalars_are_null_before_other_protocols(value: object) -> None:
     assert _sqlaero._encode_value(value).to_bytes() == b"NULL"

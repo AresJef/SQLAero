@@ -384,6 +384,19 @@ pub(crate) fn client(py: Python<'_>, code: ClientErrorCode, message: impl AsRef<
     }
 }
 
+/// Format a required driver message with the shared fallible native writer.
+#[cold]
+pub(crate) fn client_format(
+    py: Python<'_>,
+    code: ClientErrorCode,
+    arguments: std::fmt::Arguments<'_>,
+) -> PyErr {
+    match message(py, arguments) {
+        Ok(message) => client(py, code, message),
+        Err(error) => error,
+    }
+}
+
 fn exception_type(py: Python<'_>, class: ExceptionClass) -> Bound<'_, PyType> {
     match class {
         ExceptionClass::Interface => py.get_type::<InterfaceError>(),

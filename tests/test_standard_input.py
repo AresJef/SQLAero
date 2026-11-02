@@ -1,6 +1,6 @@
 """Approved standard protocols, conversion counts and common cycle identity."""
 # pyright: reportPrivateUsage=false
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from decimal import Decimal, DecimalTuple
 from enum import IntEnum, StrEnum
 from collections.abc import Iterator
@@ -55,6 +55,36 @@ def test_temporal_subclasses_read_native_fields(base: type, value: tuple[int, ..
         raise AssertionError("no temporal string conversion")
     Child = type("Child", (base,), {"__str__": forbidden})
     assert encoded(Child(*value)) == expected
+
+
+@pytest.mark.parametrize("zone", [timezone.utc, timezone(timedelta(hours=2))])
+def test_datetime_subclass_offset_override_does_not_replace_base_timezone_semantics(zone: tzinfo) -> None:
+    class Child(datetime):
+        def utcoffset(self) -> timedelta:
+            raise AssertionError("datetime subclass utcoffset override must not run")
+
+    value = Child(2024, 1, 2, 3, 4, 5, tzinfo=zone)
+    expected_hour = b"03" if zone is timezone.utc else b"01"
+    assert encoded(value) == b"'2024-01-02 " + expected_hour + b":04:05'"
+
+
+def test_datetime_base_offset_still_calls_the_real_tzinfo_once_and_preserves_its_error() -> None:
+    calls: list[datetime | None] = []
+    original = RuntimeError("real tzinfo offset failure")
+
+    class Zone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta:
+            calls.append(dt)
+            raise original
+
+    class Child(datetime):
+        def utcoffset(self) -> timedelta:
+            raise AssertionError("datetime override must not replace the tzinfo protocol")
+
+    value = Child(2024, 1, 2, 3, 4, 5, tzinfo=Zone(), fold=1)
+    with pytest.raises(RuntimeError) as caught:
+        encoded(value)
+    assert caught.value is original and calls == [value]
 
 
 @pytest.mark.parametrize("base", [list, tuple])

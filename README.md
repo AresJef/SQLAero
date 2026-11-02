@@ -40,6 +40,16 @@ containers and mutable nested values stable until the call returns. Threading
 does not imply linear scaling, and network waiting already releases the GIL in
 ordinary builds.
 
+NumPy-backed inputs must also obey NumPy's own concurrent-access contract.
+Keep every shared array, record and Pandas backing store stable while Escape
+reads it, or synchronize **all** readers and writers with the same application
+lock. Concurrent element writes, dtype/shape changes or storage replacement
+can race inside NumPy and crash the interpreter, especially with Object arrays
+under free threading. A read-only flag, an owning reference or a SQLAero-only
+lock does not synchronize other aliases. SQLAero still protects its own borrow,
+callback, bounds and error-handling boundaries; it cannot enforce a lock that
+an external writer does not acquire.
+
 The macOS 11.0, manylinux_2_28 and musllinux_1_2 tags are build compatibility
 targets, not claims of runtime tests on every older OS release. Native CI runs
 on macOS 26 arm64, macOS 15 Intel, Windows Server 2022 x86_64 and Windows 11
@@ -123,6 +133,9 @@ For mutable binary sources, callers may synchronize their own access and pass
 an already created immutable `bytes` value. Escape performs no implicit conversion.
 Nonfinite float/Decimal values become NULL. Aware datetime inputs normalize to
 UTC and require a reliably confirmed UTC session.
+Temporal subclasses use their base date/time fields. For `datetime`, the base
+offset method calls the real `tzinfo` protocol; overriding `datetime.utcoffset`
+on a subclass does not replace that protocol or change the UTC fast path.
 `datetime.time` inputs preserve their clock fields and microseconds, ignore
 `tzinfo`, and never call timezone methods. For example, `00:30+01:00` is written
 as `'00:30:00'`; unlike aware `datetime`, it is not converted to UTC.
@@ -149,8 +162,11 @@ stable until execute returns, including external buffer aliases.
 One-dimensional sources follow `many`/`itemize`; two-dimensional tables are row
 sources even with `many=False`. Record fields form one logical row. Nested
 containers and typed values remain a single SQL parameter fragment; they are
-not converted to JSON or expanded using the SQL placeholder count. Empty roots
-mean zero positions; a nonempty table with no columns retains every logical row.
+not converted to JSON or expanded using the SQL placeholder count. Empty typed
+vectors and zero-row tables mean zero positions. A nonempty table with no
+columns retains every logical row. A zero-field record is one row: it supplies
+zero positions with `itemize=True`, or one `()` fragment with `itemize=False`.
+Ordinary empty containers follow their documented `many`/`itemize` rules.
 
 Floating inputs preserve their binary source value when widened to float64,
 including negative zero. Missing/nonfinite inputs become NULL. Temporal values
@@ -198,6 +214,14 @@ See [errors and diagnostic snapshots](docs/errors.md), the maintained
 The public typing aliases are in `sqlaero.typing`; retry preserves callable
 parameters and return inference. Execution never reconnects or replays SQL
 implicitly.
+`EscapeInput` has an installed family union in `typing.pyi`, including small
+public-surface protocols for optional providers without importing them. Static
+checking rejects unsupported roots such as `bytearray`, `memoryview` and an
+ordinary unrelated object. It does not prove exact provider identity, supported
+dtype, dimensions or every nested value; Escape validates those at runtime.
+The runtime alias is annotation-only, not an `isinstance` support predicate.
+For Pandas static checking, install its official `pandas-stubs` package; it is
+a development dependency here, not a runtime requirement of SQLAero.
 
 ## Performance and development
 

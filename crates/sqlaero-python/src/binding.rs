@@ -72,7 +72,7 @@ impl<'py> Rows<'py> {
         };
         let (count, empty) = match native.as_ref().map(|v| v.shape()) {
             Some(Shape::Vector { length }) => (if many { length.max(1) } else { 1 }, length == 0),
-            Some(Shape::Record { fields }) => (1, fields == 0),
+            Some(Shape::Record { .. }) => (1, false),
             Some(Shape::Table { rows, .. }) => (rows.max(1), rows == 0),
             None => (
                 outer.as_ref().map_or(1, |v| v.len().max(1)),
@@ -319,10 +319,10 @@ impl Row<'_, '_> {
         check(py, budget)?;
         let width = self.width();
         if width != template.slots() {
-            return Err(errors::client(
+            return Err(errors::client_format(
                 py,
                 ClientErrorCode::ParameterCount,
-                format!(
+                format_args!(
                     "SQL expects {} positions but {} provides {width}; current request was not sent",
                     template.slots(),
                     path_text(&self.path)
@@ -363,17 +363,25 @@ impl Row<'_, '_> {
             RowInput::Native(native) => Some(native),
             _ => None,
         };
-        if native.is_some() {
+        if let Some(native) = native.as_ref() {
             visit.enter(py, self.value.as_ptr() as usize)?;
+            if matches!(
+                (native.source.shape(), native.row),
+                (Shape::Table { .. }, Some(_))
+            ) {
+                // A natural table retains its root while one logical row is
+                // bound. Itemizing that row does not remove its depth level.
+                visit.enter_native(py)?;
+            }
         }
         let mut cursor = 0;
         for index in 0..width {
             let source = if let Some(row) = row {
                 row.row_item(index).inspect_err(|error| {
-                    errors::note(
+                    errors::note_format(
                         py,
                         error,
-                        format!(
+                        format_args!(
                             "while binding {}[{index}]; current request was not sent",
                             path_text(&visit.path)
                         ),
@@ -445,10 +453,10 @@ impl Row<'_, '_> {
                 visit.value(&source, output, row.map(|_| index))
             };
             if let Err(error) = result {
-                errors::note(
+                errors::note_format(
                     py,
                     &error,
-                    format!(
+                    format_args!(
                         "while binding {}; current request was not sent",
                         path_text(&visit.path)
                     ),
@@ -515,10 +523,10 @@ pub(crate) fn encode_value(
 impl Visit<'_> {
     fn enter(&mut self, py: Python<'_>, identity: usize) -> PyResult<()> {
         if self.active_depth + self.native_depth >= 64 || self.active.contains(&identity) {
-            return Err(errors::client(
+            return Err(errors::client_format(
                 py,
                 ClientErrorCode::ContainerNesting,
-                format!(
+                format_args!(
                     "{} contains a true cycle or exceeds 64 active container levels; current request was not sent",
                     path_text(&self.path)
                 ),
@@ -544,7 +552,9 @@ impl Visit<'_> {
         self.work += 1;
         if self.work >= 16384 {
             if let Err(error) = check(py, self.budget) {
-                if let Some(index) = child {
+                if let Some(index) = child
+                    && self.path.try_reserve(1).is_ok()
+                {
                     self.path.push(index);
                 }
                 return Err(error);
@@ -794,10 +804,17 @@ impl Visit<'_> {
     #[inline(never)]
     fn failed_value(&mut self, value: &Bound<'_, PyAny>, child: Option<usize>, error: &PyErr) {
         if let Some(index) = child {
+            if self.path.try_reserve(1).is_err() {
+                return;
+            }
             self.path.push(index);
         }
         if let Ok(summary) = self.types.diagnostic(value) {
-            errors::note(value.py(), error, format!("failed escape input: {summary}"));
+            errors::note_format(
+                value.py(),
+                error,
+                format_args!("failed escape input: {summary}"),
+            );
         }
     }
 }
@@ -813,10 +830,10 @@ impl CellWriter for Visit<'_> {
     }
     fn enter_native(&mut self, py: Python<'_>) -> PyResult<()> {
         if self.active_depth + self.native_depth >= 64 {
-            return Err(errors::client(
+            return Err(errors::client_format(
                 py,
                 ClientErrorCode::ContainerNesting,
-                format!(
+                format_args!(
                     "{} exceeds 64 active container levels; current request was not sent",
                     path_text(&self.path)
                 ),
@@ -848,16 +865,28 @@ impl CellWriter for Visit<'_> {
     }
 }
 
-fn path_text(path: &[usize]) -> String {
-    let mut value = String::from("args");
-    for index in path {
-        value.push_str(&format!("[{index}]"));
+struct InputPath<'a>(&'a [usize]);
+
+impl std::fmt::Display for InputPath<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("args")?;
+        for index in self.0 {
+            write!(formatter, "[{index}]")?;
+        }
+        Ok(())
     }
-    value
+}
+
+fn path_text(path: &[usize]) -> InputPath<'_> {
+    InputPath(path)
 }
 pub(crate) fn template_error(py: Python<'_>, error: TemplateError) -> PyErr {
     match error {
         TemplateError::Wire(error) => errors::wire(py, error),
-        error => errors::client(py, ClientErrorCode::TemplateBinding, error.to_string()),
+        error => errors::client_format(
+            py,
+            ClientErrorCode::TemplateBinding,
+            format_args!("{error}"),
+        ),
     }
 }

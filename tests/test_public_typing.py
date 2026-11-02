@@ -10,6 +10,8 @@ import subprocess
 import sys
 from typing import Any
 
+import pytest
+
 import sqlaero
 from sqlaero import Connection, Cursor
 
@@ -84,6 +86,47 @@ class ApplicationError(SQLAeroError):
     assert {entry['range']['start']['line'] for entry in errors} == set(range(3, 18)), result.stdout
 
 
+def test_installed_escape_alias_keeps_optional_families_and_rejects_forbidden_roots(tmp_path: Path) -> None:
+    """Check the installed stub, including an environment without provider imports."""
+    (tmp_path / "positive.py").write_text('''from datetime import datetime
+from decimal import Decimal
+from sqlaero import Cursor
+def accepted(cursor: Cursor, integers: list[int], mapping: dict[str, int]) -> None:
+    cursor.execute("SELECT %s", None)
+    cursor.execute("SELECT %s", 1)
+    cursor.execute("SELECT %s", "text")
+    cursor.execute("SELECT %s", b"binary")
+    cursor.execute("SELECT %s", Decimal("1.2"))
+    cursor.execute("SELECT %s", datetime(2024, 1, 1))
+    cursor.execute("SELECT %s", integers)
+    cursor.execute("SELECT %s", mapping)
+    cursor.execute("SELECT %s", mapping.items())
+    cursor.execute("SELECT %s", range(3), many=True)
+''')
+    (tmp_path / "negative.py").write_text('''from sqlaero import Cursor
+class Unsupported: pass
+def rejected(cursor: Cursor) -> None:
+    cursor.execute("SELECT %s", bytearray(b"x"))
+    cursor.execute("SELECT %s", memoryview(b"x"))
+    cursor.execute("SELECT %s", Unsupported())
+''')
+    configuration = tmp_path / "pyrightconfig.json"
+    configuration.write_text(json.dumps({
+        "include": ["positive.py", "negative.py"], "typeCheckingMode": "strict",
+        "pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "extraPaths": [str(Path(sqlaero.__file__).parent.parent)],
+    }))
+    result = subprocess.run(
+        ["pyright", "--outputjson", "--pythonpath", sys.executable, "--project", str(configuration)],
+        text=True, capture_output=True, timeout=30, check=False,
+    )
+    report: dict[str, Any] = json.loads(result.stdout)
+    errors = [entry for entry in report["generalDiagnostics"] if entry["severity"] == "error"]
+    assert result.returncode == 1 and len(errors) == 3, result.stdout + result.stderr
+    assert all(Path(entry["file"]).name == "negative.py" for entry in errors), result.stdout
+    assert {entry["range"]["start"]["line"] for entry in errors} == {3, 4, 5}
+
+
 def test_decode_and_close_docs_explain_both_values_and_deadline_boundaries() -> None:
     options = ('decode_json', 'decode_set', 'decode_bit', 'use_decimal',
                'use_timedelta', 'decode_text_strict', 'decode_date_strict')
@@ -94,3 +137,51 @@ def test_decode_and_close_docs_explain_both_values_and_deadline_boundaries() -> 
     close = inspect.getdoc(Connection.close) or ''
     assert all(word in close for word in ('None', 'read_timeout', 'write_timeout',
                                           'operation_timeout', 'cleanup', 'budget')), close
+
+
+def test_installed_escape_alias_accepts_typed_numpy_and_pandas_families(tmp_path: Path) -> None:
+    """Use real provider stubs, including the distinct NA and NaT singleton types."""
+    pytest.importorskip("numpy")
+    pytest.importorskip("pandas")
+    (tmp_path / "providers.py").write_text('''# pyright: reportUnknownMemberType=false, reportUnknownArgumentType=false, reportUnknownVariableType=false
+from typing import assert_type
+import numpy as np
+import pandas as pd
+from pandas._libs.missing import NAType
+from pandas._libs.tslibs.nattype import NaTType
+from sqlaero import Cursor
+assert_type(pd.NA, NAType)
+assert_type(pd.NaT, NaTType)
+def accepted(cursor: Cursor) -> None:
+    cursor.execute("SELECT %s", np.int64(7))
+    cursor.execute("SELECT %s", np.float16(0.1))
+    cursor.execute("SELECT %s", np.datetime64("2024-01-01"))
+    cursor.execute("SELECT %s", np.timedelta64(1, "s"))
+    cursor.execute("SELECT %s", np.str_("x"))
+    cursor.execute("SELECT %s", np.bytes_(b"x"))
+    cursor.execute("SELECT %s", np.array([1, 2]))
+    cursor.execute("SELECT %s", np.rec.array([(1,)], dtype=[("v", "i8")])[0])
+    cursor.execute("SELECT %s", pd.Series([1, None], dtype="Int64"))
+    cursor.execute("SELECT %s", pd.DataFrame({"v": [1, 2]}))
+    cursor.execute("SELECT %s", pd.array([1, None], dtype="Int64"))
+    cursor.execute("SELECT %s", pd.array([True, None], dtype="boolean"))
+    cursor.execute("SELECT %s", pd.array(["a", None], dtype="string"))
+    cursor.execute("SELECT %s", pd.Categorical(["a", None]))
+    cursor.execute("SELECT %s", pd.Index([1, 2]))
+    cursor.execute("SELECT %s", pd.DatetimeIndex(["2024-01-01"]))
+    cursor.execute("SELECT %s", pd.TimedeltaIndex(["1 day"]))
+    cursor.execute("SELECT %s", pd.NA)
+    cursor.execute("SELECT %s", pd.NaT)
+''')
+    configuration = tmp_path / "pyrightconfig.json"
+    configuration.write_text(json.dumps({
+        "include": ["providers.py"], "typeCheckingMode": "strict",
+        "pythonVersion": f"{sys.version_info.major}.{sys.version_info.minor}",
+        "extraPaths": [str(Path(sqlaero.__file__).parent.parent)],
+    }))
+    result = subprocess.run(
+        ["pyright", "--outputjson", "--pythonpath", sys.executable, "--project", str(configuration)],
+        text=True, capture_output=True, timeout=30, check=False,
+    )
+    report: dict[str, Any] = json.loads(result.stdout)
+    assert result.returncode == 0 and report["summary"]["errorCount"] == 0, result.stdout + result.stderr

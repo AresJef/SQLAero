@@ -3,11 +3,10 @@
 from os import PathLike
 from typing import TypeAlias
 
-# Escape owns canonical provider recognition and recursive value validation.
-# `object` keeps optional NumPy/Pandas/Arrow/Polars values usable without making
-# those packages mandatory imports or accepting arbitrary duck types at runtime.
-# The supported families, dtype whitelist and shape rules are documented by
-# Cursor.execute; bytearray and memoryview remain rejected at that boundary.
+# The adjacent typing.pyi supplies the precise static family union. This
+# annotation-only runtime placeholder avoids importing optional providers.
+# It is not an isinstance predicate or permission to pass arbitrary objects;
+# Escape owns real identity, dtype, shape and recursive-value validation.
 EscapeInput: TypeAlias = object
 PathInput: TypeAlias = str | PathLike[str] | PathLike[bytes]
 ErrorTypesInput: TypeAlias = type[Exception] | tuple[type[Exception], ...] | list[type[Exception]]

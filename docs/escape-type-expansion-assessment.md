@@ -159,7 +159,7 @@ V23在普通tuple正规化与逐项遍历前截获canonical struct_time，只读
 | int | PyNumber_Long | 仅该真实家族执行约定整数转换，得到准确整数后复用当前数值writer；不走str原文拼接 |
 | float | PyNumber_Float | 得到f64后复用有限性、负零和NULL规则；不跳过转换异常 |
 | bytes | PyObject_Bytes | C03已确认保留必要`__bytes__`协议，转换结果在边界消费。无hook的原生基值路径须验证等价性及安全后借用；不能因此接纳bytearray |
-| datetime／date／time／timedelta | 原生基类字段 | 类型识别顺序先专门Pandas缺失／时间，再datetime、date；当前UTC和time规则优先。Pandas额外精度另走G06 |
+| datetime／date／time／timedelta | 原生基类字段 | 类型识别顺序先专门Pandas缺失／时间，再datetime、date；当前UTC和time规则优先。datetime子类按本轮已确认U01使用基类日期时间字段／偏移语义，保留真正tzinfo.utcoffset协议及其原异常，不派发datetime子类自身utcoffset覆盖。Pandas额外精度另走G06 |
 | Decimal | canonical Decimal构造器取得基值 | 用基类准确值，忽略子类伪造as_tuple等方法；复用当前非有限和精度政策，不受context舍入 |
 | list／tuple | 对应正式构造器归一化 | 需要保留自定义迭代协议时执行一次必要转换；原对象及归一化结果都参与正确的递归／拥有关系，不能仅检查新容器身份 |
 | dict／set／frozenset | 对应正式构造器归一化 | 复用G02的值语义；保留转换失败，不为每个自定义类专门登记。正式构造器可能走原生快路，不承诺强制触发全部覆写方法 |

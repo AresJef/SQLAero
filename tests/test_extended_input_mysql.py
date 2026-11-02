@@ -6,6 +6,76 @@ from decimal import Decimal, ROUND_HALF_UP, localcontext
 import pytest
 
 from test_public_connection import live, requires_mysql
+from sqlaero.errors import DataError
+from sqlaero.typing import EscapeInput
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
+@pytest.mark.parametrize("kind", ["batch", "table"])
+@pytest.mark.parametrize("itemize", [False, True])
+def test_binary_arrow_schema_metadata_keeps_the_actual_inserted_values(
+    label: str, kind: str, itemize: bool,
+) -> None:
+    pa = pytest.importorskip("pyarrow")
+    field = pa.field("value", pa.int64(), metadata={b"\xff": b"field\0\xff"})
+    schema = pa.schema([field], metadata={b"info": b"schema\0\xff"})
+    factory = pa.RecordBatch.from_arrays if kind == "batch" else pa.Table.from_arrays
+    source = factory([pa.array([1, None, 2])], schema=schema)
+    source.validate(full=True)
+    with live(label) as connection, connection.cursor() as cursor:
+        cursor.execute("CREATE TEMPORARY TABLE opaque_metadata_input (value BIGINT)")
+        sql = "INSERT INTO opaque_metadata_input VALUES (%s)" if itemize else "INSERT INTO opaque_metadata_input VALUES %s"
+        assert cursor.execute(sql, source, itemize=itemize) == 3
+        assert cursor.row_count == 3 and cursor.warning_count == 0
+        cursor.execute("SELECT value FROM opaque_metadata_input ORDER BY value")
+        assert cursor.fetchall() == ((None,), (1,), (2,))
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
+@pytest.mark.parametrize("many", [False, True])
+@pytest.mark.parametrize("itemize", [False, True])
+def test_zero_field_record_executes_one_real_default_row(
+    label: str, many: bool, itemize: bool,
+) -> None:
+    np = pytest.importorskip("numpy")
+    record = np.zeros(1, dtype=[]).view(np.recarray)[0]
+    with live(label) as connection, connection.cursor() as cursor:
+        cursor.execute("CREATE TEMPORARY TABLE empty_record_input (id BIGINT AUTO_INCREMENT PRIMARY KEY, value INT DEFAULT 7)")
+        sql = "INSERT INTO empty_record_input () VALUES ()" if itemize else "INSERT INTO empty_record_input () VALUES %s"
+        assert cursor.execute(sql, record, many=many, itemize=itemize) == 1
+        assert cursor.row_count == 1 and cursor.lastrowid == 1
+        cursor.execute("SELECT id,value FROM empty_record_input")
+        assert cursor.fetchall() == ((1, 7),)
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
+@pytest.mark.parametrize("kind", ["numpy", "pandas"])
+@pytest.mark.parametrize("many", [False, True])
+@pytest.mark.parametrize("itemize", [False, True])
+def test_natural_table_depth_rejection_keeps_the_old_public_result(
+    label: str, kind: str, many: bool, itemize: bool,
+) -> None:
+    np = pytest.importorskip("numpy")
+    with live(label) as connection, connection.cursor() as cursor:
+        for levels in [62, 63]:
+            cell: object = 7
+            for _ in range(levels):
+                cell = [cell]
+            storage = np.empty((1, 1), dtype=object)
+            storage[0, 0] = cell
+            source = storage if kind == "numpy" else pytest.importorskip("pandas").DataFrame(storage)
+            cursor.execute("SELECT 41")
+            if levels == 63:
+                with pytest.raises(DataError) as caught:
+                    cursor.execute("SELECT %s", source, many=many, itemize=itemize)
+                assert type(caught.value) is DataError and caught.value.code == 65543
+                assert cursor.fetchone() == (41,)
+            else:
+                assert cursor.execute("SELECT %s", source, many=many, itemize=itemize) == 1
+                assert cursor.fetchone() == (7,)
 
 
 @requires_mysql
@@ -99,7 +169,7 @@ def test_natural_table_source_uses_public_cursor_batch_and_actual_rows(label: st
         assert cursor.fetchall() == ((1, 2), (3, 4))
 
 
-def table_input(provider: str, rows: list[tuple[int, object]], *, objects: bool = False) -> object:
+def table_input(provider: str, rows: list[tuple[int, object]], *, objects: bool = False) -> EscapeInput:
     """Construct the same logical rows using each provider's actual storage."""
     if provider == "numpy":
         np = pytest.importorskip("numpy")

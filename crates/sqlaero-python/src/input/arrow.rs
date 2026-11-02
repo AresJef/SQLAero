@@ -554,9 +554,9 @@ pub(crate) fn prepare_exported<'py>(
         // SAFETY: a canonical CPU producer owns these valid C buffers until
         // the moved array's release. The importer handles offsets/alignment.
         let data = unsafe { from_ffi_and_data_type(array, field.data_type().clone()) }
-            .map_err(|error| invalid(py, error.to_string()))?;
+            .map_err(|error| errors::builtin_format::<PyTypeError>(py, format_args!("{error}")))?;
         data.validate()
-            .map_err(|error| invalid(py, error.to_string()))?;
+            .map_err(|error| errors::builtin_format::<PyTypeError>(py, format_args!("{error}")))?;
         let array = make_array(data);
         validate_root_shape(py, &array, shape)?;
         let fast_path = if let Some(cache) = dictionary::Cache::for_schema(&field, shape) {
@@ -777,9 +777,12 @@ impl Prepared<'_> {
                     // interface and retain their own moved release callback.
                     let data =
                         unsafe { from_ffi_and_data_type(raw, self.field.data_type().clone()) }
-                            .map_err(|error| invalid(py, error.to_string()))?;
-                    data.validate()
-                        .map_err(|error| invalid(py, error.to_string()))?;
+                            .map_err(|error| {
+                                errors::builtin_format::<PyTypeError>(py, format_args!("{error}"))
+                            })?;
+                    data.validate().map_err(|error| {
+                        errors::builtin_format::<PyTypeError>(py, format_args!("{error}"))
+                    })?;
                     let array = make_array(data);
                     let next_end = end
                         .checked_add(array.len())
@@ -991,8 +994,9 @@ fn byte_slice<'a>(py: Python<'_>, array: &'a ArrayRef, index: usize) -> PyResult
                 .views()
                 .get(index)
                 .ok_or_else(|| invalid(py, "Arrow byte view index exceeds its view buffer"))?;
-            validate_binary_view(std::slice::from_ref(view), array.data_buffers())
-                .map_err(|error| invalid(py, error.to_string()))?;
+            validate_binary_view(std::slice::from_ref(view), array.data_buffers()).map_err(
+                |error| errors::builtin_format::<PyTypeError>(py, format_args!("{error}")),
+            )?;
             let length = (*view as u32) as usize;
             if length <= 12 {
                 // SAFETY: the mature binary-view validator above accepted the
@@ -1164,7 +1168,11 @@ fn byte_codec_error(
         },
         CodecError::Wire(error) => return errors::wire(py, error),
         error => {
-            return errors::client(py, ClientErrorCode::UnsupportedCharset, error.to_string());
+            return errors::client_format(
+                py,
+                ClientErrorCode::UnsupportedCharset,
+                format_args!("{error}"),
+            );
         }
     };
     let original = (|| {

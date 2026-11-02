@@ -298,7 +298,7 @@ print('shared boundary allocation failures propagated as MemoryError:', failures
 @pytest.mark.parametrize('kind', [
     'invalid-error', 'invalid-timeout', 'snapshot-stack', 'traceback',
     'display', 'repr', 'retry-defaults', 'unsupported-input', 'client-error',
-    'integer-subclass',
+    'integer-subclass', 'container-depth',
 ])
 def test_public_failure_boundaries_never_panic_on_one_allocation_failure(
     kind: str,
@@ -326,6 +326,9 @@ call_with_nomemory = getattr(_testcapi, 'call_with_nomemory', None)
 rule = RetryRule(error_types=ValueError)
 encoder = _sqlaero._prepare_encoder()
 unknown = object()
+deep = 7
+for _ in range(65):
+    deep = [deep]
 extract_stack = traceback.StackSummary.extract
 format_stack = traceback.StackSummary.format
 
@@ -348,6 +351,8 @@ def prepare() -> Callable[[], Any]:
         return partial(_sqlaero._encode_scalar, 'oversized', limit=1)
     if kind == 'integer-subclass':
         return partial(SQLAeroError, code=large_subclass)
+    if kind == 'container-depth':
+        return partial(encoder.encode, deep)
     try:
         raise SQLAeroError('allocation boundary', code=123)
     except SQLAeroError as caught:
@@ -410,7 +415,7 @@ for offset in range(256 if kind == 'traceback' else 48):
     except MemoryError:
         failures += 1
     except SQLAeroError as error:
-        assert kind == 'client-error' and error.code == 65538
+        assert (kind == 'client-error' and error.code == 65538) or (kind == 'container-depth' and error.code == 65543)
         assert error.is_server_error is False
     except (TypeError, ValueError) as error:
         if kind in ('invalid-error', 'unsupported-input'):
@@ -426,7 +431,7 @@ assert failures > 0
 if kind == 'traceback':
     assert successes > 0, 'the bounded scan never reached the successful native path'
 operation = prepare()
-if kind in ('invalid-error', 'invalid-timeout', 'unsupported-input', 'client-error'):
+if kind in ('invalid-error', 'invalid-timeout', 'unsupported-input', 'client-error', 'container-depth'):
     try:
         operation()
     except (TypeError, ValueError, SQLAeroError):

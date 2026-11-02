@@ -15,6 +15,8 @@ use sqlaero_core::transport::deadline::IoBudget;
 
 pub(crate) mod arrow;
 mod decimal;
+mod diagnostic;
+pub(crate) use diagnostic::binary_diagnostic;
 pub(crate) mod numpy;
 pub(crate) mod pandas;
 pub(crate) mod polars;
@@ -68,6 +70,7 @@ pub(crate) struct ScalarTypes {
     decimal: Py<PyType>,
     native_decimal: bool,
     utc: Py<PyAny>,
+    datetime_offset: Py<PyAny>,
     struct_time: Py<PyType>,
     numpy: std::sync::OnceLock<numpy::NumpyTypes>,
     pandas: std::sync::OnceLock<pandas::PandasTypes>,
@@ -79,90 +82,7 @@ impl ScalarTypes {
     /// or tzinfo callback. Failure to obtain this optional detail is ignored by
     /// callers so it cannot replace the real conversion exception.
     pub(crate) fn diagnostic(&self, value: &Bound<'_, PyAny>) -> PyResult<String> {
-        let py = value.py();
-        let name = value
-            .get_type()
-            .name()?
-            .to_string_lossy()
-            .chars()
-            .take(64)
-            .collect::<String>();
-        if value.is_exact_instance_of::<PyString>() {
-            let length = value.len()?;
-            // SAFETY: the owned exact str remains alive and attached. This
-            // bounded substring returns an owned value or its actual error,
-            // without infallible temporary Python slice/integer objects.
-            let prefix = unsafe {
-                Bound::<PyAny>::from_owned_ptr_or_err(
-                    py,
-                    pyo3::ffi::PyUnicode_Substring(value.as_ptr(), 0, 32),
-                )?
-            };
-            let preview = prefix.repr()?.extract::<String>()?;
-            let clipped = preview.chars().count() > 140;
-            let preview: String = preview.chars().take(140).collect();
-            return Ok(format!(
-                "{name} {preview}{} (original length {length})",
-                if length > 32 || clipped {
-                    " [truncated]"
-                } else {
-                    ""
-                }
-            ));
-        }
-        if value.is_exact_instance_of::<PyBytes>() {
-            return Ok(binary_diagnostic(
-                &name,
-                value.cast::<PyBytes>()?.as_bytes(),
-                32,
-            ));
-        }
-        if value.is_exact_instance_of::<PyInt>() {
-            let bits = errors::integer_bit_length(value)?.extract::<u64>()?;
-            if bits > 512 {
-                return Ok(format!("int ({bits} bits; value preview omitted)"));
-            }
-        }
-        if value.is_none()
-            || value.is_exact_instance_of::<PyBool>()
-            || value.is_exact_instance_of::<PyInt>()
-            || value.is_exact_instance_of::<PyFloat>()
-            || value.is_exact_instance_of::<PyDate>()
-            || value.is_exact_instance_of::<PyDelta>()
-        {
-            return Ok(format!("{name} {}", value.repr()?.to_string_lossy()));
-        }
-        if value.is_exact_instance_of::<PyDateTime>() {
-            let value = value.cast::<PyDateTime>()?;
-            return Ok(format!(
-                "datetime {:04}-{:02}-{:02} {:02}:{:02}:{:02}.{:06} (tzinfo {})",
-                value.get_year(),
-                value.get_month(),
-                value.get_day(),
-                value.get_hour(),
-                value.get_minute(),
-                value.get_second(),
-                value.get_microsecond(),
-                if value.get_tzinfo().is_some() {
-                    "present; not formatted"
-                } else {
-                    "None"
-                }
-            ));
-        }
-        if value.is_exact_instance_of::<PyTime>() {
-            let value = value.cast::<PyTime>()?;
-            return Ok(format!(
-                "time {:02}:{:02}:{:02}.{:06} (tzinfo not formatted)",
-                value.get_hour(),
-                value.get_minute(),
-                value.get_second(),
-                value.get_microsecond()
-            ));
-        }
-        // Decimal errors already describe the native numeric restriction.
-        // Avoid formatting an arbitrarily long coefficient merely for notes.
-        Ok(format!("{name} (value preview omitted)"))
+        diagnostic::value(value)
     }
     pub(crate) fn decimal_type<'py>(&self, py: Python<'py>) -> &Bound<'py, PyType> {
         self.decimal.bind(py)
@@ -183,6 +103,8 @@ impl ScalarTypes {
             decimal: decimal_type.unbind(),
             native_decimal,
             utc: errors::attribute(&timezone, c"utc")?.unbind(),
+            datetime_offset: errors::attribute(py.get_type::<PyDateTime>().as_any(), c"utcoffset")?
+                .unbind(),
             struct_time: errors::attribute(errors::module(py, c"time")?.as_any(), c"struct_time")?
                 .cast_into::<PyType>()?
                 .unbind(),
@@ -316,9 +238,10 @@ impl ScalarTypes {
             None => None,
             Some(zone) if zone.is(self.utc.bind(py)) => Some(0),
             Some(_) => {
-                // The exact built-in method validates the tzinfo return
-                // type and offset range, preserving its actual exception.
-                let offset = datetime.call_method0(PyString::from_bytes(py, b"utcoffset")?)?;
+                // Invoke the cached base descriptor, not an override on a
+                // datetime subclass. It calls the actual tzinfo protocol and
+                // preserves the built-in return-type/range validation.
+                let offset = self.datetime_offset.bind(py).call1((datetime,))?;
                 if offset.is_none() {
                     None
                 } else {
@@ -485,34 +408,12 @@ fn provider_loaded(py: Python<'_>, name: &[u8]) -> PyResult<bool> {
 #[inline(never)]
 pub(crate) fn unsupported(value: &Bound<'_, PyAny>) -> PyErr {
     match value.get_type().name() {
-        Ok(name) => errors::builtin_message::<PyTypeError>(
+        Ok(name) => errors::builtin_format::<PyTypeError>(
             value.py(),
-            format!("unsupported exact escape type: {name}"),
+            format_args!("unsupported exact escape type: {name}"),
         ),
         Err(error) => error,
     }
-}
-
-/// Format a bounded raw-byte preview without callbacks or scanning the value.
-pub(crate) fn binary_diagnostic(name: &str, value: &[u8], maximum: usize) -> String {
-    binary_preview(name, &value[..value.len().min(maximum)], value.len())
-}
-
-fn binary_preview(name: &str, preview: &[u8], length: usize) -> String {
-    let escaped: String = preview
-        .iter()
-        .flat_map(|byte| std::ascii::escape_default(*byte))
-        .map(char::from)
-        .collect();
-    format!(
-        "{name} b'{escaped}'{} (original length {})",
-        if length > preview.len() {
-            " [truncated]"
-        } else {
-            ""
-        },
-        length
-    )
 }
 
 // The sampled primitive hot path should not pay an extra reader call.
@@ -624,16 +525,20 @@ fn codec_error(
     match error {
         CodecError::Encode { offset, point } => {
             let start = text[..offset].chars().count();
-            encode_error(
-                source,
-                encoding,
-                start,
-                start + 1,
-                &format!("character U+{point:04X} is not representable in MySQL {encoding}"),
-            )
+            match errors::message(
+                py,
+                format_args!("character U+{point:04X} is not representable in MySQL {encoding}"),
+            ) {
+                Ok(reason) => encode_error(source, encoding, start, start + 1, &reason),
+                Err(error) => error,
+            }
         }
         CodecError::Wire(error) => errors::wire(py, error),
-        error => errors::client(py, ClientErrorCode::UnsupportedCharset, error.to_string()),
+        error => errors::client_format(
+            py,
+            ClientErrorCode::UnsupportedCharset,
+            format_args!("{error}"),
+        ),
     }
 }
 
@@ -723,7 +628,11 @@ pub(crate) fn text_utf8(
                 }
             }
             CodecError::Wire(error) => errors::wire(py, error),
-            error => errors::client(py, ClientErrorCode::UnsupportedCharset, error.to_string()),
+            error => errors::client_format(
+                py,
+                ClientErrorCode::UnsupportedCharset,
+                format_args!("{error}"),
+            ),
         }
     };
     if source.len() <= WORK_BYTES {
@@ -819,12 +728,71 @@ pub(crate) fn decimal_bytes(
         )
         .map_err(|error| scalar_error(py, error));
     }
-    let coefficient = num_bigint::BigInt::from_signed_bytes_le(signed_le);
-    let (sign, digits) = coefficient.to_radix_be(10);
+    decimal_wide(py, signed_le, scale, output, context)
+}
+
+/// Convert bounded wide coefficients in base 10^19 using four native limbs.
+/// Keep the fallback out of the common scalar/narrow writer's code footprint.
+#[inline(never)]
+fn decimal_wide(
+    py: Python<'_>,
+    signed_le: &[u8],
+    scale: i8,
+    output: &mut Vec<u8>,
+    context: &Context,
+) -> PyResult<()> {
+    // decimal_bytes already checked 1..=32 bytes. Unsigned two's-complement
+    // magnitude also represents the minimum negative coefficient exactly.
+    let negative = signed_le.last().is_some_and(|byte| byte & 0x80 != 0);
+    let mut magnitude = [0u8; 32];
+    let storage = &mut magnitude[..signed_le.len()];
+    storage.copy_from_slice(signed_le);
+    if negative {
+        let mut carry = 1u16;
+        for byte in storage.iter_mut() {
+            let value = u16::from(!*byte) + carry;
+            *byte = value as u8;
+            carry = value >> 8;
+        }
+    }
+    let mut words = [0u64; 4];
+    for (word, bytes) in words.iter_mut().zip(magnitude.as_chunks::<8>().0) {
+        *word = u64::from_le_bytes(*bytes);
+    }
+    let mut digits = [0u8; 78];
+    let mut start = digits.len();
+    let mut active = words.len();
+    while active != 0 && words[active - 1] == 0 {
+        active -= 1;
+    }
+    if active == 0 {
+        start -= 1;
+    }
+    while active != 0 {
+        let mut remainder = 0u128;
+        for word in words[..active].iter_mut().rev() {
+            // remainder < 10^19 < 2^64, so the complete dividend fits u128,
+            // and its quotient fits u64. No signed abs or truncation is used.
+            let value = (remainder << 64) | u128::from(*word);
+            *word = (value / 10_000_000_000_000_000_000u128) as u64;
+            remainder = value % 10_000_000_000_000_000_000u128;
+        }
+        while active != 0 && words[active - 1] == 0 {
+            active -= 1;
+        }
+        let mut buffer = itoa::Buffer::new();
+        let chunk = buffer.format(remainder as u64);
+        let width = if active == 0 { chunk.len() } else { 19 };
+        start -= width;
+        let tail = start + width - chunk.len();
+        for (digit, ascii) in digits[tail..start + width].iter_mut().zip(chunk.bytes()) {
+            *digit = ascii - b'0';
+        }
+    }
     scalar::decimal(
         output,
-        sign == num_bigint::Sign::Minus,
-        &digits,
+        negative,
+        &digits[start..],
         -i64::from(scale),
         context.limit,
     )

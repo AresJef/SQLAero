@@ -406,6 +406,12 @@ def test_arrow_decimal256_keeps_wide_fallback_and_necessary_precision(
     pytest.param(2**127, id="above-i128-max"),
     pytest.param(2**200 + 123, id="wide-positive"),
     pytest.param(-(2**200 + 123), id="wide-negative"),
+    pytest.param(10**39 - 1, id="decimal-block-below"),
+    pytest.param(-(10**39 + 1), id="decimal-block-above-negative"),
+    pytest.param(10**57 + 1, id="decimal-zero-middle-blocks"),
+    pytest.param(-(10**57 + 1), id="decimal-zero-middle-blocks-negative"),
+    pytest.param(10**64, id="decimal-full-precision-power"),
+    pytest.param(-(10**65 - 1), id="decimal-full-precision-negative"),
 ])
 def test_arrow_decimal256_signed_narrowing_boundary_keeps_the_complete_value(coefficient: int) -> None:
     coefficients = [7, coefficient, 9, 8]
@@ -415,6 +421,21 @@ def test_arrow_decimal256_signed_narrowing_boundary_keeps_the_complete_value(coe
     )
     value = source.slice(1, 2)
     assert _sqlaero._encode_value(value).to_bytes() == b"(" + str(coefficient).encode() + b",NULL)"
+
+
+@pytest.mark.parametrize("coefficient", [10**70, -(10**70)])
+def test_decimal256_wide_zero_suffix_preserves_only_necessary_precision(coefficient: int) -> None:
+    payload = coefficient.to_bytes(32, "little", signed=True)
+    value = pa.Array.from_buffers(pa.decimal256(76, 70), 1, [None, pa.py_buffer(payload)])
+    assert _sqlaero._encode_value(value).to_bytes() == (b"(1)" if coefficient > 0 else b"(-1)")
+
+
+@pytest.mark.parametrize("coefficient", [10**76 - 1, -(10**76 - 1), 2**255 - 1, -(2**255)])
+def test_decimal256_full_width_never_wraps_or_truncates_an_oversized_coefficient(coefficient: int) -> None:
+    payload = coefficient.to_bytes(32, "little", signed=True)
+    value = pa.Array.from_buffers(pa.decimal256(76, 0), 1, [None, pa.py_buffer(payload)])
+    with pytest.raises(_sqlaero.DataError):
+        _sqlaero._encode_value(value)
 
 
 @pytest.mark.parametrize(

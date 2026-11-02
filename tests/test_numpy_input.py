@@ -14,6 +14,73 @@ from sqlaero._sqlaero import DataError, ProgrammingError
 np = pytest.importorskip("numpy")
 
 
+@pytest.mark.parametrize("many", [False, True])
+@pytest.mark.parametrize("itemize", [False, True])
+def test_zero_field_record_retains_its_one_logical_row(many: bool, itemize: bool) -> None:
+    value = np.zeros(1, dtype=[]).view(np.recarray)[0]
+    sql, expected = ("SELECT 1", b"\x03SELECT 1") if itemize else ("VALUES %s", b"\x03VALUES ()")
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == [expected]
+    assert _sqlaero._encode_value(value).to_bytes() == b"()"
+
+
+@pytest.mark.parametrize("many", [False, True])
+@pytest.mark.parametrize("itemize", [False, True])
+@pytest.mark.parametrize("levels", [62, 63])
+def test_natural_numpy_table_counts_the_root_and_current_row(
+    many: bool, itemize: bool, levels: int,
+) -> None:
+    cell: object = 7
+    for _ in range(levels):
+        cell = [cell]
+    source = np.empty((1, 1), dtype=object)
+    source[0, 0] = cell
+    if levels == 63:
+        with pytest.raises(DataError) as caught:
+            _sqlaero._bind_sql("SELECT %s", source, many=many, itemize=itemize)
+        assert caught.value.code == 65543
+    else:
+        count = levels + (not itemize)
+        assert _sqlaero._bind_sql("SELECT %s", source, many=many, itemize=itemize) == [
+            b"\x03SELECT " + b"(" * count + b"7" + b")" * count,
+        ]
+
+
+def test_numpy_shared_object_input_with_application_lock_keeps_values_and_gil_state() -> None:
+    script = r'''
+import concurrent.futures
+import sys
+import threading
+before = getattr(sys, '_is_gil_enabled', lambda: True)()
+import numpy as np
+from sqlaero import _sqlaero
+assert getattr(sys, '_is_gil_enabled', lambda: True)() == before
+source = np.empty(16, dtype=object)
+source[:] = [100003] * 16
+lock = threading.Lock()
+barrier = threading.Barrier(2)
+def writer():
+    barrier.wait(timeout=10)
+    for number in range(100004, 100068):
+        with lock:
+            source[:] = [int(str(number))] * 16
+def reader():
+    encoder = _sqlaero._prepare_encoder()
+    barrier.wait(timeout=10)
+    for _ in range(64):
+        with lock:
+            literal = encoder.encode(source).to_bytes()
+            expected = b'(' + b','.join([str(source[0]).encode()] * 16) + b')'
+            assert literal == expected
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+    futures = [pool.submit(writer), pool.submit(reader)]
+    for future in futures:
+        future.result(timeout=20)
+assert getattr(sys, '_is_gil_enabled', lambda: True)() == before
+'''
+    result = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
 @pytest.mark.parametrize("kind", ["array", "record"])
 def test_numpy_allocation_callback_keeps_its_actual_argument_error_and_retry(kind: str) -> None:
     script = r'''

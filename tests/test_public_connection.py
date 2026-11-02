@@ -130,6 +130,11 @@ requires_mysql = pytest.mark.skipif('SQLAERO_TEST_MYSQL_ROOT' not in os.environ,
                                    reason='requires explicitly selected owned MySQL fixtures')
 
 
+def fixture_port(label: str) -> int:
+    """Use the actual owned instance instead of assuming its default port."""
+    return int(json.loads((ROOT / label / 'state.json').read_text())['port'])
+
+
 def live(label: str, **overrides: Any) -> Connection:
     """Read private fixture credentials without printing or persisting them."""
     secret: dict[str, str] = json.loads((ROOT / label / 'state.json').read_text())
@@ -449,7 +454,7 @@ def test_public_tcp_and_unix_tls_share_prepared_materials(label: str) -> None:
     configuration = SSL(ca_file=ROOT / 'tls/ca.pem', mode='VERIFY_IDENTITY',
                         min_tls_version='TLS 1.3', server_name='localhost')
     with live(label, unix_socket=None, host='127.0.0.1',
-              port=13384 if label == '84' else 13397, ssl=configuration) as tcp:
+              port=fixture_port(label), ssl=configuration) as tcp:
         assert tcp.ssl_mode == 'VERIFY_IDENTITY' and tcp.tls_version == 'TLSv1.3'
         with tcp.cursor() as cursor:
             cursor.execute('SELECT %s', b'\x00\xff')
@@ -465,7 +470,7 @@ def test_explicit_tls_roots_preserve_name_policy_and_replace_trust(label: str) -
     from sqlaero.errors import OperationalError
 
     settings = {'unix_socket': None, 'host': '127.0.0.1',
-                'port': 13384 if label == '84' else 13397}
+                'port': fixture_port(label)}
     # The real peer contains an IP SAN. Explicit roots retain OS name policy.
     with live(label, **settings, ssl=SSL(ca_file=ROOT / 'tls/ca.pem',
                                         mode='VERIFY_IDENTITY')) as value:
@@ -496,7 +501,7 @@ def test_greeting_plugin_is_only_a_hint_before_actual_authentication(hint: bytes
 
         def relay_changed_greeting() -> None:
             """Alter only the real greeting; forward subsequent TLS bytes unchanged."""
-            with listener.accept()[0] as client, socket.create_connection(('127.0.0.1', 13384), 3) as server:
+            with listener.accept()[0] as client, socket.create_connection(('127.0.0.1', fixture_port('84')), 3) as server:
                 client.settimeout(3)
 
                 def receive_exact(peer: socket.socket, count: int) -> bytes:
