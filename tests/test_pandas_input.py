@@ -93,6 +93,48 @@ def test_pandas_standalone_string_storage_preserves_text_and_missing(storage: st
     ]
 
 
+@pytest.mark.parametrize("na_value", [pd.NA, np.nan], ids=["pandas-na", "numpy-nan"])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_pandas_python_string_null_normalization_keeps_both_missing_conventions_across_blocks(na_value: Any, reverse: bool) -> None:
+    values = ["a", None, pd.NA, np.nan, "中'", ""]
+    # Literal SQL follows the original logical inputs, independently of the
+    # provider's normalized payload and the driver's choice of mask reader.
+    literals = [b"'a'", b"NULL", b"NULL", b"NULL", "'中\\''".encode(), b"''"]
+    value = pd.array(
+        [values[index % len(values)] for index in range(1025)],
+        dtype=pd.StringDtype(storage="python", na_value=na_value),
+    )
+    expected = [literals[index % len(literals)] for index in range(1025)]
+    if reverse:
+        value = value[::-1]
+        expected.reverse()
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT " + item for item in expected]
+    assert _sqlaero._encode_value(value).to_bytes() == b"(" + b",".join(expected) + b")"
+
+
+@pytest.mark.parametrize("error_type", [MemoryError, KeyboardInterrupt])
+def test_pandas_python_string_late_numpy_failure_keeps_the_original_and_row(monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]) -> None:
+    value = pd.array(["ok"] * 1025, dtype=pd.StringDtype(storage="python"))
+    original = error_type("original Python StringArray block conversion")
+    to_numpy = pd.arrays.StringArray.to_numpy
+    lengths: list[int] = []
+
+    def convert(array: Any, *args: Any, **kwargs: Any) -> Any:
+        lengths.append(len(array))
+        assert kwargs["dtype"] is object
+        assert kwargs["copy"] is False
+        if len(lengths) == 2:
+            raise original
+        return to_numpy(array, *args, **kwargs)
+
+    monkeypatch.setattr(pd.arrays.StringArray, "to_numpy", convert)
+    with pytest.raises(error_type) as caught:
+        _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert caught.value is original
+    assert lengths == [1024, 1]
+    assert "args[1024]" in "\n".join(getattr(caught.value, "__notes__", []))
+
+
 def test_pandas_standalone_arrow_extension_array_reuses_native_arrow() -> None:
     pa = pytest.importorskip("pyarrow")
     value = pd.array([1, None, 2], dtype=pd.ArrowDtype(pa.int64()))

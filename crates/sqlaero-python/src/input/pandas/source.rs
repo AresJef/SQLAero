@@ -443,14 +443,19 @@ impl SourceTypes {
                     length,
                     dtype: numpy_dtype,
                     python_string,
-                    arrow_nullable: (!python_string
-                        && length >= 32
-                        && self
-                            .arrays
-                            .iter()
-                            .skip(1)
-                            .take(3)
-                            .any(|typ| storage.get_type().is(typ.bind(py))))
+                    standard_array: (if python_string {
+                        self.arrays
+                            .get(4)
+                            .is_some_and(|typ| storage.get_type().is(typ.bind(py)))
+                    } else {
+                        length >= 32
+                            && self
+                                .arrays
+                                .iter()
+                                .skip(1)
+                                .take(3)
+                                .any(|typ| storage.get_type().is(typ.bind(py)))
+                    })
                     .then(|| storage.get_type()),
                     current: None,
                 }))
@@ -763,7 +768,7 @@ impl<'py> Category<'py> {
                         length: self.labels,
                         dtype: py.get_type::<PyAny>().into_any(),
                         python_string: true,
-                        arrow_nullable: None,
+                        standard_array: None,
                         current: None,
                     }),
                     Family::Arrow => {
@@ -992,7 +997,7 @@ struct Masked<'py> {
     length: usize,
     dtype: Bound<'py, PyAny>,
     python_string: bool,
-    arrow_nullable: Option<Bound<'py, PyType>>,
+    standard_array: Option<Bound<'py, PyType>>,
     current: Option<Block<'py>>,
 }
 struct Block<'py> {
@@ -1030,15 +1035,14 @@ impl<'py> Masked<'py> {
             let length = (self.length - start).min(1024);
             let slice = bounded_slice(py, start, start + length)?;
             let piece = self.owner.get_item(slice)?;
+            let standard = self
+                .standard_array
+                .as_ref()
+                .is_some_and(|typ| piece.get_type().is(typ));
             // Exact standard nullable arrays may export this bounded piece.
             // Do not import an optional provider to discover whether it exists.
             // The current block owns its export; Context is read only at write.
-            let values = if self
-                .arrow_nullable
-                .as_ref()
-                .is_some_and(|typ| piece.get_type().is(typ))
-                && loaded_arrow(py)?
-            {
+            let values = if !self.python_string && standard && loaded_arrow(py)? {
                 let exported = errors::attribute(&piece, c"__arrow_array__")?.call0()?;
                 crate::input::check(py, budget)?;
                 let source =
@@ -1054,19 +1058,26 @@ impl<'py> Masked<'py> {
                     &self.dtype,
                 )?;
                 keywords.set_item(pyo3::types::PyString::from_bytes(py, b"copy")?, false)?;
-                let missing = if self.python_string {
-                    py.None().into_bound(py)
-                } else {
-                    crate::input::python_index(py, 0)?
-                };
-                keywords.set_item(pyo3::types::PyString::from_bytes(py, b"na_value")?, missing)?;
+                // The authoritative mask already handles missing strings.
+                // Request their existing object storage without normalizing
+                // NULLs again. Exact standard sources stay stable by contract;
+                // real EA subclasses retain their original conversion hooks.
+                if !self.python_string || !standard {
+                    let missing = if self.python_string {
+                        py.None().into_bound(py)
+                    } else {
+                        crate::input::python_index(py, 0)?
+                    };
+                    keywords
+                        .set_item(pyo3::types::PyString::from_bytes(py, b"na_value")?, missing)?;
+                }
                 let data = call_keywords(&piece, c"to_numpy", &keywords)?;
                 let data = numpy_source(api, &data, budget, length)?;
                 crate::input::check(py, budget)?;
                 BlockValues::Numpy(crate::input::boxed(py, NumpyBlock { data, mask })?)
             };
             // The small range header stays local; only the chosen payload is
-            // boxed. Both routes retain one fallible state allocation.
+            // boxed. Each route retains one fallible state allocation.
             self.current = Some(Block {
                 start,
                 length,

@@ -273,10 +273,12 @@ def test_arrow_dictionary_all_key_widths_resolve_actual_labels(dtype: object, le
     assert _sqlaero._encode_value(value).to_bytes() == expected
 
 
-def test_arrow_dictionary_chunks_with_shared_values_keep_their_own_keys() -> None:
-    labels = pa.array(["left", "right"])
-    first = pa.DictionaryArray.from_arrays(pa.array([0, 1, None, 0] * 10, type=pa.int16()), labels)
-    second = pa.DictionaryArray.from_arrays(pa.array([1, 0, None, 1] * 10, type=pa.int16()), labels)
+@pytest.mark.parametrize("labels_count", [2, 65])
+def test_arrow_dictionary_chunks_with_shared_values_keep_their_own_keys(labels_count: int) -> None:
+    labels = pa.array(["left", *(f"unused{index}" for index in range(labels_count - 2)), "right"])
+    right = labels_count - 1
+    first = pa.DictionaryArray.from_arrays(pa.array([0, right, None, 0] * 10, type=pa.int16()), labels)
+    second = pa.DictionaryArray.from_arrays(pa.array([right, 0, None, right] * 10, type=pa.int16()), labels)
     # Both exported chunks remain long enough to prepare their own readers.
     value = pa.chunked_array([first, second]).slice(1, 78)
     tokens = ([b"'left'", b"'right'", b"NULL", b"'left'"] * 10
