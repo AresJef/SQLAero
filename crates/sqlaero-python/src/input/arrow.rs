@@ -1,6 +1,6 @@
 //! Canonical CPU Arrow sources, imported through the public C Data interface.
 
-use std::ffi::{CStr, c_char, c_int, c_void};
+use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 
 use arrow_array::ffi::{FFI_ArrowArray, from_ffi_and_data_type};
@@ -35,6 +35,7 @@ use crate::errors;
 
 mod cdata;
 mod dictionary;
+mod schema;
 
 /// The five fields of the public Arrow C Stream ABI. Apache's record-batch
 /// reader requires a Struct root, while this input also accepts primitive
@@ -45,21 +46,6 @@ struct StreamAbi {
     get_schema: Option<unsafe extern "C" fn(*mut Self, *mut FFI_ArrowSchema) -> c_int>,
     get_next: Option<unsafe extern "C" fn(*mut Self, *mut FFI_ArrowArray) -> c_int>,
     get_last_error: Option<unsafe extern "C" fn(*mut Self) -> *const c_char>,
-    release: Option<unsafe extern "C" fn(*mut Self)>,
-    private_data: *mut c_void,
-}
-
-/// The published C Schema ABI, used only to reject released, deeply recursive
-/// or text-invalid schemas before the mature Rust importer traverses them.
-#[repr(C)]
-struct SchemaAbi {
-    format: *const c_char,
-    name: *const c_char,
-    metadata: *const c_char,
-    flags: i64,
-    n_children: i64,
-    children: *const *const Self,
-    dictionary: *const Self,
     release: Option<unsafe extern "C" fn(*mut Self)>,
     private_data: *mut c_void,
 }
@@ -391,87 +377,6 @@ fn current_python_error(py: Python<'_>) -> PyResult<()> {
     }
 }
 
-fn preflight_schema(py: Python<'_>, schema: &FFI_ArrowSchema, budget: &IoBudget) -> PyResult<()> {
-    // SAFETY: Apache's repr(C) schema implements the public C Schema ABI.
-    // The live canonical producer owns every referenced child and C string.
-    let raw = unsafe { &*(ptr::from_ref(schema).cast::<SchemaAbi>()) };
-    preflight_schema_node(py, raw, 0, &mut 0, budget)
-}
-
-fn preflight_schema_node(
-    py: Python<'_>,
-    schema: &SchemaAbi,
-    depth: usize,
-    work: &mut usize,
-    budget: &IoBudget,
-) -> PyResult<()> {
-    if depth >= 64 {
-        return Err(errors::client(
-            py,
-            ClientErrorCode::ContainerNesting,
-            "Arrow schema exceeds 64 nested container levels",
-        ));
-    }
-    *work += 1;
-    if *work >= 1024 {
-        super::check(py, budget)?;
-        *work = 0;
-    }
-    if schema.release.is_none() || schema.format.is_null() {
-        return Err(invalid(py, "Arrow schema is released or has no format"));
-    }
-    // SAFETY: the standard live schema provides NUL-terminated format/name
-    // strings. Validate UTF-8 before Arrow's public, asserting text accessors.
-    unsafe { CStr::from_ptr(schema.format) }
-        .to_str()
-        .map_err(|_| invalid(py, "Arrow schema format is not valid UTF-8"))?;
-    if !schema.name.is_null() {
-        // SAFETY: same live C Schema contract as the format above.
-        unsafe { CStr::from_ptr(schema.name) }
-            .to_str()
-            .map_err(|_| invalid(py, "Arrow schema name is not valid UTF-8"))?;
-    }
-    let children = usize::try_from(schema.n_children)
-        .map_err(|_| invalid(py, "Arrow schema has a negative child count"))?;
-    if children != 0 && schema.children.is_null() {
-        return Err(invalid(
-            py,
-            "Arrow schema is missing its child pointer array",
-        ));
-    }
-    for index in 0..children {
-        // SAFETY: the C Schema contract provides n_children live pointers;
-        // null entries are rejected before any pointed-to object is read.
-        let child = unsafe { *schema.children.add(index) };
-        // SAFETY: a non-null child belongs to the same live standard schema.
-        let Some(child) = (unsafe { child.as_ref() }) else {
-            return Err(invalid(py, "Arrow schema contains a null child pointer"));
-        };
-        preflight_schema_node(py, child, depth + 1, work, budget)?;
-    }
-    // SAFETY: a non-null dictionary is another live schema under the same
-    // producer owner, rather than a pointer into an unrelated Python layout.
-    if let Some(dictionary) = unsafe { schema.dictionary.as_ref() } {
-        preflight_schema_node(py, dictionary, depth + 1, work, budget)?;
-        // Dictionary values become a bare DataType in Arrow's logical model;
-        // their field metadata would otherwise be discarded before our normal
-        // recursive Field validation can see an extension declaration.
-        // SAFETY: this node is the same live public C Schema ABI as above.
-        let dictionary = unsafe { &*(ptr::from_ref(dictionary).cast::<FFI_ArrowSchema>()) };
-        if dictionary
-            .metadata()
-            .map_err(|error| invalid(py, error.to_string()))?
-            .contains_key("ARROW:extension:name")
-        {
-            return Err(invalid(
-                py,
-                "Arrow dictionary extension values are outside the supported input contract",
-            ));
-        }
-    }
-    Ok(())
-}
-
 fn loaded_module<'py>(py: Python<'py>) -> PyResult<Option<Bound<'py, PyAny>>> {
     // SAFETY: CPython owns sys.modules and returns a borrowed, live dictionary;
     // the Bound acquires its own reference while this thread is attached.
@@ -642,8 +547,7 @@ pub(crate) fn prepare_exported<'py>(
                 FFI_ArrowArray::from_raw(array),
             )
         };
-        preflight_schema(py, &schema, budget)?;
-        let field = Field::try_from(&schema).map_err(|error| invalid(py, error.to_string()))?;
+        let field = schema::import(py, &schema, budget)?;
         validate_field(py, &field, 0)?;
         super::check(py, budget)?;
         cdata::normalize_nulls(py, &mut array, field.data_type(), budget)?;
@@ -703,8 +607,7 @@ pub(crate) fn prepare_exported<'py>(
     if schema.release().is_none() {
         return Err(invalid(py, "Arrow stream returned a released schema"));
     }
-    preflight_schema(py, &schema, budget)?;
-    let field = Field::try_from(&schema).map_err(|error| invalid(py, error.to_string()))?;
+    let field = schema::import(py, &schema, budget)?;
     validate_field(py, &field, 0)?;
     validate_table_schema(py, &field, shape)?;
     super::check(py, budget)?;

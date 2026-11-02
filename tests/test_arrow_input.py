@@ -25,6 +25,32 @@ from sqlaero import _sqlaero
 pa = pytest.importorskip("pyarrow")
 
 
+@pytest.mark.parametrize("kind", ["record-batch", "table"])
+@pytest.mark.parametrize("location", ["schema", "field"])
+@pytest.mark.parametrize("metadata", [
+    {b"info": b"\xff"}, {b"\xff": b"opaque"},
+    {b"info": b"before\0after\xff"}, {b"info": b""},
+])
+def test_opaque_arrow_metadata_does_not_change_sql_values(
+    kind: str, location: str, metadata: dict[bytes, bytes],
+) -> None:
+    field = pa.field("value", pa.int64(), metadata=metadata if location == "field" else None)
+    schema = pa.schema([field], metadata=metadata if location == "schema" else None)
+    factory = pa.RecordBatch.from_arrays if kind == "record-batch" else pa.Table.from_arrays
+    value = factory([pa.array([1, 2])], schema=schema)
+    value.validate(full=True)
+    assert _sqlaero._bind_sql("SELECT %s", value) == [b"\x03SELECT 1", b"\x03SELECT 2"]
+
+
+@pytest.mark.parametrize("kind", ["array", "chunked"])
+def test_nested_arrow_field_metadata_is_binary_and_not_sql_content(kind: str) -> None:
+    dtype = pa.struct([pa.field("value", pa.int64(), metadata={b"opaque": b"\0\xff"})])
+    chunk = pa.array([{"value": 1}, {"value": 2}], type=dtype)
+    value = chunk if kind == "array" else pa.chunked_array([chunk.slice(0, 1), chunk.slice(1)])
+    value.validate(full=True)
+    assert _sqlaero._encode_value(value).to_bytes() == b"((1),(2))"
+
+
 @pytest.mark.parametrize("native_levels", [62, 63])
 def test_mixed_python_and_arrow_nesting_shares_one_logical_limit(native_levels: int) -> None:
     data: Any = 7
