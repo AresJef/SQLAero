@@ -644,8 +644,11 @@ impl Column<'_> {
                 if let Some(value) = native
                     .and_then(|(start, step)| (row as i128).checked_mul(step)?.checked_add(start))
                 {
-                    return scalar::integer(output, value, context.limit)
-                        .map_err(|error| errors::wire(owner.py(), error));
+                    let result = match i64::try_from(value) {
+                        Ok(value) => scalar::integer(output, value, context.limit),
+                        Err(_) => scalar::integer(output, value, context.limit),
+                    };
+                    return result.map_err(|error| errors::wire(owner.py(), error));
                 }
                 let value = owner.get_item(crate::input::python_index(owner.py(), row)?)?;
                 visitor.python(&value, output, None)

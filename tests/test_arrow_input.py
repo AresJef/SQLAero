@@ -327,6 +327,48 @@ def test_arrow_negative_decimal_scale_is_an_exact_value(constructor: Callable[[i
     assert _sqlaero._encode_value(value).to_bytes() == b"(12300,NULL,-4500)"
 
 
+@pytest.mark.parametrize(("constructor", "bits", "precision"), [(pa.decimal32, 32, 9), (pa.decimal64, 64, 18), (pa.decimal128, 128, 38)])
+@pytest.mark.parametrize("scale", [-2, 0, 4])
+def test_arrow_decimal_physical_signed_extremes_keep_exact_values_and_owned_slices(
+    constructor: Callable[[int, int], object], bits: int, precision: int, scale: int
+) -> None:
+    # These are memory-safe physical integer extrema, including the 39-digit
+    # i128 minimum. They are not claims of logical precision-38 validity.
+    coefficients = [9, -(2 ** (bits - 1)), 2 ** (bits - 1) - 1, 0, -1, 1, 99, 9]
+    payload = b"".join(value.to_bytes(bits // 8, "little", signed=True) for value in coefficients)
+    dtype = constructor(precision, scale)
+    source = pa.Array.from_buffers(dtype, len(coefficients), [pa.py_buffer(b"\xbf"), pa.py_buffer(payload)])
+    value = source.slice(1, 6)
+    tokens: list[bytes] = []
+    for coefficient in coefficients[1:6]:
+        text = format(Decimal(f"{coefficient}e{-scale}"), "f")
+        tokens.append((text.rstrip("0").rstrip(".") if "." in text else text).encode())
+    expected = b"(" + b",".join([*tokens, b"NULL"]) + b")"
+    assert _sqlaero._encode_value(value).to_bytes() == expected
+    chunked = pa.chunked_array([value.slice(0, 2), value.slice(2, 0), value.slice(2)])
+    assert _sqlaero._encode_value(chunked).to_bytes() == expected
+    with pytest.raises(_sqlaero.OperationalError):
+        _sqlaero._bind_sql("SELECT %s", (chunked,), limit=len(b"\x03SELECT ") + len(expected) - 1)
+
+
+@pytest.mark.parametrize(("scale", "coefficient", "accepted"), [
+    (0, 10**65 - 1, True), (0, -(10**65 - 1), True), (0, 10**65, False),
+    (65, 1, True), (66, 1, False), (-2, -123, True),
+])
+def test_arrow_decimal256_keeps_wide_fallback_and_necessary_precision(
+    scale: int, coefficient: int, accepted: bool
+) -> None:
+    payload = coefficient.to_bytes(32, "little", signed=True)
+    value = pa.Array.from_buffers(pa.decimal256(76, scale), 1, [None, pa.py_buffer(payload)])
+    if accepted:
+        text = format(Decimal(f"{coefficient}e{-scale}"), "f")
+        expected = (text.rstrip("0").rstrip(".") if "." in text else text).encode()
+        assert _sqlaero._encode_value(value).to_bytes() == b"(" + expected + b")"
+    else:
+        with pytest.raises(_sqlaero.DataError):
+            _sqlaero._encode_value(value)
+
+
 @pytest.mark.parametrize(
     "dtype", [pa.int8(), pa.int16(), pa.int32(), pa.int64(), pa.uint8(), pa.uint16(), pa.uint32(), pa.uint64()]
 )

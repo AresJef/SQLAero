@@ -561,6 +561,32 @@ def test_pandas_range_index_beyond_native_integer_width_uses_its_exact_values() 
     ]
 
 
+@pytest.mark.parametrize(("start", "stop", "step"), [
+    pytest.param(2**63 - 2, 2**63 + 2, 1, id="cross-i64-upper"),
+    pytest.param(-(2**63) + 1, -(2**63) - 3, -1, id="cross-i64-lower-descending"),
+    pytest.param(2**127 - 2, 2**127, 1, id="i128-maximum"),
+    pytest.param(-(2**127), -(2**127) + 2, 1, id="i128-minimum"),
+    pytest.param(2**127 - 2, 2**127 + 4, 3, id="checked-add-overflow"),
+    pytest.param(-(2**127) + 1, -(2**127) - 5, -3, id="checked-add-underflow"),
+    pytest.param(-(2**127), 2**127 - 1, 2**127 - 1, id="checked-product-overflow-with-final-cancellation"),
+    pytest.param(0, 2**131, 2**130, id="step-wider-than-i128"),
+    pytest.param(2**130, 2**130, -1, id="empty-wide-start"),
+])
+def test_pandas_range_index_integer_boundaries_match_python_range(start: int, stop: int, step: int) -> None:
+    value = pd.RangeIndex(start, stop, step)
+    # Python range uses arbitrary-precision integer semantics, independent of
+    # the driver's checked arithmetic and choice of native integer writer.
+    expected_values = list(range(start, stop, step))
+    tokens = [str(number).encode("ascii") for number in expected_values]
+    if tokens:
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT " + token for token in tokens]
+    else:
+        assert _sqlaero._bind_sql("SELECT 1", value, many=True) == [b"\x03SELECT 1"]
+        with pytest.raises(ProgrammingError):
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
+    assert _sqlaero._encode_value(value).to_bytes() == b"(" + b",".join(tokens) + b")"
+
+
 def test_pandas_dataframe_nested_as_a_cell_does_not_become_an_outer_batch() -> None:
     value = pd.DataFrame([[1, 2], [3, 4]])
     assert _sqlaero._bind_sql("SELECT %s", (value,)) == [b"\x03SELECT ((1,2),(3,4))"]
