@@ -786,6 +786,7 @@ def worker(package: str | None, with_legacy: bool, warmup_calls: int = 16) -> No
     outputs: dict[str, object] = {}
     warmups: dict[tuple[str, str], dict[str, int]] = {}
     calibration = clock_calibration()
+    task_started = False
     ready = {"pid": os.getpid(), "start_unix_ns": time.time_ns(), "python": sys.version, "gc_enabled": gc.isenabled(),
              "module": native.__file__, "artifact_sha256": digest(Path(native.__file__)),
              "clock": calibration, "inputs": [case.identity() for case in collection.values()],
@@ -797,9 +798,37 @@ def worker(package: str | None, with_legacy: bool, warmup_calls: int = 16) -> No
         try:
             case_id, role = str(request["case"]), str(request.get("role", "native"))
             key = case_id, role
+            cold_observation: dict[str, object] | None = None
+            if request.get("cold_first", False):
+                if key in calls:
+                    raise ValueError("Cold-first observation requires this worker's first request for the case")
+                if role == "legacy" or collection[case_id].family not in {"escape", "bind"}:
+                    raise ValueError("Cold-first observation supports only native CPU escape/bind cases")
+                if task_started or request.get("prepare") or request.get("timing_control"):
+                    raise ValueError("Cold-first observation requires a fresh worker and a sample request")
             if key not in calls:
                 case = collection[case_id]
-                task = target(case, native, legacy if role == "legacy" else None, sessions)
+                task_started = True
+                if request.get("cold_first", False):
+                    created: Task | None = None
+
+                    def create_task() -> None:
+                        nonlocal created
+                        created = target(case, native, None, sessions)
+
+                    creation = measure(create_task, 1)
+                    if created is None:
+                        raise RuntimeError("Cold task creation returned no task")
+                    task = created
+                    first_call = measure(task.call, 1)
+                    cold_observation = {
+                        "purpose": "single cold observation; no statistical performance verdict",
+                        "scope": "fresh worker, after imports/factory, before correctness/warmup",
+                        "imports_included": False, "input_factory_included": False,
+                        "task_creation": creation, "first_full_call": first_call,
+                    }
+                else:
+                    task = target(case, native, legacy if role == "legacy" else None, sessions)
                 if task.prepare:
                     task.prepare(1)
                 actual = task.call()
@@ -861,6 +890,8 @@ def worker(package: str | None, with_legacy: bool, warmup_calls: int = 16) -> No
             result["untimed_preparation"] = preparations.get(key)
             result["warmup"] = warmups[key]
             result["cpu_quality"] = collection[case_id].family in CPU_FAMILIES
+            if cold_observation is not None:
+                result["cold_first"] = cold_observation
             print(json.dumps(result), flush=True)
         except BaseException as error:
             print(json.dumps({"error": type(error).__name__, "message": str(error),
@@ -892,9 +923,12 @@ class Worker:
             raise RuntimeError(f"Worker call failed: {result}")
         return result
 
-    def sample(self, case_id: str, n: int, role: str) -> dict[str, Any]:
+    def sample(self, case_id: str, n: int, role: str, *, cold_first: bool = False) -> dict[str, Any]:
         assert self.process.stdin is not None
-        self.process.stdin.write(json.dumps({"case": case_id, "n": n, "role": role}) + "\n")
+        request: dict[str, object] = {"case": case_id, "n": n, "role": role}
+        if cold_first:
+            request["cold_first"] = True
+        self.process.stdin.write(json.dumps(request) + "\n")
         self.process.stdin.flush()
         return self.read()
 
@@ -1320,8 +1354,11 @@ def gil_state() -> dict[str, object]:
 
 
 def parallel_trial(case: Case, native: Any, threads: int, calls: int, python_work: int,
-                   warmup_calls: int, deadline: float) -> dict[str, Any]:
+                   warmup_calls: int, deadline: float, *,
+                   thread_cases: list[Case] | None = None) -> dict[str, Any]:
     """Observe one fixed batch with private tasks and untimed preparation/close."""
+    if thread_cases is not None and len(thread_cases) != threads:
+        raise ValueError('Independent inputs require exactly one case per thread')
     samples: list[dict[str, Any]] = [{} for _ in range(threads)]
     errors: list[list[dict[str, object]]] = [[] for _ in range(threads)]
     bounds: dict[str, int] = {}
@@ -1346,21 +1383,22 @@ def parallel_trial(case: Case, native: Any, threads: int, calls: int, python_wor
     done = threading.Barrier(threads + 1, action=stop)
 
     def run(index: int) -> None:
+        current_case = case if thread_cases is None else thread_cases[index]
         sessions: dict[str, Any] = {}
         task: Task | None = None
         sample = samples[index]
-        sample.update(index=index, ident=threading.get_ident())
+        sample.update(index=index, ident=threading.get_ident(), input_root_id=id(current_case.value))
         try:
-            task = target(case, native, None, sessions)
+            task = target(current_case, native, None, sessions)
 
             def checked(current: Task) -> dict[str, object]:
                 if current.prepare:
                     current.prepare(1)
                 actual = current.call()
                 checked_output = fingerprint(actual)
-                if case.family == 'escape':
-                    expected = native._bind_sql('SELECT %s', (case.value,), itemize=True,
-                                                no_backslash=case.no_backslash)[0][8:]
+                if current_case.family == 'escape':
+                    expected = native._bind_sql('SELECT %s', (current_case.value,), itemize=True,
+                                                no_backslash=current_case.no_backslash)[0][8:]
                     if cast(Any, actual).to_bytes() != expected:
                         raise AssertionError('Measurement and production binding disagree')
                 del actual
@@ -1491,6 +1529,17 @@ def parallel(args: argparse.Namespace) -> None:
     case = collection[args.case[0]]
     if case.family not in {'escape', 'bind', 'fetch', 'batch', 'roundtrip'}:
         raise ValueError(f'Parallel does not support task family {case.family}')
+    thread_cases: list[Case] | None = None
+    if args.independent_inputs:
+        thread_cases = [case]
+        expected_case = case.identity()
+        for _ in range(args.threads - 1):
+            current = next(item for item in cases() if item.id == case.id)
+            if current.identity() != expected_case:
+                raise ValueError('Independent factory inputs differ from the selected case')
+            thread_cases.append(current)
+        if len({id(current.value) for current in thread_cases}) != args.threads:
+            raise ValueError('This factory case does not provide distinct independent input roots')
     if not gc.isenabled():
         raise RuntimeError('Parallel measurement requires normal automatic GC to remain enabled')
     native = load_native(args.package)
@@ -1504,6 +1553,8 @@ def parallel(args: argparse.Namespace) -> None:
     if (directory / 'parallel-contract.json').exists() or (directory / 'parallel-trials.jsonl').exists():
         raise ValueError('Preserve this parallel run and use a new output directory')
     directory.mkdir(parents=True, exist_ok=True)
+    inputs = thread_cases or [case] * args.threads
+    input_identities = [current.identity() for current in inputs]
     contract = {
         'command': 'parallel', 'purpose': 'representative fixed-work observation; no performance verdict',
         'runner_sha256': digest(Path(__file__)), 'package': package, 'case': case.identity(),
@@ -1512,6 +1563,9 @@ def parallel(args: argparse.Namespace) -> None:
         'gc_enabled': gc.isenabled(), 'before_import': before_import, 'after_import': after_import,
         'threads': args.threads, 'calls_per_thread': args.calls, 'cycles': args.cycles,
         'python_work_per_call': args.python_work, 'warmup_calls': args.warmup_calls,
+        'input_mode': 'independent' if thread_cases is not None else 'shared-stable',
+        'thread_inputs': [dict(index=index, root_id=id(current.value), case=input_identities[index])
+                          for index, current in enumerate(inputs)],
         'seconds_budget': args.seconds,
         'timing_scope': 'start-barrier release through all fixed batches reaching the stop barrier; excludes preparation, checks and close',
     }
@@ -1519,11 +1573,17 @@ def parallel(args: argparse.Namespace) -> None:
     deadline = time.monotonic() + args.seconds
     for cycle in range(args.cycles):
         trial = parallel_trial(case, native, args.threads, args.calls, args.python_work,
-                               args.warmup_calls, deadline)
+                               args.warmup_calls, deadline, thread_cases=thread_cases)
         trial.update(cycle=cycle, case=case.id, runner_sha256=contract['runner_sha256'],
                      after_work=gil_state(), gc_enabled=gc.isenabled())
         if case.identity() != contract['case']:
             trial['errors'].append({'type': 'AssertionError', 'message': 'The read-only case input changed'})
+            trial['complete'] = False
+        if thread_cases is not None and any(
+            current.identity() != input_identities[index]
+            for index, current in enumerate(thread_cases)
+        ):
+            trial['errors'].append({'type': 'AssertionError', 'message': 'An independent read-only input changed'})
             trial['complete'] = False
         if trial['after_work']['free_threaded_build'] and trial['after_work']['gil_enabled']:
             trial['errors'].append({'type': 'RuntimeError', 'message': 'Work enabled the free-threaded GIL'})
@@ -1558,6 +1618,8 @@ def main() -> None:
     parser.add_argument("--calls", type=int, help="Fixed calls per thread for parallel")
     parser.add_argument("--python-work", type=int, default=0,
                         help="Pure Python integer additions before each parallel task call")
+    parser.add_argument("--independent-inputs", action="store_true",
+                        help="Prepare a fresh existing factory input per parallel thread before timing")
     args = parser.parse_args()
     if resource is None and args.command not in ('list', 'smoke'):
         raise RuntimeError('Formal resource-based performance measurement is supported on the macOS development host')
