@@ -55,6 +55,24 @@ def test_bounded_native_integer_transfer_never_consumes_truncated_low_bits(value
     assert caught.value.is_server_error is False
 
 
+@pytest.mark.parametrize("value", [
+    pytest.param(2**216 - 1, id="fits-transfer-positive-outside-decimal-domain"),
+    pytest.param(-(2**216 - 1), id="fits-transfer-negative-outside-decimal-domain"),
+    pytest.param(2**255 - 1, id="signed-transfer-positive-limit"),
+    pytest.param(-(2**255 - 1), id="signed-transfer-negative-near-limit"),
+    pytest.param((1 << 1_000_000) + 17, id="huge-positive-with-small-low-bits"),
+    pytest.param(-((1 << 1_000_000) + 17), id="huge-negative-with-small-low-bits"),
+])
+def test_exact_integer_bounded_transfer_preserves_range_error_and_recovery(value: int) -> None:
+    with pytest.raises(DataError) as caught:
+        _sqlaero._encode_value(value)
+    assert caught.value.message == "integer exceeds the 65-digit exact SQL range"
+    assert caught.value.code == 65536 and caught.value.is_server_error is False
+    # A conversion overflow must neither consume its truncated low bytes nor
+    # leave its intermediate CPython error pending for the next valid call.
+    assert _sqlaero._encode_value(7).to_bytes() == b"7"
+
+
 @pytest.mark.parametrize("value", [10**65, -(10**65), pytest.param(10**10000, id="oversized-integer"), Decimal("1e-66"), Decimal("1e65")])
 def test_numeric_range_has_a_real_client_data_error(value: object) -> None:
     with pytest.raises(DataError) as caught:

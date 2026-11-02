@@ -555,7 +555,6 @@ fn integer_wide(
             Err(error) => return Err(error),
         }
     }
-    #[cfg(Py_3_13)]
     let value = match errors::integer_value_with_bits(value.cast::<PyInt>()?, 255) {
         // A fixed 32-byte transfer avoids Python bit_length and the generic
         // extractor's separate size query. The core still checks the actual
@@ -569,20 +568,6 @@ fn integer_wide(
             ));
         }
         Err(error) => return Err(error),
-    };
-    #[cfg(not(Py_3_13))]
-    let value = {
-        // The 3.12 path preserves its existing public size query and narrow
-        // pinned-PyO3 fallback; no private integer layout is read.
-        let bits = errors::integer_bit_length(value)?.extract::<u64>()?;
-        if bits > scalar::MAX_INTEGER_BITS {
-            return Err(errors::client(
-                py,
-                ClientErrorCode::NumericRange,
-                "integer exceeds the 65-digit exact SQL range",
-            ));
-        }
-        errors::integer_value_with_bits(value.cast::<PyInt>()?, bits as usize)?
     };
     scalar::large_integer(output, &value, limit).map_err(|e| scalar_error(py, e))
 }
