@@ -1171,7 +1171,10 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
             future = executor.submit(transaction_body)
             # Server-side validation of the large JSON precedes the overlap;
             # it is preparation, not the behavior's interruption deadline.
-            assert ready.wait(20), 'server did not finish preparing the JSON result'
+            if not ready.wait(20):
+                if future.done():
+                    future.result()  # Preserve the real background failure.
+                pytest.fail('server did not finish preparing the JSON result')
             current = cursors[0]
             alarm.start(0.0001, 0.0001, wait_ready=True)
             try:
