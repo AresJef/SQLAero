@@ -1,0 +1,31 @@
+{
+  "utc": "2026-11-02T17:03:05.591843+00:00",
+  "locked_component": "arrow-schema60.0.0 (cargo metadata --offline --locked, not an upgrade)",
+  "source_hashes": {
+    "ffi.rs": "3a00b86391b0be814cf786dcf11994249b0dc9e9f9112f2c5253843b17501667",
+    "field.rs": "2773c68811746f2ccbb1c4889a9b61b40a1cf4b7c8c265f5f93f83796f344278"
+  },
+  "existing_remaining_allocations": [
+    {
+      "source": "ffi.rs:555-557",
+      "behavior": "Struct field collection into owned Fields (ordinary allocation)"
+    },
+    {
+      "source": "ffi.rs:719-727; field.rs:181-189",
+      "behavior": "Field::new copies name with Into<String>; metadata import receives null in affected borrowed headers"
+    },
+    {
+      "source": "ffi.rs:560-570",
+      "behavior": "Arc::new for nested field variants, ordinary allocator semantics"
+    }
+  ],
+  "new_sql_aero_allocations": {
+    "schema_headers_and_edges": "checked inventory, try_reserve_exact complete capacity before all writes",
+    "diagnostics": "errors::message/format_args; optional notes/path reserve failure keeps original error",
+    "decimal256": "fixed32bytes+fouru64+78digits, no native heap conversion; existing output writer try_reserve/limit retained"
+  },
+  "proved": "three reviewed allocation paths repaired; original Field importer ordinary owned structures were not rewritten",
+  "not_proved": "arbitrary third-party native allocator OOM always returns PyMemoryError; no real Rust allocator fault injection",
+  "scope": "precise retained component guarantee boundary under approved R4; not old SDK L01 exemption, not an assertion whole dependency stack satisfies every allocation guarantee",
+  "classification": "static source evidence; no induced OOM/abort observation; no new product code/dependency"
+}

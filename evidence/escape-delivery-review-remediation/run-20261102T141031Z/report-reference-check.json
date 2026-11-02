@@ -1,0 +1,8 @@
+{
+  "report_markdown_tables": "well_formed",
+  "local_markdown_links": "all_exist",
+  "explicit_R_and_U_rows": 91,
+  "csvs_each_915rows_64fields": true,
+  "no_stale_in_progress_report_status": true,
+  "scope": "delivery document/export check; no new product tests"
+}

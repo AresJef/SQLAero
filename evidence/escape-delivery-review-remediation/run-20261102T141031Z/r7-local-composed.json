@@ -1,0 +1,79 @@
+[
+  {
+    "abi": "cp312",
+    "coverage": 2068,
+    "P": 2067,
+    "S": 1,
+    "F": [],
+    "sources": [
+      "r7-all-cp312.xml",
+      "r7-static-recovery-cp312.xml",
+      "r7-decimal-final-cp312.xml"
+    ],
+    "composed": "same r7 native and test identity, dev Pyright launcher PATH corrected; no time/performance results composed"
+  },
+  {
+    "abi": "cp313",
+    "coverage": 2068,
+    "P": 2067,
+    "S": 1,
+    "F": [],
+    "sources": [
+      "r7-all-cp313.xml",
+      "r7-decimal-final-cp313.xml"
+    ],
+    "composed": "same r7 native and test identity, dev Pyright launcher PATH corrected; no time/performance results composed"
+  },
+  {
+    "abi": "cp314",
+    "coverage": 2068,
+    "P": 2067,
+    "S": 1,
+    "F": [],
+    "sources": [
+      "r7-all-cp314.xml",
+      "r7-static-recovery-cp314.xml",
+      "r7-decimal-final-cp314.xml"
+    ],
+    "composed": "same r7 native and test identity, dev Pyright launcher PATH corrected; no time/performance results composed"
+  },
+  {
+    "abi": "cp315",
+    "coverage": 2068,
+    "P": 2067,
+    "S": 1,
+    "F": [],
+    "sources": [
+      "r7-all-cp315.xml",
+      "r7-static-recovery-cp315.xml",
+      "r7-decimal-final-cp315.xml"
+    ],
+    "composed": "same r7 native and test identity, dev Pyright launcher PATH corrected; no time/performance results composed"
+  },
+  {
+    "abi": "cp314t",
+    "coverage": 1962,
+    "P": 1952,
+    "S": 10,
+    "F": [],
+    "sources": [
+      "r7-all-cp314t.xml",
+      "r7-static-recovery-cp314t.xml",
+      "r7-decimal-final-cp314t.xml"
+    ],
+    "composed": "same r7 native and test identity, dev Pyright launcher PATH corrected; no time/performance results composed"
+  },
+  {
+    "abi": "cp315t",
+    "coverage": 1962,
+    "P": 1952,
+    "S": 10,
+    "F": [],
+    "sources": [
+      "r7-all-cp315t.xml",
+      "r7-static-recovery-cp315t.xml",
+      "r7-decimal-final-cp315t.xml"
+    ],
+    "composed": "same r7 native and test identity, dev Pyright launcher PATH corrected; no time/performance results composed"
+  }
+]

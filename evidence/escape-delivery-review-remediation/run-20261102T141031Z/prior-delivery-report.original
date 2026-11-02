@@ -1,0 +1,297 @@
+# SQLAero Escape 全类型接入与性能优化报告
+
+**本轮适用范围的必要验收及本地交付已完成。** 最后更新：2026-11-02T10:05:19Z。I54 为最终最佳；I53 是本机功能及性能已验收的回退。历史产物、测量包和最终CI包分别标明。安全、精度和易维护性没有豁免。本轮不发布 tag、Release、PyPI，也不合并 main。
+
+## 1. 当前版本与原始基准
+
+I54 产品提交 `50358a77894e0713388a43d550324e3be8b2d9c8`，最终测试源码为 `fcfd28dc81b385783571f64a9da6546198940adb`，401份运行文件一致。将既有有界宽整数转移复用于CP312，删除16行重复版本路径。实际二进制不同，因此完整915个ABI／场景均重新采集，未复用I53计时。固定6项U的主／独各256真实周期恢复完成，原有518／新增397项累计双轮全部适用5%P、零可信超线、零U；原1%和历史失败保留。最终六ABI／真实SQL、同源48／96、包与provider身份及资源收尾均完成。见[采用决定](../performance/i54-cp312-wide-transfer/decision.json)、[完整性能组合](../performance/i54-gil-acceptance.json)及[最后交付读回](delivery-readback.json)。
+
+I53回退产品提交 `0ea803c8c98726a26d1a2d46155c72ce13521068`，六ABI本机功能与真实MySQL、915项主／独适用5%保护均完成；这些证据不能改署I54，也不将它称为本轮最终48组合的已验收产物。
+
+| 身份 | 实际 native SHA256 |
+| --- | --- |
+| C16 CP313 | `a0d6cff48ad7d406d24f0ffde5c6a22a178cd9cf2cedab740d4a50c58cac25e4` |
+| C16 CP312 | `bc5494cb38ea0f08db18329067ef2c9ea8fc0a048dc0bdc732194cb2b58e645b` |
+| F0 CP313 | `a9d67f26cb08621ec629f535b5ebf2f95ad96d75831a2e89ea93351aef2f9cc5` |
+| I53 CP313 | `5e0a127a6acd1e36e9ddb50dc7b1670a6a3f0195f728bacb412968aadf5b7729` |
+| I53 CP312 | `c046179924ee458a1130746156cf31a1479ce1c6ca888c149a0e6a8511ffbd21` |
+| I54 CP313 | `020efd484d3e2ce67c6241e8a5279325c472433158df0c7fb8f3f9dde9a7dabe` |
+| I54 CP312 | `42f42bcb3b0928addad146ff83a981ea0e8ed3c7eb5fae5634b00da2b3ee61f0` |
+| I54 CP314t | `fa8776910adee4a3e718aef9253cfc7828b8b8417607b12b99198434404d047e` |
+
+I54测量时的401份运行源码及31份测试与当时提交逐一匹配：[身份](../performance/i54-cp312-wide-transfer/committed-source-identity.json)。后续测试／工具修正使用第9节fcfd28d精确checkout；运行文件仍全部一致，未把不同测试epoch混成一个。I53的[完整性能验收](../performance/i53-gil-acceptance.json)及[六ABI源与测试](../performance/final-validation-i53/source.json)为回退事实，不能改署I54。
+
+## 2. 功能、值和架构
+
+最终依据为[类型规格 G01–G14／C01–C08／8.3](../../../../docs/escape-type-expansion-assessment.md)、[边界契约](../../../../docs/python-boundary-extension-contracts.md)及[唯一计划](../../../../tasks/escape-type-expansion/plan.md)。V23 只借鉴类型和算法，新版直接写 Rust 请求，不生成逐值 Python SQL str。
+
+| 规格 | 已接入内容与关键边界 |
+| --- | --- |
+| G01 | 原有精确标量和 list／tuple，复用同一 writer |
+| G02 | dict／三个视图、set／frozenset、range；实际顺序、递归与有界推进 |
+| G03 | struct_time 六字段整数协议／拒绝负值；其余日历合法性交 MySQL |
+| G04 | 已确认十四个真实内建子类家族；保留必要协议和原异常 |
+| G05–G06 | NumPy 定宽数值／文本／二进制／时间标量、Pandas 时间；源精度、NaT、单位倍率、UTC |
+| G07–G08 | 精确 1D／2D ndarray 的 17 逻辑 kind、np.record；真实 stride／endian、Object 与字段序 |
+| G09–G10 | Pandas 缺失、Series／Index 及已列索引；来源 validity 与实际逻辑值 |
+| G11–G12 | 精确 Pandas DataFrame、七类独立扩展数组；按列准备按行写入、共用存储 reader |
+| G13 | Arrow Array／ChunkedArray／RecordBatch／Table／Dictionary；CPU 协议、chunk／offset／null／嵌套白名单 |
+| G14 | 精确 Polars Series／DataFrame；公共 Arrow 主线、分类标签、Object 先分流 |
+
+bytearray 及所有子类、memoryview 继续排除。不开放任意 ndarray／DataFrame 子类、任意 Arrow scalar／未知扩展存储。有限 float16／32 精确提升 f64、负零保号、非有限／来源缺失为 NULL；Decimal 65 必要位、目标 scale 交服务器、返回侧同步；时间按来源和 UTC 规则。准确输出纳秒不保证 MySQL 目标列无损存储纳秒。
+
+PreparedSource／Shape／CellWriter 在 Escape 域保留结构、拥有者和累计检查；Cursor／网络／事务消费通用 Rust 契约，没有 provider 类型白名单。无逐值 Python SQL 字符串、默认整表 object／Value 树。必要协议与 owner/capsule 在批准绑定边界，纯 Rust 核心不持有 Python 对象。此为源码数据流核对，不以模块命名代替证明。
+
+### 2.1 实现与实际验证对应
+
+以下是14组要求的实现与测试入口；六ABI实际运行和XML见[当前功能归并](../performance/final-validation-i54/functional-results.json)，新增工具/metadata测试另有六ABI107项补充。CI仍待完成，不能用本机覆盖冒充所有provider在各平台可用。
+
+| 规格 | 实现入口 | 行为验证入口 |
+| --- | --- | --- |
+| G01 | [input.rs](../../../../crates/sqlaero-python/src/input.rs) | [test_scalar_input.py](../../../../tests/test_scalar_input.py) |
+| G02 | [standard.rs](../../../../crates/sqlaero-python/src/input/standard.rs) | [test_container_input.py](../../../../tests/test_container_input.py) |
+| G03 | [standard.rs](../../../../crates/sqlaero-python/src/input/standard.rs) | [test_standard_input.py](../../../../tests/test_standard_input.py) |
+| G04 | [input.rs](../../../../crates/sqlaero-python/src/input.rs) | [test_standard_input.py](../../../../tests/test_standard_input.py) |
+| G05 | [numpy.rs](../../../../crates/sqlaero-python/src/input/numpy.rs) | [test_numpy_input.py](../../../../tests/test_numpy_input.py) |
+| G06 | [scalar.rs](../../../../crates/sqlaero-core/src/bind/scalar.rs) | [test_extended_input_mysql.py](../../../../tests/test_extended_input_mysql.py) |
+| G07 | [array.rs](../../../../crates/sqlaero-python/src/input/numpy/array.rs) | [test_numpy_input.py](../../../../tests/test_numpy_input.py) |
+| G08 | [record.rs](../../../../crates/sqlaero-python/src/input/numpy/record.rs) | [test_numpy_input.py](../../../../tests/test_numpy_input.py) |
+| G09 | [pandas.rs](../../../../crates/sqlaero-python/src/input/pandas.rs) | [test_pandas_input.py](../../../../tests/test_pandas_input.py) |
+| G10 | [source.rs](../../../../crates/sqlaero-python/src/input/pandas/source.rs) | [test_pandas_input.py](../../../../tests/test_pandas_input.py) |
+| G11 | [source.rs](../../../../crates/sqlaero-python/src/input/pandas/source.rs) | [test_extended_input_mysql.py](../../../../tests/test_extended_input_mysql.py) |
+| G12 | [source.rs](../../../../crates/sqlaero-python/src/input/pandas/source.rs) | [test_pandas_input.py](../../../../tests/test_pandas_input.py) |
+| G13 | [arrow.rs](../../../../crates/sqlaero-python/src/input/arrow.rs) | [test_arrow_input.py](../../../../tests/test_arrow_input.py) |
+| G14 | [polars.rs](../../../../crates/sqlaero-python/src/input/polars.rs) | [test_polars_input.py](../../../../tests/test_polars_input.py) |
+
+共享形状、路径、检查点、callback/owner与rollover接线由input/source.rs、binding.rs和共同writer承担，联合test_binding/test_batch_binding/test_error_diagnostics/test_extended_input_mysql验证；不是每类一套机制。NumPy/Arrow/Pandas/Polars文件的当前所有权/生命周期前提见边界契约。Decimal输入/返回闭环另经test_decode_fields及真实MySQL验证。字节数组/memoryview排除与原异常/中断/限额也在既有输入测试中，不能只以正常值通过代替这些边界。
+
+## 3. 安全和易维护性是采用前提
+
+性能取舍授权不能豁免安全、精度或维护性。优化复用已有 reader/writer，并收敛被替代实现；不缓存跨调用答案、不识别基准特殊输入、不以全局锁、强开 GIL、unsafe Send/Sync 或吞异常换速度。
+
+I54 保留 i64/u64 快路、65 位／216 bit SQL 域检查、原 OverflowError 选码及其他真实异常；固定 32 字节转换失败时不读取部分写入内容，巨大输入工作有界。没有新增 unsafe、依赖、共享状态或私有布局读取。CP312 复用的是既有私有命名 API 薄适配，不称为新公开 API。临时容量可能增加 4–20 字节，真实 OOM 必须传播，未声称净内存改善。[安全证明](../performance/i54-cp312-wide-transfer/safety-review.md)保留其原私有草案身份；执行状态以实际日志为准。
+
+readonly／强引用／Arc／attached 均不等于排除外部写者。保留稳定输入、合格 CPU producer 和生命周期前提；不保证抵御强制 resize、违规 native 写者或伪造指针。无通用原子整批快照承诺；opaque C 区段不承诺硬实时信号延迟。
+
+## 4. 本机运行证据
+
+I53 普通 CPython 3.12／3.13／3.14／3.15 各 1968P，3.14t／3.15t 各 1853P；完整本机 suite 与精确 live SQL 集合分别运行，真实 MySQL 8.4.13／9.7.4，t 实际 GIL=False。日志、XML、原生哈希和 provider 见 final-validation-i53。t 无 Polars runtime 的模块／8 SQL 场景及 Windows 专属分支明确 NA，不算 P。
+
+I54 最终六 ABI 全 suite 与真实 SQL 已通过：普通四版各1974P、t两版各1859P；新增4个观察工具测试也在六版完整24项工具集通过，去重后各1978P／1863P。不是把旧20工具项重复加24。Clippy／fmt／core及Pyright适用检查通过；Pyright4个原生模块源码定位警告保留。运行源码401份未变，功能归并见[functional-results.json](../performance/final-validation-i54/functional-results.json)，六份观察工具XML位于performance/final-observation-tools-cp312.xml至cp315t.xml。此后只修改CI辅助器／既有测试，未增加产品行为；六ABI107项辅助工具集、NumPy四项／nullable一项及信号预检均有独立补充证据，不重复累加测试数。最终跨平台套件必须使用最后测试源码。新增6个宽整数错误／恢复实例先在I53基线通过。旧 CPython 3.15.2t 外部限制保留历史事实；当前 3.15.1t 通过不证明所有未来解释器版本无缺陷。
+
+## 5. 完整 GIL 对照
+
+冻结 runner SHA256 `bc2c5e9f1f1dc3a0a187ea21e123eb263e5ed9465f6abb1d8540f2a3bdbb578f`，双方同一 887 输入，旧 881 身份保持。原共同能力 490／CP313，原 CP312 28，新增 F0 397／CP313，共 915 ABI／场景，不等于 915 互异类型。
+
+计时包含真实 reader／准备／writer、合同规定输出消费、分配释放及正常 GC；bind 诊断副本、fetch 查询／结果准备遵循既定计时边界。imports、工厂和 worker 启动不在热调用内，不能据热调用成绩声称总应用启动速度。
+
+`ratio=T_reference/T_candidate`，大于1新版快；`cost%=100×(1/ratio−1)`。主／独分别列配对中位及95%区间，边际中位相除不替代配对效应。区间不是最坏延迟保证。旧、新冻结见证分别在当前产物双轮证明至少5%实际提速，才使用各自5%保护；所有严格1%判定仍保留。
+
+| I54 全量原轮次 | 主 P/R/U | 独 P/R/U |
+| --- | --- | --- |
+| C16 CP313 490 | 488/0/2 | 487/0/3 |
+| C16 CP312 28 | 28/0/0 | 28/0/0 |
+| F0 CP313 397 | 395/0/2 | 396/0/1 |
+
+逐项时间、区间、组数、真实周期、原1%和5%判定分别见 [C16](../performance/i54-cp312-wide-transfer/final-c16/classification.json)、[CP312](../performance/i54-cp312-wide-transfer/final-cp312-c16/classification.json)、[F0](../performance/i54-cp312-wide-transfer/final-f0/classification.json)。固定6项主／独各256周期已完成，完整替换两轮指定场景，变差也采用；旧U／失败保留，不拼样本。最终组合 C16 CP313 490、CP312 28、F0 397 均双轮全5%P。逐项来源在各目录 composed-final-i54.json；[完整915行对照CSV](gil-performance-i54.csv)同时列出两轮时间、效应、区间、严格1%和适用5%结果。表中上述原轮次仍保留，不能把它抹成当时通过。
+
+## 6. 最终直接性能收益和成本
+
+旧490中74项双轮可靠至少5%提速：Decimal 同值 tuple N10000 两轮较小中心约3.155倍，混合 tuple N1000约2.897倍。CP312原28中7项双轮可靠至少5%提速，宽整数混合 list N1000约1.178倍，tuple N1000主／独1.156／1.172倍。
+
+新增397中256项双轮可靠至少5%提速。Pandas Categorical N1000两轮较小中心22.66倍，分类表1000×4约18.39–19.65倍；NumPy int64 N1000主／独6.770／6.743倍、float32 4.110／4.100倍；Pandas int64表3.612／3.624倍；Arrow Dictionary 1.636／1.638倍、分类表1.798／1.804倍；Polars分类表1.687／1.677倍。全部是当前产物直接基线对照，没有串乘历史倍率。
+
+保护以内仍有成本：INSERT100和nested100恢复双轮约慢4.85%／4.65%；部分位置绑定／嵌套约慢3%–4%。最终RangeIndex1000慢4.72／4.76%，binary N1慢3.79／3.67%，均双轮守5%线；它们原轮次的U保留。必须列全部成本，不用零超线冒充零变慢；无业务频率不造总体权重。
+
+
+下表按互不重复的场景组归纳。方向列要求两轮各自95%区间均位于1的同一侧；“未双轮确认方向”允许区间跨1或两轮不一致，**不等于5%保护未明**。所有场景的5%上限已确认。最大中心成本取组内两轮的最大配对中位成本，不是最坏延迟，也不以此代替区间。
+
+| 对照组 | 场景数 | 双轮可靠更快 | 双轮可靠更慢 | 未双轮确认方向 | 双轮可靠耗时至少降5% | 最大中心成本 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| C16 Escape / CP313 | 207 | 140 | 35 | 32 | 74 | 4.65% |
+| C16 bind / CP313 | 27 | 8 | 17 | 2 | 0 | 4.87% |
+| C16 connect / CP313 | 12 | 0 | 0 | 12 | 0 | 1.06% |
+| C16 execute / CP313 | 48 | 0 | 0 | 48 | 0 | 2.00% |
+| C16 fetch / CP313 | 174 | 22 | 39 | 113 | 0 | 2.02% |
+| C16 JSON decode / CP313 | 6 | 0 | 1 | 5 | 0 | 2.75% |
+| C16 diagnostic / CP313 | 10 | 1 | 0 | 9 | 0 | 0.45% |
+| C16 retry / CP313 | 2 | 0 | 0 | 2 | 0 | 0.46% |
+| C16 metadata / CP313 | 4 | 2 | 0 | 2 | 0 | 0.15% |
+| C16 CP312 原整数/绑定/诊断集 | 28 | 14 | 1 | 13 | 7 | 1.43% |
+| F0 标准容器/struct_time | 24 | 11 | 4 | 9 | 0 | 2.00% |
+| F0 真实子类 | 42 | 34 | 0 | 8 | 13 | 0.86% |
+| F0 NumPy | 111 | 81 | 11 | 19 | 64 | 3.79% |
+| F0 Pandas | 102 | 81 | 4 | 17 | 74 | 4.76% |
+| F0 Arrow | 62 | 61 | 1 | 0 | 54 | 1.01% |
+| F0 Polars | 56 | 55 | 1 | 0 | 51 | 2.03% |
+
+两轮严格1%分类也未删除：C16 CP313主364P/37R/89U、独343P/34R/113U；CP312主24P/0R/4U、独23P/1R/4U；F0主357P/5R/35U、独351P/19R/27U。适用5%资格有独立当前产物见证，不把这些严格判定改名为1%通过。
+
+### 6.1 明确成本及绝对影响
+
+原C16/CP313范围125项至少一轮95%确认变慢，其中92项两轮确认；CP312为2项/1项；F0新增为37项/21项。上述都已守住适用5%保护，不能因此改称零成本。完整CSV新增两轮各自方向与至少一轮慢标记，便于查看全部，而非只看下表15项。
+
+| 基准 | 场景 | 主／独配对成本 | 主／独边际中位增量 μs |
+| --- | --- | ---: | ---: |
+| final-c16 | bind/insert/rows/N100 | 4.866%／4.848% | 0.6948／0.6952 |
+| final-f0 | typed/pandas/RangeIndex/N1000 | 4.719%／4.763% | 0.6948／0.6986 |
+| final-c16 | escape/nested/list/N100 | 4.647%／4.642% | 0.3293／0.3553 |
+| final-c16 | bind/positions/tuple/N100 | 3.875%／3.514% | 0.1529／0.1312 |
+| final-c16 | bind/insert/rows/N1000 | 3.436%／3.823% | 4.7320／4.7000 |
+| final-f0 | typed/numpy/binary/array/N1 | 3.788%／3.667% | 0.0995／0.0917 |
+| final-c16 | escape/nested/list/N1000 | 3.631%／3.657% | 2.9184／2.5617 |
+| final-c16 | escape/nested/list/N10000 | 3.623%／3.356% | 23.3888／22.0555 |
+| final-f0 | typed/numpy/table-int64/R1C1 | 1.242%／3.587% | 0.0230／0.0644 |
+| final-f0 | typed/pandas/RangeIndex/N100 | 3.576%／3.570% | 0.0812／0.0763 |
+| final-c16 | bind/insert/rows/N10000 | 3.562%／3.531% | 44.6460／43.5730 |
+| final-c16 | bind/nested/itemize-false | 3.136%／3.562% | 0.0337／0.0332 |
+| final-c16 | bind/positions/list/N100 | 3.390%／3.500% | 0.1570／0.1731 |
+| final-c16 | bind/empty/many | 3.390%／3.340% | 0.0230／0.0206 |
+| final-f0 | typed/numpy/i2/array/N1 | 1.876%／3.254% | 0.0499／0.0609 |
+
+百分比来自配对中位效应，绝对增量是双方边际中位时间之差，二者不互相替代。区间及全部合格观察范围在CSV/原summary。缺少业务频率，不能保证任意负载综合更快。
+
+按已验证方法再迁移的最终只读核查：Arrow List的每span typed准备已在I33实现，schema只在导入/chunk验证；标准INSERT行的Sequence策略已在width/fill复用，nested已用I20/I28直接入口。没有发现尚未省去的重复Python准备／整批包装。剩余Rust downcast／identity／alias分派有进一步研究空间，但没有新profile证明高ROI，不据此制造候选或重开已拒绝布局路线。4.65%/4.85%等成本是实测事实，未把它们全部归为安全所必需，也没有虚构单一因果。两位既有agent只读核查未改码／运行。
+
+## 7. 方法迁移与未采用方案
+
+保留的方法包括受检原生数值 reader/writer、宽整数有界转移、真实 stride/endian 数组访问、按列准备／按行组装、分类编码解析复用、Decimal原生小系数及符号扩展判断、Pandas nullable公开导出、String mask与数据收敛。
+
+I46 nullable、I48 Range、I49/I53 Decimal、I52 String、I54 CP312 是已验证方法的适用迁移。I53小系数Decimal256对它自己的I52局部快约2.29倍，这不能当作最终基线倍率。I47 Object借用参数局部有收益，但普通绑定列表约慢6.5%，撤回；I50分类keys无可靠收益撤回；I51由更简单I52替代。各轮原FAIL/U／决定只绑定原具体身份，不扩大为未来豁免。
+
+## 8. 独立输入NoGIL与冷首次实测
+
+独立输入观察已完成81配置／243固定工作周期，全部正确性、输入identity、正常GC与实际GIL检查通过；普通3.13及3.14t／3.15t分别1／2／4线程，使用同一冻结每线程调用量。每线程由原Case工厂生成自己的输入根，实际target和绑定校验都使用该源；独立根不宣称任意共享底层buffer隔离。各线程自有Task／连接／Cursor。
+
+以下是三个完整周期吞吐的中位数及相对同解释器1线程倍率，仅作描述性观察，无统计PASS或线性保证。总工作随线程增加，计时范围为起始barrier释放至所有固定批次完成，不含准备／检查／close；绝对wall、每线程调用数、三个所有观测值和累计进程RSS边界见[完整结果](../performance/final-independent-nogil/results.json)及各目录contract/trials。不同解释器之间不能直接归因为代码优化。
+
+| 运行时 | 场景 | 1线程 calls/s | 2线程 calls/s | 4线程 calls/s | 2/1 | 4/1 | 总wall中位1/2/4 ms |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| cp313 | Pandas分类表1000x4 | 3111.3 | 3097.5 | 3059.8 | 0.996x | 0.983x  51.10／102.66／207.85 |
+| cp313 | NumPy int64 N1000 | 41986.9 | 41822.4 | 41737.2 | 0.996x | 0.994x  50.54／101.48／203.37 |
+| cp313 | 宽整数tuple N1000 | 9806.0 | 9744.6 | 9813.4 | 0.994x | 1.001x  52.11／104.88／208.29 |
+| cp313 | Arrow List N1000 | 16177.6 | 15879.8 | 15880.1 | 0.982x | 0.982x  51.43／104.79／209.57 |
+| cp313 | Arrow时间表1000x4 | 3101.1 | 3065.8 | 3078.2 | 0.989x | 0.993x  50.95／103.07／205.31 |
+| cp313 | Pandas nullable表1000x4 | 4032.7 | 3783.8 | 3513.2 | 0.938x | 0.871x  50.34／107.30／231.13 |
+| cp313 | Arrow Decimal256小系数N1000 | 21192.5 | 21317.4 | 20979.0 | 1.006x | 0.990x  52.38／104.14／211.64 |
+| cp313 | MySQL8.4独立连接roundtrip100行 | 5659.3 | 10598.3 | 7811.9 | 1.873x | 1.380x  46.83／50.01／135.69 |
+| cp313 | MySQL9.7独立连接roundtrip100行 | 5611.5 | 10389.7 | 7687.1 | 1.851x | 1.370x  48.47／52.36／141.54 |
+| cp314t | Pandas分类表1000x4 | 3060.4 | 5697.9 | 8303.5 | 1.862x | 2.713x  51.95／55.81／76.59 |
+| cp314t | NumPy int64 N1000 | 40897.6 | 74766.5 | 103035.7 | 1.828x | 2.519x  51.89／56.76／82.38 |
+| cp314t | 宽整数tuple N1000 | 9729.9 | 13029.2 | 20783.6 | 1.339x | 2.136x  52.52／78.44／98.35 |
+| cp314t | Arrow List N1000 | 16337.6 | 31488.8 | 58158.3 | 1.927x | 3.560x  50.93／52.84／57.22 |
+| cp314t | Arrow时间表1000x4 | 3173.6 | 6247.0 | 12117.5 | 1.968x | 3.818x  49.79／50.58／52.16 |
+| cp314t | Pandas nullable表1000x4 | 3799.2 | 6957.3 | 10223.4 | 1.831x | 2.691x  53.43／58.36／79.43 |
+| cp314t | Arrow Decimal256小系数N1000 | 21306.3 | 38402.6 | 72362.5 | 1.802x | 3.396x  52.10／57.81／61.36 |
+| cp314t | MySQL8.4独立连接roundtrip100行 | 5668.6 | 10187.9 | 7222.7 | 1.797x | 1.274x  46.75／52.02／146.76 |
+| cp314t | MySQL9.7独立连接roundtrip100行 | 5676.4 | 10304.7 | 7642.6 | 1.815x | 1.346x  47.92／52.79／142.36 |
+| cp315t | Pandas分类表1000x4 | 3107.0 | 5847.9 | 8428.6 | 1.882x | 2.713x  51.17／54.38／75.46 |
+| cp315t | NumPy int64 N1000 | 40902.0 | 64714.3 | 106916.7 | 1.582x | 2.614x  51.88／65.58／79.39 |
+| cp315t | 宽整数tuple N1000 | 9822.3 | 16459.7 | 21174.1 | 1.676x | 2.156x  52.02／62.09／96.53 |
+| cp315t | Arrow List N1000 | 16460.6 | 31687.1 | 58283.1 | 1.925x | 3.541x  50.55／52.51／57.10 |
+| cp315t | Arrow时间表1000x4 | 3176.9 | 6195.1 | 12099.7 | 1.950x | 3.809x  49.73／51.01／52.23 |
+| cp315t | Pandas nullable表1000x4 | 3854.7 | 7143.7 | 11637.3 | 1.853x | 3.019x  52.66／56.83／69.78 |
+| cp315t | Arrow Decimal256小系数N1000 | 20956.8 | 38152.7 | 70161.0 | 1.821x | 3.348x  52.97／58.19／63.28 |
+| cp315t | MySQL8.4独立连接roundtrip100行 | 5588.2 | 10182.8 | 7365.6 | 1.822x | 1.318x  47.42／52.05／143.91 |
+| cp315t | MySQL9.7独立连接roundtrip100行 | 5737.5 | 10380.6 | 8564.9 | 1.809x | 1.493x  47.41／52.41／127.03 |
+
+两种t的7类CPU场景4线程约2.14–3.82倍各自单线程，普通GIL控制基本不扩展。IO的2线程约1.8倍，但4线程回落；可能受服务器、调度或本机限制，本轮没有为此另做因果归因，不把它删除或宣称更多线程必然更快。进程maxRSS是包括准备的累计高水位，不能当每次调用独立峰值。
+
+冷首次：11个ABI／场景各三轮、共33组／66新worker观测，双方输入与实际输出一致。先测Task创建（包括_prepare_encoder）再测首次真实调用，早于正确性检查／预热；imports／完整工厂在外，创建闭包有微小工具开销，不扣除。不是总应用启动，也不从三次观测推导可靠快慢或保护PASS。所有值和边界见[冷首次摘要](../performance/final-cold-first/summary.json)及原observations.jsonl。
+
+| ABI／基准 | 场景 | 创建基准→新版 μs | 首次调用基准→新版 μs |
+| --- | --- | ---: | ---: |
+| cp313／C16 | escape/int/v3/scalar | 27.04→31.75 | 24.25→22.58 |
+| cp313／C16 | escape/int/varied/tuple/N1000 | 19.46→21.88 | 152.33→127.54 |
+| cp313／C16 | escape/str/v2/scalar | 19.62→19.92 | 17.75→18.75 |
+| cp313／C16 | escape/bytes/same/list/N1000 | 19.17→23.46 | 50.96→45.33 |
+| cp313／C16 | escape/datetime/v0/scalar | 18.83→19.29 | 16.62→20.00 |
+| cp313／F0 | typed/numpy/i8/array/N1000 | 18.75→18.46 | 213.38→86.25 |
+| cp313／F0 | typed/pandas/frame-category-low/R1000C4 | 18.04→18.50 | 6781.67→606.88 |
+| cp313／F0 | typed/arrow/decimal256-small/N1000 | 17.67→21.71 | 193.58→137.33 |
+| cp313／F0 | typed/polars/frame-category-low/R1000C4 | 18.58→19.38 | 449.50→322.88 |
+| cp312／C16 | escape/int/v3/scalar | 20.58→17.79 | 19.71→20.54 |
+| cp312／C16 | escape/int/varied/tuple/N1000 | 19.04→17.96 | 161.04→144.46 |
+
+## 9. 同源跨平台、安装包与真实耗时
+
+[最终成功运行41417320597](https://github.com/AresJef/SQLAero/actions/runs/41417320597)绑定源码 `fcfd28dc81b385783571f64a9da6546198940adb`：**48／48个原生组合、96次原wheel／独立sdist重建安装及最终bundle全部通过**。8平台各覆盖普通CPython3.12–3.15和3.14t／3.15t。没有发布tag、Release或PyPI，产物仍为本轮本地／CI的0.2.0b4。
+
+- [最终49文件目录](../ci/final-fcfd28d/download/validated-distributions)：48个原生wheel＋1个canonical sdist；[全部49哈希读回](../ci/final-fcfd28d/download-hashes-readback.json)均匹配。
+- [GitHub manifest](../ci/final-fcfd28d/download/release-manifest/release-manifest.json)与[本地重新验证](../ci/final-fcfd28d/manifest-local-readback.json)按唯一安装身份排序后完整内容相同，未省略任何字段；原数组遍历顺序不同不能作逐行同序比较。[独立读回](../ci/final-fcfd28d/manifest-semantic-readback.json)核实48个原生文件内容哈希、96份安装／测试／provider记录，32普通＋16t两种安装各一套。
+- canonical sdist SHA256为 `376de223d60670e393d20395a1e9ef3542b8fc8bf2973d17a9ceba2354183331`。[源码读回](../ci/final-fcfd28d/canonical-runtime-readback.json)逐文件401份与测量I54一致，31份测试资产和2个工具与最终checkout一致。sdist默认不含测试／工具，测试使用精确checkout；源码tar仍相同是因为后续修正只涉及不打包的测试／工具／计划。
+- NumPy／Pandas在全部48个组合实测可用；PyArrow26.0.0在42个可用、Windows ARM64六个NA；Polars2.1.0在32个普通GIL组合可用、16个t组合NA。两种安装分别验证，不将上游缺包算作功能通过。所有t实载及可用provider加载后GIL仍为False；[96份实际记录](../ci/final-fcfd28d/validation)保留加载路径、native／wheel／sdist哈希、XML和版本。
+- 下载包在本机两个新隔离目录再次实载：普通CP313实际SQL52P；CP314t实际SQL44P＋8项Polars NA。[加载哈希和SQL读回](../ci/final-fcfd28d/mac-local-native-readback.json)匹配同一CI wheel，未覆盖已测速I54／I53包。
+
+正式性能只绑定第5节实际测量的本机I54二进制；CI原生包因平台／构建环境不同有独立哈希，功能／安装证据不能冒充其均跑过915项正式性能矩阵。同源产品代码一致，跨平台仅沿用已约定的代表诊断批次。已测速本机wheel另保存在 `.runtime/escape-type-expansion/i54-final-ABI/wheels`，六份实际加载身份见[本机最终验证目录](../performance/final-validation-i54)。
+
+### 9.1 顺利最终一轮的时间
+
+最终运行从2026-11-02T09:01:23Z创建至最后job在09:43:14Z完成，**41分51秒**；首job开始至结束41分50秒。48矩阵worker合计9小时41分48秒是并行worker用时，不是项目经过时间。本轮不发布，不能将其说成含PyPI发布后验证的发行耗时。全部48个单元的开始／结束、排队、原构建／原测试／sdist构建／安装测试和job总时长见[48行CSV](../ci/final-fcfd28d/platform-times.csv)与[原始时间汇总](../ci/final-fcfd28d/platform-times.json)。
+
+下表为每个平台六个解释器的最小—最大秒数。原构建／测试不含共享准备和静态检查；job总时长包括。sdist安装测试包含环境／依赖准备；Linux用已有容器分段秒钟，其余用Actions step时间，边界有明确差别，不用于平台性能排名。
+
+| Platform | Original build s | Original test s | sdist build s | sdist install/test s | Job total s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| linux-glibc-aarch64 | 61-68 | 64-70 | 61-68 | 67-75 | 486-549 |
+| linux-glibc-x86_64 | 65-92 | 55-78 | 61-93 | 57-85 | 483-600 |
+| linux-musl-aarch64 | 121-133 | 70-79 | 119-132 | 74-85 | 680-714 |
+| linux-musl-x86_64 | 112-185 | 59-90 | 110-183 | 62-96 | 600-877 |
+| macos-arm64 | 78-136 | 55-84 | 90-117 | 74-89 | 469-748 |
+| macos-x86_64 | 148-313 | 86-151 | 120-247 | 116-164 | 824-1496 |
+| windows-arm64 | 107-128 | 78-87 | 114-128 | 108-127 | 728-885 |
+| windows-x86_64 | 115-157 | 57-72 | 113-151 | 78-90 | 611-758 |
+
+### 9.2 本轮CI恢复与真实限制
+
+旧失败保持失败，不拼接到最终源码：
+
+1. run41407264624：主窗口增加四个macOS观察测试后漏同步Windows精确NA清单。独立预期先复现3F，仅补四个精确名称，六ABI107项工具测试及Pyright通过；未知／错标／重复skip仍拒绝。
+2. run41410043814：Winx64／CP312 nullable100k窗口未捕到原信号，固定2m输入及有界JUnit投递记录后，run41413430832两安装各1955P／24NA。WinARM／CP312原异常identity已通过、仅缺args[1]；CALL帧不能证明还在第二个值中，保留OS原异常验证，把确定位置义务放进已有S／U两位置5ms deadline测试；run41415289748两安装各1639P／83NA。没有取消真实signal或确定native失败的路径要求。
+3. 同旧run的MacIntel／CP315被SIGALRM终止（142）。三个解释器的隔离child实证旧fixture close后仍有pending signal，解除屏蔽即-14；这不证明远端完全相同时序。[Apple官方说明](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/sigaction.2.html)支持SIG_IGN丢弃pending。仅在测试close先退休callback／忽略自有signal、停源、恢复实际旧handler；新增既有preflight内的隔离回归保护DFL／IGN／callable、原mask、零timer、重复close及恢复后的新signal，六ABI预检＋受影响5项通过。[有限修正证据](../ci/final-9029453/native-alarm-close-scope.json)保留原142及因果反例。最终同源48／96已全通过。
+
+这些是已观察的测试／清理语义修正，不新增产品类型补丁、信号框架或安全豁免；不承诺所有信号竞态／硬实时中断延迟已被消除。
+
+## 10. 预算、验收结论与回退
+
+72有效小时，T0 `2026-10-31T19:20:28Z`，前置1153秒已计入，不重算；硬截止 `2026-11-03T19:01:15Z`。普通阅读／等待／诊断／记录计时，并行工作取经过区间并集。下表以本报告最后读回时间为准，全部时间之和与统一台账一致。
+
+| Budget pool | Original allocation | Actual elapsed |
+| --- | ---: | ---: |
+| A/B plus original general | 26h | 4h36m41s |
+| C performance | 32h | 31h13m45s |
+| D final validation | 10h | 2h59m41s |
+| E delivery | 4h | 0h13m56s |
+| TOTAL | 72h | 39h04m04s |
+| REMAINING |  | 32h55m55s |
+
+Read back UTC: 2026-11-02T10:05:19.682064+00:00.
+
+A/B包含前置规划及原预算内通用区间，其中49分10秒宿主／响应空档照计，未改称开发或性能工作。C32目标实际31h13m45s，其中原8h以上23h13m45s属于追加24h性能，剩46m14s没有挪给CI／工具，也没有为耗时制造任务。最后8分钟已核查方法迁移；相关优化已实现，没有高把握且安全易维护的新候选，故进入必要交付。剩余预算不自动形成新任务。
+
+### 10.1 必要门槛与限制
+
+| 必要成果 | 最终状态和适用证据 |
+| --- | --- |
+| S01–S03 起点、协作、安全先导 | C16／F0／I53／I54身份及原包保存；两名既有agent分工，预算不重复累计；通用边界和所有权契约保留 |
+| S04–S17 全类型及完整基线 | G01–G14、C01–C08确认范围实现，六ABI功能／精确真实SQL证据；bytearray／memoryview等排除不变 |
+| S18 功能／NoGIL／错误／资源 | 六ABI实载、原异常／溯源／工作量中断／拥有与释放测试；下载包52／44实际SQL再次通过；稳定输入等前提没有取消 |
+| S19–S20 性能 | C16原518＋F0新增397主／独最终适用5%全P；严格1%与全部原U/R保留；独立NoGIL243周期／冷首次33组单独标注观察边界 |
+| S21 同源构建／安装 | fcfd28d的48原wheel＋canonical sdist、96安装和bundle成功，本地49哈希／96身份与provider记录读回；provider NA独立披露 |
+| S22 架构／接口／证据 | 当前运行401份不变，复用仍有效的Rust／类型检查与边界审查；稳定Rust契约、Escape类型责任和按需输出未扩散；无新增产品补丁或安全／维护性豁免 |
+| S23–S24 交付 | 一份最终报告、915行对照、48行平台时间、实包／原始证据／回退均保存；两个已确认专用MySQL实例已停止 |
+
+本轮适用范围的必要验收没有未闭合项。它不代表每个场景变快、所有95%区间都能确认相对零的方向，或所有未来解释器／provider补丁都已通过。性能保护依据第5／6节的实测产物与分档资格；普通潜在优化不当作功能缺陷。历史CPython3.15.2t外部运行时限制保留，本轮实际SDK与CI通过不改写历史，也不保证未来补丁。当前支持边界、NA、外部稳定输入／CPU producer前提、opaque区段非硬实时限制见第2／3／9节。没有发布授权或发行结果被混入本轮。
+
+### 10.2 可安装包、复现与回退
+
+- 跨平台交付：[49文件目录](../ci/final-fcfd28d/download/validated-distributions)，使用与操作系统／CPU／Python／GIL ABI匹配的wheel。可在自己的隔离环境用 `python -m pip install --no-deps <matching.whl>` 安装；provider仍是可选独立依赖，按第9节能力使用。
+- 本机正式性能实包：`.runtime/escape-type-expansion/i54-final-ABI/wheels`，例如[CP313实测wheel](../../../../.runtime/escape-type-expansion/i54-final-cp313/wheels/sqlaero-0.2.0b4-cp313-cp313-macosx_11_0_arm64.whl)。[六ABI身份](../performance/final-validation-i54)记载每个wheel及native哈希；CI包与它们分别命名，不用同版本号混淆产物。
+- I53完整本机功能／性能回退：源码 `0ea803c8c98726a26d1a2d46155c72ce13521068`，六版实包 `.runtime/escape-type-expansion/i53-final-ABI/wheels` 和immutable `packages/i53-final-ABI`；例如[CP313回退wheel](../../../../.runtime/escape-type-expansion/i53-final-cp313/wheels/sqlaero-0.2.0b4-cp313-cp313-macosx_11_0_arm64.whl)。在匹配解释器的新隔离环境安装对应wheel并读回路径／native哈希；不以改状态代替回退，不对工作树执行破坏性reset。
+- C16旧基准仍在 `.runtime/gil-nogil-review-remediation/packages/c16-ABI`；F0的[源／实包身份](../core/F0.json)和全部原数据保留。需要源码回退时从指定提交另建隔离checkout，不覆盖当前最佳或其他修改。
+- 正式热性能复现使用I54提交50358a7里的冻结bc2工具／887输入和各scope合同，不能直接执行移动了目录的单文件快照。工具5585803／113682c9用于独立NoGIL和冷首次观察，默认热计时路径未改写历史成绩；绝不把它的新观察拼进旧组。
+- [资源关闭记录](resource-close.json)：只停止已确认的本地MySQL8.4／9.7专用PID78091／78111，13384／13397不再监听；数据、私有状态、证书及原包／证据保留。当前CI48个job均完成自有服务器停止步骤。无业务数据库、其他进程、全局凭据／安全设置或旧证据清理。
+- 源码／测试的最终受验收提交是fcfd28d，后续只整理唯一计划和本报告；不将文档收尾误写成另一个已测速的产品，不发布tag／Release／PyPI或合并main。
+
+
+Documentation-only closing commit: `12f47388f2094dcdb26a19ed4ddcfa571f5db254`; its only tracked change after the accepted fcfd28d checkout is the unique execution plan. Runtime/test/tool identities are unchanged.

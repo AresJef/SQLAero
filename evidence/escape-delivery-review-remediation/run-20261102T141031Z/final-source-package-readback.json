@@ -1,0 +1,41 @@
+{
+  "utc": "2026-11-02T22:56:23.911235+00:00",
+  "product_commit": "a16daea30f79226625d66d94d4f301154591423a",
+  "test_commit": "04dd535dbd3978d217572a81fc30be4530563378",
+  "runtime_build_files_verified": 452,
+  "mismatches": [],
+  "packages": [
+    {
+      "abi": "cp312",
+      "native": "/Users/jef/.codex/worktrees/beta-native-integration/SQLAero/.runtime/escape-delivery-review-remediation/packages/r7-cp312/sqlaero/_sqlaero.cpython-312-darwin.so",
+      "sha256": "e20693832032602eea10afae59b84e01aae412514193012710ab9be8c00ef58a"
+    },
+    {
+      "abi": "cp313",
+      "native": "/Users/jef/.codex/worktrees/beta-native-integration/SQLAero/.runtime/escape-delivery-review-remediation/packages/r7-cp313/sqlaero/_sqlaero.cpython-313-darwin.so",
+      "sha256": "047cf18c3771b93952fd336d5f40e04a2e588ad74a9077e876995fd985bf60c3"
+    },
+    {
+      "abi": "cp314",
+      "native": "/Users/jef/.codex/worktrees/beta-native-integration/SQLAero/.runtime/escape-delivery-review-remediation/packages/r7-cp314/sqlaero/_sqlaero.cpython-314-darwin.so",
+      "sha256": "857bd9afed653df79f396802e9e7aabc35164e052e0f6366870e5f53e521978f"
+    },
+    {
+      "abi": "cp315",
+      "native": "/Users/jef/.codex/worktrees/beta-native-integration/SQLAero/.runtime/escape-delivery-review-remediation/packages/r7-cp315/sqlaero/_sqlaero.cpython-315-darwin.so",
+      "sha256": "e7ee9e96776106a03739efa89197d0ea258bfb12e13724260b9662e2cfd09211"
+    },
+    {
+      "abi": "cp314t",
+      "native": "/Users/jef/.codex/worktrees/beta-native-integration/SQLAero/.runtime/escape-delivery-review-remediation/packages/r7-cp314t/sqlaero/_sqlaero.cpython-314t-darwin.so",
+      "sha256": "8058ced39b6c6923231dca1e0c729fbb145b9e9ac6796157587f41b2e279a11a"
+    },
+    {
+      "abi": "cp315t",
+      "native": "/Users/jef/.codex/worktrees/beta-native-integration/SQLAero/.runtime/escape-delivery-review-remediation/packages/r7-cp315t/sqlaero/_sqlaero.cpython-315t-darwin.so",
+      "sha256": "bc3ea23bd255ad8c0bb954ed7dad8e830d8ca561ee9130baccc6921dc89d6d40"
+    }
+  ],
+  "runner_sha256": "bc2c5e9f1f1dc3a0a187ea21e123eb263e5ed9465f6abb1d8540f2a3bdbb578f",
+  "product_changed_after_final_tests": false
+}

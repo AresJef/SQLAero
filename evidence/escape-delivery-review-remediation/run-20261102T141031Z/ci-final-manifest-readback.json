@@ -1,0 +1,4341 @@
+{
+  "version": "0.2.0b4",
+  "source_commit": "04dd535dbd3978d217572a81fc30be4530563378",
+  "wheels": [
+    {
+      "file": "sqlaero-0.2.0b4-cp312-cp312-macosx_11_0_arm64.whl",
+      "sha256": "4d06d531c5e09abaed1dd4eb191715dcff7431a504ebad841057d0b3b62bc5d2",
+      "bytes": 4326998,
+      "version": "0.2.0b4",
+      "python": "cp312",
+      "abi": "cp312",
+      "platform": "macos-arm64",
+      "native_member": "sqlaero/_sqlaero.cpython-312-darwin.so",
+      "native_sha256": "d27646897fd90272c9e59f72a7e8b71e257df29d9f077377a9d8c8aba93b8028"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp312-cp312-macosx_11_0_x86_64.whl",
+      "sha256": "00b22f4ac6bf6890ebaca6f4b63c0a1fe071e70694b97eb32f4cc9dc495af50d",
+      "bytes": 4564551,
+      "version": "0.2.0b4",
+      "python": "cp312",
+      "abi": "cp312",
+      "platform": "macos-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-312-darwin.so",
+      "native_sha256": "aea75e18b30453617ea8d5b1d10cc26adcb1860f3b53d6dec550c7dc6be289e2"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp312-cp312-manylinux_2_28_aarch64.whl",
+      "sha256": "20f6156b86c2b047b12bce2fe68f618652e4a4764238c79343121da231ff6104",
+      "bytes": 4670607,
+      "version": "0.2.0b4",
+      "python": "cp312",
+      "abi": "cp312",
+      "platform": "linux-glibc-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-312-aarch64-linux-gnu.so",
+      "native_sha256": "41f4452bc50d262d3a9c3e6df4f79d49a26e6ea5c3228cbcde616092f45218dd"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp312-cp312-manylinux_2_28_x86_64.whl",
+      "sha256": "cf5128e301c4304b07d3cd5b608759f154d773940a19ef7e784fd53c8de4877b",
+      "bytes": 4778678,
+      "version": "0.2.0b4",
+      "python": "cp312",
+      "abi": "cp312",
+      "platform": "linux-glibc-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-312-x86_64-linux-gnu.so",
+      "native_sha256": "c8f7159fda5d0e79c418f618d469307461348d2181bd334095d377803036f0bf"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp312-cp312-musllinux_1_2_aarch64.whl",
+      "sha256": "6ec5543d9adda34a3736ad30ff63d0edbed64b5e6c57974c0212643116f1d85c",
+      "bytes": 4746708,
+      "version": "0.2.0b4",
+      "python": "cp312",
+      "abi": "cp312",
+      "platform": "linux-musl-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-312-aarch64-linux-musl.so",
+      "native_sha256": "939025b43588e8fa187ae67761e6efb3d2c44294b1093994f7742bc76dec9457"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp312-cp312-musllinux_1_2_x86_64.whl",
+      "sha256": "c40007da5580d40c005054a899bed8df7ade48c070908969cebfb66250c3f778",
+      "bytes": 4964543,
+      "version": "0.2.0b4",
+      "python": "cp312",
+      "abi": "cp312",
+      "platform": "linux-musl-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-312-x86_64-linux-musl.so",
+      "native_sha256": "ece8ef33560e63fac35e6a775c185aca1576794c125f504c93c5ec5c5fe910ca"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp312-cp312-win_amd64.whl",
+      "sha256": "a96d36fd1057bb7d58e455ad44f0c090f7b7536685078f12219a84b1490b8393",
+      "bytes": 4103304,
+      "version": "0.2.0b4",
+      "python": "cp312",
+      "abi": "cp312",
+      "platform": "windows-x86_64",
+      "native_member": "sqlaero/_sqlaero.cp312-win_amd64.pyd",
+      "native_sha256": "8a14baca550eba84fbf9b0316dc4b5853f10231d97b10c108f0e9e326cbd8d27"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp312-cp312-win_arm64.whl",
+      "sha256": "98870b12575506a6ecf7e0654b5fe8a888cacb5ba6077c7f74b7af4e8187cab4",
+      "bytes": 4049924,
+      "version": "0.2.0b4",
+      "python": "cp312",
+      "abi": "cp312",
+      "platform": "windows-arm64",
+      "native_member": "sqlaero/_sqlaero.cp312-win_arm64.pyd",
+      "native_sha256": "fa3fb23773666d9ab4c58eb8d9b22be9309da5b020ef3da4f40213e3a6cd617e"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp313-cp313-macosx_11_0_arm64.whl",
+      "sha256": "7d277752c71dd9d970119ccd7b215af8e1e320b87ca486cdd73ca046563f26e8",
+      "bytes": 4327260,
+      "version": "0.2.0b4",
+      "python": "cp313",
+      "abi": "cp313",
+      "platform": "macos-arm64",
+      "native_member": "sqlaero/_sqlaero.cpython-313-darwin.so",
+      "native_sha256": "134f311902802a0abb9c1bcff98a61da2eba1821a905adb2d3b32ebf480bc68f"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp313-cp313-macosx_11_0_x86_64.whl",
+      "sha256": "6c4bc1d11f8b72ec97d2c4dafa4ce63c307292c20792766c0574f18f2913cff7",
+      "bytes": 4564369,
+      "version": "0.2.0b4",
+      "python": "cp313",
+      "abi": "cp313",
+      "platform": "macos-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-313-darwin.so",
+      "native_sha256": "3d17916ffc4735d6b669c2b1bcb8527e176ccb7a94ad51f9e63fa21a1a1fa746"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp313-cp313-manylinux_2_28_aarch64.whl",
+      "sha256": "6b1cf5a6a3be5c8c9b42ce466be74dae53a71246767576b61c4e04d785ed1962",
+      "bytes": 4671852,
+      "version": "0.2.0b4",
+      "python": "cp313",
+      "abi": "cp313",
+      "platform": "linux-glibc-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-313-aarch64-linux-gnu.so",
+      "native_sha256": "ff064cf7f876b53969700b172a9e2535db1e9ac0d399389674bd76d1601ccca5"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp313-cp313-manylinux_2_28_x86_64.whl",
+      "sha256": "d08ee3ab5e4f744c19b28d11f73b9741c766018ec456d2beecf91c52553f4f99",
+      "bytes": 4778812,
+      "version": "0.2.0b4",
+      "python": "cp313",
+      "abi": "cp313",
+      "platform": "linux-glibc-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-313-x86_64-linux-gnu.so",
+      "native_sha256": "7b2deda4bea7a60c23c609bc6496a61c319e898032094c69bc688c76b7a44c16"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp313-cp313-musllinux_1_2_aarch64.whl",
+      "sha256": "e0dfd065fac5da298fdb0fee62fd5b78931d86199fc6d0d9dcbfc131580c4667",
+      "bytes": 4746149,
+      "version": "0.2.0b4",
+      "python": "cp313",
+      "abi": "cp313",
+      "platform": "linux-musl-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-313-aarch64-linux-musl.so",
+      "native_sha256": "33516c8e9aa70551cb8888c38a65b48ef8376643e42b39aeaf504a2186f126e4"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp313-cp313-musllinux_1_2_x86_64.whl",
+      "sha256": "ff8436e8a17c7313e64f0d5018f68c30857fece09e3fd0b938b3d7547557124c",
+      "bytes": 4965062,
+      "version": "0.2.0b4",
+      "python": "cp313",
+      "abi": "cp313",
+      "platform": "linux-musl-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-313-x86_64-linux-musl.so",
+      "native_sha256": "48b0ce53bcb691c8ad3382389e01995172ccb388cb87b986885fdd4be57a80bf"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp313-cp313-win_amd64.whl",
+      "sha256": "ece83579b2d8b9394a7a8dbdbcf7118bf9d2a187a74b4b5708fa260c08d159a2",
+      "bytes": 4104178,
+      "version": "0.2.0b4",
+      "python": "cp313",
+      "abi": "cp313",
+      "platform": "windows-x86_64",
+      "native_member": "sqlaero/_sqlaero.cp313-win_amd64.pyd",
+      "native_sha256": "95019158d7e7cc8303eb19e75c9c84fd23054c3a1a9774249ff4ca3baa1b0a17"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp313-cp313-win_arm64.whl",
+      "sha256": "45c971178298b266dd5d41eba2000ab75f6844d04886abf186d9e2d3cf65c414",
+      "bytes": 4050555,
+      "version": "0.2.0b4",
+      "python": "cp313",
+      "abi": "cp313",
+      "platform": "windows-arm64",
+      "native_member": "sqlaero/_sqlaero.cp313-win_arm64.pyd",
+      "native_sha256": "fc5796b549ad39ca0b53b67462b496a406a0a3c4c2988f60a8bb8822cfcc05cf"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314-macosx_11_0_arm64.whl",
+      "sha256": "e840270c3669612a1974a835e2faa0775c1d4f185dc96cc12a8824bb6af3342e",
+      "bytes": 4327687,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314",
+      "platform": "macos-arm64",
+      "native_member": "sqlaero/_sqlaero.cpython-314-darwin.so",
+      "native_sha256": "47d392be396bf90edc881afe23a5a7ec6ced242c8a3b6f8f04e8c1d3320e02ee"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314-macosx_11_0_x86_64.whl",
+      "sha256": "0d28946f8345a6e65f3215c18d7f17b663a5bcdfb6b1a3d74c40efd03fefd266",
+      "bytes": 4565475,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314",
+      "platform": "macos-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-314-darwin.so",
+      "native_sha256": "341cdfd3d1d703f2eabcdfc8a25703406c59d0628852e8d0e7ebe7866f1aa12e"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314-manylinux_2_28_aarch64.whl",
+      "sha256": "9ab8990515e7ebf5482acc0a03bfbae50837f8fbc6df9e432972a49f366e4caf",
+      "bytes": 4671682,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314",
+      "platform": "linux-glibc-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-314-aarch64-linux-gnu.so",
+      "native_sha256": "d5d61b48bcc18608769aca9c15759cafc61ff513851b5bc048a5892a2e66df35"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314-manylinux_2_28_x86_64.whl",
+      "sha256": "51aa653081a67c79733468789409d415ca74e5d094b8470241972295a084e127",
+      "bytes": 4780050,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314",
+      "platform": "linux-glibc-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-314-x86_64-linux-gnu.so",
+      "native_sha256": "46078f7ce4cc65f37d6adb5b6bc520dc3825860c6b589cae20b49c40b6e5e5b5"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314-musllinux_1_2_aarch64.whl",
+      "sha256": "2ab6485fb764fd47226a269357d67c03fe7898936f079259d65038eabc28f0e4",
+      "bytes": 4746334,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314",
+      "platform": "linux-musl-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-314-aarch64-linux-musl.so",
+      "native_sha256": "4a3ab26c364a9f14183c460d0170b03ae5833ec4c47df05eb2cbeafe51145060"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314-musllinux_1_2_x86_64.whl",
+      "sha256": "a2ae09059131b3a4731cfded5f9a1be6ffa67e4ae9d409d94d6d5d2c0dd50d76",
+      "bytes": 4965070,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314",
+      "platform": "linux-musl-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-314-x86_64-linux-musl.so",
+      "native_sha256": "c3417fb1217413dc2e5d2fc5bfc4dce27e07db040046a74fd6bb4947c7badad3"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314-win_amd64.whl",
+      "sha256": "c39494524a7d9f82e90169bb140cb7435717174483d4cea42624408d058a3387",
+      "bytes": 4104292,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314",
+      "platform": "windows-x86_64",
+      "native_member": "sqlaero/_sqlaero.cp314-win_amd64.pyd",
+      "native_sha256": "0aefa4f2f91235b59c8f667c598a8e81d99b0ed38136942f1e1d78dc4dbfcbb5"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314-win_arm64.whl",
+      "sha256": "6a024360bbfa6877365f2680b36085cc095157b65526c5a064056bd4b6ec08d2",
+      "bytes": 4050534,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314",
+      "platform": "windows-arm64",
+      "native_member": "sqlaero/_sqlaero.cp314-win_arm64.pyd",
+      "native_sha256": "4efd486f388fcc18f357ddf8a3fcd21662dc2cc1632a290eb33d8536b15bfc8b"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314t-macosx_11_0_arm64.whl",
+      "sha256": "8e8ac23345f846b0afe0178e83447a725c059f956bfd640464f6109c5ab6eee4",
+      "bytes": 4302492,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314t",
+      "platform": "macos-arm64",
+      "native_member": "sqlaero/_sqlaero.cpython-314t-darwin.so",
+      "native_sha256": "481be66ddf8f550c0cb4b4e92e42cabddd8f7b3016a796cce67c2dfd6c9bba51"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314t-macosx_11_0_x86_64.whl",
+      "sha256": "6fb23636190214f7b8cafd0b59e63f9d2bef79a9e7bef05b0c3d445d60403a16",
+      "bytes": 4540586,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314t",
+      "platform": "macos-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-314t-darwin.so",
+      "native_sha256": "76f2527a45f3e8f84f7e6a89844b6d105ac76953d60cca0fdbf8e43b543ab03c"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314t-manylinux_2_28_aarch64.whl",
+      "sha256": "bfa29f7648798cd38a5bdc2d830e70673a944f65c968e2c50dad620829adb5bb",
+      "bytes": 4651542,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314t",
+      "platform": "linux-glibc-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-314t-aarch64-linux-gnu.so",
+      "native_sha256": "e08da2caee728ea484989b9eaae18d238bb66d0a8714596cd21622c7ef8a91b4"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314t-manylinux_2_28_x86_64.whl",
+      "sha256": "7dc73cdb61c992def9e54ffd97d922550c13a9e50461fcdae9523a093a748ebd",
+      "bytes": 4757750,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314t",
+      "platform": "linux-glibc-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-314t-x86_64-linux-gnu.so",
+      "native_sha256": "863aa677ff4de2e44a6922decc8223a94ef3c298851d342ecce49be4274a75a0"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314t-musllinux_1_2_aarch64.whl",
+      "sha256": "00b139a15b6098e01446fef083c7e1aab3bf8262a6c10f726f4cd75d1a346fa8",
+      "bytes": 4727527,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314t",
+      "platform": "linux-musl-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-314t-aarch64-linux-musl.so",
+      "native_sha256": "5fd2b1c95da2641f854d2348d6bf376dfe89cb21e7e1aa98bf6426eb07335ede"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314t-musllinux_1_2_x86_64.whl",
+      "sha256": "45fe19ac752fd33d91db74874d02e2d37f678326697084065b6ce31961bd1a37",
+      "bytes": 4946640,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314t",
+      "platform": "linux-musl-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-314t-x86_64-linux-musl.so",
+      "native_sha256": "ae9382deac0c5b855932eac5eddb3a92db16eceb24c748f0ac8b31c7c58033e1"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314t-win_amd64.whl",
+      "sha256": "3b1f23876f735b78827318d15a16a875f3aa65519e2bc2d530eec40c487fb124",
+      "bytes": 4078545,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314t",
+      "platform": "windows-x86_64",
+      "native_member": "sqlaero/_sqlaero.cp314t-win_amd64.pyd",
+      "native_sha256": "09b2a863728fdab9232d3b5b3aea055bd4c57b0d0c81c9620b5771815321ffd9"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp314-cp314t-win_arm64.whl",
+      "sha256": "c4a456995f82b36dbd849e0521ae54c5bcc9074b7e7d71dd862d067a95d2e1ac",
+      "bytes": 4027914,
+      "version": "0.2.0b4",
+      "python": "cp314",
+      "abi": "cp314t",
+      "platform": "windows-arm64",
+      "native_member": "sqlaero/_sqlaero.cp314t-win_arm64.pyd",
+      "native_sha256": "e8797de065e55019f44bc029ee402f82516d5969620d1175d4669d9f2ecda538"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315-macosx_11_0_arm64.whl",
+      "sha256": "dfdf7a0ea02ac8b87494830319255267e59e2561a2a5ab353f158d12a7560ef8",
+      "bytes": 4327825,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315",
+      "platform": "macos-arm64",
+      "native_member": "sqlaero/_sqlaero.cpython-315-darwin.so",
+      "native_sha256": "be6a5a225f61cad1d4e8b4cab46525a095874761c9728190e9bbb3835008ca67"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315-macosx_11_0_x86_64.whl",
+      "sha256": "ef943a8644b573b43614a6159948217dd959b8472a1a8aaabd574577d1f9427d",
+      "bytes": 4565557,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315",
+      "platform": "macos-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-315-darwin.so",
+      "native_sha256": "f9002cf7358c011d2cef395af54ed8cb26721cf288b051ff4de04289f7f42e75"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315-manylinux_2_28_aarch64.whl",
+      "sha256": "599cc9093881119d6987c6668aacbc9e6e9ebf4b34c100dde5f1b5dad61e53e2",
+      "bytes": 4671908,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315",
+      "platform": "linux-glibc-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-315-aarch64-linux-gnu.so",
+      "native_sha256": "07c6d2d19bbb1b80ef130169ced8b75ac3161efdc28bb33941ad9d4a64b5b192"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315-manylinux_2_28_x86_64.whl",
+      "sha256": "ff4bfcb2166d516b3030a117b6ddd19bd4f4fa57eeaed279f09ac5fd1a4a888f",
+      "bytes": 4780038,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315",
+      "platform": "linux-glibc-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-315-x86_64-linux-gnu.so",
+      "native_sha256": "1fc8fa2dfdfc9957c7e1fc565b7851980b23c0729f59751e5f4bbaeb0d5f3eed"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315-musllinux_1_2_aarch64.whl",
+      "sha256": "7eb42cd9a63f193f0bff428bc2df8a17cb21644a2715ba8c98f7391f24f5cfe3",
+      "bytes": 4746719,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315",
+      "platform": "linux-musl-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-315-aarch64-linux-musl.so",
+      "native_sha256": "37e3931be70cbb54a6cc039b49dbb54062c0275351e391eb2029cfb02b6f0965"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315-musllinux_1_2_x86_64.whl",
+      "sha256": "91fa86c97286fd86e68830fa349873036f61d8e745feb8ec958e8e3e3a099d40",
+      "bytes": 4966436,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315",
+      "platform": "linux-musl-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-315-x86_64-linux-musl.so",
+      "native_sha256": "6d5fa5b145a41f3317115fd5eff47972cc994f32a4323e3bbadae43ff9c22834"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315-win_amd64.whl",
+      "sha256": "cc6f0958d282a6e921da26cdba23d94540ef02186ea2b0d80cb605c44f2f1ed7",
+      "bytes": 4104492,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315",
+      "platform": "windows-x86_64",
+      "native_member": "sqlaero/_sqlaero.cp315-win_amd64.pyd",
+      "native_sha256": "36b57eb1b342897535a1f0c867e7d879d0ddc84e5b38a6bbf5127dbdceff4d34"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315-win_arm64.whl",
+      "sha256": "bfc796ba968b027f860e984b5c71a2aa50006c93ac0aae9fdc65fb47f94f8569",
+      "bytes": 4050689,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315",
+      "platform": "windows-arm64",
+      "native_member": "sqlaero/_sqlaero.cp315-win_arm64.pyd",
+      "native_sha256": "b31e8964a2aaa1f20645518f03d26bffed1c97a272d4dbd14cc9a4e13177ae1a"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315t-macosx_11_0_arm64.whl",
+      "sha256": "28a61d7fab104f6dc227d34f1ddc3947797d0e70aa21d691bb244a074f68f28d",
+      "bytes": 4302573,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315t",
+      "platform": "macos-arm64",
+      "native_member": "sqlaero/_sqlaero.cpython-315t-darwin.so",
+      "native_sha256": "40fe80b441c8354a7c64ddb62e42faabf62e3e1ae3ce791fdd1b0eced1c6fc63"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315t-macosx_11_0_x86_64.whl",
+      "sha256": "93f5f474b9df4b94514c1d526f2b9bf410d6fac8a693e1c3c371f706a0dc1fe6",
+      "bytes": 4540711,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315t",
+      "platform": "macos-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-315t-darwin.so",
+      "native_sha256": "4f55b6f52fa837927a0518a729519c14f9a7bc6a1714906f0da68a2f804207f3"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315t-manylinux_2_28_aarch64.whl",
+      "sha256": "ce31264af9d705e621d48c7ba6d56acf7c4431021fe69187f4dd7c4a7d44b9a5",
+      "bytes": 4651605,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315t",
+      "platform": "linux-glibc-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-315t-aarch64-linux-gnu.so",
+      "native_sha256": "1d004d544d15ab9c15bec0bd89b367b815956ccf4090e466e33d0998cb8444a2"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315t-manylinux_2_28_x86_64.whl",
+      "sha256": "8f0a01b797fdc8839b3f300a0f0e5791d40fba61f631201c9717a9f545c45683",
+      "bytes": 4758100,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315t",
+      "platform": "linux-glibc-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-315t-x86_64-linux-gnu.so",
+      "native_sha256": "48027b988b6dd4ef3d5818b9322376bf2595221a7b6ae98ae743363639a73e30"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315t-musllinux_1_2_aarch64.whl",
+      "sha256": "c63bf397f174d422b8212b68040da20bf9f9c5460d826a76c3e5e266b9c4ff15",
+      "bytes": 4727648,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315t",
+      "platform": "linux-musl-aarch64",
+      "native_member": "sqlaero/_sqlaero.cpython-315t-aarch64-linux-musl.so",
+      "native_sha256": "2e7aa1e3d090cd0e96bedb97cee2fa68aa3c51fe1bb84d70658d31f1c517ff27"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315t-musllinux_1_2_x86_64.whl",
+      "sha256": "3de0ba7115016ce23ecef60e5bbea9f7518e0144fbaadb0276452f3d94934642",
+      "bytes": 4947172,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315t",
+      "platform": "linux-musl-x86_64",
+      "native_member": "sqlaero/_sqlaero.cpython-315t-x86_64-linux-musl.so",
+      "native_sha256": "3367c9534cd06607ccbb7b99071d13719ca099a6345dffab4f226f9f3f33cc81"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315t-win_amd64.whl",
+      "sha256": "be437019e62a9615e9e92235d699592f66ef64d6cc2dcd600bdd3cab1cb4129f",
+      "bytes": 4078741,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315t",
+      "platform": "windows-x86_64",
+      "native_member": "sqlaero/_sqlaero.cp315t-win_amd64.pyd",
+      "native_sha256": "61d7e9697ed481f8283b4daf7a11f7746a7afdfa8e2b4116de4965d73f31649c"
+    },
+    {
+      "file": "sqlaero-0.2.0b4-cp315-cp315t-win_arm64.whl",
+      "sha256": "1d44b31a1999b1d974370b1a56b5f07a7a84d77e843865dfad9848d00f025def",
+      "bytes": 4028284,
+      "version": "0.2.0b4",
+      "python": "cp315",
+      "abi": "cp315t",
+      "platform": "windows-arm64",
+      "native_member": "sqlaero/_sqlaero.cp315t-win_arm64.pyd",
+      "native_sha256": "5ff3dc9ee58a867b5b94330bfa2239757f420cb593fa6133fd1428bd2c266fb5"
+    }
+  ],
+  "sdist": {
+    "file": "sqlaero-0.2.0b4.tar.gz",
+    "sha256": "8f5f10e2caa2023789835acc00fa7c5c2505fd834923abb96ea66f7d4f3c012f",
+    "bytes": 2597733
+  },
+  "evidence": [
+    {
+      "kind": "original",
+      "platform": "macos-arm64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "28a61d7fab104f6dc227d34f1ddc3947797d0e70aa21d691bb244a074f68f28d",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "8cf1e5500da3056e38f31e02864ef1b682f84a1b88cf5820bdf695f97cd14a46"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-x86_64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "3de0ba7115016ce23ecef60e5bbea9f7518e0144fbaadb0276452f3d94934642",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "f11a9ca5767838b4fcbafcbe5151a220101a16ba3d567fe7a8690cd6c341b5e5"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "8f0a01b797fdc8839b3f300a0f0e5791d40fba61f631201c9717a9f545c45683",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "942227b7d3074aa40e071331fcedc9393f614401f4d72fba723a41314d7a11bd"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-x86_64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "ff8436e8a17c7313e64f0d5018f68c30857fece09e3fd0b938b3d7547557124c",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "6ecf98b42150b8fc9e6a1e05f5883dd8d5161f3fe4b471742fb02b1254d0873f"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-x86_64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "a2ae09059131b3a4731cfded5f9a1be6ffa67e4ae9d409d94d6d5d2c0dd50d76",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "49cd27fa99b2583b4060fba12f3766e088d713e855fadde7da9563d5cb782104"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-x86_64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "91fa86c97286fd86e68830fa349873036f61d8e745feb8ec958e8e3e3a099d40",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "99240e1cd992e99be90bb4c3a13a7a742143ec8d2aad3d08b6bdcfd591556fb1"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-x86_64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "c40007da5580d40c005054a899bed8df7ade48c070908969cebfb66250c3f778",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "1b63584156c09d52dfb3ad20b5a5a9aad580c4ecb9825b17f3aeca5f8d27b41f"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-x86_64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "cc6f0958d282a6e921da26cdba23d94540ef02186ea2b0d80cb605c44f2f1ed7",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 24
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "49383323adf10953c597ea344d9566332c85a92925855f98436821edc386089f"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-x86_64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "a96d36fd1057bb7d58e455ad44f0c090f7b7536685078f12219a84b1490b8393",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 24
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "d5993bf68375a1818b8288153fb84936369661c9d379a7bde7dc81fb88908e3a"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-aarch64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "c63bf397f174d422b8212b68040da20bf9f9c5460d826a76c3e5e266b9c4ff15",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "68db05c9dcc3a34cbd4d5bc27ef5bfe8ef16f369f8548571d1ad4f8c9b612bf7"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-x86_64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "ece83579b2d8b9394a7a8dbdbcf7118bf9d2a187a74b4b5708fa260c08d159a2",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 24
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "12cecfcde4ab01efca6d80800edbebc9ff1a44a87b70c95856f589344c2dad17"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-x86_64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "c39494524a7d9f82e90169bb140cb7435717174483d4cea42624408d058a3387",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 24
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "de9abd969fce93c3109f74f6218049e9e7d38cf72f5611061f7c89695c5da444"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-x86_64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "00b22f4ac6bf6890ebaca6f4b63c0a1fe071e70694b97eb32f4cc9dc495af50d",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "47e23ce1efbddb9edf2c277b2ffc3baea2b5021d9537df60a651fbd01f7b41b1"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-x86_64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "ef943a8644b573b43614a6159948217dd959b8472a1a8aaabd574577d1f9427d",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "84ce1ef87d54d2e28babe79ac82335cbdba33b1fa6149ec5c0ff3fb317fdaf75"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-x86_64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "0d28946f8345a6e65f3215c18d7f17b663a5bcdfb6b1a3d74c40efd03fefd266",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "18e342337c6735abec45473662f92326d5bb684555d884459eb2fdad3e7552ce"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "ce31264af9d705e621d48c7ba6d56acf7c4431021fe69187f4dd7c4a7d44b9a5",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "cda545620fafae2854c9d474f4f01514b743953be037db0b96d6c9f732b6b17b"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-x86_64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "6c4bc1d11f8b72ec97d2c4dafa4ce63c307292c20792766c0574f18f2913cff7",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "17bc19c7b6783aeed1f3d3cbb23a069806daa519d9a040f377dfb8792860a351"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "cf5128e301c4304b07d3cd5b608759f154d773940a19ef7e784fd53c8de4877b",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "97c1847d8a0efd3de1dd5b198f643e50b50e7e9e7c3378d047c7c1d10ec3718a"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "ff4bfcb2166d516b3030a117b6ddd19bd4f4fa57eeaed279f09ac5fd1a4a888f",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "82b224114bcf802f55fee4aeea881dbe90c223a354eaf14520a296ade50e16d8"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-arm64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "1d44b31a1999b1d974370b1a56b5f07a7a84d77e843865dfad9848d00f025def",
+      "tests": {
+        "tests": 1675,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 95
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64",
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "a845d0ad291706b888d10f2d1c18b2f9f8d9f1b634545951093384a2ca8f1fe5"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-x86_64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "93f5f474b9df4b94514c1d526f2b9bf410d6fac8a693e1c3c371f706a0dc1fe6",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "d2ba7ee7c2337efae5f328ffb511b9dc5760d26859bdf31e3c5dcee8414fe4cc"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "51aa653081a67c79733468789409d415ca74e5d094b8470241972295a084e127",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "9174fc54d8e7eafa8b987a286d3607bec32f2fb936fc9063e6eba4fb9935521b"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-x86_64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "be437019e62a9615e9e92235d699592f66ef64d6cc2dcd600bdd3cab1cb4129f",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 33
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "c9b58ca87ebd3e9f83ee284860ec9f4c091305a0332335ef7567a9593fab23b1"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "d08ee3ab5e4f744c19b28d11f73b9741c766018ec456d2beecf91c52553f4f99",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "d367832f6b56229751a2fa72f244a91be317f47987da659f2896a749d91416fe"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-x86_64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "3b1f23876f735b78827318d15a16a875f3aa65519e2bc2d530eec40c487fb124",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 33
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "05a02a63438090cd173a01fb221707b62f3ec15a2e0063e44443e3fc7dd73224"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-arm64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "c4a456995f82b36dbd849e0521ae54c5bcc9074b7e7d71dd862d067a95d2e1ac",
+      "tests": {
+        "tests": 1675,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 95
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64",
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "5c0a1770a94984790946e308a0ec9206121e9c58d790a62d4c44984e92d83b44"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-x86_64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "6fb23636190214f7b8cafd0b59e63f9d2bef79a9e7bef05b0c3d445d60403a16",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "41c5b983975f801ddee855c7b7bd7d0e39e5b77e3b9209c76ef20e441a56f1b3"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-aarch64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "6ec5543d9adda34a3736ad30ff63d0edbed64b5e6c57974c0212643116f1d85c",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "d34fcab740441fdf36dd463ba6ae88a605545268a51fa53bd3aabb45cc6cd3ee"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-aarch64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "7eb42cd9a63f193f0bff428bc2df8a17cb21644a2715ba8c98f7391f24f5cfe3",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "22a8bfe68608f40c7ea02796a764f89e26dac51fd678beb2a6e17cb96f9f6836"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "599cc9093881119d6987c6668aacbc9e6e9ebf4b34c100dde5f1b5dad61e53e2",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "e6de9b9a38dcc43a74e161a2e8ff3714edd70111b62754f264d46a5df6c903ea"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "20f6156b86c2b047b12bce2fe68f618652e4a4764238c79343121da231ff6104",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "9f6c2d222812bbcec13f1f9cde134f68f5cd1f86d156991a038a5c9c8024b491"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "bfa29f7648798cd38a5bdc2d830e70673a944f65c968e2c50dad620829adb5bb",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "29634e53a6eb708e3aacc3c98f945ea139ca27a13552c393a1944ec33f34f439"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "6b1cf5a6a3be5c8c9b42ce466be74dae53a71246767576b61c4e04d785ed1962",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "4e46204888351ca1f74385b37107e5a58834ebc5fd967c2e6d0a076d3eaf667e"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "9ab8990515e7ebf5482acc0a03bfbae50837f8fbc6df9e432972a49f366e4caf",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "4b03009b4d3c366d412c82f74e11c6215ee7e122c45f831f12b43d705e511dcf"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-aarch64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "2ab6485fb764fd47226a269357d67c03fe7898936f079259d65038eabc28f0e4",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "c50d480412b590a7c3ecbbf479c9fa9e9f8e466bb50eda80eadfdfdf346cf59a"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-aarch64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "e0dfd065fac5da298fdb0fee62fd5b78931d86199fc6d0d9dcbfc131580c4667",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "11564fd19bf449e2d0647c8bfaf8298b89a05da4f32693d35b358cc84bde9bd3"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-arm64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "bfc796ba968b027f860e984b5c71a2aa50006c93ac0aae9fdc65fb47f94f8569",
+      "tests": {
+        "tests": 1781,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 91
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64"
+        },
+        "pip_report_sha256": "d883a9b626615800be55726e98990bb149ed744015f33a5a9260841e96da16c8"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-arm64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "98870b12575506a6ecf7e0654b5fe8a888cacb5ba6077c7f74b7af4e8187cab4",
+      "tests": {
+        "tests": 1781,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 91
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64"
+        },
+        "pip_report_sha256": "27a6fc7f7d7c8ae7217f705fa065ba1ecae438cf87d47789b0b74e5c976c87e1"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-aarch64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "00b139a15b6098e01446fef083c7e1aab3bf8262a6c10f726f4cd75d1a346fa8",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "4e038cc2437e9cbce1475b7d45433a031d84f205ac536a96e71e169e32157f44"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-arm64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "45c971178298b266dd5d41eba2000ab75f6844d04886abf186d9e2d3cf65c414",
+      "tests": {
+        "tests": 1781,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 91
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64"
+        },
+        "pip_report_sha256": "a7ec48c9e6afcce577b58dd9389ba0b7db80b4cd1f155cf7cd72da597b0ceaa5"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "windows-arm64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "6a024360bbfa6877365f2680b36085cc095157b65526c5a064056bd4b6ec08d2",
+      "tests": {
+        "tests": 1781,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 91
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64"
+        },
+        "pip_report_sha256": "1abc239318c262d54e4aba46409bf214273a720c01fe9ffea3798cb7643d300f"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-arm64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "4d06d531c5e09abaed1dd4eb191715dcff7431a504ebad841057d0b3b62bc5d2",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "85cf19c73019264ab58738c252746eb743bca50626bceb65cf826d31b28d374e"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-arm64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "dfdf7a0ea02ac8b87494830319255267e59e2561a2a5ab353f158d12a7560ef8",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "e8ab0326e73cd090645c826dfc813e41db1d2d9f2bb2568513c71a44646973eb"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-arm64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "8e8ac23345f846b0afe0178e83447a725c059f956bfd640464f6109c5ab6eee4",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "3b66c414474e5720af40e9fcfa8d04c518ac868661c385c952c705e4be76da62"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-musl-x86_64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "45fe19ac752fd33d91db74874d02e2d37f678326697084065b6ce31961bd1a37",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "da88eefa617f35f8a18380db7449d877b0d1b8ea09477dbf1b481b0726d847a6"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-arm64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "e840270c3669612a1974a835e2faa0775c1d4f185dc96cc12a8824bb6af3342e",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "f6a1639f5982f9a3e79b917efef4977611c98cdc1289dde19b8d67aaba4b45df"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "7dc73cdb61c992def9e54ffd97d922550c13a9e50461fcdae9523a093a748ebd",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "4968028036ac3ba4e2364fcfc246116deca2faade78f1f311e06b447601505a3"
+      }
+    },
+    {
+      "kind": "original",
+      "platform": "macos-arm64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "7d277752c71dd9d970119ccd7b215af8e1e320b87ca486cdd73ca046563f26e8",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "b1170598b4a23c7fea3b1d98b43431f7890e79e2596d66e4cb2d7fe0b669bd7d"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-arm64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "fd9e4ce52f8cfd834eb4a00742219f81b823d56099353d6c90b03afd577988e4",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "8cf1e5500da3056e38f31e02864ef1b682f84a1b88cf5820bdf695f97cd14a46"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-x86_64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "29612778f37307456e8012dc722d39ae815eae7c4c76b4d28d0c29075ab1b190",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "f11a9ca5767838b4fcbafcbe5151a220101a16ba3d567fe7a8690cd6c341b5e5"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "55cd9a5d7ba835d624db00b9d673267ef455e648cb008d09831acf246cc31b7d",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "942227b7d3074aa40e071331fcedc9393f614401f4d72fba723a41314d7a11bd"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-x86_64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "459498dc7f6dd0e3b82f9640efab661642313b5915ca7d438978c062b8409987",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "6ecf98b42150b8fc9e6a1e05f5883dd8d5161f3fe4b471742fb02b1254d0873f"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-x86_64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "c5b85081adf45c9141987be896a1ba0f63ea0928cb56c947b478b8e04faac5f3",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "49cd27fa99b2583b4060fba12f3766e088d713e855fadde7da9563d5cb782104"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-x86_64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "dfe5946652df1c4e5bbc0ef81d8eeef6cd3f722a0f58f0825330b13586069fc1",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "99240e1cd992e99be90bb4c3a13a7a742143ec8d2aad3d08b6bdcfd591556fb1"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-x86_64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "1922a721330d6ccdf01ca23bb7500dffbd63935228febe7f20c05685fec6f876",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "1b63584156c09d52dfb3ad20b5a5a9aad580c4ecb9825b17f3aeca5f8d27b41f"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-x86_64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "e550a0a0505651e11f1c9df61551634503ea44358eae36f836ab9039336ffb54",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 24
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "49383323adf10953c597ea344d9566332c85a92925855f98436821edc386089f"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-x86_64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "af661c3a9ce5c9f7fc2e3ea581c50b4f6730e1c6e250d159fe777fe1561d1ab1",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 24
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "d5993bf68375a1818b8288153fb84936369661c9d379a7bde7dc81fb88908e3a"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-aarch64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "c3e3fb0d0c6f3cb845d87020c616804fdbec6d72d69d7075038a4935f3e43941",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "68db05c9dcc3a34cbd4d5bc27ef5bfe8ef16f369f8548571d1ad4f8c9b612bf7"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-x86_64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "b5e40a82567c33504644c8fc7ba95589112025abd01fae2915d9810f1fea5597",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 24
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "12cecfcde4ab01efca6d80800edbebc9ff1a44a87b70c95856f589344c2dad17"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-x86_64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "0e1b988edd451cf9046d76eb44a652f35f1e6b469b937ad85769244330b68780",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 24
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "de9abd969fce93c3109f74f6218049e9e7d38cf72f5611061f7c89695c5da444"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-x86_64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "ea9b27fd2ed23a4752f60c0194f9905f5d6d52dc6566e72bea26afcdbcb87e67",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "47e23ce1efbddb9edf2c277b2ffc3baea2b5021d9537df60a651fbd01f7b41b1"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-x86_64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "f52c18bfe957319d39a5d8441e4d068ab26bc11d3111395ec20197ded310ab31",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "84ce1ef87d54d2e28babe79ac82335cbdba33b1fa6149ec5c0ff3fb317fdaf75"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-x86_64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "32aac55d355987291e70d1c6cfc8647f726702d874728d46921cb196c410dd19",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "18e342337c6735abec45473662f92326d5bb684555d884459eb2fdad3e7552ce"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "7bb38bbad7a5de1621aed9e20969d8d32eb2c11c3564ec1c9c23b744f0aa8e85",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "cda545620fafae2854c9d474f4f01514b743953be037db0b96d6c9f732b6b17b"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-x86_64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "bb7cdaf0fda6675a3e29b467c93a164e12047386c6b914e57f493d916cbd571d",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "17bc19c7b6783aeed1f3d3cbb23a069806daa519d9a040f377dfb8792860a351"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "50f0ee02edeadf0401d034b3797eb92310ce69f3aab7bc3eedcd036b13acb758",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "97c1847d8a0efd3de1dd5b198f643e50b50e7e9e7c3378d047c7c1d10ec3718a"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "e6eb8752371f2e0bc54276d3baa08e62de14bd5f78d0339dd2b3b0ef1b58c030",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "82b224114bcf802f55fee4aeea881dbe90c223a354eaf14520a296ade50e16d8"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-arm64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "c2cadd56102132555499cbe9448523af8e1a77e88a80bfa8be531c2b732b4638",
+      "tests": {
+        "tests": 1675,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 95
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64",
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "a845d0ad291706b888d10f2d1c18b2f9f8d9f1b634545951093384a2ca8f1fe5"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-x86_64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "853c50cf7d987d1edb25da97a51c5b5e20b501acccd46e0b14d5832281a50684",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "d2ba7ee7c2337efae5f328ffb511b9dc5760d26859bdf31e3c5dcee8414fe4cc"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "d781ef1560483a4763bfea7fd9e2e3b063cd34e448751edb48ac841920333b51",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "9174fc54d8e7eafa8b987a286d3607bec32f2fb936fc9063e6eba4fb9935521b"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-x86_64",
+      "python": "cp315",
+      "abi": "cp315t",
+      "wheel_sha256": "c9621895608922fcdd3a560b60f688e338bab5693229381ef6f0356fc3d3872c",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 33
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "c9b58ca87ebd3e9f83ee284860ec9f4c091305a0332335ef7567a9593fab23b1"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "28d414457248a1072db352c7a669f7c43d6329032984d324dabde832bf120d89",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "d367832f6b56229751a2fa72f244a91be317f47987da659f2896a749d91416fe"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-x86_64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "d22f1a4bc486cbd2c5432a2c15903e2ad9502c27140473f8d57e49c9214a839a",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 33
+      },
+      "providers": {
+        "platform": "windows-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "05a02a63438090cd173a01fb221707b62f3ec15a2e0063e44443e3fc7dd73224"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-arm64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "caf8cf14b9c2c951ddabf3d75bacf51c64959c0ba16d7f7f4ce781213a39d0ee",
+      "tests": {
+        "tests": 1675,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 95
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64",
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "5c0a1770a94984790946e308a0ec9206121e9c58d790a62d4c44984e92d83b44"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-x86_64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "fd1b7dbb7ce27d55f5efaa3d3fe6d8260207811450b88edc4d43d62e0e0dc417",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "macos-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "41c5b983975f801ddee855c7b7bd7d0e39e5b77e3b9209c76ef20e441a56f1b3"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-aarch64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "bf1ce2a83a7b030abbb75d2f1ae0fa220d2ef3f8e0d8e056a756dfbedb62840f",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "d34fcab740441fdf36dd463ba6ae88a605545268a51fa53bd3aabb45cc6cd3ee"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-aarch64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "afdbce60e121eb2359e07164175722bf40418e6f97bc298704727f6332e63a0a",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "22a8bfe68608f40c7ea02796a764f89e26dac51fd678beb2a6e17cb96f9f6836"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "eb5941e75690f0675222df7acc08f273c750e986810c8a9724e7c475ccb5f85c",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "e6de9b9a38dcc43a74e161a2e8ff3714edd70111b62754f264d46a5df6c903ea"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "4e987785e232161b9e3b0849e1996d78b64e2564f2e77a58942b38e7fbe52aad",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "9f6c2d222812bbcec13f1f9cde134f68f5cd1f86d156991a038a5c9c8024b491"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "285fcf4e736e6112a98af2f8e76aae18930ea94808ed3cba4f92bb6bc5776d29",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "29634e53a6eb708e3aacc3c98f945ea139ca27a13552c393a1944ec33f34f439"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "7d83c80bb45c349f50dbb6f24cd456ed8d92710ac2314f4d820c51ff41eb7d70",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "4e46204888351ca1f74385b37107e5a58834ebc5fd967c2e6d0a076d3eaf667e"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-aarch64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "039caacea9163c3a8508180d077ff23a73a2cd0bcef34016f87b9812d4872b5b",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-glibc-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "4b03009b4d3c366d412c82f74e11c6215ee7e122c45f831f12b43d705e511dcf"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-aarch64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "b68c1f79bcce61581b2a95043622cbd45023947214faa8ce32f839420bca1b4d",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "c50d480412b590a7c3ecbbf479c9fa9e9f8e466bb50eda80eadfdfdf346cf59a"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-aarch64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "92f07b4d41dad577f8bfa0e129d2bd8366859f26581ddd80ea3b93f87aa1d0a7",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "11564fd19bf449e2d0647c8bfaf8298b89a05da4f32693d35b358cc84bde9bd3"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-arm64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "7ae2478622304596514773ab79c281a1274f0e9dee19401afa26cb78045fa538",
+      "tests": {
+        "tests": 1781,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 91
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64"
+        },
+        "pip_report_sha256": "d883a9b626615800be55726e98990bb149ed744015f33a5a9260841e96da16c8"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-arm64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "1f1a2730d5a8cdf566942ae52ee70364596c32975a0df0354c4fae620cdce435",
+      "tests": {
+        "tests": 1781,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 91
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64"
+        },
+        "pip_report_sha256": "27a6fc7f7d7c8ae7217f705fa065ba1ecae438cf87d47789b0b74e5c976c87e1"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-aarch64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "3883dafd78b858d0980b706ec537e8ad0d1fcf120bb580aa90521d57a3d57cf7",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-musl-aarch64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "4e038cc2437e9cbce1475b7d45433a031d84f205ac536a96e71e169e32157f44"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-arm64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "fc1c5c3a4f07cf620c650f9986d820cc1fb86e7d1989b724006bb9a8a0e25a88",
+      "tests": {
+        "tests": 1781,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 91
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64"
+        },
+        "pip_report_sha256": "a7ec48c9e6afcce577b58dd9389ba0b7db80b4cd1f155cf7cd72da597b0ceaa5"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "windows-arm64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "e3951595a2ad4d3ff4a61fdf13b7139ac51a6bd571f232032b53dfda87b77eae",
+      "tests": {
+        "tests": 1781,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 91
+      },
+      "providers": {
+        "platform": "windows-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {
+          "pyarrow": "NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64"
+        },
+        "pip_report_sha256": "1abc239318c262d54e4aba46409bf214273a720c01fe9ffea3798cb7643d300f"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-arm64",
+      "python": "cp312",
+      "abi": "cp312",
+      "wheel_sha256": "a5f655a19046333fc3049bf7c3d2dbb159d75dc252d44b778b708fbee558a722",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "85cf19c73019264ab58738c252746eb743bca50626bceb65cf826d31b28d374e"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-arm64",
+      "python": "cp315",
+      "abi": "cp315",
+      "wheel_sha256": "5401f92c45baa8888d042c3e743eb45146504963bb895bbd5e411fa0c2679cf8",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "e8ab0326e73cd090645c826dfc813e41db1d2d9f2bb2568513c71a44646973eb"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-arm64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "fd20f3aa3c698d3a103e9feb28ded1497785347b82a4b3ab9d1c4bf1a8b4d6d7",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "3b66c414474e5720af40e9fcfa8d04c518ac868661c385c952c705e4be76da62"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-musl-x86_64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "ac7fca6ac731a8770491d29bbf2681bc25c1e767858f4c4b727218e3a4527813",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-musl-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "da88eefa617f35f8a18380db7449d877b0d1b8ea09477dbf1b481b0726d847a6"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-arm64",
+      "python": "cp314",
+      "abi": "cp314",
+      "wheel_sha256": "a121b2ffe742d2c96fb9773f643cd1af3d86e14dd235a140fc9bb3fba9a94c14",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "f6a1639f5982f9a3e79b917efef4977611c98cdc1289dde19b8d67aaba4b45df"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "linux-glibc-x86_64",
+      "python": "cp314",
+      "abi": "cp314t",
+      "wheel_sha256": "2c145e045776aee15c3ca7e454c4e5989edef37a5af26f74bee217261b71c2f8",
+      "tests": {
+        "tests": 1962,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 10
+      },
+      "providers": {
+        "platform": "linux-glibc-x86_64",
+        "free_threaded": true,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": false,
+            "gil_after": false
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": false,
+            "gil_after": false
+          }
+        },
+        "unavailable": {
+          "polars": "NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI"
+        },
+        "pip_report_sha256": "4968028036ac3ba4e2364fcfc246116deca2faade78f1f311e06b447601505a3"
+      }
+    },
+    {
+      "kind": "sdist",
+      "platform": "macos-arm64",
+      "python": "cp313",
+      "abi": "cp313",
+      "wheel_sha256": "33d31cb7144c7f3178e15129ccb7742078d8b42c478923ef04307da295074869",
+      "tests": {
+        "tests": 2068,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 1
+      },
+      "providers": {
+        "platform": "macos-arm64",
+        "free_threaded": false,
+        "packages": {
+          "numpy": {
+            "version": "2.5.4",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pandas": {
+            "version": "3.1.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "pyarrow": {
+            "version": "26.0.0",
+            "gil_before": true,
+            "gil_after": true
+          },
+          "polars": {
+            "version": "2.1.0",
+            "gil_before": true,
+            "gil_after": true
+          }
+        },
+        "unavailable": {},
+        "pip_report_sha256": "b1170598b4a23c7fea3b1d98b43431f7890e79e2596d66e4cb2d7fe0b669bd7d"
+      }
+    }
+  ]
+}

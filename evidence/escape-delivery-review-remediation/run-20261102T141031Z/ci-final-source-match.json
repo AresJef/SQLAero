@@ -1,0 +1,14 @@
+{
+  "source_commit": "04dd535dbd3978d217572a81fc30be4530563378",
+  "product_commit": "a16daea30f79226625d66d94d4f301154591423a",
+  "canonical_sdist": {
+    "file": "sqlaero-0.2.0b4.tar.gz",
+    "sha256": "8f5f10e2caa2023789835acc00fa7c5c2505fd834923abb96ea66f7d4f3c012f",
+    "bytes": 2597733
+  },
+  "runtime_files_matched": 452,
+  "source_manifest_not_packaged": [],
+  "mismatches": [],
+  "all_packaged_test_files_match_current": true,
+  "packaged_test_files": 0
+}

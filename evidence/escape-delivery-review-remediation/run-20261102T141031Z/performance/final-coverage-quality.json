@@ -1,0 +1,294 @@
+{
+  "utc": "2026-11-02T22:57:40.636167+00:00",
+  "scope": "physical formal collection directories only; includes valid superseded stages, excludes derived combined copies, calibration/trials and known invalid-context attempts",
+  "physical_phase_directories": 34,
+  "physical_totals": {
+    "accepted_groups": 324416,
+    "rejected_group_attempts": 90
+  },
+  "timed_member_denominators": {
+    "A": 324506,
+    "B": 324506
+  },
+  "member_specific_invalid_reasons_count": {
+    "A": 53,
+    "B": 55
+  },
+  "rejected_group_reasons": {
+    "off_cpu_proxy": 69,
+    "snapshot_outside_calibration": 21
+  },
+  "known_excluded_contexts": [
+    "original contaminated cumulative-c16 main replaced by main-clean",
+    "two socket-denied cp313 attempts each34 CPU groups, no statistics"
+  ],
+  "selected_final_coverage": {
+    "incremental": {
+      "case_abi_units": 915,
+      "actual_true_cycles_per_case_phase_range": [
+        16,
+        512
+      ],
+      "complete_selected_group_records": 210432,
+      "complete_orders": "each case phase has one AB and one BA for every complete true process cycle",
+      "not_a_count_of_global_independent_process_pairs": true
+    },
+    "cumulative": {
+      "case_abi_units": 915,
+      "actual_true_cycles_per_case_phase_range": [
+        16,
+        256
+      ],
+      "complete_selected_group_records": 89824,
+      "complete_orders": "each case phase has one AB and one BA for every complete true process cycle",
+      "not_a_count_of_global_independent_process_pairs": true
+    }
+  },
+  "physical_directories": [
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/incremental-cp313/main",
+      "accepted_group_records": 42576,
+      "rejected_group_attempts": 13,
+      "rejection_reasons": {
+        "off_cpu_proxy": 9,
+        "snapshot_outside_calibration": 4
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/incremental-cp313/independent",
+      "accepted_group_records": 42576,
+      "rejected_group_attempts": 14,
+      "rejection_reasons": {
+        "snapshot_outside_calibration": 1,
+        "off_cpu_proxy": 13
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/incremental-cp312/main",
+      "accepted_group_records": 896,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/incremental-cp312/independent",
+      "accepted_group_records": 896,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/cumulative-c16-cp313/main-clean",
+      "accepted_group_records": 23520,
+      "rejected_group_attempts": 3,
+      "rejection_reasons": {
+        "snapshot_outside_calibration": 1,
+        "off_cpu_proxy": 2
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/cumulative-c16-cp313/independent",
+      "accepted_group_records": 23520,
+      "rejected_group_attempts": 4,
+      "rejection_reasons": {
+        "snapshot_outside_calibration": 3,
+        "off_cpu_proxy": 1
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/cumulative-f0-cp313/main",
+      "accepted_group_records": 19056,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/cumulative-f0-cp313/independent",
+      "accepted_group_records": 19056,
+      "rejected_group_attempts": 2,
+      "rejection_reasons": {
+        "snapshot_outside_calibration": 1,
+        "off_cpu_proxy": 1
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/cumulative-c16-cp312/main",
+      "accepted_group_records": 896,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/cumulative-c16-cp312/independent",
+      "accepted_group_records": 896,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms64/cumulative-c16-cp313/main",
+      "accepted_group_records": 1152,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms64/cumulative-c16-cp313/independent",
+      "accepted_group_records": 1152,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms64/cumulative-f0-cp313/main",
+      "accepted_group_records": 128,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms64/cumulative-f0-cp313/independent",
+      "accepted_group_records": 128,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms64/incremental-cp312/main",
+      "accepted_group_records": 1280,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms64/incremental-cp312/independent",
+      "accepted_group_records": 1280,
+      "rejected_group_attempts": 2,
+      "rejection_reasons": {
+        "off_cpu_proxy": 2
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms64/incremental-cp313/main",
+      "accepted_group_records": 30080,
+      "rejected_group_attempts": 13,
+      "rejection_reasons": {
+        "off_cpu_proxy": 9,
+        "snapshot_outside_calibration": 4
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms64/incremental-cp313/independent",
+      "accepted_group_records": 30080,
+      "rejected_group_attempts": 12,
+      "rejection_reasons": {
+        "off_cpu_proxy": 7,
+        "snapshot_outside_calibration": 5
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms128/cumulative-c16-cp313/block64/main",
+      "accepted_group_records": 256,
+      "rejected_group_attempts": 1,
+      "rejection_reasons": {
+        "off_cpu_proxy": 1
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms128/cumulative-c16-cp313/block64/independent",
+      "accepted_group_records": 256,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms128/cumulative-f0-cp313/block64/main",
+      "accepted_group_records": 128,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms128/cumulative-f0-cp313/block64/independent",
+      "accepted_group_records": 128,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms128/incremental-cp312/block64/main",
+      "accepted_group_records": 384,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms128/incremental-cp312/block64/independent",
+      "accepted_group_records": 384,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms128/incremental-cp313/block64/main",
+      "accepted_group_records": 14208,
+      "rejected_group_attempts": 4,
+      "rejection_reasons": {
+        "off_cpu_proxy": 4
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms128/incremental-cp313/block64/independent",
+      "accepted_group_records": 14208,
+      "rejected_group_attempts": 4,
+      "rejection_reasons": {
+        "snapshot_outside_calibration": 1,
+        "off_cpu_proxy": 3
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms256/cumulative-f0-cp313/block128/main",
+      "accepted_group_records": 256,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms256/cumulative-f0-cp313/block128/independent",
+      "accepted_group_records": 256,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms256/incremental-cp312/block128/main",
+      "accepted_group_records": 768,
+      "rejected_group_attempts": 0,
+      "rejection_reasons": {}
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms256/incremental-cp312/block128/independent",
+      "accepted_group_records": 768,
+      "rejected_group_attempts": 1,
+      "rejection_reasons": {
+        "off_cpu_proxy": 1
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms256/incremental-cp313/block128-socket-ready/main",
+      "accepted_group_records": 20992,
+      "rejected_group_attempts": 3,
+      "rejection_reasons": {
+        "off_cpu_proxy": 3
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms256/incremental-cp313/block128-socket-ready/independent",
+      "accepted_group_records": 20992,
+      "rejected_group_attempts": 8,
+      "rejection_reasons": {
+        "off_cpu_proxy": 7,
+        "snapshot_outside_calibration": 1
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms512/incremental-cp313/block256/main",
+      "accepted_group_records": 5632,
+      "rejected_group_attempts": 1,
+      "rejection_reasons": {
+        "off_cpu_proxy": 1
+      }
+    },
+    {
+      "directory": "evidence/escape-delivery-review-remediation/run-20261102T141031Z/performance/recovery-4ms512/incremental-cp313/block256/independent",
+      "accepted_group_records": 5632,
+      "rejected_group_attempts": 5,
+      "rejection_reasons": {
+        "off_cpu_proxy": 5
+      }
+    }
+  ]
+}

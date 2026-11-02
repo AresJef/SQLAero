@@ -1,0 +1,28 @@
+{
+  "utc": "2026-11-02T23:04:41.644093+00:00",
+  "owned_root": "/private/tmp/sqlaero-escape-remediation-20261102-141031",
+  "method": "existing mysql_fixture.stop using owned private admin configuration; no global process/service changed",
+  "checks": [
+    {
+      "label": "84",
+      "port": 15384,
+      "pidfile_absent": true,
+      "tcp_connect_errno": 61,
+      "listener_closed": true
+    },
+    {
+      "label": "97",
+      "port": 15397,
+      "pidfile_absent": true,
+      "tcp_connect_errno": 61,
+      "listener_closed": true
+    }
+  ],
+  "private_state_retained_under_owned_root": true,
+  "private_state_exported": false,
+  "benchmark_collectors_completed": [
+    24475,
+    76572
+  ],
+  "published": false
+}

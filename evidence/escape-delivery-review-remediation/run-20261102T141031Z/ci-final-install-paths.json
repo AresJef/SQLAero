@@ -1,0 +1,962 @@
+[
+  {
+    "platform": "linux-glibc-aarch64",
+    "abi": "cp312",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-aarch64-linux-gnu.so",
+      "native_sha256": "41f4452bc50d262d3a9c3e6df4f79d49a26e6ea5c3228cbcde616092f45218dd",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-aarch64-linux-gnu.so",
+      "native_sha256": "41f4452bc50d262d3a9c3e6df4f79d49a26e6ea5c3228cbcde616092f45218dd",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-glibc-aarch64",
+    "abi": "cp313",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-aarch64-linux-gnu.so",
+      "native_sha256": "ff064cf7f876b53969700b172a9e2535db1e9ac0d399389674bd76d1601ccca5",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-aarch64-linux-gnu.so",
+      "native_sha256": "ff064cf7f876b53969700b172a9e2535db1e9ac0d399389674bd76d1601ccca5",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-glibc-aarch64",
+    "abi": "cp314",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-aarch64-linux-gnu.so",
+      "native_sha256": "d5d61b48bcc18608769aca9c15759cafc61ff513851b5bc048a5892a2e66df35",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-aarch64-linux-gnu.so",
+      "native_sha256": "d5d61b48bcc18608769aca9c15759cafc61ff513851b5bc048a5892a2e66df35",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-glibc-aarch64",
+    "abi": "cp314t",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-aarch64-linux-gnu.so",
+      "native_sha256": "e08da2caee728ea484989b9eaae18d238bb66d0a8714596cd21622c7ef8a91b4",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-aarch64-linux-gnu.so",
+      "native_sha256": "e08da2caee728ea484989b9eaae18d238bb66d0a8714596cd21622c7ef8a91b4",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "linux-glibc-aarch64",
+    "abi": "cp315",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-aarch64-linux-gnu.so",
+      "native_sha256": "07c6d2d19bbb1b80ef130169ced8b75ac3161efdc28bb33941ad9d4a64b5b192",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-aarch64-linux-gnu.so",
+      "native_sha256": "07c6d2d19bbb1b80ef130169ced8b75ac3161efdc28bb33941ad9d4a64b5b192",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-glibc-aarch64",
+    "abi": "cp315t",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-aarch64-linux-gnu.so",
+      "native_sha256": "1d004d544d15ab9c15bec0bd89b367b815956ccf4090e466e33d0998cb8444a2",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-aarch64-linux-gnu.so",
+      "native_sha256": "1d004d544d15ab9c15bec0bd89b367b815956ccf4090e466e33d0998cb8444a2",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "linux-glibc-x86_64",
+    "abi": "cp312",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-x86_64-linux-gnu.so",
+      "native_sha256": "c8f7159fda5d0e79c418f618d469307461348d2181bd334095d377803036f0bf",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-x86_64-linux-gnu.so",
+      "native_sha256": "c8f7159fda5d0e79c418f618d469307461348d2181bd334095d377803036f0bf",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-glibc-x86_64",
+    "abi": "cp313",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-x86_64-linux-gnu.so",
+      "native_sha256": "7b2deda4bea7a60c23c609bc6496a61c319e898032094c69bc688c76b7a44c16",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-x86_64-linux-gnu.so",
+      "native_sha256": "7b2deda4bea7a60c23c609bc6496a61c319e898032094c69bc688c76b7a44c16",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-glibc-x86_64",
+    "abi": "cp314",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-x86_64-linux-gnu.so",
+      "native_sha256": "46078f7ce4cc65f37d6adb5b6bc520dc3825860c6b589cae20b49c40b6e5e5b5",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-x86_64-linux-gnu.so",
+      "native_sha256": "46078f7ce4cc65f37d6adb5b6bc520dc3825860c6b589cae20b49c40b6e5e5b5",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-glibc-x86_64",
+    "abi": "cp314t",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-x86_64-linux-gnu.so",
+      "native_sha256": "863aa677ff4de2e44a6922decc8223a94ef3c298851d342ecce49be4274a75a0",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-x86_64-linux-gnu.so",
+      "native_sha256": "863aa677ff4de2e44a6922decc8223a94ef3c298851d342ecce49be4274a75a0",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "linux-glibc-x86_64",
+    "abi": "cp315",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-x86_64-linux-gnu.so",
+      "native_sha256": "1fc8fa2dfdfc9957c7e1fc565b7851980b23c0729f59751e5f4bbaeb0d5f3eed",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-x86_64-linux-gnu.so",
+      "native_sha256": "1fc8fa2dfdfc9957c7e1fc565b7851980b23c0729f59751e5f4bbaeb0d5f3eed",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-glibc-x86_64",
+    "abi": "cp315t",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-x86_64-linux-gnu.so",
+      "native_sha256": "48027b988b6dd4ef3d5818b9322376bf2595221a7b6ae98ae743363639a73e30",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-x86_64-linux-gnu.so",
+      "native_sha256": "48027b988b6dd4ef3d5818b9322376bf2595221a7b6ae98ae743363639a73e30",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "linux-musl-aarch64",
+    "abi": "cp312",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-aarch64-linux-musl.so",
+      "native_sha256": "939025b43588e8fa187ae67761e6efb3d2c44294b1093994f7742bc76dec9457",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-aarch64-linux-musl.so",
+      "native_sha256": "939025b43588e8fa187ae67761e6efb3d2c44294b1093994f7742bc76dec9457",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-musl-aarch64",
+    "abi": "cp313",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-aarch64-linux-musl.so",
+      "native_sha256": "33516c8e9aa70551cb8888c38a65b48ef8376643e42b39aeaf504a2186f126e4",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-aarch64-linux-musl.so",
+      "native_sha256": "33516c8e9aa70551cb8888c38a65b48ef8376643e42b39aeaf504a2186f126e4",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-musl-aarch64",
+    "abi": "cp314",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-aarch64-linux-musl.so",
+      "native_sha256": "4a3ab26c364a9f14183c460d0170b03ae5833ec4c47df05eb2cbeafe51145060",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-aarch64-linux-musl.so",
+      "native_sha256": "4a3ab26c364a9f14183c460d0170b03ae5833ec4c47df05eb2cbeafe51145060",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-musl-aarch64",
+    "abi": "cp314t",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-aarch64-linux-musl.so",
+      "native_sha256": "5fd2b1c95da2641f854d2348d6bf376dfe89cb21e7e1aa98bf6426eb07335ede",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-aarch64-linux-musl.so",
+      "native_sha256": "5fd2b1c95da2641f854d2348d6bf376dfe89cb21e7e1aa98bf6426eb07335ede",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "linux-musl-aarch64",
+    "abi": "cp315",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-aarch64-linux-musl.so",
+      "native_sha256": "37e3931be70cbb54a6cc039b49dbb54062c0275351e391eb2029cfb02b6f0965",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-aarch64-linux-musl.so",
+      "native_sha256": "37e3931be70cbb54a6cc039b49dbb54062c0275351e391eb2029cfb02b6f0965",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-musl-aarch64",
+    "abi": "cp315t",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-aarch64-linux-musl.so",
+      "native_sha256": "2e7aa1e3d090cd0e96bedb97cee2fa68aa3c51fe1bb84d70658d31f1c517ff27",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-aarch64-linux-musl.so",
+      "native_sha256": "2e7aa1e3d090cd0e96bedb97cee2fa68aa3c51fe1bb84d70658d31f1c517ff27",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "linux-musl-x86_64",
+    "abi": "cp312",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-x86_64-linux-musl.so",
+      "native_sha256": "ece8ef33560e63fac35e6a775c185aca1576794c125f504c93c5ec5c5fe910ca",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-x86_64-linux-musl.so",
+      "native_sha256": "ece8ef33560e63fac35e6a775c185aca1576794c125f504c93c5ec5c5fe910ca",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-musl-x86_64",
+    "abi": "cp313",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-x86_64-linux-musl.so",
+      "native_sha256": "48b0ce53bcb691c8ad3382389e01995172ccb388cb87b986885fdd4be57a80bf",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-x86_64-linux-musl.so",
+      "native_sha256": "48b0ce53bcb691c8ad3382389e01995172ccb388cb87b986885fdd4be57a80bf",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-musl-x86_64",
+    "abi": "cp314",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-x86_64-linux-musl.so",
+      "native_sha256": "c3417fb1217413dc2e5d2fc5bfc4dce27e07db040046a74fd6bb4947c7badad3",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-x86_64-linux-musl.so",
+      "native_sha256": "c3417fb1217413dc2e5d2fc5bfc4dce27e07db040046a74fd6bb4947c7badad3",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-musl-x86_64",
+    "abi": "cp314t",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-x86_64-linux-musl.so",
+      "native_sha256": "ae9382deac0c5b855932eac5eddb3a92db16eceb24c748f0ac8b31c7c58033e1",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-x86_64-linux-musl.so",
+      "native_sha256": "ae9382deac0c5b855932eac5eddb3a92db16eceb24c748f0ac8b31c7c58033e1",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "linux-musl-x86_64",
+    "abi": "cp315",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-x86_64-linux-musl.so",
+      "native_sha256": "6d5fa5b145a41f3317115fd5eff47972cc994f32a4323e3bbadae43ff9c22834",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-x86_64-linux-musl.so",
+      "native_sha256": "6d5fa5b145a41f3317115fd5eff47972cc994f32a4323e3bbadae43ff9c22834",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "linux-musl-x86_64",
+    "abi": "cp315t",
+    "original": {
+      "executable": "/tmp/sqlaero-original/bin/python",
+      "prefix": "/tmp/sqlaero-original",
+      "package": "/tmp/sqlaero-original/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-original/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-x86_64-linux-musl.so",
+      "native_sha256": "3367c9534cd06607ccbb7b99071d13719ca099a6345dffab4f226f9f3f33cc81",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/tmp/sqlaero-sdist/bin/python",
+      "prefix": "/tmp/sqlaero-sdist",
+      "package": "/tmp/sqlaero-sdist/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/tmp/sqlaero-sdist/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-x86_64-linux-musl.so",
+      "native_sha256": "3367c9534cd06607ccbb7b99071d13719ca099a6345dffab4f226f9f3f33cc81",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "macos-arm64",
+    "abi": "cp312",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-darwin.so",
+      "native_sha256": "d27646897fd90272c9e59f72a7e8b71e257df29d9f077377a9d8c8aba93b8028",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-darwin.so",
+      "native_sha256": "70061cd14a7b82c1200321805d6730c80c70fb7617b738d7a2ce8bc4fa0a289e",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "macos-arm64",
+    "abi": "cp313",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-darwin.so",
+      "native_sha256": "134f311902802a0abb9c1bcff98a61da2eba1821a905adb2d3b32ebf480bc68f",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-darwin.so",
+      "native_sha256": "468b58f17e843a67b75764fab2e3427c8a8461a994c14323b8cdc3243fd214b8",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "macos-arm64",
+    "abi": "cp314",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-darwin.so",
+      "native_sha256": "47d392be396bf90edc881afe23a5a7ec6ced242c8a3b6f8f04e8c1d3320e02ee",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-darwin.so",
+      "native_sha256": "05046cd8bbfef5a4b1ddd431a024bac32a22e98b3abb5efc140a72b46b8326f3",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "macos-arm64",
+    "abi": "cp314t",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-darwin.so",
+      "native_sha256": "481be66ddf8f550c0cb4b4e92e42cabddd8f7b3016a796cce67c2dfd6c9bba51",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-darwin.so",
+      "native_sha256": "3aa36085e4a98da521732fbd8f2a5e517df4daddbe25ce47d1649b1179cf653b",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "macos-arm64",
+    "abi": "cp315",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-darwin.so",
+      "native_sha256": "be6a5a225f61cad1d4e8b4cab46525a095874761c9728190e9bbb3835008ca67",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-darwin.so",
+      "native_sha256": "89e33cb3d23eceba89757e22b5956497f97881d89cf1ac7c460a75fe0521a4ee",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "macos-arm64",
+    "abi": "cp315t",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-darwin.so",
+      "native_sha256": "40fe80b441c8354a7c64ddb62e42faabf62e3e1ae3ce791fdd1b0eced1c6fc63",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-darwin.so",
+      "native_sha256": "f1a573fdb3143eba9ea4ece0d0621d8acfc7fd4af9a31e36a512e039a297c5fd",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "macos-x86_64",
+    "abi": "cp312",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-darwin.so",
+      "native_sha256": "aea75e18b30453617ea8d5b1d10cc26adcb1860f3b53d6dec550c7dc6be289e2",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.12/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.12/site-packages/sqlaero/_sqlaero.cpython-312-darwin.so",
+      "native_sha256": "e57a5bcf98a193d228c126435c6d0bee34cb642c059fe7f116b9dac9fa2bd9a5",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "macos-x86_64",
+    "abi": "cp313",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-darwin.so",
+      "native_sha256": "3d17916ffc4735d6b669c2b1bcb8527e176ccb7a94ad51f9e63fa21a1a1fa746",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.13/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.13/site-packages/sqlaero/_sqlaero.cpython-313-darwin.so",
+      "native_sha256": "14a2278e52391383bb3e5df5459770bcddc500f104c7b95dcef2fa8a596c28a0",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "macos-x86_64",
+    "abi": "cp314",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-darwin.so",
+      "native_sha256": "341cdfd3d1d703f2eabcdfc8a25703406c59d0628852e8d0e7ebe7866f1aa12e",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.14/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.14/site-packages/sqlaero/_sqlaero.cpython-314-darwin.so",
+      "native_sha256": "68a3b4796c74b8b094fda38766b42e1d40c31352835ea55b38cc1f80b6ac1de9",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "macos-x86_64",
+    "abi": "cp314t",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-darwin.so",
+      "native_sha256": "76f2527a45f3e8f84f7e6a89844b6d105ac76953d60cca0fdbf8e43b543ab03c",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.14t/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.14t/site-packages/sqlaero/_sqlaero.cpython-314t-darwin.so",
+      "native_sha256": "8a8d04bde84e8064b29a1adefb5a6a1f0ab385fbf808e3fd32bc3db479ee9ae4",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "macos-x86_64",
+    "abi": "cp315",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-darwin.so",
+      "native_sha256": "f9002cf7358c011d2cef395af54ed8cb26721cf288b051ff4de04289f7f42e75",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.15/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.15/site-packages/sqlaero/_sqlaero.cpython-315-darwin.so",
+      "native_sha256": "9fb8644320ae974b1b0dc2ae9842ac39140d0ce6f4293ac0198b7b3545165d23",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "macos-x86_64",
+    "abi": "cp315t",
+    "original": {
+      "executable": "/Users/runner/work/SQLAero/SQLAero/.venv/bin/python",
+      "prefix": "/Users/runner/work/SQLAero/SQLAero/.venv",
+      "package": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/SQLAero/SQLAero/.venv/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-darwin.so",
+      "native_sha256": "4f55b6f52fa837927a0518a729519c14f9a7bc6a1714906f0da68a2f804207f3",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "/Users/runner/work/_temp/sdist-installed/bin/python",
+      "prefix": "/Users/runner/work/_temp/sdist-installed",
+      "package": "/Users/runner/work/_temp/sdist-installed/lib/python3.15t/site-packages/sqlaero/__init__.py",
+      "native": "/Users/runner/work/_temp/sdist-installed/lib/python3.15t/site-packages/sqlaero/_sqlaero.cpython-315t-darwin.so",
+      "native_sha256": "3bbe036b3509396eff158cb88dbeb5b7d40fc902f56c678d2231d13319e438a3",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "windows-arm64",
+    "abi": "cp312",
+    "original": {
+      "executable": "C:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "C:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp312-win_arm64.pyd",
+      "native_sha256": "fa3fb23773666d9ab4c58eb8d9b22be9309da5b020ef3da4f40213e3a6cd617e",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "C:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "C:\\a\\_temp\\sdist-installed",
+      "package": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp312-win_arm64.pyd",
+      "native_sha256": "62fe6f725304eb6eecb187a2470031b024c32ee9d36ef670c0c10e4719f33a0e",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "windows-arm64",
+    "abi": "cp313",
+    "original": {
+      "executable": "C:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "C:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp313-win_arm64.pyd",
+      "native_sha256": "fc5796b549ad39ca0b53b67462b496a406a0a3c4c2988f60a8bb8822cfcc05cf",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "C:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "C:\\a\\_temp\\sdist-installed",
+      "package": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp313-win_arm64.pyd",
+      "native_sha256": "34e1a9ef0d022ec7358538b6ebb8a413144b7ef7db4fbf6ea913548b8e3bd5ac",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "windows-arm64",
+    "abi": "cp314",
+    "original": {
+      "executable": "C:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "C:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp314-win_arm64.pyd",
+      "native_sha256": "4efd486f388fcc18f357ddf8a3fcd21662dc2cc1632a290eb33d8536b15bfc8b",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "C:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "C:\\a\\_temp\\sdist-installed",
+      "package": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp314-win_arm64.pyd",
+      "native_sha256": "e314fdc6553c4c0d1373940b87ad4be2193814225356e920646a64affc545e48",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "windows-arm64",
+    "abi": "cp314t",
+    "original": {
+      "executable": "C:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "C:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp314t-win_arm64.pyd",
+      "native_sha256": "e8797de065e55019f44bc029ee402f82516d5969620d1175d4669d9f2ecda538",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "C:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "C:\\a\\_temp\\sdist-installed",
+      "package": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp314t-win_arm64.pyd",
+      "native_sha256": "838e44c5f0a0f08e4ede889c3043f27651ea26d5fd93916e5c474499a331c60a",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "windows-arm64",
+    "abi": "cp315",
+    "original": {
+      "executable": "C:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "C:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp315-win_arm64.pyd",
+      "native_sha256": "b31e8964a2aaa1f20645518f03d26bffed1c97a272d4dbd14cc9a4e13177ae1a",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "C:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "C:\\a\\_temp\\sdist-installed",
+      "package": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp315-win_arm64.pyd",
+      "native_sha256": "de12900c893eeb0f1d294acc64f36e54ecc46c04e4542027dfc49a69c165e2f0",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "windows-arm64",
+    "abi": "cp315t",
+    "original": {
+      "executable": "C:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "C:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp315t-win_arm64.pyd",
+      "native_sha256": "5ff3dc9ee58a867b5b94330bfa2239757f420cb593fa6133fd1428bd2c266fb5",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "C:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "C:\\a\\_temp\\sdist-installed",
+      "package": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "C:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp315t-win_arm64.pyd",
+      "native_sha256": "b2ec36f449b23ef04a8a9067da23e0c5c028947701a2384757075dae22728ef7",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "windows-x86_64",
+    "abi": "cp312",
+    "original": {
+      "executable": "D:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "D:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp312-win_amd64.pyd",
+      "native_sha256": "8a14baca550eba84fbf9b0316dc4b5853f10231d97b10c108f0e9e326cbd8d27",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "D:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "D:\\a\\_temp\\sdist-installed",
+      "package": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp312-win_amd64.pyd",
+      "native_sha256": "9c5e69424c4f1cc6f6b02d69171d999f5d1e12eb5a9f561924c2a2abf6a528f9",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "windows-x86_64",
+    "abi": "cp313",
+    "original": {
+      "executable": "D:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "D:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp313-win_amd64.pyd",
+      "native_sha256": "95019158d7e7cc8303eb19e75c9c84fd23054c3a1a9774249ff4ca3baa1b0a17",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "D:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "D:\\a\\_temp\\sdist-installed",
+      "package": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp313-win_amd64.pyd",
+      "native_sha256": "68d8eec368242355b9ddfab370908ed91903e17501af5292d2f5e65572242c01",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "windows-x86_64",
+    "abi": "cp314",
+    "original": {
+      "executable": "D:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "D:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp314-win_amd64.pyd",
+      "native_sha256": "0aefa4f2f91235b59c8f667c598a8e81d99b0ed38136942f1e1d78dc4dbfcbb5",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "D:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "D:\\a\\_temp\\sdist-installed",
+      "package": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp314-win_amd64.pyd",
+      "native_sha256": "cef53a61d03556c11ad951070e468e0dd705a3fee3c0ecad26a72b9d5c6a2ca3",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "windows-x86_64",
+    "abi": "cp314t",
+    "original": {
+      "executable": "D:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "D:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp314t-win_amd64.pyd",
+      "native_sha256": "09b2a863728fdab9232d3b5b3aea055bd4c57b0d0c81c9620b5771815321ffd9",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "D:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "D:\\a\\_temp\\sdist-installed",
+      "package": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp314t-win_amd64.pyd",
+      "native_sha256": "2632a7b8e7bf2405506d0f9879f9a0456f7cabd249eecef6674c754cd8c33caf",
+      "gil_enabled": false
+    }
+  },
+  {
+    "platform": "windows-x86_64",
+    "abi": "cp315",
+    "original": {
+      "executable": "D:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "D:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp315-win_amd64.pyd",
+      "native_sha256": "36b57eb1b342897535a1f0c867e7d879d0ddc84e5b38a6bbf5127dbdceff4d34",
+      "gil_enabled": true
+    },
+    "sdist": {
+      "executable": "D:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "D:\\a\\_temp\\sdist-installed",
+      "package": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp315-win_amd64.pyd",
+      "native_sha256": "0b419f5ab9e15e68ac400f75f733f5bf84d2e711eb7e57c6214c4bc21843af6b",
+      "gil_enabled": true
+    }
+  },
+  {
+    "platform": "windows-x86_64",
+    "abi": "cp315t",
+    "original": {
+      "executable": "D:\\a\\SQLAero\\SQLAero\\.venv\\Scripts\\python.exe",
+      "prefix": "D:\\a\\SQLAero\\SQLAero\\.venv",
+      "package": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\SQLAero\\SQLAero\\.venv\\Lib\\site-packages\\sqlaero\\_sqlaero.cp315t-win_amd64.pyd",
+      "native_sha256": "61d7e9697ed481f8283b4daf7a11f7746a7afdfa8e2b4116de4965d73f31649c",
+      "gil_enabled": false
+    },
+    "sdist": {
+      "executable": "D:\\a\\_temp\\sdist-installed\\Scripts\\python.exe",
+      "prefix": "D:\\a\\_temp\\sdist-installed",
+      "package": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\__init__.py",
+      "native": "D:\\a\\_temp\\sdist-installed\\Lib\\site-packages\\sqlaero\\_sqlaero.cp315t-win_amd64.pyd",
+      "native_sha256": "76fe9dc9b0dcae8747852712d386bc998474a501998a6ad730442ea291b53431",
+      "gil_enabled": false
+    }
+  }
+]
