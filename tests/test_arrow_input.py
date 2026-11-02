@@ -371,6 +371,26 @@ def test_arrow_decimal256_keeps_wide_fallback_and_necessary_precision(
             _sqlaero._encode_value(value)
 
 
+@pytest.mark.parametrize("coefficient", [
+    pytest.param(0, id="zero"),
+    pytest.param(-1, id="minus-one"),
+    pytest.param(-(2**127), id="i128-min"),
+    pytest.param(2**127 - 1, id="i128-max"),
+    pytest.param(-(2**127) - 1, id="below-i128-min"),
+    pytest.param(2**127, id="above-i128-max"),
+    pytest.param(2**200 + 123, id="wide-positive"),
+    pytest.param(-(2**200 + 123), id="wide-negative"),
+])
+def test_arrow_decimal256_signed_narrowing_boundary_keeps_the_complete_value(coefficient: int) -> None:
+    coefficients = [7, coefficient, 9, 8]
+    payload = b"".join(value.to_bytes(32, "little", signed=True) for value in coefficients)
+    source = pa.Array.from_buffers(
+        pa.decimal256(76, 0), len(coefficients), [pa.py_buffer(b"\x0b"), pa.py_buffer(payload)]
+    )
+    value = source.slice(1, 2)
+    assert _sqlaero._encode_value(value).to_bytes() == b"(" + str(coefficient).encode() + b",NULL)"
+
+
 @pytest.mark.parametrize(
     "dtype", [pa.int8(), pa.int16(), pa.int32(), pa.int64(), pa.uint8(), pa.uint16(), pa.uint32(), pa.uint64()]
 )

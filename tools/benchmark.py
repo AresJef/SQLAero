@@ -388,6 +388,8 @@ def typed_cases() -> list[Case]:
                        'timestamp-ns-utc': pa.array(ticks, type=pa.timestamp('ns', tz='UTC')),
                        'duration-ns': pa.array(spans, type=pa.duration('ns')),
                        'decimal128': pa.array(decimals, type=pa.decimal128(12, 4)),
+                       'decimal256-small': pa.array([None if (i + 1) % 7 == 0 else Decimal(f'{i - 500}e-4') for i in index], type=pa.decimal256(65, 4)),
+                       'decimal256-wide': pa.array([None if (i + 1) % 7 == 0 else Decimal(f'{(-1 if i % 2 else 1) * (10**60 + i)}e-4') for i in index], type=pa.decimal256(65, 4)),
                        'utf8': pa.array(text), 'binary': pa.array(binary),
                        'list': pa.array(nested, type=pa.list_(pa.int64())),
                        'struct': pa.array(structs, type=pa.struct([('i', pa.int64()), ('s', pa.string())]))}

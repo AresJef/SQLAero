@@ -785,6 +785,18 @@ pub(crate) fn decimal_bytes(
             "Decimal coefficient must contain between 1 and 32 bytes",
         ));
     }
+    // Wider physical storage may contain only redundant i128 sign extension.
+    // The retained low half's sign, not merely uniform high bytes, proves it.
+    let signed_le = if signed_le.len() > 16 {
+        let fill = if signed_le[15] & 0x80 == 0 { 0 } else { 0xff };
+        if signed_le[16..].iter().all(|byte| *byte == fill) {
+            &signed_le[..16]
+        } else {
+            signed_le
+        }
+    } else {
+        signed_le
+    };
     if signed_le.len() <= 16 {
         // The source is signed little-endian two's complement. Extending its
         // actual sign preserves every width, including the i128 minimum.

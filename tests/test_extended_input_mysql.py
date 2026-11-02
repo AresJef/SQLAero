@@ -39,6 +39,25 @@ def test_high_scale_decimal_literal_round_trip_and_target_scale(label: str, use_
 
 @requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
+def test_arrow_decimal256_signed_boundaries_round_trip_exactly_through_mysql(label: str) -> None:
+    pa = pytest.importorskip("pyarrow")
+    numbers = [0, -1, -(2**127), 2**127 - 1, -(2**127) - 1, 2**127, 2**200 + 123, -(2**200 + 123)]
+    values: list[Decimal | None] = [None, *(Decimal(str(number)) for number in numbers)]
+    source = pa.array(values, type=pa.decimal256(76, 0))
+    expected = ((None,), *((Decimal(str(number)),) for number in sorted(numbers)))
+    with live(label) as connection, connection.cursor() as cursor:
+        cursor.use_decimal = True
+        cursor.execute("CREATE TEMPORARY TABLE decimal256_input_probe (value DECIMAL(65,0))")
+        assert cursor.execute("INSERT INTO decimal256_input_probe VALUES (%s)", source, many=True) == len(values)
+        assert cursor.row_count == len(values) and cursor.warning_count == 0
+        cursor.execute("SELECT value FROM decimal256_input_probe ORDER BY value")
+        actual = cursor.fetchall()
+        assert actual == expected
+        assert all(row[0] is None or isinstance(row[0], Decimal) for row in actual)
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("truncate", [False, True])
 def test_source_nanoseconds_reach_mysql_for_datetime_and_time(label: str, truncate: bool) -> None:
     np = pytest.importorskip("numpy")
