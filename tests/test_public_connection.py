@@ -1198,9 +1198,13 @@ def test_confirmed_transaction_cleanup_retires_cursor_without_breaking_active_fe
             check = observer.cursor()
             check.execute(f'SELECT id FROM {name}')
             assert check.fetchall() == ((1,),)
+        # Keep the old cleanup's usability check as an explicit assertion:
+        # closing the transaction Cursor must not retire this older Cursor.
+        setup.execute(f'SELECT id FROM {name}')
+        assert setup.fetchall() == ((1,),)
     except BaseException as error:
         error.add_note(
-            f'cleanup overlap observation: connection.closed={connection.closed}; '
+            f'cleanup overlap observation: connection.closed={connection.closed}; setup.closed={setup.closed}; '
             f'fetching={fetching.is_set()}; transaction_exited={exited.is_set()}'
         )
         raise
