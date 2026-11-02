@@ -14,7 +14,7 @@ import pytest
 
 from tools import release_artifacts
 
-# Frozen independently from cbest05-cp313-full.xml, not the tool's allowlist.
+# Frozen from collected test names, independently of the tool's allowlist.
 PARALLEL_NAMES = (
     'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids0-extra0]',
     'test_parallel_cli_rejects_invalid_requests_before_import_or_output[case_ids1-extra1]',
@@ -36,6 +36,10 @@ PARALLEL_NAMES = (
     'test_parallel_worker_failure_aborts_peers_and_closes_sessions[preparation]',
     'test_parallel_worker_failure_aborts_peers_and_closes_sessions[call]',
     'test_parallel_timeout_releases_barriers_and_reports_in_flight_work',
+    'test_parallel_binds_each_designated_input_and_keeps_shared_default',
+    'test_parallel_factory_inputs_are_private_reused_and_checked_for_mutation',
+    'test_cold_first_observation_precedes_checks_and_default_stays_hot_only',
+    'test_cold_first_guards_and_original_creation_error_are_preserved',
 )
 PARALLEL_REASON = ('Parallel performance observations require POSIX resource snapshots '
                    'and are measured on macOS')
@@ -149,7 +153,7 @@ def test_missing_real_database_prerequisites_do_not_pass_release_evidence(
 def test_exact_parallel_na_is_accepted_only_for_windows(tmp_path: Path, target: str) -> None:
     junit = tmp_path / 'windows.xml'
     write_skips(junit, PARALLEL_NAMES, 'tests.test_benchmark_parallel', PARALLEL_REASON)
-    assert release_artifacts.test_totals(junit, target=target)['skipped'] == 20
+    assert release_artifacts.test_totals(junit, target=target)['skipped'] == 24
 
 
 @pytest.mark.parametrize('target', [None, 'macos-arm64', 'linux-glibc-x86_64', 'linux-musl-aarch64'])
@@ -192,7 +196,7 @@ def test_exact_unix_socket_na_remains_accepted(tmp_path: Path, target: str | Non
 
 
 @pytest.mark.parametrize(('windows_count', 'unix_count', 'accepted'), [
-    (20, 1, True), (19, 1, False), (20, 0, False),
+    (24, 1, True), (23, 1, False), (24, 0, False),
 ])
 def test_manifest_requires_platform_specific_na_counts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -235,7 +239,7 @@ def test_manifest_requires_platform_specific_na_counts(
         release_artifacts.manifest(distribution, identities, output)
         result = json.loads(output.read_text())
         assert {row['platform']: row['tests']['skipped'] for row in result['evidence']} == {
-            'windows-x86_64': 20, 'macos-arm64': 1}
+            'windows-x86_64': 24, 'macos-arm64': 1}
     else:
         with pytest.raises(AssertionError):
             release_artifacts.manifest(distribution, identities, output)
@@ -292,13 +296,13 @@ def test_joint_provider_observation_gap_is_limited_to_its_five_real_cases(tmp_pa
         case = ElementTree.SubElement(root, 'testcase', classname='tests.test_polars_input',
             name=f'test_c_array_consumption_owns_both_releases_on_every_exit[{mode}]')
         ElementTree.SubElement(case, 'skipped', message='C Array release observation needs both optional providers')
-    root.set('tests', '25')
-    root.set('skipped', '25')
+    root.set('tests', '29')
+    root.set('skipped', '29')
     tree.write(report)
     capabilities = tmp_path / 'providers.json'
     capabilities.write_text(json.dumps({'platform': 'windows-arm64', 'free_threaded': False,
         'unavailable': {'pyarrow': 'NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64'}}))
-    assert release_artifacts.test_totals(report, 'windows-arm64', capabilities)['skipped'] == 25
+    assert release_artifacts.test_totals(report, 'windows-arm64', capabilities)['skipped'] == 29
     root.findall('testcase')[-1].set('name', 'test_unrelated_polars_behavior')
     tree.write(report)
     with pytest.raises(AssertionError):

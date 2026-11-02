@@ -63,6 +63,10 @@ WINDOWS_PARALLEL_NA = frozenset({
     'test_parallel_worker_failure_aborts_peers_and_closes_sessions[preparation]',
     'test_parallel_worker_failure_aborts_peers_and_closes_sessions[call]',
     'test_parallel_timeout_releases_barriers_and_reports_in_flight_work',
+    'test_parallel_binds_each_designated_input_and_keeps_shared_default',
+    'test_parallel_factory_inputs_are_private_reused_and_checked_for_mutation',
+    'test_cold_first_observation_precedes_checks_and_default_stays_hot_only',
+    'test_cold_first_guards_and_original_creation_error_are_preserved',
 })
 
 
@@ -285,7 +289,7 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
             seen.add(identity)
     assert len(seen) == totals['skipped'], ('Skipped total differs from cases', path, totals)
     if providers is not None:
-        assert baseline_skips == (20 if windows else 1), (path, baseline_skips)
+        assert baseline_skips == (len(WINDOWS_PARALLEL_NA) if windows else 1), (path, baseline_skips)
     return totals
 
 
@@ -321,7 +325,7 @@ def manifest(directory: Path, identities: Path, output: Path, free_threaded: boo
             provider_evidence = provider_path if provider_path.is_file() else None
             totals = test_totals(path.with_name(f'python-{kind}.xml'), target=key[0], providers=provider_evidence)
             if provider_evidence is None:
-                assert totals['skipped'] == (20 if key[0].startswith('windows-') else 1), (path, totals)
+                assert totals['skipped'] == (len(WINDOWS_PARALLEL_NA) if key[0].startswith('windows-') else 1), (path, totals)
             assert bool(record['free_threaded']) == key[2].endswith('t')
             assert bool(record['gil_enabled']) is not bool(record['free_threaded'])
             evidence.append({'kind': kind, 'platform': key[0], 'python': key[1], 'abi': key[2],
