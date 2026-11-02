@@ -916,6 +916,8 @@ T2250自查：总目标/72h/安全维护门槛不变。I54运行401及正式915�
 
 Windows信号边界修正2026-11-02T08:44Z：Winx64/CP312预试41413430832已成功，原wheel与canonical sdist重建安装各1955P/24明确NA；固定2m nullable输入、真实OS alarm及严格frame/originalidentity无放宽，JUnit有界观测仍保留。WinARM/CP312原失败只缺args[1]，originalidentity已P；源码Row::fill在所有值退出后仍有最终check，因此同一CALL顶层帧不能证明signal属于第二个值。经主窗口和A独立只读核对，将两条验证义务准确分开：既有真实signal测试仍保护真实OS异常身份，既有S/U长值5ms deadline测试预热同kind后改两位置(7,source)，保护65544及args[1]。不新增产品补丁／in-native探针／类型例外，不豁免确定当前值失败的通用溯源。当前产品未改，cp312/cp313/cp314t定向六次实际deadline均args[1][0]；修改后的四个测试在六ABI各4P，Pyright使用正确SDK环境后0错误/4旧warnings；首次缺DYLD的启动失败单列保留。接下来仅原WinARM/CP312用既有工作流预试原包+sdist两安装，最多25分钟含排队；通过再开启一次最终同源48/96，旧失败不拼接新source最终结果。完整成本约25+90–125分钟及交付仍在D剩余约8h内，72h不追加，C剩余46m14不挪用。
 
+08:59Z有限恢复结果：WinARM/CP312预试41415289748已成功，原wheel和sdist各1639P/83明确NA，真实signalidentity与确定native的S/U两位置deadline/path均通过。上一完整902轮其余45平台成功、三平台失败；新增MacIntel/CP315原包进程被SIGALRM14终止(exit142)，不能记统计噪声或无条件重试。主窗口对当前helper做隔离child实际因果反例：屏蔽/排入owned pending/旧close/解除屏蔽，313/315/315t全-14且close后pending仍在；不冒称已证明远端完全相同时序。B独立只读同意最小生命周期修正，Apple sigaction官方说明SIG_IGN会丢弃current/pending。现helper统一close先标记closed、忽略自有signal、停止自有timer/sender、原样恢复旧handler；仅关闭后dispatch退休，active期间原真实OS测试强度不变。既有preflight增加隔离child直接回归DFL/IGN/callable/原mask/零timer/重复close/新signal仍到旧callable，无新skip清单／产品补丁／通用框架。六ABI各preflight+5项P、Pyright0错误/4旧warnings。该动作08:53:10至约09:00完成，计D普通CI，不挪C性能专用。下一采用当前测试源码直接完整48/96：两Windows实际单元已P；新POSIX机制有三个旧helper必死反例及六版预试，不再多跑一轮约40分钟MacIntel单组合后又重跑全矩阵。只开一次完整配置，预计75–125分钟＋读回25分钟，原D/E仍装得下；出现新独立问题再限定到其真实根因，不盲重跑。产品401哈希与I54全一致，正式性能/native不改署。
+
 ### 11.2 30分钟自查与有限恢复
 
 每T+30、T+60……有效分钟自查，阶段切换、重复拒绝、超时、余量动用可合并触发。每次用不超过约90秒说明：已获成果／证据；当前最佳身份；各池已用及余额；U／可信退步和真实阻碍；是否偏离“快速开发、快速迭代”；继续／换法／停止局部路线及下一有界检查点。普通进度不逐项请求批准。

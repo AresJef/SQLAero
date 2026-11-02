@@ -98,7 +98,7 @@ class NativeAlarm:
 
         def dispatch(number: int, frame: FrameType | None) -> None:
             nonlocal handling
-            if handling:
+            if handling or self.closed:
                 return
             handling = True
             try:
@@ -148,8 +148,10 @@ class NativeAlarm:
         if self.closed:
             return
         self.closed = True
+        # Discard already pending owned alarms as well as stopping future ones.
+        # Disarming a POSIX timer alone does not remove a queued SIGALRM.
+        signal.signal(self.number, signal.SIG_IGN)
         if self.sender is not None:
-            signal.signal(self.number, signal.SIG_IGN)
             self._stop_sender()
         else:
             self.cancel()
@@ -226,6 +228,37 @@ if __name__ == '__main__':
                                    creationflags=subprocess.CREATE_NEW_CONSOLE, timeout=10, check=False)
         raise SystemExit(completed.returncode)
     else:
+        if os.name != 'nt':
+            # Keep a pending default-action signal in an isolated process: the
+            # old close order terminated it after unblocking, hiding pytest output.
+            pending_close = '''
+import os
+import signal
+import sys
+sys.path.insert(0, sys.argv[1])
+from _native_signal import NativeAlarm
+hits = []
+def previous_handler(number, frame):
+    hits.append(number)
+for previous in (signal.SIG_DFL, signal.SIG_IGN, previous_handler):
+    signal.signal(signal.SIGALRM, previous)
+    alarm = NativeAlarm(lambda number, frame: None)
+    old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+    os.kill(os.getpid(), signal.SIGALRM)
+    assert signal.SIGALRM in signal.sigpending()
+    alarm.close()
+    alarm.close()
+    assert signal.getsignal(signal.SIGALRM) is previous
+    assert signal.SIGALRM not in signal.sigpending()
+    assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+    signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
+    assert hits == []
+os.kill(os.getpid(), signal.SIGALRM)
+assert hits == [signal.SIGALRM]
+print('pending owned alarm discarded; original handler restored')
+'''
+            subprocess.run([sys.executable, '-c', pending_close,
+                            str(Path(__file__).resolve().parent)], check=True, timeout=10)
         for sigint in ((False, True) if os.name == 'nt' else (False,)):
             hits: list[int] = []
 
@@ -237,6 +270,8 @@ if __name__ == '__main__':
                     nested(number, frame)
 
             alarm = NativeAlarm(receive, sigint=sigint)
+            installed = signal.getsignal(alarm.number)
+            assert callable(installed)
             try:
                 alarm.start(0.02)
                 end = time.monotonic() + 3
@@ -246,3 +281,6 @@ if __name__ == '__main__':
                 print(f'real native signal received: {hits[0]}')
             finally:
                 alarm.close()
+            # A Python dispatch already queued during close must stay retired.
+            installed(alarm.number, None)
+            assert hits == [alarm.number], hits
