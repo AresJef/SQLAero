@@ -138,6 +138,7 @@ dependencies = [
  "asn1-rs-impl",
  "displaydoc",
  "nom",
+ "num-bigint 0.4.8",
  "num-traits",
  "rusticata-macros",
  "thiserror",
@@ -1531,6 +1532,7 @@ dependencies = [
 name = "sqlaero-core"
 version = "0.2.0-beta.4"
 dependencies = [
+ "asn1-rs",
  "aws-lc-rs",
  "core-foundation",
  "core-foundation-sys",
