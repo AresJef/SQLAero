@@ -322,3 +322,97 @@ fn legacy_out_metadata_keeps_the_real_tail_pending_without_rewriting_end_flags()
         server.join().unwrap();
     }
 }
+
+#[test]
+fn large_fetch_all_yields_complete_rows_at_the_existing_work_quantum() {
+    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = std::thread::spawn(move || {
+        let (mut socket, _) = listener.accept().unwrap();
+        socket
+            .set_read_timeout(Some(Duration::from_secs(3)))
+            .unwrap();
+        let mut sequence = Sequence::default();
+        assert_eq!(
+            framing::read_message(&mut socket, &mut sequence, 4096).unwrap(),
+            request(false)
+        );
+        let mut column = Vec::new();
+        mysql_common::packets::Column::new(ColumnType::MYSQL_TYPE_VAR_STRING)
+            .with_name(b"value")
+            .with_column_length(100_000)
+            .serialize(&mut column);
+        framing::write_message(&mut socket, &[1], &mut sequence, 4096).unwrap();
+        framing::write_message(&mut socket, &column, &mut sequence, 4096).unwrap();
+        let mut row = vec![0xfd, 0xa0, 0x86, 1];
+        row.resize(100_004, b'x');
+        for _ in 0..3 {
+            framing::write_message(&mut socket, &row, &mut sequence, 128 * 1024).unwrap();
+        }
+        framing::write_message(&mut socket, &[0xfe, 0, 0, 2, 0, 0, 0], &mut sequence, 4096)
+            .unwrap();
+    });
+    let mut channel = Channel::new(Transport::tcp(address).unwrap(), false);
+    let mut budget = IoBudget::new(
+        TimeoutKind::Operation,
+        Some(Duration::from_secs(2)),
+        None,
+        None,
+    );
+    while !channel.connected().unwrap() {
+        channel.wait(Direction::Write, &mut budget).unwrap();
+    }
+    let mut query = Query::new(
+        request(false),
+        CapabilityFlags::CLIENT_PROTOCOL_41 | CapabilityFlags::CLIENT_DEPRECATE_EOF,
+        4096,
+        128 * 1024,
+        1_000_000,
+    )
+    .unwrap()
+    .with_streaming()
+    .unwrap();
+    let limit = NonZeroUsize::new(usize::MAX).unwrap();
+    let mut header = false;
+    let mut batches = 0;
+    loop {
+        match query
+            .advance_stream(&mut channel, &mut budget, limit)
+            .unwrap()
+        {
+            Step::Control => (),
+            Step::Wait(_) => panic!("Query drives concrete readiness"),
+            Step::Ready(StreamEvent::Header(_)) => {
+                assert!(!header);
+                header = true;
+            }
+            Step::Ready(StreamEvent::Rows(rows)) => {
+                assert!(header);
+                batches += 1;
+                assert_eq!(rows.row_count, 3);
+                assert!(rows.bytes.len() >= 256 * 1024);
+                for index in 0..3 {
+                    let bytes = rows.row(index).unwrap()[0]
+                        .get(&rows.bytes)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(bytes.len(), 100_000);
+                    assert!(bytes.iter().all(|byte| *byte == b'x'));
+                }
+                assert!(!query.is_finished());
+                assert!(query.take_confirmation().is_none());
+                assert!(query.at_stream_boundary());
+            }
+            Step::Ready(StreamEvent::End {
+                tail, total_rows, ..
+            }) => {
+                assert!(tail.is_none());
+                assert_eq!(total_rows, Some(3));
+                assert_eq!(batches, 1);
+                assert!(query.is_finished());
+                break;
+            }
+        }
+    }
+    server.join().unwrap();
+}

@@ -314,7 +314,13 @@ fn local_cases(label: &str) {
                 eof_flushed: true
             }
         );
-        let data = LocalFile::new(b"1\tstreamed\n2\tstreamed\n");
+        let mut wrapped = String::new();
+        for id in 1..=70_000 {
+            use std::fmt::Write;
+            writeln!(&mut wrapped, "{id}\tstreamed-sequence-wrap").unwrap();
+        }
+        assert!(wrapped.len() > 256 * 4096);
+        let data = LocalFile::new(wrapped.as_bytes());
         let mut operation = budget();
         let source = Source::open(&data.path).unwrap();
         operation.check().unwrap();
@@ -340,10 +346,14 @@ fn local_cases(label: &str) {
                     assert!(tail.is_none());
                     assert_eq!(total_rows, None);
                     assert_eq!(metadata_status, None);
-                    assert_eq!(completion.affected_rows(), 2);
+                    assert_eq!(completion.affected_rows(), 70_000);
                     assert!(job.is_finished());
                     assert!(job.at_stream_boundary());
                     assert!(job.local_progress().unwrap().eof_flushed);
+                    assert_eq!(
+                        job.local_progress().unwrap().flushed_bytes,
+                        wrapped.len() as u64
+                    );
                     break;
                 }
                 Step::Ready(_) => panic!("LOAD must not invent a row header or row batch"),
