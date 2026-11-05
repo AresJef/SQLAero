@@ -1032,6 +1032,23 @@ fn native(py: Python<'_>, primary: &PyErr, captured: diagnostics::Native) {
     drop(retired);
 }
 
+/// Preserve one certificate-property failure through the shared native-source
+/// diagnostics, without per-property exception types or cached Python errors.
+pub(crate) fn tls_certificate<E: std::error::Error + 'static>(
+    py: Python<'_>,
+    certificate_index: usize,
+    property: &'static str,
+    source: &E,
+) -> PyErr {
+    let primary = client_format(
+        py,
+        ClientErrorCode::TlsCertificateContent,
+        format_args!("Cannot read peer_certificates[{certificate_index}].{property}: {source}"),
+    );
+    native(py, &primary, diagnostics::Native::capture(source, Some(std::any::type_name::<E>())));
+    at(py, primary, "tls_certificate_details")
+}
+
 /// Materialize standard IntEnum metadata once, from the same native registry
 /// used for dispatch. No per-command enumeration or duplicate mapping occurs.
 fn register_codes(module: &Bound<'_, PyModule>) -> PyResult<()> {

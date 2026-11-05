@@ -10,7 +10,7 @@ use sqlaero_core::{
     config::size,
     transport::{
         deadline::{IoBudget, TimeoutKind},
-        tls::{self, MinimumVersion, Mode},
+        tls::{self, Mode, Version},
     },
 };
 use std::{
@@ -164,7 +164,7 @@ pub(crate) fn bytes_limit(value: &Bound<'_, PyAny>, name: &str, maximum: usize) 
 #[pyclass(frozen, name = "SSL", module = "sqlaero")]
 pub(crate) struct Ssl {
     mode: Option<Mode>,
-    minimum: MinimumVersion,
+    minimum: Version,
     roots: Option<Vec<CertificateDer<'static>>>,
     identity: Option<Arc<CertifiedKey>>,
     server_name: Option<ServerName<'static>>,
@@ -214,6 +214,8 @@ impl Ssl {
                 let config = tls::client_config(
                     mode,
                     self.minimum,
+                    None,
+                    tls::CaMode::Replace,
                     self.roots.clone(),
                     self.identity.clone(),
                 )
@@ -252,7 +254,7 @@ impl Ssl {
     pub(crate) fn default_config() -> Self {
         Self {
             mode: None,
-            minimum: MinimumVersion::Tls12,
+            minimum: Version::Tls12,
             roots: None,
             identity: None,
             server_name: None,
@@ -291,7 +293,7 @@ impl Ssl {
                 crate::errors::builtin_message::<PyValueError>(py, error.to_string())
             })?;
         let minimum = optional_text(min_tls_version, "min_tls_version", false)?
-            .map(|value| value.parse::<MinimumVersion>())
+            .map(|value| value.parse::<Version>())
             .transpose()
             .map_err(|error| crate::errors::builtin_message::<PyValueError>(py, error.to_string()))?
             .unwrap_or_default();
@@ -358,11 +360,17 @@ impl Ssl {
                     "SSL server_name conflicts with DISABLED transport",
                 ));
             }
-            let config =
-                tls::client_config(mode, minimum, value.roots.clone(), value.identity.clone())
-                    .map_err(|error| {
-                        crate::errors::builtin_message::<PyValueError>(py, error.to_string())
-                    })?;
+            let config = tls::client_config(
+                mode,
+                minimum,
+                None,
+                tls::CaMode::Replace,
+                value.roots.clone(),
+                value.identity.clone(),
+            )
+            .map_err(|error| {
+                crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+            })?;
             let _ = value.tcp.set(config.clone());
             let _ = value.unix.set(config);
         }

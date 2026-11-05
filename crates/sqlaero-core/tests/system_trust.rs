@@ -1,6 +1,6 @@
 //! Read-only system-trust probe; no account data or HTTP request is transmitted.
 
-use sqlaero_core::transport::tls::{self, MinimumVersion, Mode};
+use sqlaero_core::transport::tls::{self, Mode, Version};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
 
@@ -21,9 +21,10 @@ fn system_ca_and_identity_policies_accept_the_real_pypi_certificate() {
         socket
             .set_write_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        let config = tls::client_config(mode, MinimumVersion::Tls12, None, None)
-            .unwrap()
-            .unwrap();
+        let config =
+            tls::client_config(mode, Version::Tls12, None, tls::CaMode::Replace, None, None)
+                .unwrap()
+                .unwrap();
         let mut tls =
             rustls::ClientConnection::new(config, "pypi.org".to_owned().try_into().unwrap())
                 .unwrap();

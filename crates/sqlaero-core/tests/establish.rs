@@ -5,7 +5,7 @@ use sqlaero_core::session::connect::{
     Authenticated, ConnectError, ConnectParams, ConnectTls, Endpoint, Establish,
 };
 use sqlaero_core::transport::channel::Step;
-use sqlaero_core::transport::tls::{self, MinimumVersion, Mode};
+use sqlaero_core::transport::tls::{self, Mode, Version};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -80,9 +80,16 @@ fn configuration(
             Some(tls::certificates(&std::fs::read(root.join("tls/ca.pem")).unwrap()).unwrap())
         };
         ConnectTls {
-            config: tls::client_config(mode, MinimumVersion::Tls12, roots, None)
-                .unwrap()
-                .unwrap(),
+            config: tls::client_config(
+                mode,
+                Version::Tls12,
+                None,
+                tls::CaMode::Replace,
+                roots,
+                None,
+            )
+            .unwrap()
+            .unwrap(),
             name: name.to_owned().try_into().unwrap(),
         }
     });
@@ -175,7 +182,9 @@ fn invalid_identity_and_unsafe_full_authentication_fail_without_downgrade() {
         bad_roots.tls = Some(ConnectTls {
             config: tls::client_config(
                 Mode::VerifyIdentity,
-                MinimumVersion::Tls12,
+                Version::Tls12,
+                None,
+                tls::CaMode::Replace,
                 Some(
                     tls::certificates(&std::fs::read(root.join("tls/client.pem")).unwrap())
                         .unwrap(),
@@ -242,7 +251,9 @@ fn encrypted_client_key_is_used_when_mysql_requires_x509() {
         parameters.tls = Some(ConnectTls {
             config: tls::client_config(
                 Mode::VerifyIdentity,
-                MinimumVersion::Tls12,
+                Version::Tls12,
+                None,
+                tls::CaMode::Replace,
                 Some(tls::certificates(&std::fs::read(root.join("tls/ca.pem")).unwrap()).unwrap()),
                 Some(Arc::clone(&identity)),
             )
@@ -283,7 +294,9 @@ fn tls12_negotiates_and_tls13_minimum_never_downgrades() {
         only13.tls = Some(ConnectTls {
             config: tls::client_config(
                 Mode::VerifyIdentity,
-                MinimumVersion::Tls13,
+                Version::Tls13,
+                None,
+                tls::CaMode::Replace,
                 Some(tls::certificates(&std::fs::read(root.join("tls/ca.pem")).unwrap()).unwrap()),
                 None,
             )
