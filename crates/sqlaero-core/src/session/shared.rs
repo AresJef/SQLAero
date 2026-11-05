@@ -348,7 +348,7 @@ impl<'a> Close<'a> {
     /// Preserves the actual send, timeout or lifecycle failure after releasing
     /// the transport. A failed close can never make this connection reusable.
     pub fn advance(&mut self, budget: &mut IoBudget) -> Result<Step<()>, CloseError> {
-        let result = self.advance_inner(budget);
+        let result = self.io().and_then(|mut io| io.advance(budget));
         if result.is_err() || matches!(result, Ok(Step::Ready(()))) {
             self.lease.invalidate();
             self.finished = true;
@@ -356,18 +356,42 @@ impl<'a> Close<'a> {
         result
     }
 
-    fn advance_inner(&mut self, budget: &mut IoBudget) -> Result<Step<()>, CloseError> {
+    /// Borrow only native transfer fields for an off-GIL IO segment. The
+    /// command lease and its non-Send mutex guard remain on the caller thread.
+    /// Dropping this borrow does not release the enclosing retirement owner.
+    ///
+    /// # Errors
+    /// Returns Closed after completion or retirement of the actual transport.
+    pub fn io(&mut self) -> Result<CloseIo<'_>, CloseError> {
         if self.finished {
             return Err(AccessError::Closed.into());
         }
+        Ok(CloseIo {
+            channel: &mut self.lease.session()?.channel,
+            sender: &mut self.sender,
+            scope: self.scope.as_ref(),
+        })
+    }
+}
+
+/// Transferable close IO with no mutex guard or host object. The enclosing
+/// Close retains the actual command and always retires the transport on drop.
+pub struct CloseIo<'a> {
+    channel: &'a mut Channel,
+    sender: &'a mut MessageWriter,
+    scope: Option<&'a Arc<Scope>>,
+}
+
+impl CloseIo<'_> {
+    /// Advance the shared COM_QUIT without a response or fresh timeout budget.
+    ///
+    /// # Errors
+    /// Returns the original transport, framing or deadline failure.
+    pub fn advance(&mut self, budget: &mut IoBudget) -> Result<Step<()>, CloseError> {
         loop {
-            let session = self.lease.session()?;
-            match session
-                .channel
-                .send_step(&mut self.sender, &[1], budget, self.scope.as_ref())?
-            {
+            match self.channel.send_step(self.sender, &[1], budget, self.scope)? {
                 Step::Wait(direction) => {
-                    if session.channel.wait(direction, budget)? == WaitStatus::Control {
+                    if self.channel.wait(direction, budget)? == WaitStatus::Control {
                         return Ok(Step::Control);
                     }
                 }

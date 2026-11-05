@@ -369,6 +369,14 @@ pub enum Response {
     },
 }
 impl Response {
+    /// Borrow this set's existing allocation identity without retaining rows.
+    #[must_use]
+    pub fn scope(&self) -> &Arc<Scope> {
+        match self {
+            Self::Rows(rows) => rows.scope(),
+            Self::Command(completion) | Self::Counted { completion, .. } => completion._owner.scope(),
+        }
+    }
     /// Actual final OK/EOF metadata shared by counters and state updates.
     #[must_use]
     pub fn completion(&self) -> &OkPacket<'static> {

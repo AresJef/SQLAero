@@ -35,6 +35,8 @@ fn connect(label: &str) -> Authenticated {
         database: Some("sqlaero_test".to_owned()),
         tls: None,
         server_public_key: None,
+        compression: Default::default(),
+        multi_statements: false,
         connect_timeout: Some(Duration::from_secs(5)),
         read_timeout: Some(Duration::from_secs(3)),
         write_timeout: Some(Duration::from_secs(3)),

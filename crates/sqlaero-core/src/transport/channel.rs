@@ -1,5 +1,6 @@
 //! One concrete plain/TLS byte channel with resumable MySQL message transfer.
 
+use super::compression::{Algorithm, Codec as CompressionCodec, Options as CompressionOptions};
 use super::deadline::{Direction, IoBudget, TimeoutKind};
 use super::socket::{Transport, TransportError, WaitStatus};
 use crate::memory::Scope;
@@ -59,6 +60,7 @@ pub struct Channel {
     tls: Option<ClientConnection>,
     sequence: Sequence,
     local: bool,
+    compression: Option<CompressionCodec>,
 }
 
 /// Translate rustls's full application buffer into resumable backpressure.
@@ -89,6 +91,7 @@ impl Channel {
             tls: None,
             sequence: Sequence::default(),
             local,
+            compression: None,
         }
     }
 
@@ -107,6 +110,9 @@ impl Channel {
     /// Returns a framing failure if a negotiated transport cannot begin a new
     /// exchange while preceding frame work is still incomplete.
     pub fn new_command(&mut self) -> Result<(), ChannelError> {
+        if let Some(compression) = &mut self.compression {
+            compression.start_command()?;
+        }
         self.sequence = Sequence::default();
         Ok(())
     }
@@ -114,7 +120,31 @@ impl Channel {
     /// Whether the authenticated channel uses an additional compression layer.
     #[must_use]
     pub const fn is_compressed(&self) -> bool {
-        false
+        self.compression.is_some()
+    }
+
+    /// Enable the actually negotiated layer after the final authentication OK.
+    /// # Errors
+    /// Returns an invalid transition or actual compression-engine failure.
+    pub fn enable_compression(
+        &mut self,
+        algorithm: Algorithm,
+        zstd_level: u8,
+    ) -> Result<(), ChannelError> {
+        if self.compression.is_some() || self.tls.as_ref().is_some_and(|tls| tls.is_handshaking()) {
+            return Err(WireError::Malformed(
+                "compression cannot be activated in this channel state",
+            )
+            .into());
+        }
+        self.compression = Some(CompressionCodec::new(algorithm, zstd_level)?);
+        Ok(())
+    }
+
+    /// Actual immutable native snapshot; no compression is represented by None.
+    #[must_use]
+    pub fn compression_options(&self) -> Option<CompressionOptions> {
+        self.compression.as_ref().map(CompressionCodec::snapshot)
     }
 
     /// Return whether full authentication may use this established channel.
@@ -196,9 +226,19 @@ impl Channel {
         message: &mut MessageWriter,
         bytes: &[u8],
         budget: &mut IoBudget,
-        _scope: Option<&Arc<Scope>>,
+        scope: Option<&Arc<Scope>>,
     ) -> Result<Step<()>, ChannelError> {
         budget.check()?;
+        if self.compression.is_some() {
+            return self.send_compressed(
+                message,
+                bytes,
+                budget,
+                scope.ok_or(WireError::Malformed(
+                    "compressed send has no allocation scope",
+                ))?,
+            );
+        }
         if self.tls.is_none() {
             return message
                 .step(&mut self.transport.io(budget), bytes, &mut self.sequence)
@@ -238,9 +278,18 @@ impl Channel {
         &mut self,
         message: &mut MessageReader,
         budget: &mut IoBudget,
-        _scope: Option<&Arc<Scope>>,
+        scope: Option<&Arc<Scope>>,
     ) -> Result<Step<crate::memory::Buffer<u8>>, ChannelError> {
         budget.check()?;
+        if self.compression.is_some() {
+            return self.receive_compressed(
+                message,
+                budget,
+                scope.ok_or(WireError::Malformed(
+                    "compressed receive has no allocation scope",
+                ))?,
+            );
+        }
         if self.tls.is_none() {
             return message
                 .step(&mut self.transport.io(budget), &mut self.sequence)
@@ -253,6 +302,121 @@ impl Channel {
                 .as_mut()
                 .ok_or(WireError::Malformed("missing TLS state"))?;
             match message.step(&mut tls.reader(), &mut self.sequence)? {
+                Progress::Ready(bytes) => return Ok(Step::Ready(bytes)),
+                Progress::Yield => return Ok(Step::Control),
+                Progress::Pending => (),
+            }
+            match self.flush_tls(budget)? {
+                Step::Ready(()) => (),
+                Step::Wait(direction) => return Ok(Step::Wait(direction)),
+                Step::Control => return Ok(Step::Control),
+            }
+            let tls = self
+                .tls
+                .as_mut()
+                .ok_or(WireError::Malformed("missing TLS state"))?;
+            match tls.read_tls(&mut self.transport.io(budget)) {
+                Ok(0) => return Err(WireError::Io(io::ErrorKind::UnexpectedEof.into()).into()),
+                Ok(_) => {
+                    tls.process_new_packets()?;
+                }
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    return Ok(Step::Wait(Direction::Read));
+                }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {
+                    return Ok(Step::Control);
+                }
+                Err(error) => return Err(WireError::Io(error).into()),
+            }
+        }
+        Ok(Step::Control)
+    }
+
+    fn send_compressed(
+        &mut self,
+        message: &mut MessageWriter,
+        bytes: &[u8],
+        budget: &mut IoBudget,
+        scope: &Arc<Scope>,
+    ) -> Result<Step<()>, ChannelError> {
+        let compression = self
+            .compression
+            .as_mut()
+            .ok_or(WireError::Malformed("missing compression layer"))?;
+        if self.tls.is_none() {
+            return compression
+                .write_message_step(
+                    message,
+                    bytes,
+                    &mut self.transport.io(budget),
+                    &mut self.sequence,
+                    scope,
+                )
+                .map(|step| convert(step, Direction::Write))
+                .map_err(ChannelError::from);
+        }
+        let tls = self
+            .tls
+            .as_mut()
+            .ok_or(WireError::Malformed("missing TLS state"))?;
+        if tls.is_handshaking() {
+            return Err(WireError::Malformed("application data before TLS completion").into());
+        }
+        // Even after normal framing is complete, the last compressed block may
+        // still need flushing. TLS buffer pressure is relieved by flush_tls.
+        let complete = matches!(
+            compression.write_message_step(
+                message,
+                bytes,
+                &mut TlsPlaintextWriter(tls.writer()),
+                &mut self.sequence,
+                scope
+            )?,
+            Progress::Ready(())
+        );
+        match self.flush_tls(budget)? {
+            Step::Ready(()) if complete => Ok(Step::Ready(())),
+            Step::Ready(()) => Ok(Step::Control),
+            other => Ok(other),
+        }
+    }
+
+    fn receive_compressed(
+        &mut self,
+        message: &mut MessageReader,
+        budget: &mut IoBudget,
+        scope: &Arc<Scope>,
+    ) -> Result<Step<crate::memory::Buffer<u8>>, ChannelError> {
+        if self.tls.is_none() {
+            let compression = self
+                .compression
+                .as_mut()
+                .ok_or(WireError::Malformed("missing compression layer"))?;
+            return compression
+                .read_message_step(
+                    message,
+                    &mut self.transport.io(budget),
+                    &mut self.sequence,
+                    scope,
+                )
+                .map(|step| convert(step, Direction::Read))
+                .map_err(ChannelError::from);
+        }
+        for _ in 0..16 {
+            let tls = self
+                .tls
+                .as_mut()
+                .ok_or(WireError::Malformed("missing TLS state"))?;
+            let compression = self
+                .compression
+                .as_mut()
+                .ok_or(WireError::Malformed("missing compression layer"))?;
+            match compression.read_message_step(
+                message,
+                &mut tls.reader(),
+                &mut self.sequence,
+                scope,
+            )? {
                 Progress::Ready(bytes) => return Ok(Step::Ready(bytes)),
                 Progress::Yield => return Ok(Step::Control),
                 Progress::Pending => (),

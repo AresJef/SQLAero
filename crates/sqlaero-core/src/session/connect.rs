@@ -4,6 +4,7 @@ use crate::protocol::auth::{self, AuthError, AuthPath, AuthResponse, CachingSha2
 use crate::protocol::framing::{MAX_MESSAGE_PAYLOAD, MessageReader, MessageWriter, WireError};
 use crate::protocol::packets;
 use crate::transport::channel::{Channel, ChannelError, Step};
+use crate::transport::compression::{Negotiated, Options as CompressionOptions};
 use crate::transport::deadline::{Direction, IoBudget, TimeoutKind};
 use crate::transport::socket::{Transport, WaitStatus};
 use mysql_common::constants::{CapabilityFlags, StatusFlags};
@@ -51,6 +52,10 @@ pub struct ConnectParams {
     pub password: Zeroizing<Vec<u8>>,
     /// Optional initial database, selected in the authentication response.
     pub database: Option<String>,
+    /// Explicit compression permissions; Default permits raw transport only.
+    pub compression: CompressionOptions,
+    /// Whether one text command may contain several SQL statements.
+    pub multi_statements: bool,
     /// Explicitly resolved TLS policy; None means no TLS on this internal path.
     pub tls: Option<ConnectTls>,
     /// Optional trusted local RSA SPKI public-key file, validated even if unused.
@@ -157,6 +162,7 @@ pub struct Establish {
     key: Option<Arc<aws_lc_rs::rsa::OaepPublicEncryptingKey>>,
     metadata: Option<ServerMetadata>,
     capabilities: CapabilityFlags,
+    compression: Option<Negotiated>,
     nonce: [u8; 20],
 }
 
@@ -230,6 +236,7 @@ impl Establish {
             key,
             metadata: None,
             capabilities: CapabilityFlags::empty(),
+            compression: None,
             nonce: [0; 20],
         })
     }
@@ -417,6 +424,25 @@ impl Establish {
                         | CapabilityFlags::CLIENT_MULTI_RESULTS
                         | CapabilityFlags::CLIENT_PS_MULTI_RESULTS)
                         & greeting.capabilities());
+                let compression = self
+                    .params
+                    .compression
+                    .negotiate(greeting.capabilities())
+                    .map_err(ConnectError::Configuration)?;
+                self.capabilities |= compression.capabilities;
+                self.compression = Some(compression);
+                if self.params.multi_statements {
+                    if !greeting
+                        .capabilities()
+                        .contains(CapabilityFlags::CLIENT_MULTI_STATEMENTS)
+                    {
+                        return Err(ConnectError::Unsupported(
+                            "server does not support requested multi_statements",
+                        ));
+                    }
+                    self.capabilities
+                        .insert(CapabilityFlags::CLIENT_MULTI_STATEMENTS);
+                }
                 if self.params.database.is_some() {
                     self.capabilities
                         .insert(CapabilityFlags::CLIENT_CONNECT_WITH_DB);
@@ -467,6 +493,15 @@ impl Establish {
                             .ok_or(ConnectError::Configuration("missing server metadata"))?;
                         metadata.status = ok.status_flags();
                         metadata.auth_path = path;
+                        let compression = self.compression.ok_or(ConnectError::Configuration(
+                            "missing negotiated compression",
+                        ))?;
+                        if let Some(algorithm) = compression.algorithm {
+                            self.channel
+                                .as_mut()
+                                .ok_or(ConnectError::Configuration("missing channel"))?
+                                .enable_compression(algorithm, compression.zstd_level)?;
+                        }
                         self.phase = Phase::Finished;
                         return Ok(Step::Ready(Authenticated {
                             channel: self
@@ -517,6 +552,10 @@ impl Establish {
             usize::from(self.params.database.is_some()),
             b"caching_sha2_password".len(),
             1,
+            usize::from(
+                self.capabilities
+                    .contains(CapabilityFlags::CLIENT_ZSTD_COMPRESSION_ALGORITHM),
+            ),
         ];
         let length = lengths
             .into_iter()
@@ -547,6 +586,20 @@ impl Establish {
             .try_reserve_exact(length)
             .map_err(WireError::Allocation)?;
         response.serialize(&mut bytes);
+        // mysql_common 0.38.2 preserves the flag but does not serialize this
+        // MySQL handshake suffix. Keep its parser/builder for all other fields.
+        if self
+            .capabilities
+            .contains(CapabilityFlags::CLIENT_ZSTD_COMPRESSION_ALGORITHM)
+        {
+            bytes.push(
+                self.compression
+                    .ok_or(ConnectError::Configuration(
+                        "missing negotiated compression level",
+                    ))?
+                    .zstd_level,
+            );
+        }
         debug_assert_eq!(bytes.len(), length);
         debug_assert_eq!(response.collation(), 45);
         debug_assert_eq!(response.capabilities(), self.capabilities);
