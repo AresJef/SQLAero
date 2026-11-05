@@ -195,6 +195,14 @@ impl CursorHandle {
             Self::StreamingDictionary(value) => value.borrow(py).retire(),
         }
     }
+    pub(crate) fn finish_response(&self, py: Python<'_>, budget: &IoBudget) -> PyResult<()> {
+        match self {
+            Self::Tuple(value) => value.borrow(py).finish_response(py, budget),
+            Self::Dictionary(value) => value.borrow(py).finish_response(py, budget),
+            Self::StreamingTuple(value) => value.borrow(py).finish_response(py, budget),
+            Self::StreamingDictionary(value) => value.borrow(py).finish_response(py, budget),
+        }
+    }
 }
 impl CursorCore {
     fn hold_stream(&self, py: Python<'_>) -> PyResult<Option<HeldStream<'_>>> {
@@ -333,11 +341,20 @@ impl CursorCore {
 
     fn next_stream(&self, py: Python<'_>) -> PyResult<Option<bool>> {
         let Some(mut held) = self.hold_stream(py)? else {
+            self.reader.end_set(py)?;
             return Ok(None);
         };
         let stream = held.get(py)?;
         let connection = self.connection.borrow(py);
         let result = (|| {
+            if connection.native.is_closed() && !stream.finished() {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::SessionState,
+                    "Cannot switch to an unfinished streaming result because its Connection is closed; complete local results remain independently readable",
+                ));
+            }
+            self.reader.end_set(py)?;
             self.drain_current(py, &connection, stream)?;
             stream.rows = None;
             if stream.pending.is_none() && stream.finished() {
@@ -388,6 +405,9 @@ impl CursorCore {
             }
             Ok(())
         })();
+        if let Some(stream) = &stream {
+            self.results(py)?.batch = stream.batch;
+        }
         self.reader.retire();
         let old = {
             let mut state = self.results(py)?;
@@ -396,6 +416,51 @@ impl CursorCore {
         };
         drop(old);
         drop(stream);
+        result
+    }
+
+    pub(crate) fn finish_response(&self, py: Python<'_>, enclosing: &IoBudget) -> PyResult<()> {
+        // Buffered/local reads do not acquire a network-cleanup operation and
+        // therefore cannot block a legal transaction command on their own.
+        let needs_wire = self
+            .results(py)?
+            .stream
+            .as_ref()
+            .is_some_and(|stream| !stream.finished());
+        if !needs_wire {
+            return Ok(());
+        }
+        let _operation = self.reader.operation(py)?;
+        let Some(mut held) = self.hold_stream(py)? else {
+            return Ok(());
+        };
+        let stream = held.get(py)?;
+        let connection = self.connection.borrow(py);
+        if connection.native.is_closed() || stream.finished() {
+            return Ok(());
+        }
+        if let Err(error) = stream.budget.cap_total(enclosing) {
+            stream.abort(&connection);
+            return Err(errors::timeout(py, error));
+        }
+        let result = (|| {
+            self.drain_current(py, &connection, stream)?;
+            stream.rows = None;
+            while stream.pending.is_some() || !stream.finished() {
+                let event = stream.advance(py, &connection, usize::MAX)?;
+                if matches!(
+                    event.value,
+                    sqlaero_core::result::text::StreamEvent::Header(_)
+                ) {
+                    stream.discard_current(py)?;
+                }
+            }
+            Ok(())
+        })();
+        self.results(py)?.batch = stream.batch;
+        if let Err(error) = &result {
+            self.save_stream_failure(py, error)?;
+        }
         result
     }
 
@@ -600,13 +665,20 @@ impl CursorCore {
     /// already active Reader operation retains and releases its own data.
     pub(crate) fn retire(&self) {
         self.reader.retire();
-        let old = match self.results.lock() {
-            Ok(mut state) => {
-                state.failure_note = None;
-                std::mem::take(&mut state.pending)
-            }
-            Err(error) => std::mem::take(&mut error.into_inner().pending),
+        let old = {
+            let mut state = match self.results.lock() {
+                Ok(state) => state,
+                Err(error) => error.into_inner(),
+            };
+            (
+                state.failure_note.take(),
+                std::mem::take(&mut state.pending),
+                state.stream.take(),
+            )
         };
+        // An idle unread stream retires its wire owner here. If another Reader
+        // operation owns it, HeldStream observes retirement on return instead.
+        // Python diagnostic objects and native buffers are dropped unlocked.
         drop(old);
     }
 
@@ -1096,7 +1168,7 @@ macro_rules! cursor_api {
                 if !self.results(py)?.started {return Err(errors::client(py,ClientErrorCode::SessionState,"Cursor has no result sequence; execute a command before nextset"));}
                 let next=self.results(py)?.pending.take_next();
                 if let Some(set)=next { self.publish_set(py,set)?; return Ok(Some(true)); }
-                self.reader.end_set(py)?;
+                if !$streaming {self.reader.end_set(py)?;}
                 let (failed,snapshot)={let state=self.results(py)?;(state.failed,state.failure_note.as_ref().map(std::sync::Arc::clone))};
                 if let Some(snapshot)=snapshot {return Err(errors::at(py,snapshot.restore(py),"cursor.nextset"));}
                 if failed {return Err(errors::client(py,ClientErrorCode::SessionState,

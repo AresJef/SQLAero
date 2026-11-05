@@ -125,6 +125,30 @@ impl IoBudget {
         Ok(())
     }
 
+    /// Limit remaining work by an enclosing operation's original deadline.
+    /// Spent time and this stream's directional timeout snapshot are retained;
+    /// transaction cleanup receives no fresh total or read/write allowance.
+    ///
+    /// # Errors
+    /// Returns the actually expired budget or an unrepresentable total bound.
+    pub fn cap_total(&mut self, enclosing: &Self) -> Result<(), TimeoutKind> {
+        let now = Instant::now();
+        let own = self.total_remaining(now)?;
+        let outer = enclosing.total_remaining(now)?;
+        let remaining = match (own, outer) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        if let Some(remaining) = remaining {
+            self.total = Some(
+                now.saturating_duration_since(self.started)
+                    .checked_add(remaining)
+                    .ok_or(self.total_kind)?,
+            );
+        }
+        Ok(())
+    }
+
     fn total_remaining(&self, now: Instant) -> Result<Option<Duration>, TimeoutKind> {
         self.total
             .map(|total| {
@@ -178,6 +202,54 @@ impl IoBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enclosing_total_caps_without_refreshing_spent_or_directional_time() {
+        let now = Instant::now();
+        let mut stream = IoBudget::starting_at(
+            now - Duration::from_secs(2),
+            TimeoutKind::Operation,
+            Some(Duration::from_secs(10)),
+            Some(Duration::from_millis(100)),
+            None,
+        );
+        stream.read_wait = Some(now - Duration::from_millis(40));
+        let outer = IoBudget::starting_at(
+            now,
+            TimeoutKind::Operation,
+            Some(Duration::from_secs(1)),
+            None,
+            None,
+        );
+        stream.cap_total(&outer).unwrap();
+        assert_eq!(stream.started, now - Duration::from_secs(2));
+        assert_eq!(stream.read, Some(Duration::from_millis(100)));
+        assert_eq!(stream.read_wait, Some(now - Duration::from_millis(40)));
+        assert!(stream.total_remaining(now).unwrap().unwrap() <= Duration::from_secs(1));
+        assert_eq!(stream.check_io(Direction::Write), Ok(()));
+    }
+
+    #[test]
+    fn expired_enclosing_budget_does_not_mutate_or_extend_the_old_stream() {
+        let now = Instant::now();
+        let mut stream = IoBudget::starting_at(
+            now,
+            TimeoutKind::Operation,
+            Some(Duration::from_secs(10)),
+            None,
+            None,
+        );
+        let outer = IoBudget::starting_at(
+            now - Duration::from_secs(2),
+            TimeoutKind::Operation,
+            Some(Duration::from_secs(1)),
+            None,
+            None,
+        );
+        assert_eq!(stream.cap_total(&outer), Err(TimeoutKind::Operation));
+        assert_eq!(stream.started, now);
+        assert_eq!(stream.total, Some(Duration::from_secs(10)));
+    }
 
     #[test]
     fn excluding_user_idle_retains_consumed_total_and_no_progress_time() {

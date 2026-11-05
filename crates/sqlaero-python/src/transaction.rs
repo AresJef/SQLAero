@@ -284,6 +284,15 @@ impl Transaction {
         let mut cleanup_detail = String::new();
         let finish = (|| {
             let mut budget = connection.runtime(py)?.timeouts.operation();
+            if let Some(cursor) = &cursor
+                && let Err(error) = cursor.finish_response(py, &budget)
+            {
+                if let Some(existing) = &primary {
+                    errors::additional(py, existing, error, "transaction.drain");
+                } else {
+                    primary = Some(errors::at(py, error, "transaction.drain"));
+                }
+            }
             let mut lease = connection
                 .native
                 .try_command()
