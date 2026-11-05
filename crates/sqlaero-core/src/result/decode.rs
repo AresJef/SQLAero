@@ -405,7 +405,20 @@ pub fn date(data: &[u8]) -> Result<Date, ContentError> {
     let year = digits(&data[..4]).ok_or(error)? as i32;
     let month = digits(&data[5..7]).ok_or(error)? as u8;
     let day = digits(&data[8..]).ok_or(error)? as u8;
-    if year == 0 || !(1..=12).contains(&month) || day == 0 || day > month_days(year, month) {
+    date_components(year, month, day)
+}
+
+/// Validate actual native calendar components using the text decoder's policy.
+///
+/// # Errors
+/// Rejects incomplete calendars or years outside Python's supported range.
+pub fn date_components(year: i32, month: u8, day: u8) -> Result<Date, ContentError> {
+    let error = ContentError("DATE value is not a representable Gregorian date");
+    if !(1..=9999).contains(&year)
+        || !(1..=12).contains(&month)
+        || day == 0
+        || day > month_days(year, month)
+    {
         return Err(error);
     }
     Ok(Date { year, month, day })
@@ -435,18 +448,45 @@ pub fn datetime(data: &[u8]) -> Result<(Date, Clock), ContentError> {
     let minute = digits(&data[14..16]).ok_or(error)? as u8;
     let second = digits(&data[17..19]).ok_or(error)? as u8;
     let microsecond = fraction(&data[19..]).ok_or(error)?;
-    if hour > 23 || minute > 59 || second > 59 {
-        return Err(error);
-    }
+    Ok((date, clock_components(hour, minute, second, microsecond)?))
+}
+
+/// Validate native DATETIME components without a temporary formatted string.
+///
+/// # Errors
+/// Uses exactly the shared calendar, clock and microsecond content rules.
+pub fn datetime_components(
+    year: i32,
+    month: u8,
+    day: u8,
+    hour: u8,
+    minute: u8,
+    second: u8,
+    microsecond: u32,
+) -> Result<(Date, Clock), ContentError> {
     Ok((
-        date,
-        Clock {
-            hour,
-            minute,
-            second,
-            microsecond,
-        },
+        date_components(year, month, day)?,
+        clock_components(hour, minute, second, microsecond)?,
     ))
+}
+
+fn clock_components(
+    hour: u8,
+    minute: u8,
+    second: u8,
+    microsecond: u32,
+) -> Result<Clock, ContentError> {
+    if hour > 23 || minute > 59 || second > 59 || microsecond > 999_999 {
+        return Err(ContentError(
+            "DATETIME/TIMESTAMP value is not a representable date and clock",
+        ));
+    }
+    Ok(Clock {
+        hour,
+        minute,
+        second,
+        microsecond,
+    })
 }
 
 /// Exact signed TIME microseconds, including negative and cross-day durations.
