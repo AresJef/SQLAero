@@ -1,6 +1,7 @@
 //! Python input and output boundary for SQLAero's native MySQL core.
 
 mod binding;
+mod compression;
 mod config;
 mod connection;
 mod cursor;
@@ -439,6 +440,8 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<metadata::Columns>()?;
     module.add_class::<metadata::ColumnInfo>()?;
     module.add_class::<config::Ssl>()?;
+    module.add_class::<compression::Compression>()?;
+    module.add_function(wrap_pyfunction!(compression::_parse_compression, module)?)?;
     module.add_class::<tls_info::TlsInfo>()?;
     module.add_class::<tls_info::TlsCertificate>()?;
     module.add_class::<connection::Connection>()?;
