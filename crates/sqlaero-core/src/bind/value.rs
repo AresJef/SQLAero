@@ -98,6 +98,32 @@ pub trait ValueSink {
     /// # Errors
     /// Returns the writer's actual failure without sending any request.
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), Self::Error>;
+
+    /// Begin one chunked text value. `utf8_len` is the original UTF-8 size,
+    /// not a promise about the encoded byte length in another client charset.
+    /// # Errors
+    /// Returns actual preparation, bound or allocation failure.
+    fn text_start(&mut self, utf8_len: usize, context: &Context) -> Result<(), Self::Error>;
+    /// Encode one complete-character fragment of the same logical text value.
+    /// # Errors
+    /// Returns the first encoding or destination failure.
+    fn text_fragment(&mut self, text: &str, context: &Context) -> Result<(), Self::Error>;
+    /// Finish exactly one text value without introducing another parameter.
+    /// # Errors
+    /// Returns actual finalization or destination failure.
+    fn text_end(&mut self, context: &Context) -> Result<(), Self::Error>;
+    /// Begin one exact-length chunked binary value.
+    /// # Errors
+    /// Returns actual preparation, bound or allocation failure.
+    fn bytes_start(&mut self, length: usize, context: &Context) -> Result<(), Self::Error>;
+    /// Write one bounded byte fragment of the same logical binary value.
+    /// # Errors
+    /// Returns actual destination or allocation failure.
+    fn bytes_fragment(&mut self, bytes: &[u8], context: &Context) -> Result<(), Self::Error>;
+    /// Finish exactly one binary value without introducing another parameter.
+    /// # Errors
+    /// Returns actual finalization or destination failure.
+    fn bytes_end(&mut self, context: &Context) -> Result<(), Self::Error>;
 }
 
 /// Native text writing failure, retaining the original typed source.
@@ -177,6 +203,36 @@ impl ValueSink for TextSink<'_> {
         }
         Ok(())
     }
+
+    fn text_start(&mut self, _: usize, context: &Context) -> Result<(), ValueError> {
+        writer::append(self.output, b"'", context.limit)?;
+        Ok(())
+    }
+    fn text_fragment(&mut self, text: &str, context: &Context) -> Result<(), ValueError> {
+        context.codec.literal_fragment(
+            text,
+            self.output,
+            context.no_backslash_escapes,
+            context.limit,
+        )?;
+        Ok(())
+    }
+    fn text_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        writer::append(self.output, b"'", context.limit)?;
+        Ok(())
+    }
+    fn bytes_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError> {
+        writer::binary_start(self.output, length, context.limit)?;
+        Ok(())
+    }
+    fn bytes_fragment(&mut self, bytes: &[u8], context: &Context) -> Result<(), ValueError> {
+        writer::binary_fragment(self.output, bytes, context.limit)?;
+        Ok(())
+    }
+    fn bytes_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        writer::binary_end(self.output, context.limit)?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -230,6 +286,24 @@ mod tests {
                 self.0.extend_from_slice(&value.to_le_bytes());
                 Ok(())
             }
+            fn text_start(&mut self, _: usize, _: &Context) -> Result<(), Self::Error> {
+                Err("integer-only contract test")
+            }
+            fn text_fragment(&mut self, _: &str, _: &Context) -> Result<(), Self::Error> {
+                Err("integer-only contract test")
+            }
+            fn text_end(&mut self, _: &Context) -> Result<(), Self::Error> {
+                Err("integer-only contract test")
+            }
+            fn bytes_start(&mut self, _: usize, _: &Context) -> Result<(), Self::Error> {
+                Err("integer-only contract test")
+            }
+            fn bytes_fragment(&mut self, _: &[u8], _: &Context) -> Result<(), Self::Error> {
+                Err("integer-only contract test")
+            }
+            fn bytes_end(&mut self, _: &Context) -> Result<(), Self::Error> {
+                Err("integer-only contract test")
+            }
         }
         let mut parameter = SignedParameter(Vec::new());
         parameter.write(ValueRef::Signed(-17), &context()).unwrap();
@@ -237,5 +311,36 @@ mod tests {
             parameter.0,
             [0xef, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff]
         );
+    }
+
+    #[test]
+    fn fragments_keep_one_literal_and_both_backslash_modes() {
+        for no_backslash_escapes in [false, true] {
+            let context = Context {
+                no_backslash_escapes,
+                ..context()
+            };
+            let mut text = Vec::new();
+            let mut sink = TextSink::new(&mut text);
+            sink.text_start(7, &context).unwrap();
+            sink.text_fragment("中'", &context).unwrap();
+            sink.text_fragment("é", &context).unwrap();
+            sink.text_end(&context).unwrap();
+            assert_eq!(
+                text,
+                if no_backslash_escapes {
+                    "'中''é'".as_bytes()
+                } else {
+                    "'中\\'é'".as_bytes()
+                }
+            );
+            text.clear();
+            let mut sink = TextSink::new(&mut text);
+            sink.bytes_start(3, &context).unwrap();
+            sink.bytes_fragment(&[0, 255], &context).unwrap();
+            sink.bytes_fragment(&[39], &context).unwrap();
+            sink.bytes_end(&context).unwrap();
+            assert_eq!(text, b"CAST(X'00FF27' AS BINARY)");
+        }
     }
 }
