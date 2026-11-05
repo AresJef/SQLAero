@@ -3,7 +3,7 @@
 use sqlaero_core::charset;
 use sqlaero_core::protocol::CapabilityFlags;
 use sqlaero_core::protocol::local_infile::{Source, UploadProgress};
-use sqlaero_core::result::text::{Response, ResultError};
+use sqlaero_core::result::text::{Response, ResultError, StreamEvent};
 use sqlaero_core::session::connect::{
     Authenticated, ConnectParams, ConnectTls, Endpoint, Establish,
 };
@@ -14,6 +14,7 @@ use sqlaero_core::transport::deadline::{IoBudget, TimeoutKind};
 use sqlaero_core::transport::{compression, tls};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
+use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -313,6 +314,41 @@ fn local_cases(label: &str) {
                 eof_flushed: true
             }
         );
+        let data = LocalFile::new(b"1\tstreamed\n2\tstreamed\n");
+        let mut operation = budget();
+        let source = Source::open(&data.path).unwrap();
+        operation.check().unwrap();
+        let mut job = Query::new(b"\x03LOAD DATA LOCAL INFILE 'stream-source' INTO TABLE c_local_data CHARACTER SET utf8mb4".to_vec(), connection.capabilities, 4096, LIMIT, LIMIT)
+            .unwrap().with_local_infile(source).unwrap().with_streaming().unwrap();
+        loop {
+            match job
+                .advance_stream(
+                    &mut connection.channel,
+                    &mut operation,
+                    NonZeroUsize::new(1).unwrap(),
+                )
+                .unwrap()
+            {
+                Step::Control => (),
+                Step::Wait(_) => panic!("Query drives concrete readiness"),
+                Step::Ready(StreamEvent::End {
+                    tail,
+                    completion,
+                    total_rows,
+                    metadata_status,
+                }) => {
+                    assert!(tail.is_none());
+                    assert_eq!(total_rows, None);
+                    assert_eq!(metadata_status, None);
+                    assert_eq!(completion.affected_rows(), 2);
+                    assert!(job.is_finished());
+                    assert!(job.at_stream_boundary());
+                    assert!(job.local_progress().unwrap().eof_flushed);
+                    break;
+                }
+                Step::Ready(_) => panic!("LOAD must not invent a row header or row batch"),
+            }
+        }
         sql(&mut connection, "DO 1").unwrap();
     }
 }

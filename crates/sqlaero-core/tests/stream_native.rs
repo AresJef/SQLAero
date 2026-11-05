@@ -257,6 +257,50 @@ fn stream(
     (headers, ends)
 }
 
+fn short_tail(connection: &mut Authenticated, request: Vec<u8>, expected: &[&[i64]]) {
+    let mut job = Query::new(request, connection.capabilities, LIMIT, LIMIT, LIMIT)
+        .unwrap()
+        .with_streaming()
+        .unwrap();
+    let mut budget = budget();
+    let mut header = false;
+    loop {
+        match job
+            .advance_stream(
+                &mut connection.channel,
+                &mut budget,
+                NonZeroUsize::new(3).unwrap(),
+            )
+            .unwrap()
+        {
+            Step::Control => (),
+            Step::Wait(_) => panic!("Query drives concrete readiness"),
+            Step::Ready(StreamEvent::Header(_)) => {
+                assert!(!header);
+                header = true;
+                assert!(job.take_confirmation().is_none());
+            }
+            Step::Ready(StreamEvent::Rows(_)) => {
+                panic!("two short rows belong to the actual End tail")
+            }
+            Step::Ready(StreamEvent::End {
+                tail, total_rows, ..
+            }) => {
+                assert!(header);
+                let rows = tail.expect("short final batch");
+                assert_eq!(rows.row_count, 2);
+                assert_eq!(total_rows, Some(2));
+                let mut seen = 0;
+                check_rows(&rows, expected, &mut seen);
+                assert_eq!(seen, 2);
+                assert!(job.is_finished());
+                assert!(job.take_confirmation().is_some());
+                break;
+            }
+        }
+    }
+}
+
 #[test]
 #[ignore = "requires C's two owned MySQL fixtures; run with one test thread"]
 fn real_stream_text_binary_and_multiple_sets_share_the_original_channel() {
@@ -274,6 +318,11 @@ fn real_stream_text_binary_and_multiple_sets_share_the_original_channel() {
             );
             assert_eq!(ends.len(), 1);
             assert_eq!(ends[0].0, Some(2));
+            short_tail(
+                &mut connection,
+                b"\x03SELECT 1 AS n UNION ALL SELECT 2".to_vec(),
+                &[&[1], &[2]],
+            );
             let statement = prepare(&mut connection, "SELECT ? AS n UNION ALL SELECT ?").unwrap();
             let mut params = Parameters::new(statement.id, 2, LIMIT).unwrap();
             params.write(ValueRef::Signed(3), &context()).unwrap();
@@ -286,6 +335,10 @@ fn real_stream_text_binary_and_multiple_sets_share_the_original_channel() {
             );
             assert_eq!(ends.len(), 1);
             assert_eq!(ends[0].0, Some(2));
+            let mut params = Parameters::new(statement.id, 2, LIMIT).unwrap();
+            params.write(ValueRef::Signed(3), &context()).unwrap();
+            params.write(ValueRef::Signed(4), &context()).unwrap();
+            short_tail(&mut connection, params.finish().unwrap(), &[&[3], &[4]]);
             close(&mut connection, statement);
             sql(&mut connection, "DROP PROCEDURE IF EXISTS c_stream_sets").unwrap();
             sql(&mut connection, "CREATE PROCEDURE c_stream_sets(IN n INT) BEGIN SELECT n AS n; SELECT n+1 AS n; END").unwrap();
