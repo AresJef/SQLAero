@@ -22,6 +22,12 @@ pub enum TemplateError {
         /// Zero-based original character of the prohibited directive.
         offset: usize,
     },
+    /// Native MySQL markers are not part of the public binding interface.
+    #[error("raw '?' binding is not supported at SQL character {offset}; use %s")]
+    RawQuestion {
+        /// Zero-based original Unicode character of the raw marker.
+        offset: usize,
+    },
     /// A native allocation or final request-bound failure.
     #[error(transparent)]
     Wire(#[from] WireError),
@@ -74,6 +80,25 @@ impl Template {
         self.merge_tokens
             .take()
             .and_then(|tokens| super::batch::recognize(&tokens, &self.source))
+    }
+
+    /// Start bounded native PREPARE assembly from the same lexical edits.
+    /// Only actual value pieces become question marks; fixed bytes and quoted
+    /// percent/question text are never scanned again.
+    ///
+    /// # Errors
+    /// Returns a command-byte capacity or native allocation failure.
+    pub fn prepare_request(&self, limit: usize) -> Result<PrepareWriter<'_>, WireError> {
+        let mut output = Vec::new();
+        writer::append(&mut output, &[0x16], limit)?;
+        Ok(PrepareWriter {
+            template: self,
+            piece: 0,
+            offset: 0,
+            output,
+            limit,
+            finished: false,
+        })
     }
 
     /// Encoded source length used by range-based request assembly.
@@ -133,6 +158,73 @@ impl Template {
     }
 }
 
+/// Bounded native template mapping. The host checks signals/deadlines between
+/// advances, and receives one owned complete COM_STMT_PREPARE request at end.
+pub struct PrepareWriter<'template> {
+    template: &'template Template,
+    piece: usize,
+    offset: usize,
+    output: Vec<u8>,
+    limit: usize,
+    finished: bool,
+}
+impl PrepareWriter<'_> {
+    /// Copy at most 256 KiB of final bytes without exposing a partial request.
+    /// Byte copies may stop within a character because all bytes remain owned
+    /// and are not decoded or sent until the complete mapping is returned.
+    ///
+    /// # Errors
+    /// Returns a consumed-job, complete request capacity or allocation failure.
+    pub fn advance(&mut self) -> Result<Option<Vec<u8>>, WireError> {
+        if self.finished {
+            return Err(WireError::Malformed("prepare writer already consumed"));
+        }
+        let result = self.advance_inner();
+        if result.is_err() {
+            self.finished = true;
+        }
+        result
+    }
+    fn advance_inner(&mut self) -> Result<Option<Vec<u8>>, WireError> {
+        let mut work = 0;
+        while work < 256 * 1024 {
+            let Some(piece) = self.template.pieces.get(self.piece) else {
+                self.finished = true;
+                return Ok(Some(std::mem::take(&mut self.output)));
+            };
+            match piece {
+                Piece::Value(_) => {
+                    writer::append(&mut self.output, b"?", self.limit)?;
+                    self.piece += 1;
+                    work += 1;
+                }
+                Piece::Bytes(range) => {
+                    let start = range.start + self.offset;
+                    let end = range.end.min(start.saturating_add(256 * 1024 - work));
+                    writer::append(
+                        &mut self.output,
+                        &self.template.source[start..end],
+                        self.limit,
+                    )?;
+                    work += end - start;
+                    if end == range.end {
+                        self.piece += 1;
+                        self.offset = 0;
+                    } else {
+                        self.offset += end - start;
+                    }
+                }
+            }
+        }
+        if self.piece == self.template.pieces.len() {
+            self.finished = true;
+            Ok(Some(std::mem::take(&mut self.output)))
+        } else {
+            Ok(None)
+        }
+    }
+}
+
 /// A bounded native lexical preparation job. It owns only source bytes and
 /// fragment ranges; the host checks signals/deadlines between advance calls.
 pub struct Compiler {
@@ -149,6 +241,7 @@ pub struct Compiler {
     finished: bool,
     tokens: Option<Vec<super::batch::Token>>,
     merge_safe: bool,
+    native_markers: bool,
 }
 #[derive(Clone, Copy)]
 enum Lex {
@@ -185,6 +278,7 @@ impl Compiler {
             finished: false,
             tokens: None,
             merge_safe: true,
+            native_markers: false,
         }
     }
 
@@ -196,6 +290,20 @@ impl Compiler {
         compiler.tokens = Some(Vec::new());
         compiler
     }
+    /// Share the ordinary lexer while rejecting active raw native markers.
+    /// Public positional directives remain %s and retain their exact ranges.
+    #[must_use]
+    pub fn for_prepared(
+        source: Vec<u8>,
+        codec: Codec,
+        no_backslash: bool,
+        ansi_quotes: bool,
+    ) -> Self {
+        let mut compiler = Self::new(source, codec, no_backslash, ansi_quotes);
+        compiler.native_markers = true;
+        compiler
+    }
+
     /// Scan at most 256 KiB of source plus one complete encoded character.
     /// None yields to the host; Some commits the finished immutable template.
     /// Unterminated quotes/comments do not create an extra SQL grammar check.
@@ -346,6 +454,14 @@ impl Compiler {
                                 self.state = Lex::Block;
                                 self.position += 2;
                             }
+                        }
+                        b'?' if self.native_markers => {
+                            let offset = self.source_position(position)?;
+                            return Err(if self.special {
+                                TemplateError::CommentBinding { offset }
+                            } else {
+                                TemplateError::RawQuestion { offset }
+                            });
                         }
                         b'%' => {
                             if self.source.get(position + 1) == Some(&b's') {

@@ -186,3 +186,79 @@ fn complete_multigroup_input_is_indivisible_at_the_hard_limit() {
     assert!(blocks.push(b"(333),(444)").is_err());
     assert_eq!(blocks.rows(), 0);
 }
+
+fn native_template(
+    sql: &str,
+    no_backslash: bool,
+    ansi: bool,
+) -> Result<sqlaero_core::bind::template::Template, sqlaero_core::bind::template::TemplateError> {
+    let codec = Codec::new(resolve(None, None).unwrap().charset);
+    let mut compiler = Compiler::for_prepared(sql.as_bytes().to_vec(), codec, no_backslash, ansi);
+    loop {
+        if let Some(template) = compiler.advance()? {
+            return Ok(template);
+        }
+    }
+}
+
+#[test]
+fn prepared_markers_share_the_original_lexer_and_percent_edit_ranges() {
+    let sql = "SELECT %s, '中?%s%%', `?%s`, \"?%s\", 10%%3 /* ? %s %% */ , %s # ? %s %%";
+    for ansi in [false, true] {
+        let template = native_template(sql, false, ansi).unwrap();
+        assert_eq!(template.slots(), 2);
+        let mut writer = template.prepare_request(4096).unwrap();
+        let request = loop {
+            if let Some(request) = writer.advance().unwrap() {
+                break request;
+            }
+        };
+        assert_eq!(
+            request,
+            "\x16SELECT ?, '中?%s%%', `?%s`, \"?%s\", 10%3 /* ? %s %% */ , ? # ? %s %%".as_bytes()
+        );
+        assert!(writer.advance().is_err());
+    }
+}
+
+#[test]
+fn prepared_active_raw_question_is_rejected_at_original_unicode_position() {
+    use sqlaero_core::bind::template::TemplateError;
+    for sql in ["SELECT '中', ?", "SELECT %s, ?", "SELECT '😀', ?"] {
+        let expected = sql.chars().position(|point| point == '?').unwrap();
+        assert!(
+            matches!(native_template(sql, false, false), Err(TemplateError::RawQuestion { offset }) if offset == expected),
+            "{sql}"
+        );
+    }
+    assert!(matches!(
+        native_template("SELECT /*! ? */ 1", false, false),
+        Err(TemplateError::CommentBinding { .. })
+    ));
+    assert!(native_template("SELECT '?' /* ? */ # ?", false, false).is_ok());
+}
+
+#[test]
+fn prepared_mapping_yields_between_large_native_copies_and_checks_full_limit() {
+    let sql = format!("SELECT '{}',%s", "x".repeat(600_000));
+    let template = native_template(&sql, false, false).unwrap();
+    let expected = format!("\x16SELECT '{}',?", "x".repeat(600_000)).into_bytes();
+    let mut writer = template.prepare_request(expected.len()).unwrap();
+    let mut yields = 0;
+    let actual = loop {
+        if let Some(request) = writer.advance().unwrap() {
+            break request;
+        }
+        yields += 1;
+    };
+    assert!(yields >= 2);
+    assert_eq!(actual, expected);
+    let mut writer = template.prepare_request(expected.len() - 1).unwrap();
+    loop {
+        match writer.advance() {
+            Err(_) => break,
+            Ok(None) => (),
+            Ok(Some(_)) => panic!("oversized prepare succeeded"),
+        }
+    }
+}
