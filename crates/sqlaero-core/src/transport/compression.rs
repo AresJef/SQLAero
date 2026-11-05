@@ -17,6 +17,7 @@ use outbound::Outbound;
 /// classic framing. Its sequence is independent of the normal packet sequence.
 pub struct Codec {
     algorithm: Algorithm,
+    zstd_level: u8,
     sequence: u8,
     inbound: Inbound,
     outbound: Outbound,
@@ -36,6 +37,7 @@ impl Codec {
         }
         Ok(Self {
             algorithm,
+            zstd_level,
             sequence: 0,
             inbound: Inbound::new(algorithm)?,
             outbound: Outbound::new(algorithm, zstd_level)?,
@@ -48,6 +50,19 @@ impl Codec {
     #[must_use]
     pub const fn algorithm(&self) -> Algorithm {
         self.algorithm
+    }
+
+    /// Actual immutable single-algorithm configuration, without reparsing user
+    /// input or constructing a Python object. The level applies only to zstd.
+    #[must_use]
+    pub const fn snapshot(&self) -> Options {
+        Options {
+            algorithms: Algorithms(match self.algorithm {
+                Algorithm::Zlib => 1,
+                Algorithm::Zstd => 2,
+            }),
+            zstd_level: self.zstd_level,
+        }
     }
 
     /// Current Zstandard encoder/decoder context sizes reported by the frozen
@@ -577,6 +592,11 @@ mod tests {
             let input = vec![0x5a; 1_000_000];
             let mut wire = Vec::new();
             let mut sender = Codec::new(algorithm, 3).unwrap();
+            assert_eq!(
+                sender.snapshot().algorithms().names().collect::<Vec<_>>(),
+                [algorithm.name()]
+            );
+            assert_eq!(sender.snapshot().zstd_level(), 3);
             sender.start_command().unwrap();
             let mut ordinary = Sequence::default();
             send(&mut sender, &input, &mut wire, &mut ordinary, &scope);
