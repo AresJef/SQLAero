@@ -391,6 +391,53 @@ macro_rules! cursor_api {
     ($(($name:ident,$set:ident,$doc:literal)),* $(,)?) => {
         #[pymethods]
         impl Cursor {
+            /// Project values through Connection.escape without executing SQL
+            /// or changing this Cursor, even after Cursor or Connection close.
+            /// many and itemize must be exact bool; returned fragments are str.
+            #[pyo3(signature=(data,*,many=Argument::default(),itemize=Argument::default()))]
+            #[pyo3(text_signature="($self, data, *, many=False, itemize=True)")]
+            fn escape<'py>(&self,py:Python<'py>,data:&Bound<'py,PyAny>,many:Argument<'_>,itemize:Argument<'_>)->PyResult<Bound<'py,PyAny>> {
+                self.connection.borrow(py).escape(py,data,many,itemize)
+                    .map_err(|error|errors::at(py,error,"cursor.escape"))
+            }
+            /// Preview every actual text request without sending SQL, advancing
+            /// results or claiming execution. One request returns str; multiple
+            /// requests return list[str] in send order. The last confirmed
+            /// encoding/mode and logical send limit are used even while busy or
+            /// closed. No operation timeout or result-memory quota is consumed.
+            /// Unrepresentable lossless text raises ValueError; omitted args
+            /// and an explicit None retain their normal execute meanings.
+            #[pyo3(signature=(sql,args=Argument::default(),*,many=Argument::default(),itemize=Argument::default()))]
+            #[pyo3(text_signature="($self, sql, args=..., *, many=False, itemize=True)")]
+            fn mogrify<'py>(&self,py:Python<'py>,sql:&Bound<'py,PyAny>,args:Argument<'py>,many:Argument<'_>,itemize:Argument<'_>)->PyResult<Bound<'py,PyAny>> {
+                (|| {
+                    let connection=self.connection.borrow(py);
+                    let reference=connection.auxiliary_context(py)?;
+                    let many=many.0.as_ref().map_or(Ok(false),|value|config::boolean(value,"many"))?;
+                    let itemize=itemize.0.as_ref().map_or(Ok(true),|value|config::boolean(value,"itemize"))?;
+                    let sql=sql.cast::<PyString>().map_err(|_|errors::builtin_message::<pyo3::exceptions::PyTypeError>(py,"sql must be str; already encoded bytes are not accepted"))?;
+                    let budget=IoBudget::new(sqlaero_core::transport::deadline::TimeoutKind::Operation,None,None,None);
+                    let types=connection.types.borrow(py);
+                    let mut planner=binding::Planner::new(sql,args.0.as_ref(),many,itemize,binding::PlanMode::Text,&types,&budget)?;
+                    let mut first=None;
+                    let mut output:Option<Bound<'py,pyo3::types::PyList>>=None;
+                    while let Some(request)=planner.next(py,&reference.binding,reference.ansi_quotes,&budget)? {
+                        let text=request.bytes.get(1..).ok_or_else(||errors::client(py,ClientErrorCode::InternalState,"SQL preview produced no command payload"))?;
+                        let value=binding::display(py,text,reference.binding.codec)?;
+                        if let Some(output)=&output { output.append(value)?; }
+                        else if let Some(previous)=first.take() {
+                            let list=pyo3::types::PyList::new(py,[previous,value])?;
+                            output=Some(list);
+                        } else { first=Some(value); }
+                        input::check(py,&budget)?;
+                    }
+                    match (output,first) {
+                        (Some(output),_)=>Ok(output.into_any()),
+                        (_,Some(first))=>Ok(first.into_any()),
+                        _=>Err(errors::client(py,ClientErrorCode::InternalState,"SQL preview produced no logical request")),
+                    }
+                })().map_err(|error|errors::at(py,error,"cursor.mogrify"))
+            }
             $(#[getter] #[doc=$doc]
             fn $name(&self,py:Python<'_>)->PyResult<bool>{Ok(self.settings(py)?.options.$name)}
             #[setter] fn $set(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()> {

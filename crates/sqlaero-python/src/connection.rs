@@ -331,6 +331,23 @@ impl Connection {
         let value = self.execution_context(py)?;
         Ok((value.binding, value.ansi_quotes, value.metadata))
     }
+    /// Copy historical auxiliary facts without acquiring command ownership or
+    /// consulting live state. This reference cannot authorize SQL execution.
+    pub(crate) fn auxiliary_context(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<sqlaero_core::session::state::ExecutionContext> {
+        self.native
+            .auxiliary_reference()
+            .map_err(|error| errors::access(py, error))?
+            .ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::SessionState,
+                    "No completely confirmed encoding and SQL-mode reference is available for local SQL projection",
+                )
+            })
+    }
     pub(crate) fn query_job(
         &self,
         py: Python<'_>,
@@ -702,6 +719,22 @@ macro_rules! connection_api {
     ($(($name:ident,$set:ident,$doc:literal)),* $(,)?) => {
         #[pymethods]
         impl Connection {
+            /// Encode supported values locally as SQL str fragments, parameter
+            /// tuples or row lists. many and itemize are exact bool. This uses
+            /// the last confirmed encoding reference, including while busy or
+            /// closed, and never executes SQL or changes any Cursor result.
+            /// No SQL deadline or result-memory quota applies. Strings that
+            /// cannot round-trip losslessly through that encoding raise ValueError.
+            #[pyo3(signature=(data,*,many=Argument::default(),itemize=Argument::default()))]
+            #[pyo3(text_signature="($self, data, *, many=False, itemize=True)")]
+            pub(crate) fn escape<'py>(&self,py:Python<'py>,data:&Bound<'py,PyAny>,many:Argument<'_>,itemize:Argument<'_>)->PyResult<Bound<'py,PyAny>> {
+                (|| {
+                    let many=many.0.as_ref().map_or(Ok(false),|value|config::boolean(value,"many"))?;
+                    let itemize=itemize.0.as_ref().map_or(Ok(true),|value|config::boolean(value,"itemize"))?;
+                    let reference=self.auxiliary_context(py)?;
+                    crate::binding::escape(data,many,itemize,&self.types.borrow(py),&reference.binding)
+                })().map_err(|error|errors::at(py,error,"connection.escape"))
+            }
             $(#[getter] #[doc=$doc]
             fn $name(&self, py: Python<'_>) -> PyResult<bool> { Ok(self.runtime(py)?.options.$name) }
             #[setter] fn $set(&self, py: Python<'_>, value:&Bound<'_,PyAny>) -> PyResult<()> {
@@ -1187,6 +1220,7 @@ pub(crate) fn connect(
         server_public_key,
         compression: Default::default(),
         multi_statements,
+        local_infile: false,
         connect_timeout: timeout_config.connect,
         read_timeout: timeout_config.read,
         write_timeout: timeout_config.write,

@@ -11,8 +11,8 @@ mod metadata;
 mod output;
 mod reader;
 mod retry;
-mod transaction;
 mod tls_info;
+mod transaction;
 
 use pyo3::exceptions::{PyUnicodeDecodeError, PyValueError};
 use pyo3::prelude::*;

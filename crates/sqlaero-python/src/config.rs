@@ -474,6 +474,8 @@ impl Ssl {
             })?,
         };
         Ok(Some(sqlaero_core::session::connect::ConnectTls {
+            minimum: self.minimum,
+            maximum: self.maximum,
             config,
             name,
         }))

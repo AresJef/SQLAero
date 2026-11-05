@@ -35,6 +35,10 @@ pub enum Endpoint {
 
 /// Prepared TLS configuration and an already validated expected identity.
 pub struct ConnectTls {
+    /// Normalized allowed lower bound retained for failure diagnostics.
+    pub minimum: crate::transport::tls::Version,
+    /// Additional allowed upper bound, not an inferred peer capability.
+    pub maximum: Option<crate::transport::tls::Version>,
     /// Immutable provider, verifier and optional client signing identity.
     pub config: Arc<ClientConfig>,
     /// Expected DNS/IP identity or the non-SNI internal name for unnamed Unix.
@@ -115,6 +119,18 @@ pub enum ConnectError {
     /// A real transport, TLS or timeout failure occurred.
     #[error(transparent)]
     Channel(#[from] ChannelError),
+    /// The actual TLS phase failed, retaining configured bounds and cause.
+    #[error("TLS handshake failed; allowed TLS range: {}..{}; native cause: {source}",
+        .minimum.as_str(), .maximum.map_or("None (no extra maximum)", crate::transport::tls::Version::as_str))]
+    TlsHandshake {
+        /// Configured lower bound.
+        minimum: crate::transport::tls::Version,
+        /// Configured extra upper bound, if any.
+        maximum: Option<crate::transport::tls::Version>,
+        /// Original channel error; no version rejection is inferred.
+        #[source]
+        source: ChannelError,
+    },
     /// The actual authentication result failed.
     #[error(transparent)]
     Auth(#[from] AuthError),
@@ -328,13 +344,26 @@ impl Establish {
                 .as_mut()
                 .ok_or(ConnectError::Configuration("missing channel"))?;
             if self.phase == Phase::Tls {
-                match channel.handshake_step(budget)? {
+                let tls = self
+                    .params
+                    .tls
+                    .as_ref()
+                    .ok_or(ConnectError::Configuration("missing TLS configuration"))?;
+                let minimum = tls.minimum;
+                let maximum = tls.maximum;
+                let failure = |source| ConnectError::TlsHandshake {
+                    minimum,
+                    maximum,
+                    source,
+                };
+                match channel.handshake_step(budget).map_err(failure)? {
                     Step::Ready(()) => {
                         self.phase = Phase::Login;
                         self.prepare_login()?;
                     }
                     Step::Wait(direction) => {
-                        if channel.wait(direction, budget)? == WaitStatus::Control {
+                        if channel.wait(direction, budget).map_err(failure)? == WaitStatus::Control
+                        {
                             return Ok(Step::Control);
                         }
                     }

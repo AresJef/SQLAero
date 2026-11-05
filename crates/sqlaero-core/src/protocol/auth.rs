@@ -30,9 +30,7 @@ pub enum AuthError {
     )]
     TrustedKeyRequired,
     /// The explicit local key was not a supported RSA SPKI key.
-    #[error(
-        "server_public_key must contain a supported RSA SubjectPublicKeyInfo PEM public key"
-    )]
+    #[error("server_public_key must contain a supported RSA SubjectPublicKeyInfo PEM public key")]
     PublicKey,
     /// The password cannot fit, or the selected crypto provider rejected it.
     #[error(

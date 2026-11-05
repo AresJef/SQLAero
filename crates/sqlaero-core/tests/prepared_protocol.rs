@@ -48,6 +48,8 @@ fn connect_mode(label: &str, compression: compression::Options, secure: bool) ->
         password: Zeroizing::new(state["test_password"].as_str().unwrap().as_bytes().to_vec()),
         database: Some("sqlaero_test".to_owned()),
         tls: secure.then(|| ConnectTls {
+            minimum: tls::Version::Tls12,
+            maximum: None,
             config: tls::client_config(
                 tls::Mode::VerifyIdentity,
                 tls::Version::Tls12,

@@ -995,6 +995,32 @@ pub(crate) fn query_with_codec(
 ) -> PyErr {
     use sqlaero_core::{result::text::ResultError, session::query::QueryError};
     match error.borrow() {
+        QueryError::Local(error) => {
+            use sqlaero_core::protocol::local_infile::LocalError;
+            let mapped = match error {
+                LocalError::Wire(error) => wire(py, error),
+                LocalError::Channel(error) => channel(py, error),
+                LocalError::Source(error) if error.kind() == std::io::ErrorKind::OutOfMemory => {
+                    memory_error(py)
+                }
+                LocalError::Source(error) => {
+                    let source = match error.raw_os_error() {
+                        Some(code) => std::io::Error::from_raw_os_error(code),
+                        None => std::io::Error::new(error.kind(), error.to_string()),
+                    };
+                    PyErr::from(source)
+                }
+            };
+            native(
+                py,
+                &mapped,
+                diagnostics::Native::capture(
+                    error,
+                    Some("sqlaero_core::protocol::local_infile::LocalError"),
+                ),
+            );
+            mapped
+        }
         QueryError::Wire(error) | QueryError::Result(ResultError::Wire(error)) => wire(py, error),
         QueryError::Channel(error) => channel(py, error),
         QueryError::Result(ResultError::Memory(error)) => crate::output::memory(py, error),
@@ -1022,6 +1048,26 @@ pub(crate) fn establish(
     let mapped = match error {
         ConnectError::Wire(error) | ConnectError::Auth(AuthError::Wire(error)) => wire(py, error),
         ConnectError::Channel(error) => channel(py, error),
+        ConnectError::TlsHandshake {
+            minimum,
+            maximum,
+            source,
+        } => {
+            let primary = channel(py, source);
+            note_format(
+                py,
+                &primary,
+                format_args!(
+                    "allowed TLS range: {}..{}",
+                    minimum.as_str(),
+                    maximum.map_or(
+                        "None (no extra maximum)",
+                        sqlaero_core::transport::tls::Version::as_str
+                    )
+                ),
+            );
+            primary
+        }
         ConnectError::Timeout(error) => timeout(py, error),
         ConnectError::Auth(AuthError::Server(error)) => server(
             py,

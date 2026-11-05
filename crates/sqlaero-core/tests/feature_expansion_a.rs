@@ -1,5 +1,6 @@
 //! Independent A-lane encoding and SQL-planning contracts.
 
+use sqlaero_core::bind::template::Compiler;
 use sqlaero_core::charset::{
     codec::{Codec, CodecError},
     resolve,

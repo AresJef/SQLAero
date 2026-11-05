@@ -80,6 +80,8 @@ fn configuration(
             Some(tls::certificates(&std::fs::read(root.join("tls/ca.pem")).unwrap()).unwrap())
         };
         ConnectTls {
+            minimum: tls::Version::Tls12,
+            maximum: None,
             config: tls::client_config(
                 mode,
                 Version::Tls12,
@@ -185,6 +187,8 @@ fn invalid_identity_and_unsafe_full_authentication_fail_without_downgrade() {
         let mut bad_roots =
             configuration(&root, label, false, Some(Mode::VerifyIdentity), "127.0.0.1");
         bad_roots.tls = Some(ConnectTls {
+            minimum: tls::Version::Tls12,
+            maximum: None,
             config: tls::client_config(
                 Mode::VerifyIdentity,
                 Version::Tls12,
@@ -254,6 +258,8 @@ fn encrypted_client_key_is_used_when_mysql_requires_x509() {
         let mut parameters =
             configuration(&root, label, false, Some(Mode::VerifyIdentity), "127.0.0.1");
         parameters.tls = Some(ConnectTls {
+            minimum: tls::Version::Tls12,
+            maximum: None,
             config: tls::client_config(
                 Mode::VerifyIdentity,
                 Version::Tls12,
@@ -297,6 +303,8 @@ fn tls12_negotiates_and_tls13_minimum_never_downgrades() {
         let mut only13 =
             configuration(&root, label, false, Some(Mode::VerifyIdentity), "127.0.0.1");
         only13.tls = Some(ConnectTls {
+            minimum: tls::Version::Tls13,
+            maximum: None,
             config: tls::client_config(
                 Mode::VerifyIdentity,
                 Version::Tls13,
