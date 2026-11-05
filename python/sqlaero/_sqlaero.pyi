@@ -1,5 +1,6 @@
 """Private native extension declarations."""
 
+from datetime import datetime
 from typing import Any, Iterator, Literal, Never, Self, final, overload
 from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as MySQLErrorCode
 
@@ -319,11 +320,219 @@ from types import TracebackType
 
 @final
 class SSL:
-    """Immutable native TLS policy and validated reusable PEM materials."""
-    def __init__(self, *, mode: str | None = None, min_tls_version: str | None = None,
-                 ca_file: PathInput | None = None, cert_file: PathInput | None = None,
-                 key_file: PathInput | None = None, key_password: str | None = None,
+    """Immutable native TLS configuration and construction-time PEM snapshot.
+
+    ca_file, ca_dir and ca_data are mutually exclusive. CA bundles contain only
+    CERTIFICATE sections; ordinary explanation text and comments are allowed.
+    ca_mode None/replace uses custom roots alone when present; append combines
+    custom roots with actual system trust. Unavailable system trust does not
+    silently become custom-only validation. ca_mode does not itself enable TLS.
+
+    cert_file/cert_data and key_file/key_data are independently exclusive, and
+    certificate and key must be supplied together. Their sources may be mixed.
+    Data arguments are PEM str/bytes, without path or DER guessing. Encrypted
+    PKCS#8 keys use key_password and the existing native identity preparation.
+
+    Version bounds are validated even with DISABLED mode, without enabling TLS.
+    Explicit custom file/directory contents are saved during construction and
+    are not reloaded. System trust follows native platform semantics.
+    """
+    def __init__(self, *, mode: str | None = None,
+                 min_tls_version: str | None = None,
+                 max_tls_version: str | None = None,
+                 ca_file: PathInput | None = None,
+                 ca_dir: PathInput | None = None,
+                 ca_data: str | bytes | None = None,
+                 ca_mode: str | None = None,
+                 cert_file: PathInput | None = None,
+                 cert_data: str | bytes | None = None,
+                 key_file: PathInput | None = None,
+                 key_data: str | bytes | None = None,
+                 key_password: str | None = None,
                  server_name: str | None = None) -> None: ...
+    @property
+    def min_tls_version(self) -> Literal["TLSv1.2", "TLSv1.3"]:
+        """Normalized configured minimum; None input resolves to TLSv1.2.
+
+        Read-only configuration, independent of any negotiated connection.
+        """
+        ...
+    @property
+    def max_tls_version(self) -> Literal["TLSv1.2", "TLSv1.3"] | None:
+        """Read-only extra configured maximum, or None when no extra cap applies.
+
+        None is not replaced with a negotiated version or a claimed TLSv1.3 cap.
+        """
+        ...
+    def __repr__(self) -> str: ...
+
+
+@final
+class TLSInfo:
+    """Read-only owned facts for an actual TLS connection, created internally.
+
+    This object is not SSL configuration. It remains usable after Connection
+    close or disposal; reading or displaying it performs no SQL or network I/O.
+    """
+    def __new__(cls, _factory_only: Never, /) -> Self: ...
+    @property
+    def mode(self) -> Literal["REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"]:
+        """Resolved policy actually used by this TLS connection."""
+        ...
+    @property
+    def min_version(self) -> Literal["TLSv1.2", "TLSv1.3"]:
+        """Normalized configured minimum, independent of the negotiated result."""
+        ...
+    @property
+    def max_version(self) -> Literal["TLSv1.2", "TLSv1.3"] | None:
+        """Extra configured maximum, or None when no extra maximum was selected."""
+        ...
+    @property
+    def server_name(self) -> str | None:
+        """Effective native DNS/IP target, or None for an unnamed Unix target.
+
+        The verification guarantees follow mode; REQUIRED does not authenticate
+        the peer's CA or name. Unix does not borrow the TCP host as its identity.
+        """
+        ...
+    @property
+    def version(self) -> Literal["TLSv1.2", "TLSv1.3"]:
+        """Actual negotiated TLS protocol version."""
+        ...
+    @property
+    def cipher(self) -> str:
+        """Actual cipher suite's canonical IANA name."""
+        ...
+    @property
+    def cipher_id(self) -> int:
+        """Exact negotiated 16-bit cipher suite number, in 0..65535."""
+        ...
+    @property
+    def session_reused(self) -> bool:
+        """True only when the native TLS engine reports a resumed handshake."""
+        ...
+    @property
+    def peer_certificates(self) -> tuple[TLSCertificate, ...]:
+        """Immutable saved peer-sent certificate chain, in original order.
+
+        This is the peer identity, not the verifier's constructed trust path.
+        Each certificate can outlive this TLSInfo and its original Connection.
+        """
+        ...
+    def __str__(self) -> str:
+        """Multiline basic facts with a certificate-count summary, without parsing details."""
+        ...
+    def __repr__(self) -> str:
+        """Compact basic facts and certificate count, without parsing certificate details."""
+        ...
+
+
+@final
+class TLSCertificate:
+    """One independently owned, read-only peer certificate, created internally.
+
+    Structured metadata is prepared only when a detail is requested. A content
+    failure affects dependent properties; raw exports and SHA-256 remain
+    independent of detail parsing. Native content failures raise DataError with
+    TLS_CERTIFICATE_CONTENT; MemoryError and control exceptions keep their types.
+    The original peer bytes remain usable after its TLSInfo/Connection is gone.
+    """
+    def __new__(cls, _factory_only: Never, /) -> Self: ...
+    @property
+    def subject(self) -> str:
+        """Complete Subject DN with quoted, escaped decoded attribute values."""
+        ...
+    @property
+    def issuer(self) -> str:
+        """Complete Issuer DN, using the same display convention as subject."""
+        ...
+    @property
+    def serial_number(self) -> int:
+        """Exact ASN.1 serial INTEGER as an arbitrary-precision Python int."""
+        ...
+    @property
+    def version(self) -> int:
+        """Human X.509 version number; v3 is 3, independent of TLS version."""
+        ...
+    @property
+    def not_before(self) -> datetime:
+        """Absolute validity start as a timezone-aware datetime with timezone.utc."""
+        ...
+    @property
+    def not_after(self) -> datetime:
+        """Absolute validity end as a timezone-aware datetime with timezone.utc."""
+        ...
+    @property
+    def dns_names(self) -> tuple[str, ...]:
+        """SAN DNS names in original order, including duplicates and wildcard text.
+
+        Missing DNS names give (); malformed dependent content raises DataError.
+        """
+        ...
+    @property
+    def ip_addresses(self) -> tuple[str, ...]:
+        """Canonical SAN IPv4/IPv6 strings in original order, including duplicates.
+
+        Missing IP addresses give (); malformed dependent content raises DataError.
+        """
+        ...
+    @property
+    def is_ca(self) -> bool:
+        """The basicConstraints CA bit; absent is False, malformed raises DataError."""
+        ...
+    @property
+    def signature_algorithm_oid(self) -> str:
+        """Outer certificate signature algorithm's exact dotted-decimal OID."""
+        ...
+    @property
+    def public_key_algorithm_oid(self) -> str:
+        """SubjectPublicKeyInfo algorithm's exact dotted-decimal OID."""
+        ...
+    @property
+    def fingerprint_sha256(self) -> str:
+        """SHA-256 of original DER as 64 lowercase hex digits, computed lazily."""
+        ...
+    def to_der(self) -> bytes:
+        """Return exact original peer DER, without requiring successful detail parsing."""
+        ...
+    def to_pem(self) -> str:
+        """Encode original DER as CERTIFICATE PEM: LF, 64-column Base64, final LF."""
+        ...
+    def __str__(self) -> str:
+        """Multiline twelve-field display; deterministic content failures use markers.
+
+        Explicit display may parse details and compute the fingerprint, without
+        expanding PEM. Resource and control exceptions propagate unchanged.
+        """
+        ...
+    def __repr__(self) -> str:
+        """Compact twelve-field display in the same order, without PEM expansion."""
+        ...
+
+@final
+class Compression:
+    """Immutable reusable permissions, independent of actual negotiation.
+
+    algorithms is mandatory: None permits only uncompressed transport; str
+    accepts CSV, while each list/tuple element is one algorithm name. ASCII
+    trimming/case folding and deduplication produce a permission set, not a
+    priority order. Only zlib, zstd and uncompressed are accepted. Empty or
+    unknown names raise ValueError; invalid carriers/elements raise TypeError.
+    zstd_compression_level must always be an exact built-in int in 1..22,
+    including when zstd is absent. No arbitrary conversion hooks are used.
+    """
+    def __init__(self, *, algorithms: str | list[str] | tuple[str, ...] | None,
+                 zstd_compression_level: int = 3) -> None: ...
+    @property
+    def algorithms(self) -> tuple[str, ...]:
+        """Cached canonical permissions, or the single actual snapshot algorithm."""
+        ...
+    @property
+    def zstd_compression_level(self) -> int | None:
+        """Saved/applicable zstd level; None when algorithms does not contain zstd."""
+        ...
+    def __str__(self) -> str: ...
+    def __repr__(self) -> str: ...
 
 @final
 class Connection:
@@ -345,6 +554,56 @@ class Connection:
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
     def set_autocommit(self, enabled: bool) -> None: ...
+    def escape(self, data: EscapeInput, *, many: bool = False,
+               itemize: bool = True) -> str | tuple[str, ...] | list[str | tuple[str, ...]]:
+        """Project escaped values/rows/batches with strict bool role switches.
+
+        Scalars stay str, parameter rows are tuple, and batches are list; these
+        shapes depend on native input roles as well as many/itemize. None is
+        SQL NULL. Empty roots, actual zero-position rows and Record roles retain
+        their documented distinctions. No SQL template or network is involved.
+        The latest complete confirmed native reference is captured once, even
+        while busy, streaming, closed or current session facts are unknown.
+        This local conversion does not inherit SQL timeouts or result-pool
+        quotas. A charset that cannot represent the resulting display str
+        losslessly raises ValueError; no target SQL has been executed.
+        """
+        ...
+    def create_savepoint(self, name: str) -> None:
+        """Safely quote a nonempty raw name and send SAVEPOINT in the current transaction.
+
+        No implicit BEGIN/COMMIT occurs. Success does not promise the marker was
+        retained, especially with autocommit and no explicit transaction. Empty
+        or NUL names raise ValueError, non-str raises TypeError. Str subclasses
+        are read by base content. Other naming limits are decided by MySQL.
+        """
+        ...
+    def rollback_to_savepoint(self, name: str) -> None:
+        """Undo changes after a marker without ending the transaction; retain that marker.
+
+        Later markers follow MySQL lifetime rules. Missing/expired markers keep
+        the original server error. This neither begins nor commits a transaction.
+        """
+        ...
+    def release_savepoint(self, name: str) -> None:
+        """Release a marker without committing or rolling back its data changes.
+
+        COMMIT, full ROLLBACK and applicable implicit-commit DDL remove markers.
+        All three savepoint methods preserve Cursor results, obey normal command
+        ownership/deadlines, and reject busy, unread-stream or closed sessions.
+        """
+        ...
+    def show_warnings(self) -> tuple[tuple[str, int, str], ...]:
+        """Query current diagnostics as ordered (Level, Code, Message) tuples; empty is ().
+
+        This explicit request preserves every business Cursor result and position.
+        It cannot restore diagnostics already replaced or not saved by MySQL.
+        An Error-level diagnostic is a row, not a new exception. No preparatory
+        SQL is sent to repair unknown session facts; decoding uses reliable
+        metadata from this response or fails clearly. Normal busy/closed,
+        deadlines and resource rules apply. Returned values remain independent.
+        """
+        ...
     def ping(self) -> bool: ...
     def __enter__(self) -> Connection: ...
     def __exit__(self, typ: object, value: object, traceback: object) -> bool: ...
@@ -361,12 +620,41 @@ class Connection:
         """Actual server connection identity, still readable after close."""
         ...
     @property
-    def ssl_mode(self) -> Literal["DISABLED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"]:
-        """Resolved TLS policy, still readable after close."""
+    def tls_info(self) -> TLSInfo | None:
+        """Owned actual TLS facts, or None for plain transport; readable after close.
+
+        Access performs no SQL or network I/O. The snapshot records negotiated
+        facts and configured bounds; certificate details remain lazy.
+        """
         ...
     @property
-    def tls_version(self) -> Literal["TLSv1.2", "TLSv1.3"] | None:
-        """Actual negotiated TLS version, or None for plain transport."""
+    def compression(self) -> Compression | None:
+        """Cached actual zlib/zstd snapshot; None when transport is uncompressed.
+
+        The input configuration is unchanged. Reading after close remains valid
+        and does not query the server or retain the network transport.
+        """
+        ...
+    @property
+    def multi_statements(self) -> bool:
+        """Confirmed multi-statement permission; unknown facts raise InterfaceError.
+
+        Read-only and readable after close. This does not disable CALL results.
+        """
+        ...
+    def set_multi_statements(self, enabled: bool) -> None:
+        """Switch remote permission explicitly; exact bool only, success is None.
+
+        Busy/closed rules apply even for a reliable same-value short circuit.
+        Existing Cursor results and already running operations are unchanged.
+        """
+        ...
+    @property
+    def local_infile(self) -> bool:
+        """Confirmed client upload capability; read-only, still readable after close.
+
+        This alone never authorizes a file or changes the server global option.
+        """
         ...
     @property
     def net_read_timeout(self) -> int:
@@ -379,7 +667,7 @@ class Connection:
     def set_net_read_timeout(self, value: int) -> None:
         """Set MySQL server-side SESSION net_read_timeout in positive whole seconds.
 
-        Only int excluding bool; None/bad types raise TypeError, zero/negative raise
+        Only exact built-in int; None/bad types raise TypeError, zero/negative raise
         ValueError. MySQL decides upper limits/normalization; actual confirmed values
         are cached. A change sends SET under the operation deadline. Reliable same
         values still check lifecycle/ownership, then send no SQL. Closed/busy calls
@@ -396,7 +684,7 @@ class Connection:
     def set_net_write_timeout(self, value: int) -> None:
         """Set MySQL server-side SESSION net_write_timeout in positive whole seconds.
 
-        Only int excluding bool; None/bad types raise TypeError, zero/negative raise
+        Only exact built-in int; None/bad types raise TypeError, zero/negative raise
         ValueError. MySQL decides upper limits/normalization; actual confirmed values
         are cached. A change sends SET under the operation deadline. Reliable same
         values still check lifecycle/ownership, then send no SQL. Closed/busy calls
@@ -413,7 +701,7 @@ class Connection:
     def set_wait_timeout(self, value: int) -> None:
         """Set MySQL server-side SESSION wait_timeout in positive whole seconds.
 
-        Only int excluding bool; None/bad types raise TypeError, zero/negative raise
+        Only exact built-in int; None/bad types raise TypeError, zero/negative raise
         ValueError. MySQL decides upper limits/normalization; actual confirmed values
         are cached. A change sends SET under the operation deadline. Reliable same
         values still check lifecycle/ownership, then send no SQL. Closed/busy calls
@@ -430,7 +718,7 @@ class Connection:
     def set_innodb_lock_wait_timeout(self, value: int) -> None:
         """Set MySQL server-side SESSION innodb_lock_wait_timeout in positive whole seconds.
 
-        Only int excluding bool; None/bad types raise TypeError, zero/negative raise
+        Only exact built-in int; None/bad types raise TypeError, zero/negative raise
         ValueError. MySQL decides upper limits/normalization; actual confirmed values
         are cached. A change sends SET under the operation deadline. Reliable same
         values still check lifecycle/ownership, then send no SQL. Closed/busy calls
@@ -441,42 +729,44 @@ class Connection:
         """Last reliable MySQL autocommit fact; unknown raises InterfaceError."""
         ...
     @property
-    def connect_timeout(self) -> int | None:
+    def connect_timeout(self) -> int | float | None:
         """Client-side whole-call establishment seconds; default 10, None disables.
 
-        Positive int excluding bool; bad types/values raise TypeError/ValueError.
+        Exact built-in int/float seconds only; bool/subclasses and other types
+        raise TypeError. Positive finite values round to nearest nanosecond with
+        ties to even; values below 1 ns, zero and negative values raise ValueError.
         Covers preparation, dialing, authentication and initialization; no extra
         network cleanup grace. Read-only after creation, readable after close."""
         ...
     @property
-    def read_timeout(self) -> int | None:
-        """Client-side maximum network read wait without progress, in whole seconds.
+    def read_timeout(self) -> int | float | None:
+        """Client-side maximum network read wait without progress, in seconds.
 
-        Default None disables; positive int or None, excluding bool. Bad type/value
+        Default None disables; exact positive int/float seconds or None. Bad type/value
         raises TypeError/ValueError. Actual progress restarts this interval; readiness
         does not. Local assignment sends no SQL and affects subsequent operations.
         Not a total-response timer. Readable after close; modification then fails.
         Expiry does not establish SQL cancellation or confirmed rollback."""
         ...
     @read_timeout.setter
-    def read_timeout(self, value: int | None) -> None: ...
+    def read_timeout(self, value: int | float | None) -> None: ...
     @property
-    def write_timeout(self) -> int | None:
-        """Client-side maximum network write wait without progress, in whole seconds.
+    def write_timeout(self) -> int | float | None:
+        """Client-side maximum network write wait without progress, in seconds.
 
-        Default None disables; positive int or None, excluding bool. Bad type/value
+        Default None disables; exact positive int/float seconds or None. Bad type/value
         raises TypeError/ValueError. Actual progress restarts this interval, not the
         total upload/operation deadline. Local assignment affects subsequent commands
         and sends no SQL. Saved value is readable after close; modification fails.
         Expiry does not establish SQL cancellation or confirmed rollback."""
         ...
     @write_timeout.setter
-    def write_timeout(self, value: int | None) -> None: ...
+    def write_timeout(self, value: int | float | None) -> None: ...
     @property
-    def operation_timeout(self) -> int | None:
-        """Client-side total whole-second limit shared by an operation's batches.
+    def operation_timeout(self) -> int | float | None:
+        """Client-side total limit shared by an operation's batches, in seconds.
 
-        Default None disables; positive int or None excluding bool, with
+        Default None disables; exact positive int/float or None, with
         TypeError/ValueError on invalid type/value. Covers binding, necessary internal
         confirmation, sending, complete reception and state/result publication;
         progress does not reset it. Does not time buffered fetch or transaction-body
@@ -484,7 +774,7 @@ class Connection:
         close, modification fails. No new network cleanup grace or implied rollback."""
         ...
     @operation_timeout.setter
-    def operation_timeout(self, value: int | None) -> None: ...
+    def operation_timeout(self, value: int | float | None) -> None: ...
     @property
     def max_allowed_packet(self) -> int:
         """Configured client logical-send byte limit, readable after close."""
@@ -802,22 +1092,28 @@ def connect(*, user: str, host: str = '127.0.0.1', port: int = 3306,
             unix_socket: PathInput | None = None, password: str | None = None,
             database: str | None = None, charset: str | None = None,
             collation: str | None = None, ssl: SSL | None = None,
-            server_public_key_path: PathInput | None = None, autocommit: bool = True,
-            sql_mode: str | None = None, connect_timeout: int | None = 10,
-            read_timeout: int | None = None, write_timeout: int | None = None,
-            operation_timeout: int | None = None, net_read_timeout: int | None = None,
+            server_public_key: PathInput | bytes | None = None, autocommit: bool = True,
+            sql_mode: str | None = None, connect_timeout: int | float | None = 10,
+            read_timeout: int | float | None = None, write_timeout: int | float | None = None,
+            operation_timeout: int | float | None = None, net_read_timeout: int | None = None,
             net_write_timeout: int | None = None, wait_timeout: int | None = None,
             innodb_lock_wait_timeout: int | None = None, max_allowed_packet: int | str = '64MB',
             max_received_packet: int | str = '64MB', result_memory_limit: int | str = '256MB',
             total_result_memory_limit: int | str = '512MB', decode_json: bool = False,
             decode_set: bool = False, decode_bit: bool = False, use_decimal: bool = True,
             use_timedelta: bool = True, decode_text_strict: bool = True,
-            decode_date_strict: bool = True) -> Connection:
+            decode_date_strict: bool = True,
+            compression: str | list[str] | tuple[str, ...] | Compression | None = None,
+            multi_statements: bool = True, local_infile: bool = False,
+            init_sql: str | list[str] | tuple[str, ...] | None = None) -> Connection:
     """Create and fully initialize a native sync MySQL connection.
 
     Client connect_timeout defaults to 10; read/write/operation_timeout to None.
-    Values are positive whole-second int excluding bool, or None to disable the
-    applicable client limit. Type/value errors raise TypeError/ValueError.
+    Values are exact built-in int/float seconds or None to disable the applicable
+    client limit; bool and numeric subclasses are rejected. Positive finite values
+    must be at least 1 ns and round to nearest ns with ties to even. Integer
+    seconds never pass through float. Getters return exact int for whole seconds,
+    float for fractional seconds, and None when disabled. Type/value errors raise TypeError/ValueError.
     Establishment includes preparation/authentication/initialization; operation
     timeout covers later complete commands, not buffered fetch or transaction-body
     code. Progress restarts only read/write waits. No extra network cleanup grace
@@ -825,10 +1121,33 @@ def connect(*, user: str, host: str = '127.0.0.1', port: int = 3306,
 
     MySQL server SESSION net_read_timeout (upload), net_write_timeout (download),
     wait_timeout (idle) and innodb_lock_wait_timeout (row lock) default to None:
-    preserve then confirm their actual server values. Supplied positive int values
+    preserve then confirm their actual server values. Supplied exact positive int values
     are initialized together where possible; MySQL decides upper normalization.
     Later remote changes use explicit set_* methods; local runtime timeouts use
     property assignment. See each property's precise lifecycle/unknown semantics.
+
+    multi_statements defaults to True and accepts exact bool; switching later uses
+    set_multi_statements(). local_infile defaults to False and accepts exact bool;
+    an upload additionally needs this execution's explicit local_file path.
+    compression accepts strict algorithm CSV/list/tuple or reusable Compression.
+    None disables compression; only explicit uncompressed permission allows raw
+    fallback. A shorthand zstd connection uses level 3. Actual negotiated facts
+    are reported by Connection.compression, independently of input configuration.
+
+    init_sql is None, one nonempty SQL str or a finite list/tuple of nonempty str.
+    After normal initialization, every step and all its results complete under
+    the original connect deadline and are discarded; strings are not split at
+    semicolons. The final real settings and transaction are retained without an
+    automatic commit/rollback. Required final UTC/session conditions still apply.
+    A failed step stops later steps and does not undo already committed effects.
+
+    server_public_key is an explicit trusted RSA SubjectPublicKeyInfo PEM source.
+    str and PathLike represent paths; top-level bytes represent PEM contents,
+    even when they look like a filename. PathLike returning bytes is still a
+    path. None means no source. No guessing, arbitrary conversion, DER/PKCS#1/
+    certificate extraction, aliases or network key fetching occurs. Explicit bad
+    material fails preparation even if TLS/fast authentication would not use it.
+    This key does not encrypt later SQL/results or authenticate the peer itself.
     """
     ...
 
