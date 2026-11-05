@@ -38,6 +38,33 @@ pub(crate) fn memory_error(py: Python<'_>) -> PyErr {
     PyErr::fetch(py)
 }
 
+/// Preserve a native I/O failure's actual OS number at the Python boundary.
+/// PyO3's single-message conversion loses errno; no synthetic errno is supplied
+/// for errors which did not originate from an OS failure.
+#[cold]
+pub(crate) fn io_error(py: Python<'_>, source: &std::io::Error) -> PyErr {
+    use pyo3::exceptions::PyOSError;
+    if source.kind() == std::io::ErrorKind::OutOfMemory {
+        return memory_error(py);
+    }
+    let create = || -> PyResult<PyErr> {
+        let text = message(py, format_args!("{source}"))?;
+        let text = PyString::from_bytes(py, text.as_bytes())?;
+        let Some(code) = source.raw_os_error() else {
+            return Ok(builtin_error(&py.get_type::<PyOSError>(), text.to_str()?));
+        };
+        let code = code_object(py, &BigInt::from(code))?;
+        #[cfg(windows)]
+        let value = py
+            .get_type::<PyOSError>()
+            .call1((0, text, py.None(), code))?;
+        #[cfg(not(windows))]
+        let value = py.get_type::<PyOSError>().call1((code, text))?;
+        Ok(PyErr::from_value(value))
+    };
+    create().unwrap_or_else(|error| error)
+}
+
 /// Prepare a built-in error message fallibly before returning across FFI.
 /// The caller supplies a built-in exception type, never a user-defined class.
 /// Native error restoration handles exception allocation with the prepared text.
@@ -1000,16 +1027,7 @@ pub(crate) fn query_with_codec(
             let mapped = match error {
                 LocalError::Wire(error) => wire(py, error),
                 LocalError::Channel(error) => channel(py, error),
-                LocalError::Source(error) if error.kind() == std::io::ErrorKind::OutOfMemory => {
-                    memory_error(py)
-                }
-                LocalError::Source(error) => {
-                    let source = match error.raw_os_error() {
-                        Some(code) => std::io::Error::from_raw_os_error(code),
-                        None => std::io::Error::new(error.kind(), error.to_string()),
-                    };
-                    PyErr::from(source)
-                }
+                LocalError::Source(error) => io_error(py, error),
             };
             native(
                 py,

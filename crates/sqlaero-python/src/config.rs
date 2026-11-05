@@ -76,9 +76,30 @@ pub(crate) fn path(value: &Bound<'_, PyAny>, name: &str) -> PyResult<PathBuf> {
             format!("{name} must be str or os.PathLike; bare bytes are not accepted"),
         ));
     }
-    // PyO3 invokes os.fspath exactly once and preserves the native OsString;
-    // no manual separators, lossy UTF-8 conversion, expansion or realpath.
-    let path = value.extract::<PathBuf>()?;
+    // Invoke the path protocol exactly once. CPython's filesystem decoder
+    // handles a PathLike returning bytes without interpreting it as PEM data.
+    // Extract the resulting native OsString without a second user callback.
+    let normalized = unsafe {
+        // SAFETY: Python is attached and value remains owned across the call.
+        Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyOS_FSPath(value.as_ptr()))?
+    };
+    let normalized = if let Ok(bytes) = normalized.cast::<PyBytes>() {
+        let bytes = bytes.as_bytes();
+        unsafe {
+            // SAFETY: the borrowed bytes remain alive, their PyBytes length is
+            // representable as Py_ssize_t, and CPython reports decoding errors.
+            Bound::<PyAny>::from_owned_ptr_or_err(
+                py,
+                pyo3::ffi::PyUnicode_DecodeFSDefaultAndSize(
+                    bytes.as_ptr().cast(),
+                    bytes.len() as pyo3::ffi::Py_ssize_t,
+                ),
+            )?
+        }
+    } else {
+        normalized
+    };
+    let path: PathBuf = normalized.extract::<std::ffi::OsString>()?.into();
     if path.as_os_str().is_empty() || path.as_os_str().as_encoded_bytes().contains(&0) {
         return Err(crate::errors::builtin_message::<PyValueError>(
             py,
@@ -266,7 +287,7 @@ fn tls_directory_error(py: Python<'_>, error: tls::materials::DirectoryError<'_>
             if source.kind() == std::io::ErrorKind::OutOfMemory {
                 return crate::errors::memory_error(py);
             }
-            let primary: PyErr = source.into();
+            let primary = crate::errors::io_error(py, &source);
             crate::errors::note_format(py, &primary, format_args!("ca_dir member {path:?}"));
             primary
         }
@@ -318,7 +339,7 @@ fn material_bytes(
                     if source.kind() == std::io::ErrorKind::OutOfMemory {
                         return crate::errors::memory_error(py);
                     }
-                    let primary: PyErr = source.into();
+                    let primary = crate::errors::io_error(py, &source);
                     crate::errors::note_format(py, &primary, format_args!("{name}: {path:?}"));
                     primary
                 })?;
