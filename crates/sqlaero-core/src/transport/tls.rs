@@ -156,6 +156,46 @@ pub fn certificates(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, Material
     Ok(result)
 }
 
+/// Parse a complete CA-only PEM bundle, allowing surrounding explanation text.
+///
+/// # Errors
+/// Returns a non-secret material failure for a noncertificate PEM section,
+/// malformed section, or empty bundle. Client identity chains use the existing
+/// [`certificates`] entry point independently of this CA source policy.
+pub fn ca_certificates(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, MaterialError> {
+    let mut inside = false;
+    // The mature reader silently skips unknown PEM labels and permits a new
+    // BEGIN to replace an unfinished section. Only CA source policy is stricter:
+    // gate labels and complete, unnested sections before delegating decoding.
+    // Like that reader, recognize CR and LF and allow trailing ASCII spaces.
+    // No decoded body or input-derived label is copied into an error.
+    for line in pem.split(|byte| matches!(byte, b'\r' | b'\n')) {
+        let line = line.trim_ascii_end();
+        if line.trim_ascii_start().starts_with(b"-----BEGIN") {
+            if inside || line != b"-----BEGIN CERTIFICATE-----" {
+                return Err(MaterialError::Certificates);
+            }
+            inside = true;
+        } else if line.trim_ascii_start().starts_with(b"-----END") {
+            if !inside || line != b"-----END CERTIFICATE-----" {
+                return Err(MaterialError::Certificates);
+            }
+            inside = false;
+        }
+    }
+    if inside {
+        return Err(MaterialError::Certificates);
+    }
+    let certificates = certificates(pem)?;
+    if certificates
+        .iter()
+        .any(|certificate| certificate.as_ref().is_empty())
+    {
+        return Err(MaterialError::Certificates);
+    }
+    Ok(certificates)
+}
+
 fn owned_bytes(bytes: &[u8]) -> Result<Vec<u8>, TryReserveError> {
     let mut owned = Vec::new();
     owned.try_reserve_exact(bytes.len())?;

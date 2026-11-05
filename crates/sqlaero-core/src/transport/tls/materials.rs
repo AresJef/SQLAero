@@ -1,6 +1,6 @@
 //! Filesystem material loading for one immutable TLS configuration snapshot.
 
-use super::{ConfigError, MaterialError, certificates, validate_anchors};
+use super::{ConfigError, MaterialError, ca_certificates, validate_anchors};
 use rustls_pki_types::CertificateDer;
 use std::borrow::Cow;
 use std::collections::TryReserveError;
@@ -168,7 +168,7 @@ pub fn directory_certificates(
                 });
             }
         };
-        let chain = match certificates(&bytes) {
+        let chain = match ca_certificates(&bytes) {
             Ok(chain) => chain,
             Err(MaterialError::Allocation(error)) => return Err(DirectoryError::Allocation(error)),
             Err(source) => {
