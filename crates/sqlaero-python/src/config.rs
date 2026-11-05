@@ -3,7 +3,7 @@
 use num_bigint::BigUint;
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyBytes, PyInt, PyString};
+use pyo3::types::{PyBool, PyBytes, PyFloat, PyInt, PyString};
 use rustls::sign::CertifiedKey;
 use rustls_pki_types::{CertificateDer, ServerName};
 use sqlaero_core::{
@@ -117,28 +117,54 @@ pub(crate) fn positive(value: &Bound<'_, PyAny>, name: &str) -> PyResult<BigUint
     Ok(value)
 }
 pub(crate) fn timeout(value: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<Option<Duration>> {
-    value
-        .filter(|value| !value.is_none())
-        .map(|value| {
-            let py = value.py();
-            let integer = positive(value, name)?;
-            let seconds = u64::try_from(integer).map_err(|_| {
-                crate::errors::builtin_error(
-                    &value.py().get_type::<PyValueError>(),
-                    &format!("{name} cannot be represented safely as a client duration"),
-                )
+    value.filter(|value| !value.is_none()).map(|value| {
+        let py = value.py();
+        let duration = if value.is_exact_instance_of::<PyInt>() {
+            let seconds = u64::try_from(positive(value, name)?).map_err(|_| {
+                crate::errors::builtin_message::<PyValueError>(py, format!("{name} cannot be represented safely as a client duration"))
             })?;
-            let duration = Duration::from_secs(seconds);
-            Instant::now().checked_add(duration).ok_or_else(|| {
-                crate::errors::builtin_message::<PyValueError>(
-                    py,
-                    format!("{name} exceeds the platform's safe monotonic deadline range"),
-                )
-            })?;
-            Ok(duration)
-        })
-        .transpose()
+            Duration::from_secs(seconds)
+        } else if value.is_exact_instance_of::<PyFloat>() {
+            let seconds = value.cast::<PyFloat>()?.value();
+            if !seconds.is_finite() || seconds < 1e-9 {
+                return Err(crate::errors::builtin_message::<PyValueError>(py,
+                    format!("{name} must be finite and at least 1 nanosecond")));
+            }
+            Duration::try_from_secs_f64(seconds).map_err(|_| {
+                crate::errors::builtin_message::<PyValueError>(py, format!("{name} cannot be represented safely as a client duration"))
+            })?
+        } else {
+            return Err(crate::errors::builtin_message::<PyTypeError>(py,
+                format!("{name} must be an exact built-in int or float, or None; bool and numeric subclasses are not accepted")));
+        };
+        Instant::now().checked_add(duration).ok_or_else(|| {
+            crate::errors::builtin_message::<PyValueError>(py, format!("{name} exceeds the platform's safe monotonic deadline range"))
+        })?;
+        Ok(duration)
+    }).transpose()
 }
+
+/// Materialize the saved duration without retaining the original Python input.
+/// Whole seconds use int, subsecond values use float, and disabled uses None.
+pub(crate) fn timeout_object<'py>(
+    py: Python<'py>,
+    value: Option<Duration>,
+) -> PyResult<Bound<'py, PyAny>> {
+    let Some(value) = value else {
+        return Ok(py.None().into_bound(py));
+    };
+    // SAFETY: both public CPython constructors return a new owned reference or
+    // their actual allocation error. No source Python object is retained.
+    unsafe {
+        let pointer = if value.subsec_nanos() == 0 {
+            pyo3::ffi::PyLong_FromUnsignedLongLong(value.as_secs())
+        } else {
+            pyo3::ffi::PyFloat_FromDouble(value.as_secs_f64())
+        };
+        Bound::from_owned_ptr_or_err(py, pointer)
+    }
+}
+
 pub(crate) fn bytes_limit(value: &Bound<'_, PyAny>, name: &str, maximum: usize) -> PyResult<usize> {
     let py = value.py();
     let count = if let Ok(text) = value.cast::<PyString>() {

@@ -753,46 +753,54 @@ macro_rules! connection_api {
             #[getter] fn ssl_mode(&self)->&str { self.ssl_mode }
             /// Actual negotiated TLS version, or None for plain transport.
             #[getter] fn tls_version(&self)->Option<&str> { self.tls_version }
-            /// Client-side establishment timeout in whole seconds. None disables
+            /// Client-side establishment timeout in seconds. None disables
             /// its total limit. Read-only after creation and readable after close.
-            /// Default 10; positive int or None, excluding bool. Invalid type/value
+            /// Default 10; exact positive int/float or None, excluding bool and numeric
+            /// subclasses. Minimum 1ns, nearest nanosecond with ties-to-even.
+            /// Whole saved seconds read as int and subsecond values as float. Invalid type/value
             /// raises TypeError/ValueError. Covers configuration, authentication
             /// and required initialization, without an extra network cleanup grace.
-            #[getter] fn connect_timeout(&self,py:Python<'_>)->PyResult<Option<u64>> { Ok(self.runtime(py)?.timeouts.connect.map(|v|v.as_secs())) }
-            /// Client-side read wait without progress, in whole seconds. None
+            #[getter] fn connect_timeout<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> { let value=self.runtime(py)?.timeouts.connect; config::timeout_object(py,value) }
+            /// Client-side read wait without progress, in seconds. None
             /// disables it. Local assignment affects only subsequent operations,
             /// sends no SQL, and is rejected after this connection is retired.
-            /// Default None; positive int or None, excluding bool. Invalid type/value
+            /// Default None; exact positive int/float or None, excluding bool and numeric
+            /// subclasses. Minimum 1ns, nearest nanosecond with ties-to-even.
+            /// Whole saved seconds read as int and subsecond values as float. Invalid type/value
             /// raises TypeError/ValueError. Progress restarts only this interval;
             /// readiness does not. Does not cap a complete response. Saved values
             /// remain readable after close; expiry does not prove SQL cancellation.
-            #[getter] fn read_timeout(&self,py:Python<'_>)->PyResult<Option<u64>> { Ok(self.runtime(py)?.timeouts.read.map(|v|v.as_secs())) }
+            #[getter] fn read_timeout<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> { let value=self.runtime(py)?.timeouts.read; config::timeout_object(py,value) }
             #[setter] fn set_read_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()> {
                 let value=config::timeout(Some(value),"read_timeout")?; self.modify(py,"read_timeout")?.timeouts.read=value; Ok(())
             }
-            /// Client-side write wait without progress, in whole seconds. None
+            /// Client-side write wait without progress, in seconds. None
             /// disables it; actual progress restarts only this wait interval.
             /// Local assignment affects subsequent operations, sends no SQL,
             /// and fails after close while the saved value remains readable.
-            /// Default None; positive int or None, excluding bool. Invalid type/value
+            /// Default None; exact positive int/float or None, excluding bool and numeric
+            /// subclasses. Minimum 1ns, nearest nanosecond with ties-to-even.
+            /// Whole saved seconds read as int and subsecond values as float. Invalid type/value
             /// raises TypeError/ValueError. Does not cap a complete upload; the
             /// connect/operation deadline may expire earlier. Expiry does not
             /// prove server cancellation or confirmed transaction rollback.
-            #[getter] fn write_timeout(&self,py:Python<'_>)->PyResult<Option<u64>> { Ok(self.runtime(py)?.timeouts.write.map(|v|v.as_secs())) }
+            #[getter] fn write_timeout<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> { let value=self.runtime(py)?.timeouts.write; config::timeout_object(py,value) }
             #[setter] fn set_write_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()> {
                 let value=config::timeout(Some(value),"write_timeout")?; self.modify(py,"write_timeout")?.timeouts.write=value; Ok(())
             }
-            /// Client-side total timeout for one operation in whole seconds,
+            /// Client-side total timeout for one operation in seconds,
             /// beginning before binding and shared by all batches and internal
             /// confirmations. Progress does not restart it. None disables it.
             /// Local assignment affects subsequent operations and sends no SQL;
             /// after close modification fails but the saved value stays readable.
-            /// Default None; positive int or None, excluding bool. Invalid type/value
+            /// Default None; exact positive int/float or None, excluding bool and numeric
+            /// subclasses. Minimum 1ns, nearest nanosecond with ties-to-even.
+            /// Whole saved seconds read as int and subsecond values as float. Invalid type/value
             /// raises TypeError/ValueError. Includes request preparation, reception
             /// and state/result publication, but not buffered fetching or user
             /// transaction-block code. Expiry grants no new network cleanup period
             /// and does not prove SQL cancellation or confirmed rollback.
-            #[getter] fn operation_timeout(&self,py:Python<'_>)->PyResult<Option<u64>> { Ok(self.runtime(py)?.timeouts.operation.map(|v|v.as_secs())) }
+            #[getter] fn operation_timeout<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> { let value=self.runtime(py)?.timeouts.operation; config::timeout_object(py,value) }
             #[setter] fn set_operation_timeout(&self,py:Python<'_>,value:&Bound<'_,PyAny>)->PyResult<()> {
                 let value=config::timeout(Some(value),"operation_timeout")?; self.modify(py,"operation_timeout")?.timeouts.operation=value; Ok(())
             }
