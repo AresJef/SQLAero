@@ -38,6 +38,9 @@ pub enum ContextError {
 /// a known NULL character_set_results is represented by Some(None).
 #[derive(Debug)]
 pub struct Facts {
+    /// Actual COM_QUERY multi-statement permission, confirmed by handshake or
+    /// COM_SET_OPTION. SQL text cannot change this protocol option.
+    pub multi_statements: Option<bool>,
     /// Latest applicable confirmed status; absence does not mean no transaction.
     pub status: Option<StatusFlags>,
     /// Confirmed schema bytes, known no schema, or unconfirmed.
@@ -63,6 +66,7 @@ impl From<Confirmed> for Facts {
     fn from(value: Confirmed) -> Self {
         let charset = value.encoding.charset.name;
         Self {
+            multi_statements: None,
             status: Some(value.status),
             database: Some(value.database.map(String::into_bytes)),
             time_zone: Some(value.time_zone),

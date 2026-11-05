@@ -1047,6 +1047,39 @@ macro_rules! connection_api {
                 status.map(|status|status.contains(sqlaero_core::protocol::StatusFlags::SERVER_STATUS_AUTOCOMMIT))
                     .ok_or_else(||errors::client(py,ClientErrorCode::SessionState,"autocommit has not been reliably confirmed"))
             }
+            /// Confirmed permission for multiple statements in one text
+            /// request. This is read-only and remains readable after close
+            /// when known. It does not disable a CALL's multiple results or
+            /// the separate prepared-statement protocol. Unknown raises
+            /// InterfaceError; reading never sends a command.
+            #[getter] fn multi_statements(&self,py:Python<'_>)->PyResult<bool> {
+                let value=self.native.facts.lock().map_err(|error|{drop(error.into_inner());errors::client(py,ClientErrorCode::InternalState,"confirmed session facts are unavailable")})?.multi_statements;
+                value.ok_or_else(||errors::client(py,ClientErrorCode::SessionState,"multi_statements has not been reliably confirmed after the previous control request"))
+            }
+            /// Change the protocol permission using COM_SET_OPTION, accepting
+            /// exact bool only. The saved value changes only on a complete
+            /// acknowledgement. A confirmed equal value sends no command, but
+            /// still rejects closed connections and overlapping/unread work.
+            /// Requests are never replayed after an unknown response.
+            fn set_multi_statements(&self,py:Python<'_>,enabled:&Bound<'_,PyAny>)->PyResult<()> {
+                (|| {
+                    let mut budget=self.runtime(py)?.timeouts.operation();
+                    let enabled=config::boolean(enabled,"enabled")?;
+                    let mut lease=self.native.try_command().map_err(|error|errors::access(py,error))?;
+                    input::check(py,&budget)?;
+                    if self.multi_statements(py).ok()==Some(enabled) {return Ok(());}
+                    let bytes=if enabled {vec![0x1b,0,0]} else {vec![0x1b,1,0]};
+                    let job=self.query_job(py,&mut lease,bytes,false)?;
+                    let result=self.drive(py,&mut lease,job,&mut budget,CommandRole::InternalControl);
+                    let confirmed=result.as_ref().map_or_else(|failure|failure.confirmation().is_some(), |_|true);
+                    let unknown=result.as_ref().err().is_some_and(|failure|failure.outcome.unknown());
+                    if confirmed || unknown {
+                        self.native.facts.lock().map_err(|error|{drop(error.into_inner());errors::client(py,ClientErrorCode::InternalState,"confirmed multi-statement facts are unavailable")})?.multi_statements=confirmed.then_some(enabled);
+                    }
+                    result?;
+                    input::check(py,&budget)
+                })().map_err(|error|errors::at(py,error,"connection.set_multi_statements"))
+            }
             /// Change server SESSION autocommit after acquiring command ownership.
             /// A reliably confirmed same value sends no request and is not a ping.
             fn set_autocommit(&self,py:Python<'_>,enabled:&Bound<'_,PyAny>)->PyResult<()> {

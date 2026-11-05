@@ -87,7 +87,10 @@ impl Connection {
             max_receive: authenticated.max_receive,
             owner: None,
         };
-        let facts: Facts = ready.confirmed.into();
+        let mut facts: Facts = ready.confirmed.into();
+        facts.multi_statements = Some(
+            authenticated.capabilities.contains(crate::protocol::CapabilityFlags::CLIENT_MULTI_STATEMENTS),
+        );
         let reference = facts.execution_context(wire.max_send).ok();
         (
             Self {
