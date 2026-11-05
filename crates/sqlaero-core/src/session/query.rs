@@ -3,10 +3,11 @@
 use crate::memory::{Pool, Scope};
 use crate::protocol::framing::{MessageReader, MessageWriter, WireError};
 use crate::result::text::{self, Receiver, Response, ResultError};
+use crate::result::value::RowEncoding;
 use crate::transport::channel::{Channel, ChannelError, Step};
 use crate::transport::deadline::IoBudget;
 use crate::transport::socket::WaitStatus;
-use mysql_common::constants::CapabilityFlags;
+use mysql_common::constants::{CapabilityFlags, Command};
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -110,6 +111,7 @@ pub struct Query {
     incoming: MessageReader,
     collector: Receiver,
     capabilities: CapabilityFlags,
+    encoding: RowEncoding,
     max_receive: usize,
     scope: Arc<Scope>,
     sent: bool,
@@ -189,13 +191,20 @@ impl Query {
         }
         let sender = MessageWriter::new(request.len(), max_send)?;
         let scope = Scope::new(Arc::clone(&pool), memory_limit).map_err(ResultError::from)?;
-        let collector = Receiver::new(capabilities, Arc::clone(&scope), discard)?;
+        let encoding = if request[0] == Command::COM_STMT_EXECUTE as u8 {
+            RowEncoding::Binary
+        } else {
+            RowEncoding::Text
+        };
+        let collector =
+            Receiver::with_encoding(capabilities, Arc::clone(&scope), discard, encoding)?;
         Ok(Self {
             request,
             sender,
             incoming: MessageReader::tracked(max_receive, &scope),
             collector,
             capabilities,
+            encoding,
             max_receive,
             scope,
             sent: false,
@@ -248,7 +257,12 @@ impl Query {
             // only after the previous complete set was returned to its owner.
             let scope =
                 Scope::new(Arc::clone(&self.pool), self.memory_limit).map_err(ResultError::from)?;
-            let collector = Receiver::new(self.capabilities, Arc::clone(&scope), self.discard)?;
+            let collector = Receiver::with_encoding(
+                self.capabilities,
+                Arc::clone(&scope),
+                self.discard,
+                self.encoding,
+            )?;
             self.incoming = MessageReader::tracked(self.max_receive, &scope);
             self.collector = collector;
             self.scope = scope;

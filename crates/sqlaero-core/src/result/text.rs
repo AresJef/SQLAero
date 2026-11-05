@@ -194,7 +194,7 @@ impl Column {
             .then_some(self.decimals)
     }
 
-    fn parse(data: &[u8], base: usize) -> Result<Self, WireError> {
+    pub(crate) fn parse(data: &[u8], base: usize) -> Result<Self, WireError> {
         let mut position = 0;
         let mut labels = [Cell { start: 0, end: 0 }; 6];
         for label in &mut labels {
@@ -438,7 +438,7 @@ pub struct ServerFailure {
     _owner: Reservation,
 }
 impl ServerFailure {
-    fn new(packet: &ServerError<'_>, scope: &Arc<Scope>) -> Result<Self, MemoryError> {
+    pub(crate) fn new(packet: &ServerError<'_>, scope: &Arc<Scope>) -> Result<Self, MemoryError> {
         // The incoming packet remains charged while this copy is allocated.
         // Buffer charges real capacity and any growth peak, not payload length.
         let owner = scope.charge(size_of::<Self>())?;
@@ -519,6 +519,7 @@ enum Phase {
 /// results use the same parser while retaining only counts and completion.
 pub struct Receiver {
     capabilities: CapabilityFlags,
+    encoding: super::value::RowEncoding,
     phase: Phase,
     columns: Buffer<Column>,
     metadata: Buffer<u8>,
@@ -542,9 +543,29 @@ impl Receiver {
         scope: Arc<Scope>,
         discard: bool,
     ) -> Result<Self, ResultError> {
+        Self::with_encoding(
+            capabilities,
+            scope,
+            discard,
+            super::value::RowEncoding::Text,
+        )
+    }
+
+    /// Receive metadata and rows using the actual request protocol. Binary
+    /// rows share the same owners, quotas, terminators and error handling.
+    ///
+    /// # Errors
+    /// Returns a fixed native-owner quota failure.
+    pub fn with_encoding(
+        capabilities: CapabilityFlags,
+        scope: Arc<Scope>,
+        discard: bool,
+        encoding: super::value::RowEncoding,
+    ) -> Result<Self, ResultError> {
         let owner = scope.charge(size_of::<Self>())?;
         Ok(Self {
             capabilities,
+            encoding,
             phase: Phase::First,
             columns: Buffer::tracked(&scope),
             metadata: Buffer::tracked(&scope),
@@ -645,6 +666,8 @@ impl Receiver {
                 let column = Column::parse(data, base)?;
                 if !self.discard {
                     self.metadata.extend_from_slice(data)?;
+                }
+                if !self.discard || self.encoding == super::value::RowEncoding::Binary {
                     self.columns.push(column)?;
                 }
                 self.phase = if remaining == 1 {
@@ -706,7 +729,7 @@ impl Receiver {
                             _owner: metadata_owner,
                         });
                         Response::Rows(Buffered {
-                            encoding: super::value::RowEncoding::Text,
+                            encoding: self.encoding,
                             columns,
                             bytes: std::mem::take(&mut self.bytes),
                             fields: std::mem::take(&mut self.fields),
@@ -718,40 +741,53 @@ impl Receiver {
                     self.phase = Phase::Finished;
                     return Ok(Some(response));
                 }
-                if !self.discard {
-                    self.fields.reserve(self.column_count)?;
-                }
                 let base = self.bytes.len();
-                let mut position = 0;
-                for _ in 0..self.column_count {
-                    let cell = match length(data, &mut position)? {
-                        None => Cell {
-                            start: usize::MAX,
-                            end: 0,
+                if self.encoding == super::value::RowEncoding::Binary {
+                    crate::protocol::binary::scan_row(
+                        data,
+                        self.columns.as_slice(),
+                        base,
+                        if self.discard {
+                            None
+                        } else {
+                            Some(&mut self.fields)
                         },
-                        Some(size) => {
-                            let end = position
-                                .checked_add(size)
-                                .filter(|end| *end <= data.len())
-                                .ok_or(WireError::Malformed("truncated text field"))?;
-                            let cell = Cell {
-                                start: base
-                                    .checked_add(position)
-                                    .ok_or(WireError::Malformed("row offset overflow"))?,
-                                end: base
-                                    .checked_add(end)
-                                    .ok_or(WireError::Malformed("row offset overflow"))?,
-                            };
-                            position = end;
-                            cell
-                        }
-                    };
+                    )?;
+                } else {
                     if !self.discard {
-                        self.fields.push(cell)?;
+                        self.fields.reserve(self.column_count)?;
                     }
-                }
-                if position != data.len() {
-                    return Err(WireError::Malformed("text row has trailing fields").into());
+                    let mut position = 0;
+                    for _ in 0..self.column_count {
+                        let cell = match length(data, &mut position)? {
+                            None => Cell {
+                                start: usize::MAX,
+                                end: 0,
+                            },
+                            Some(size) => {
+                                let end = position
+                                    .checked_add(size)
+                                    .filter(|end| *end <= data.len())
+                                    .ok_or(WireError::Malformed("truncated text field"))?;
+                                let cell = Cell {
+                                    start: base
+                                        .checked_add(position)
+                                        .ok_or(WireError::Malformed("row offset overflow"))?,
+                                    end: base
+                                        .checked_add(end)
+                                        .ok_or(WireError::Malformed("row offset overflow"))?,
+                                };
+                                position = end;
+                                cell
+                            }
+                        };
+                        if !self.discard {
+                            self.fields.push(cell)?;
+                        }
+                    }
+                    if position != data.len() {
+                        return Err(WireError::Malformed("text row has trailing fields").into());
+                    }
                 }
                 if !self.discard {
                     self.bytes.extend_from_slice(data)?;
