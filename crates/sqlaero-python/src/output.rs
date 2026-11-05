@@ -116,8 +116,8 @@ pub(crate) fn tuple_from_values<'py>(
     Ok(tuple)
 }
 
-pub(crate) fn memory(py: Python<'_>, error: MemoryError) -> PyErr {
-    match error {
+pub(crate) fn memory(py: Python<'_>, error: impl std::borrow::Borrow<MemoryError>) -> PyErr {
+    match error.borrow() {
         MemoryError::Allocation(_) => errors::memory_error(py),
         error => errors::client(py, ClientErrorCode::ResourceLimit, error.to_string()),
     }

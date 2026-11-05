@@ -38,6 +38,7 @@ pub struct Chain {
     later: Buffer<Option<Set>>,
     count: usize,
     next: usize,
+    later_base: usize,
     failure: Option<Failure>,
 }
 
@@ -53,6 +54,7 @@ impl Chain {
         } else {
             if self.later.capacity() == 0 {
                 self.later = Buffer::tracked(set.response.scope());
+                self.later_base = self.count;
             }
             self.later.push(Some(set))?;
         }
@@ -68,7 +70,7 @@ impl Chain {
         } else {
             self.later
                 .as_mut_slice()
-                .get_mut(self.next - 1)
+                .get_mut(self.next.checked_sub(self.later_base)?)
                 .and_then(Option::take)
         };
         if set.is_some() {
@@ -89,6 +91,8 @@ impl Chain {
     /// Borrow the terminal failure only after all complete sets were consumed.
     #[must_use]
     pub fn failure(&self) -> Option<&Failure> {
-        (self.next == self.count).then_some(self.failure.as_ref()).flatten()
+        (self.next == self.count)
+            .then_some(self.failure.as_ref())
+            .flatten()
     }
 }

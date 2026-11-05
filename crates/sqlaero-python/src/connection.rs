@@ -14,7 +14,7 @@ use sqlaero_core::{
     bind::{Context, writer},
     charset::{self, output::OutputCodec},
     error::ClientErrorCode,
-    protocol::framing::{MAX_MESSAGE_PAYLOAD},
+    protocol::framing::MAX_MESSAGE_PAYLOAD,
     result::{
         decode::Options,
         text::{Response, ResultError},
@@ -28,7 +28,6 @@ use sqlaero_core::{
     transport::{
         channel::Step,
         deadline::{IoBudget, TimeoutKind},
-        socket::WaitStatus,
     },
 };
 use std::{
@@ -97,6 +96,7 @@ pub(crate) struct DriveFailure {
     unavailable: bool,
     confirmed: Option<CommandConfirmation>,
     outcome: FailureOutcome,
+    native_failure: Option<sqlaero_core::result::chain::Failure>,
 }
 impl DriveFailure {
     fn new(
@@ -112,7 +112,20 @@ impl DriveFailure {
             unavailable,
             confirmed,
             outcome,
+            native_failure: None,
         }
+    }
+    fn with_native(mut self, error: Arc<QueryError>, codec: Option<OutputCodec>) -> Self {
+        self.native_failure = Some(sqlaero_core::result::chain::Failure { error, codec });
+        self
+    }
+    pub(crate) fn native_failure(&self) -> Option<sqlaero_core::result::chain::Failure> {
+        self.native_failure
+            .as_ref()
+            .map(|failure| sqlaero_core::result::chain::Failure {
+                error: Arc::clone(&failure.error),
+                codec: failure.codec,
+            })
     }
     pub(crate) fn record_prefix(
         self,
@@ -508,14 +521,16 @@ impl Connection {
                                 facts.database = None;
                             }
                         }
-                        let mapped = errors::query_with_codec(py, error, error_codec);
+                        let error = Arc::new(error);
+                        let mapped = errors::query_with_codec(py, error.as_ref(), error_codec);
                         return Err(DriveFailure::new(
                             py,
                             mapped,
                             FailureOutcome::ServerErr,
                             false,
                             None,
-                        ));
+                        )
+                        .with_native(error, error_codec));
                     }
                     let unavailable = unavailable(&error);
                     let keep_unsent = matches!(
@@ -527,14 +542,17 @@ impl Connection {
                                 )
                         )
                     );
-                    return Err(self.query_failure(
-                        py,
-                        lease,
-                        job,
-                        errors::query_with_codec(py, error, error_codec),
-                        unavailable,
-                        keep_unsent,
-                    ));
+                    let error = Arc::new(error);
+                    return Err(self
+                        .query_failure(
+                            py,
+                            lease,
+                            job,
+                            errors::query_with_codec(py, error.as_ref(), error_codec),
+                            unavailable,
+                            keep_unsent,
+                        )
+                        .with_native(error, error_codec));
                 }
             }
         }
@@ -712,7 +730,10 @@ macro_rules! connection_api {
                 let result=(|| {
                     let mut job=NativeClose::new(lease).map_err(|error|close_error(py,error))?;
                     loop {
-                        let step=py.detach(||job.advance(&mut budget)).map_err(|error|close_error(py,error))?;
+                        let step={
+                            let mut io=job.io().map_err(|error|close_error(py,error))?;
+                            py.detach(||io.advance(&mut budget)).map_err(|error|close_error(py,error))?
+                        };
                         match step {
                             Step::Ready(())=>return Ok(()),
                             _=>input::check(py,&budget)?,
@@ -939,9 +960,9 @@ fn configured_size(
 /// version-specific upper limit or normalization. Later remote changes use
 /// explicit set_* methods; three local runtime timeouts use property assignment.
 #[pyfunction]
-#[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,server_public_key_path=None,autocommit=Argument::default(),sql_mode=None,connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
+#[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,server_public_key_path=None,autocommit=Argument::default(),sql_mode=None,multi_statements=Argument::default(),connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
 #[pyo3(
-    text_signature = "(*, user, host='127.0.0.1', port=3306, unix_socket=None, password=None, database=None, charset=None, collation=None, ssl=None, server_public_key_path=None, autocommit=True, sql_mode=None, connect_timeout=10, read_timeout=None, write_timeout=None, operation_timeout=None, net_read_timeout=None, net_write_timeout=None, wait_timeout=None, innodb_lock_wait_timeout=None, max_allowed_packet='64MB', max_received_packet='64MB', result_memory_limit='256MB', total_result_memory_limit='512MB', decode_json=False, decode_set=False, decode_bit=False, use_decimal=True, use_timedelta=True, decode_text_strict=True, decode_date_strict=True)"
+    text_signature = "(*, user, host='127.0.0.1', port=3306, unix_socket=None, password=None, database=None, charset=None, collation=None, ssl=None, server_public_key_path=None, autocommit=True, sql_mode=None, multi_statements=True, connect_timeout=10, read_timeout=None, write_timeout=None, operation_timeout=None, net_read_timeout=None, net_write_timeout=None, wait_timeout=None, innodb_lock_wait_timeout=None, max_allowed_packet='64MB', max_received_packet='64MB', result_memory_limit='256MB', total_result_memory_limit='512MB', decode_json=False, decode_set=False, decode_bit=False, use_decimal=True, use_timedelta=True, decode_text_strict=True, decode_date_strict=True)"
 )]
 #[expect(
     clippy::too_many_arguments,
@@ -961,6 +982,7 @@ pub(crate) fn connect(
     server_public_key_path: Option<&Bound<'_, PyAny>>,
     autocommit: Argument<'_>,
     sql_mode: Option<&Bound<'_, PyAny>>,
+    multi_statements: Argument<'_>,
     connect_timeout: Argument<'_>,
     read_timeout: Option<&Bound<'_, PyAny>>,
     write_timeout: Option<&Bound<'_, PyAny>>,
@@ -1117,6 +1139,10 @@ pub(crate) fn connect(
     let ssl_mode = selected.mode_name(unix);
     let tls = selected.prepare(py, unix, &host)?;
     input::check(py, &budget).map_err(|error| errors::at(py, error, "connect"))?;
+    let multi_statements = multi_statements
+        .0
+        .as_ref()
+        .map_or(Ok(true), |value| config::boolean(value, "multi_statements"))?;
     let params = ConnectParams {
         endpoint: match socket {
             Some(socket) => Endpoint::Unix(socket),
@@ -1127,6 +1153,8 @@ pub(crate) fn connect(
         database,
         tls,
         server_public_key,
+        compression: Default::default(),
+        multi_statements,
         connect_timeout: timeout_config.connect,
         read_timeout: timeout_config.read,
         write_timeout: timeout_config.write,

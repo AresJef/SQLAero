@@ -374,7 +374,9 @@ impl Response {
     pub fn scope(&self) -> &Arc<Scope> {
         match self {
             Self::Rows(rows) => rows.scope(),
-            Self::Command(completion) | Self::Counted { completion, .. } => completion._owner.scope(),
+            Self::Command(completion) | Self::Counted { completion, .. } => {
+                completion._owner.scope()
+            }
         }
     }
     /// Actual final OK/EOF metadata shared by counters and state updates.

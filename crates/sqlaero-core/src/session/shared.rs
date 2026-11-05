@@ -389,7 +389,10 @@ impl CloseIo<'_> {
     /// Returns the original transport, framing or deadline failure.
     pub fn advance(&mut self, budget: &mut IoBudget) -> Result<Step<()>, CloseError> {
         loop {
-            match self.channel.send_step(self.sender, &[1], budget, self.scope)? {
+            match self
+                .channel
+                .send_step(self.sender, &[1], budget, self.scope)?
+            {
                 Step::Wait(direction) => {
                     if self.channel.wait(direction, budget)? == WaitStatus::Control {
                         return Ok(Step::Control);

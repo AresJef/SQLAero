@@ -6,7 +6,7 @@ use crate::{
     connection::{CommandRole, Connection},
     errors,
     input::{self, ScalarTypes},
-    metadata,
+    metadata, output,
     reader::Reader,
 };
 use num_bigint::BigUint;
@@ -19,11 +19,38 @@ use sqlaero_core::{
         batch::{Blocks, Layout},
         template::{Compiler, Template},
     },
+    charset::output::OutputCodec,
     error::ClientErrorCode,
-    result::{decode::Options, text::Response},
+    result::{
+        chain::{Chain, Set as NativeSet},
+        decode::Options,
+        text::Response,
+    },
     session::query::ConfirmedPrefix,
+    session::{
+        query::{CommandConfirmation, Query},
+        shared::CommandLease,
+    },
+    transport::deadline::IoBudget,
 };
 use std::sync::{Mutex, MutexGuard};
+
+#[derive(Default)]
+struct Results {
+    pending: Chain,
+    batch: Option<u128>,
+    failed: bool,
+    started: bool,
+    failure_note: Option<std::sync::Arc<errors::SavedFailure>>,
+}
+#[derive(Default)]
+struct Collected {
+    chain: Chain,
+    prefix: ConfirmedPrefix,
+    total: u128,
+    total_unknown: bool,
+    final_first_known: bool,
+}
 
 struct Settings {
     options: Options,
@@ -116,12 +143,18 @@ pub(crate) struct Cursor {
     reader: Reader,
     settings: Mutex<Settings>,
     counts: Mutex<Option<Counts>>,
+    results: Mutex<Results>,
 }
 impl Cursor {
     /// Stop future operations after mandatory transaction cleanup failed. Any
     /// already active Reader operation retains and releases its own data.
     pub(crate) fn retire(&self) {
         self.reader.retire();
+        let old = match self.results.lock() {
+            Ok(mut state) => { state.failure_note = None; std::mem::take(&mut state.pending) }
+            Err(error) => std::mem::take(&mut error.into_inner().pending),
+        };
+        drop(old);
     }
 
     pub(crate) fn new(
@@ -137,6 +170,7 @@ impl Cursor {
                 arraysize: BigUint::from(1u8),
             }),
             counts: Mutex::new(None),
+            results: Mutex::new(Results::default()),
         }
     }
     fn settings(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Settings>> {
@@ -172,10 +206,149 @@ impl Cursor {
             Ok(())
         }
     }
+    fn results(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Results>> {
+        self.results.lock().map_err(|error| {
+            drop(error.into_inner());
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "Cursor results are unavailable after a native state failure",
+            )
+        })
+    }
+    fn publish_set(&self, py: Python<'_>, set: NativeSet) -> PyResult<()> {
+        let completion = set.response.completion();
+        let counts = Counts {
+            rows: match &set.response {
+                Response::Command(ok) => u128::from(ok.affected_rows()),
+                Response::Rows(rows) => rows.row_count as u128,
+                Response::Counted { rows, .. } => *rows as u128,
+            },
+            last_id: completion.last_insert_id(),
+            warnings: u128::from(completion.warnings()),
+        };
+        match set.response {
+            Response::Rows(rows) => self
+                .reader
+                .install(py, rows, set.options, set.names_codec)?,
+            Response::Command(_) => self.reader.clear_result(py)?,
+            Response::Counted { .. } => {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "A discarded internal result cannot be published",
+                ));
+            }
+        }
+        *self.counters(py)? = Some(counts);
+        Ok(())
+    }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one concrete request shares the operation's existing owners and policy"
+    )]
+    fn receive_request(
+        &self,
+        py: Python<'_>,
+        connection: &Connection,
+        lease: &mut CommandLease<'_>,
+        mut job: Query,
+        budget: &mut IoBudget,
+        source_rows: std::ops::Range<usize>,
+        final_request: bool,
+        codec: OutputCodec,
+        options: Options,
+        collected: &mut Collected,
+    ) -> PyResult<()> {
+        let request_index = collected.prefix.commands;
+        let mut first = None;
+        let mut set_index = 0;
+        loop {
+            let response = match connection.drive_set(
+                py,
+                lease,
+                &mut job,
+                budget,
+                CommandRole::UserSql,
+            ) {
+                Ok(response) => response,
+                Err(failure) => {
+                    if let Some(native) = failure.native_failure() {
+                        collected.chain.fail(native);
+                    }
+                    collected.total_unknown |= !final_request || first.is_none();
+                    let error =
+                        failure.record_prefix(py, &mut collected.prefix, source_rows.clone());
+                    errors::note_format(
+                        py,
+                        &error,
+                        format_args!(
+                            "while receiving request {request_index}, result set {set_index}; statement index is not inferred from result count"
+                        ),
+                    );
+                    return Err(error);
+                }
+            };
+            if first.is_none() {
+                let count = match &response {
+                    Response::Command(ok) => u128::from(ok.affected_rows()),
+                    Response::Rows(rows) => rows.row_count as u128,
+                    Response::Counted { rows, .. } => *rows as u128,
+                };
+                collected.total = collected.total.checked_add(count).ok_or_else(|| {
+                    errors::client(
+                        py,
+                        ClientErrorCode::InternalState,
+                        "batch first-result row count overflow",
+                    )
+                })?;
+                first = Some(CommandConfirmation::from_response(&response));
+                collected.final_first_known |= final_request;
+            }
+            let result = collected.chain.push(NativeSet {
+                response,
+                options,
+                names_codec: codec,
+                request_index,
+                set_index,
+            });
+            if let Err(error) = result {
+                if !job.is_finished() {
+                    lease.invalidate();
+                }
+                collected.total_unknown |= !final_request;
+                return Err(output::memory(py, error));
+            }
+            if job.is_finished() {
+                collected
+                    .prefix
+                    .record_confirmation(
+                        source_rows,
+                        first.ok_or_else(|| {
+                            errors::client(
+                                py,
+                                ClientErrorCode::InternalState,
+                                "a completed command has no first result",
+                            )
+                        })?,
+                    )
+                    .map_err(|error| errors::wire(py, error))?;
+                return Ok(());
+            }
+            set_index += 1;
+            if let Err(error) = input::check(py, budget) {
+                lease.invalidate();
+                collected.total_unknown |= !final_request;
+                return Err(error);
+            }
+        }
+    }
     fn handoff(&self, py: Python<'_>, begun: &mut bool) -> PyResult<()> {
         if !*begun {
             self.reader.clear_result(py)?;
             *self.counters(py)? = None;
+            let old = std::mem::take(&mut *self.results(py)?);
+            drop(old);
             *begun = true;
         }
         Ok(())
@@ -213,11 +386,10 @@ impl Cursor {
             .map_or(Ok(true), |value| config::boolean(value, "itemize"))?;
         let options = self.settings(py)?.options;
         let types = connection.types.borrow(py);
-        let mut prefix = ConfirmedPrefix::default();
+        let mut collected = Collected::default();
         let mut begun = false;
         let result = (|| {
             connection.ensure_context(py, &mut lease, &mut budget)?;
-            let mut last = None;
             if let Some(args) = args.0 {
                 let mut rows = binding::Rows::new(&args, many, itemize, &types, &budget)?;
                 let batch = rows.is_batch();
@@ -242,7 +414,7 @@ impl Cursor {
                             "SQL preparation was not published",
                         )
                     })?;
-                    let start = prefix.source_rows;
+                    let start = collected.prefix.source_rows;
                     let (request, end) = if let (Some(layout), Some(blocks)) =
                         (&prepared.layout, &mut prepared.blocks)
                     {
@@ -303,16 +475,21 @@ impl Cursor {
                         )
                     };
                     let final_request = pending.is_none() && rows.remaining() == 0;
-                    let job = connection.query_job(py, &mut lease, request, !final_request)?;
+                    let job = connection.query_job(py, &mut lease, request, false)?;
                     input::check(py, &budget)?;
                     self.handoff(py, &mut begun)?;
-                    let response = connection
-                        .drive(py, &mut lease, job, &mut budget, CommandRole::UserSql)
-                        .map_err(|failure| failure.record_prefix(py, &mut prefix, start..end))?;
-                    prefix
-                        .record(start..end, &response)
-                        .map_err(|error| errors::wire(py, error))?;
-                    last = Some((response, names_codec));
+                    self.receive_request(
+                        py,
+                        &connection,
+                        &mut lease,
+                        job,
+                        &mut budget,
+                        start..end,
+                        final_request,
+                        names_codec,
+                        options,
+                        &mut collected,
+                    )?;
                     if final_request {
                         break;
                     }
@@ -324,49 +501,49 @@ impl Cursor {
                 let job = connection.query_job(py, &mut lease, request, false)?;
                 input::check(py, &budget)?;
                 self.handoff(py, &mut begun)?;
-                let response = connection
-                    .drive(py, &mut lease, job, &mut budget, CommandRole::UserSql)
-                    .map_err(|failure| failure.record_prefix(py, &mut prefix, 0..0))?;
-                prefix
-                    .record(0..0, &response)
-                    .map_err(|error| errors::wire(py, error))?;
-                last = Some((response, names_codec));
-            }
-            let Some((response, codec)) = last else {
-                return Err(errors::client(
+                self.receive_request(
                     py,
-                    ClientErrorCode::InternalState,
-                    "an execution produced no actual command",
-                ));
-            };
-            input::check(py, &budget)?;
-            let prepared = if let Response::Rows(rows) = response {
-                Some(Reader::prepare(py, rows, options, codec)?)
-            } else {
-                None
-            };
-            let returned_count = prefix.row_count.into_pyobject(py)?.into_any();
-            input::check(py, &budget)?;
-            if let Some(prepared) = prepared {
-                self.reader.publish(py, prepared)?;
+                    &connection,
+                    &mut lease,
+                    job,
+                    &mut budget,
+                    0..0,
+                    true,
+                    names_codec,
+                    options,
+                    &mut collected,
+                )?;
             }
-            *self.counters(py)? = Some(Counts {
-                rows: prefix.row_count,
-                last_id: prefix.last_insert_id,
-                warnings: prefix.warnings,
-            });
-            Ok(returned_count)
+            Ok(())
         })();
-        if let Err(error) = &result
-            && begun
-        {
-            // Publication is all-or-nothing, including decode-plan/resource
-            // preparation after a completely consumed final response.
-            self.reader.clear_result(py)?;
-            *self.counters(py)? = None;
-            errors::note(py, error, prefix.diagnostic());
+        if !begun {
+            return result.map(|()| py.None().into_bound(py));
         }
-        result
+        if let Err(error) = &result {
+            errors::note(py, error, collected.prefix.diagnostic());
+        }
+        let failed = result.is_err();
+        let failure_note = result.as_ref().err().and_then(|error|
+            errors::SavedFailure::capture(py,error).ok().map(std::sync::Arc::new));
+        let batch = (!collected.total_unknown && collected.final_first_known).then_some(collected.total);
+        let first = collected.chain.take_next();
+        let publication = first.map_or(Ok(()), |set| self.publish_set(py, set));
+        *self.results(py)? = Results {
+            pending: if self.reader.is_closed() {Chain::default()} else {collected.chain},
+            batch,
+            failed,
+            started: true,
+            failure_note,
+        };
+        match (result, publication) {
+            (Err(error), Err(secondary)) => {
+                errors::additional(py, &error, secondary, "cursor.publish_prefix");
+                Err(error)
+            }
+            (Err(error), Ok(())) => Err(error),
+            (Ok(()), Err(error)) => Err(error),
+            (Ok(()), Ok(())) => Ok(collected.total.into_pyobject(py)?.into_any()),
+        }
     }
 }
 macro_rules! cursor_api {
@@ -408,6 +585,38 @@ macro_rules! cursor_api {
                 self.run(py,sql,Argument(Some(args.clone())),&Argument(Some(many.clone())),&Argument(Some(many)))
                     .map_err(|error|errors::at(py,error,"cursor.executemany"))
             }
+            /// Advance to the next actual result set, discarding unread rows of
+            /// the current set. True selects a set; None confirms normal end.
+            /// Buffered sets are already native-owned. A stored failure boundary
+            /// raises its original cause rather than claiming natural exhaustion.
+            fn nextset(&self,py:Python<'_>)->PyResult<Option<bool>> {
+                let _operation=self.reader.operation(py)?;
+                self.reader.open(py)?;
+                if !self.results(py)?.started {return Err(errors::client(py,ClientErrorCode::SessionState,"Cursor has no result sequence; execute a command before nextset"));}
+                let next=self.results(py)?.pending.take_next();
+                if let Some(set)=next { self.publish_set(py,set)?; return Ok(Some(true)); }
+                self.reader.end_set(py)?;
+                let native=self.results(py)?.pending.failure().map(|failure|
+                    (std::sync::Arc::clone(&failure.error),failure.codec));
+                if let Some((error,codec))=native {
+                    return Err(errors::at(py,errors::query_with_codec(py,error.as_ref(),codec),"cursor.nextset"));
+                }
+                let (failed, snapshot) = {
+                    let state=self.results(py)?;
+                    (state.failed,state.failure_note.as_ref().map(std::sync::Arc::clone))
+                };
+                if let Some(snapshot)=snapshot {return Err(errors::at(py,snapshot.restore(py),"cursor.nextset"));}
+                if failed {return Err(errors::client(py,ClientErrorCode::SessionState,
+                    "The previous operation failed before a trustworthy diagnostic snapshot could be retained"));}
+                Ok(None)
+            }
+            /// Sum only the first result count of each actual request. None
+            /// means a contribution or an unattempted request remains unknown.
+            #[getter] fn batch_row_count(&self,py:Python<'_>)->PyResult<Option<u128>> {Ok(self.results(py)?.batch)}
+            /// Move within the current result. Buffered results allow both
+            /// directions, including EOF. Invalid positions raise IndexError.
+            #[pyo3(signature=(value,mode="relative"))]
+            fn scroll(&self,py:Python<'_>,value:&Bound<'_,PyAny>,mode:&str)->PyResult<()> {self.reader.scroll(py,value,mode)}
             /// Return the next tuple row, or None when a valid result is exhausted.
             /// Buffered fetching remains valid after its Connection is closed,
             /// as long as this Cursor stays open. This sends no network request.
@@ -421,7 +630,11 @@ macro_rules! cursor_api {
             fn fetchall<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {self.reader.fetchall(py)}
             /// Close only this Cursor, retaining readable local metadata,
             /// counters and configuration. Its Connection remains usable.
-            pub(crate) fn close(&self,py:Python<'_>)->PyResult<()> {self.reader.close(py).map_err(|error|errors::at(py,error,"cursor.close"))}
+            pub(crate) fn close(&self,py:Python<'_>)->PyResult<()> {
+                self.reader.close(py).map_err(|error|errors::at(py,error,"cursor.close"))?;
+                let old={let mut state=self.results(py)?;state.failure_note=None;std::mem::take(&mut state.pending)};
+                drop(old);Ok(())
+            }
             /// True after this Cursor has been permanently retired locally.
             #[getter] fn closed(&self)->bool {self.reader.is_closed()}
             /// Positive default row count for fetchmany(None); initial value 1.

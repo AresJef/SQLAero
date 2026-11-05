@@ -56,6 +56,7 @@ struct State {
     position: usize,
     total: usize,
     arraysize: usize,
+    abandoned: bool,
 }
 
 /// A concrete per-Cursor operation owner. It never owns the connection wire.
@@ -92,6 +93,7 @@ impl Reader {
                 position: 0,
                 total: 0,
                 arraysize: 1,
+                abandoned: false,
             }),
             lifecycle: Lifecycle::default(),
             types,
@@ -216,6 +218,7 @@ impl Reader {
             let old_columns = state.columns.take();
             state.position = 0;
             state.total = total;
+            state.abandoned = false;
             (
                 std::mem::replace(&mut state.data, data),
                 old_metadata,
@@ -234,13 +237,94 @@ impl Reader {
             let old_columns = state.columns.take();
             state.position = 0;
             state.total = 0;
+            state.abandoned = false;
             (state.data.take(), old_metadata, old_columns)
         };
         drop(old);
         Ok(())
     }
+    /// Confirmed end of a sequence keeps only its final metadata/counters;
+    /// explicitly abandoned native rows cannot later be recovered by scroll.
+    pub(crate) fn end_set(&self, py: Python<'_>) -> PyResult<()> {
+        let released = {
+            let mut state = self.lock(py)?;
+            state.position = state.total;
+            state.abandoned = true;
+            state.data.take()
+        };
+        drop(released);
+        Ok(())
+    }
+
     pub(crate) fn metadata(&self, py: Python<'_>) -> PyResult<Option<Arc<metadata::Snapshot>>> {
         Ok(self.lock(py)?.metadata.clone())
+    }
+
+    pub(crate) fn scroll(
+        &self,
+        py: Python<'_>,
+        value: &Bound<'_, PyAny>,
+        mode: &str,
+    ) -> PyResult<()> {
+        let _operation = self.operation(py)?;
+        self.open(py)?;
+        let absolute = match mode {
+            "relative" => false,
+            "absolute" => true,
+            _ => {
+                return Err(errors::builtin_message::<PyValueError>(
+                    py,
+                    "scroll mode must be 'relative' or 'absolute'",
+                ));
+            }
+        };
+        if value.is_instance_of::<PyBool>() {
+            return Err(errors::builtin_message::<PyTypeError>(
+                py,
+                "scroll value must support __index__; bool is not accepted",
+            ));
+        }
+        // SAFETY: attached Python owns value. The public integer protocol
+        // returns a new owning exact integer or the original callback error.
+        // No native state mutex or borrowed source pointer crosses that call.
+        let index = unsafe {
+            Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Index(value.as_ptr()))?
+        };
+        let offset = match index.extract::<i128>() {
+            Ok(value) => value,
+            Err(error) if error.is_instance_of::<PyOverflowError>(py) => {
+                return Err(errors::builtin_message::<pyo3::exceptions::PyIndexError>(
+                    py,
+                    "scroll target is outside the current result",
+                ));
+            }
+            Err(error) => return Err(error),
+        };
+        py.check_signals()?;
+        let mut state = self.lock(py)?;
+        if state.metadata.is_none() || state.abandoned {
+            drop(state);
+            return Err(errors::client(
+                py,
+                ClientErrorCode::SessionState,
+                "Cursor has no current row result to scroll",
+            ));
+        }
+        let target = if absolute {
+            Some(offset)
+        } else {
+            (state.position as i128).checked_add(offset)
+        };
+        let Some(target) = target.filter(|target| *target >= 0 && *target <= state.total as i128)
+        else {
+            drop(state);
+            return Err(errors::builtin_message::<pyo3::exceptions::PyIndexError>(
+                py,
+                "scroll target is outside the current result; the position is unchanged",
+            ));
+        };
+        state.position = target as usize;
+        Ok(())
     }
 
     pub(crate) fn set_arraysize(&self, py: Python<'_>, value: usize) -> PyResult<()> {
@@ -463,16 +547,10 @@ impl Reader {
             self.materialize::<false>(py, &data, &types, start..end, one)?
         };
         py.check_signals()?;
-        let released = {
-            let mut state = self.lock(py)?;
-            state.position = end;
-            if end == state.total {
-                state.data.take()
-            } else {
-                None
-            }
-        };
-        drop(released);
+        // Buffered navigation retains this current set's native rows at EOF.
+        // Explicit nextset, a real new send handoff, close and final ownership
+        // release remain the only boundaries which discard its row storage.
+        self.lock(py)?.position = end;
         Ok(output)
     }
 }

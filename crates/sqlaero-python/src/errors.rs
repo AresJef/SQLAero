@@ -414,9 +414,10 @@ fn exception_type(py: Python<'_>, class: ExceptionClass) -> Bound<'_, PyType> {
 
 /// Preserve an actual allocation failure; distinguish active resource bounds
 /// from malformed wire data without parsing a human error string.
-pub(crate) fn wire(py: Python<'_>, error: WireError) -> PyErr {
+pub(crate) fn wire(py: Python<'_>, error: impl std::borrow::Borrow<WireError>) -> PyErr {
+    let error = error.borrow();
     let detail =
-        diagnostics::Native::capture(&error, Some("sqlaero_core::protocol::framing::WireError"));
+        diagnostics::Native::capture(error, Some("sqlaero_core::protocol::framing::WireError"));
     let mapped = match error {
         WireError::Allocation(_) => memory_error(py),
         error @ WireError::Io(_) => client(py, ClientErrorCode::Transport, error.to_string()),
@@ -734,17 +735,18 @@ pub(crate) fn access(py: Python<'_>, error: sqlaero_core::session::shared::Acces
 }
 pub(crate) fn channel(
     py: Python<'_>,
-    error: sqlaero_core::transport::channel::ChannelError,
+    error: impl std::borrow::Borrow<sqlaero_core::transport::channel::ChannelError>,
 ) -> PyErr {
     use sqlaero_core::transport::{channel::ChannelError, socket::TransportError};
+    let error = error.borrow();
     let detail = diagnostics::Native::capture(
-        &error,
+        error,
         Some("sqlaero_core::transport::channel::ChannelError"),
     );
     let mapped = match error {
         ChannelError::Wire(error) => wire(py, error),
         ChannelError::Timeout(error) | ChannelError::Transport(TransportError::Timeout(error)) => {
-            timeout(py, error)
+            timeout(py, *error)
         }
         error @ ChannelError::Transport(_) => {
             client(py, ClientErrorCode::Transport, error.to_string())
@@ -854,6 +856,86 @@ fn escaped_error_text<'py>(py: Python<'py>, message: &[u8]) -> PyResult<Bound<'p
         None,
     )
 }
+/// Frame-free facts for a host-side failure after a trusted result prefix.
+/// The live exception, Python type object and traceback are never retained.
+pub(crate) struct SavedFailure {
+    class: SavedClass,
+    message: String,
+    code: Option<BigInt>,
+    server: Option<bool>,
+}
+#[derive(Clone, Copy)]
+enum SavedClass {
+    Library(Option<ExceptionClass>),
+    Value, Type, Overflow, Memory, Interrupt, Exit, Os, Runtime,
+}
+impl SavedFailure {
+    pub(crate) fn capture(py: Python<'_>, error: &PyErr) -> PyResult<Self> {
+        let library = error.value(py).extract::<PyRef<'_, SQLAeroError>>().ok();
+        let class = if library.is_some() {
+            let mut found = None;
+            for candidate in [ExceptionClass::InterfaceBusy, ExceptionClass::OperationalTimeout,
+                ExceptionClass::Interface, ExceptionClass::Data, ExceptionClass::Operational,
+                ExceptionClass::Integrity, ExceptionClass::Internal, ExceptionClass::Programming,
+                ExceptionClass::NotSupported, ExceptionClass::Database] {
+                if error.is_instance(py, &exception_type(py, candidate)) {
+                    found = Some(candidate); break;
+                }
+            }
+            SavedClass::Library(found)
+        } else if error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py) {SavedClass::Memory}
+        else if error.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py) {SavedClass::Interrupt}
+        else if error.is_instance_of::<pyo3::exceptions::PySystemExit>(py) {SavedClass::Exit}
+        else if error.is_instance_of::<pyo3::exceptions::PyTypeError>(py) {SavedClass::Type}
+        else if error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {SavedClass::Overflow}
+        else if error.is_instance_of::<pyo3::exceptions::PyValueError>(py) {SavedClass::Value}
+        else if error.is_instance_of::<pyo3::exceptions::PyOSError>(py) {SavedClass::Os}
+        else {SavedClass::Runtime};
+        let text = match &library { Some(value) => value.message.bind(py).clone(), None => error.value(py).str()? };
+        let encoded = match text.to_str() {
+            Ok(text) => message(py, format_args!("{text}"))?,
+            Err(_) => message(py,format_args!("{}", text.repr()?.to_str()?))?,
+        };
+        // Result-chain failure storage is bounded independently of the full
+        // immediate exception and user-owned diagnostic snapshot.
+        let mut text = encoded;
+        if text.len() > 4096 {
+            let mut end = 4096;
+            while !text.is_char_boundary(end) {end -= 1;}
+            text.truncate(end);
+            text.try_reserve(12).map_err(|_|memory_error(py))?;
+            text.push_str(" [truncated]");
+        }
+        Ok(Self {class, message:text,
+            code:library.as_ref().and_then(|value|value.code.clone()),
+            server:library.as_ref().and_then(|value|value.is_server_error)})
+    }
+    pub(crate) fn restore(&self, py: Python<'_>) -> PyErr {
+        let typ = match self.class {
+            SavedClass::Library(Some(class)) => exception_type(py,class),
+            SavedClass::Library(None) => py.get_type::<SQLAeroError>(),
+            SavedClass::Value => py.get_type::<pyo3::exceptions::PyValueError>(),
+            SavedClass::Type => py.get_type::<pyo3::exceptions::PyTypeError>(),
+            SavedClass::Overflow => py.get_type::<pyo3::exceptions::PyOverflowError>(),
+            SavedClass::Memory => return memory_error(py),
+            SavedClass::Interrupt => py.get_type::<pyo3::exceptions::PyKeyboardInterrupt>(),
+            SavedClass::Exit => py.get_type::<pyo3::exceptions::PySystemExit>(),
+            SavedClass::Os => py.get_type::<pyo3::exceptions::PyOSError>(),
+            SavedClass::Runtime => py.get_type::<pyo3::exceptions::PyRuntimeError>(),
+        };
+        if !matches!(self.class,SavedClass::Library(_)) {
+            return builtin_error(&typ,&self.message);
+        }
+        let make = || -> PyResult<Bound<'_,PyAny>> {
+            let keywords=dictionary(py)?;
+            if let Some(code)=&self.code {keywords.set_item(PyString::from_bytes(py,b"code")?,code_object(py,code)?)?;}
+            if let Some(server)=self.server {keywords.set_item(PyString::from_bytes(py,b"is_server_error")?,server)?;}
+            typ.call((PyString::from_bytes(py,self.message.as_bytes())?,),Some(&keywords))
+        };
+        match make() {Ok(value)=>PyErr::from_value(value),Err(error)=>error}
+    }
+}
+
 pub(crate) fn query(py: Python<'_>, error: sqlaero_core::session::query::QueryError) -> PyErr {
     query_with_codec(
         py,
@@ -865,11 +947,11 @@ pub(crate) fn query(py: Python<'_>, error: sqlaero_core::session::query::QueryEr
 }
 pub(crate) fn query_with_codec(
     py: Python<'_>,
-    error: sqlaero_core::session::query::QueryError,
+    error: impl std::borrow::Borrow<sqlaero_core::session::query::QueryError>,
     codec: Option<sqlaero_core::charset::output::OutputCodec>,
 ) -> PyErr {
     use sqlaero_core::{result::text::ResultError, session::query::QueryError};
-    match error {
+    match error.borrow() {
         QueryError::Wire(error) | QueryError::Result(ResultError::Wire(error)) => wire(py, error),
         QueryError::Channel(error) => channel(py, error),
         QueryError::Result(ResultError::Memory(error)) => crate::output::memory(py, error),
@@ -1045,7 +1127,11 @@ pub(crate) fn tls_certificate<E: std::error::Error + 'static>(
         ClientErrorCode::TlsCertificateContent,
         format_args!("Cannot read peer_certificates[{certificate_index}].{property}: {source}"),
     );
-    native(py, &primary, diagnostics::Native::capture(source, Some(std::any::type_name::<E>())));
+    native(
+        py,
+        &primary,
+        diagnostics::Native::capture(source, Some(std::any::type_name::<E>())),
+    );
     at(py, primary, "tls_certificate_details")
 }
 
