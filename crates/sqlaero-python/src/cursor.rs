@@ -469,15 +469,6 @@ macro_rules! cursor_api {
     (@impl $class:ident; $(($name:ident,$set:ident,$doc:literal)),* $(,)?) => {
         #[pymethods]
         impl $class {
-            /// Project values through Connection.escape without executing SQL
-            /// or changing this Cursor, even after Cursor or Connection close.
-            /// many and itemize must be exact bool; returned fragments are str.
-            #[pyo3(signature=(data,*,many=Argument::default(),itemize=Argument::default()))]
-            #[pyo3(text_signature="($self, data, *, many=False, itemize=True)")]
-            fn escape<'py>(&self,py:Python<'py>,data:&Bound<'py,PyAny>,many:Argument<'_>,itemize:Argument<'_>)->PyResult<Bound<'py,PyAny>> {
-                self.connection.borrow(py).escape(py,data,many,itemize)
-                    .map_err(|error|errors::at(py,error,"cursor.escape"))
-            }
             /// Preview every actual text request without sending SQL, advancing
             /// results or claiming execution. One request returns str; multiple
             /// requests return list[str] in send order. The last confirmed
@@ -583,11 +574,11 @@ macro_rules! cursor_api {
             /// directions, including EOF. Invalid positions raise IndexError.
             #[pyo3(signature=(value,mode="relative"))]
             fn scroll(&self,py:Python<'_>,value:&Bound<'_,PyAny>,mode:&str)->PyResult<()> {self.reader.scroll(py,value,mode)}
-            /// Return the next tuple row, or None when a valid result is exhausted.
+            /// Return the next row in this Cursor format, or None when a valid result is exhausted.
             /// Buffered fetching remains valid after its Connection is closed,
             /// as long as this Cursor stays open. This sends no network request.
             fn fetchone<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {self.reader.fetchone(py)}
-            /// Return at most size tuple rows atomically; None uses arraysize.
+            /// Return at most size rows in this Cursor format atomically; None uses arraysize.
             /// Zero preserves the position but still requires a current result.
             /// Failed conversion leaves the complete original position unchanged.
             #[pyo3(signature=(size=None))]
@@ -625,12 +616,12 @@ macro_rules! cursor_api {
             #[getter] fn row_count<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{let count=self.counters(py)?.as_ref().map(|value|value.rows);output::optional_count(py,count)}
             /// Actual affected/result row count, or None if unknown.
             #[getter] fn affected_rows<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{self.row_count(py)}
-            /// Actual final command insert ID, or None; no ID range is inferred.
+            /// Actual current-result insert ID, or None; no ID range is inferred.
             #[getter] fn lastrowid<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{let count=self.counters(py)?.as_ref().and_then(|value|value.last_id).map(u128::from);output::optional_count(py,count)}
             /// Alias of lastrowid, reliably readable after close.
             #[getter] fn last_row_id<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{self.lastrowid(py)}
-            /// Actual warnings summed once per completed command, or None if
-            /// this call's overall result is unknown. Readable after close.
+            /// Actual current-result warning count, or None when unknown.
+            /// Readable after close; no warning history is accumulated.
             #[getter] fn warning_count<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{let count=self.counters(py)?.as_ref().map(|value|value.warnings);output::optional_count(py,count)}
             /// Immutable current-result metadata, available lazily after close.
             #[getter] fn columns(&self,py:Python<'_>)->PyResult<Py<metadata::Columns>>{self.reader.columns(py)}

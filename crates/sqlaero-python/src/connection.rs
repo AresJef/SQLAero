@@ -214,6 +214,8 @@ pub(crate) struct Connection {
     total_result_limit: usize,
     tls_snapshot: Option<Arc<sqlaero_core::transport::tls::info::Snapshot>>,
     tls_info_value: OnceLock<Py<crate::tls_info::TlsInfo>>,
+    compression_snapshot: Option<sqlaero_core::transport::compression::Options>,
+    compression_value: OnceLock<Py<crate::compression::Compression>>,
     pub(crate) transaction_scope: Arc<AtomicBool>,
 }
 impl Connection {
@@ -863,6 +865,8 @@ macro_rules! connection_api {
             }
             /// Create or replace one backtick-quoted MySQL savepoint. No local
             /// savepoint registry or automatic transaction boundary is added.
+            /// Success alone does not guarantee a retained savepoint: MySQL
+            /// may end transactions through autocommit or implicit DDL commits.
             fn create_savepoint(&self,py:Python<'_>,name:&Bound<'_,PyAny>)->PyResult<()> {
                 self.savepoint(py,name,input::control::SavepointAction::Create).map_err(|error|errors::at(py,error,"connection.create_savepoint"))
             }
@@ -952,6 +956,18 @@ macro_rules! connection_api {
             #[getter] fn server_version(&self)->&str { &self.native.metadata.version }
             /// Actual server connection ID; remains readable after close.
             #[getter] fn connection_id(&self)->u32 { self.native.metadata.connection_id }
+            /// Actual negotiated compression as an immutable cached snapshot,
+            /// or None when uncompressed. This is independent of the original
+            /// permission configuration, sends no SQL and remains readable
+            /// after close. The zstd level is None for a zlib snapshot.
+            #[getter] fn compression(&self,py:Python<'_>)->PyResult<Option<Py<crate::compression::Compression>>> {
+                let Some(snapshot)=self.compression_snapshot else {return Ok(None);};
+                if let Some(value)=self.compression_value.get() {return Ok(Some(value.clone_ref(py)));}
+                let value=Py::new(py,crate::compression::Compression::from_options(py,snapshot)?)?;
+                let _=self.compression_value.set(value);
+                self.compression_value.get().map(|value|Some(value.clone_ref(py))).ok_or_else(||
+                    errors::client(py,ClientErrorCode::InternalState,"Compression representation was not published"))
+            }
             /// Actual immutable TLS diagnostics, or None for a plain channel.
             /// Facts and peer certificates remain available after close. Details
             /// are decoded lazily and successful Python representations reused.
@@ -1164,8 +1180,11 @@ fn configured_size(
 /// explicit Unix socket defaults to plain local transport. Initialization
 /// confirms UTC, encoding, autocommit and server timeout values before return.
 ///
-/// Timeouts are positive whole-second integers, excluding bool; type/value
-/// errors raise TypeError/ValueError. Client connect_timeout defaults to 10 and
+/// The four client timeouts accept exact positive int/float seconds or None,
+/// excluding bool and numeric subclasses, with nearest nanosecond rounding
+/// (ties-to-even) and a 1ns minimum. Server timeouts accept exact positive int
+/// seconds or None. Type/value errors raise TypeError/ValueError.
+/// Client connect_timeout defaults to 10 and
 /// covers this entire call; None disables that limit. Client read_timeout and
 /// write_timeout default to None and bound network waits without progress.
 /// Client operation_timeout defaults to None and bounds each later complete
@@ -1179,9 +1198,9 @@ fn configured_size(
 /// version-specific upper limit or normalization. Later remote changes use
 /// explicit set_* methods; three local runtime timeouts use property assignment.
 #[pyfunction]
-#[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,server_public_key=None,autocommit=Argument::default(),sql_mode=None,init_sql=None,multi_statements=Argument::default(),connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
+#[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,compression=None,server_public_key=None,autocommit=Argument::default(),sql_mode=None,init_sql=None,multi_statements=Argument::default(),connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
 #[pyo3(
-    text_signature = "(*, user, host='127.0.0.1', port=3306, unix_socket=None, password=None, database=None, charset=None, collation=None, ssl=None, server_public_key=None, autocommit=True, sql_mode=None, init_sql=None, multi_statements=True, connect_timeout=10, read_timeout=None, write_timeout=None, operation_timeout=None, net_read_timeout=None, net_write_timeout=None, wait_timeout=None, innodb_lock_wait_timeout=None, max_allowed_packet='64MB', max_received_packet='64MB', result_memory_limit='256MB', total_result_memory_limit='512MB', decode_json=False, decode_set=False, decode_bit=False, use_decimal=True, use_timedelta=True, decode_text_strict=True, decode_date_strict=True)"
+    text_signature = "(*, user, host='127.0.0.1', port=3306, unix_socket=None, password=None, database=None, charset=None, collation=None, ssl=None, compression=None, server_public_key=None, autocommit=True, sql_mode=None, init_sql=None, multi_statements=True, connect_timeout=10, read_timeout=None, write_timeout=None, operation_timeout=None, net_read_timeout=None, net_write_timeout=None, wait_timeout=None, innodb_lock_wait_timeout=None, max_allowed_packet='64MB', max_received_packet='64MB', result_memory_limit='256MB', total_result_memory_limit='512MB', decode_json=False, decode_set=False, decode_bit=False, use_decimal=True, use_timedelta=True, decode_text_strict=True, decode_date_strict=True)"
 )]
 #[expect(
     clippy::too_many_arguments,
@@ -1198,6 +1217,7 @@ pub(crate) fn connect(
     charset: Option<&Bound<'_, PyAny>>,
     collation: Option<&Bound<'_, PyAny>>,
     ssl: Option<&Bound<'_, PyAny>>,
+    compression: Option<&Bound<'_, PyAny>>,
     server_public_key: Option<&Bound<'_, PyAny>>,
     autocommit: Argument<'_>,
     sql_mode: Option<&Bound<'_, PyAny>>,
@@ -1242,6 +1262,8 @@ pub(crate) fn connect(
         timeout_config.write,
     );
     let user_initialization = input::control::init_sql(init_sql, &budget)
+        .map_err(|error| errors::at(py, error, "connect"))?;
+    let compression = crate::compression::parse(compression, Some(&budget))
         .map_err(|error| errors::at(py, error, "connect"))?;
     let user = config::text(user, "user", false)?;
     let host_provided = host.0.is_some();
@@ -1377,7 +1399,7 @@ pub(crate) fn connect(
         database,
         tls,
         server_public_key,
-        compression: Default::default(),
+        compression,
         multi_statements,
         local_infile: false,
         connect_timeout: timeout_config.connect,
@@ -1415,6 +1437,7 @@ pub(crate) fn connect(
             }
         }
     };
+    let compression_snapshot = ready.transport.channel.compression_options();
     let tls_snapshot = ready
         .transport
         .channel
@@ -1461,6 +1484,8 @@ pub(crate) fn connect(
         total_result_limit: total_limit,
         tls_snapshot,
         tls_info_value: OnceLock::new(),
+        compression_snapshot,
+        compression_value: OnceLock::new(),
         transaction_scope: Arc::new(AtomicBool::new(false)),
     };
     if !user_initialization.is_empty()

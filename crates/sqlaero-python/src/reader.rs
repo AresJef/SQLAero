@@ -347,7 +347,7 @@ impl Reader {
         clippy::too_many_arguments,
         reason = "one shared field loop preserves atomic position and common diagnostics for both final row formats"
     )]
-    fn row_tuple<'py, const DIRECT: bool, const DICT: bool>(
+    fn row_tuple<'py, const DIRECT: bool, const DICT: bool, const BINARY: bool>(
         &self,
         py: Python<'py>,
         data: &ReadData,
@@ -375,7 +375,18 @@ impl Reader {
             let value = match source {
                 None => py.None().into_bound(py),
                 Some(value) => {
-                    match output::field(py, value, plan, types, Some(data.rows.scope())) {
+                    let decoded = if BINARY {
+                        let column = data.rows.columns.get(column_index).ok_or_else(|| {
+                            errors::client(py, ClientErrorCode::InternalState,
+                                           "binary result column is unavailable")
+                        })?;
+                        sqlaero_core::protocol::binary::value(column, value)
+                            .map_err(|error| errors::wire(py, error))
+                            .and_then(|value| output::value(py, value, plan, types, Some(data.rows.scope())))
+                    } else {
+                        output::field(py, value, plan, types, Some(data.rows.scope()))
+                    };
+                    match decoded {
                         Ok(value) => value,
                         Err(error) => {
                             let key = self
@@ -472,7 +483,7 @@ impl Reader {
     /// Materialize the final result without changing the caller's position.
     /// The buffered specialization preserves the old wide-row ownership graph;
     /// the direct specialization hides unfinished tuples across callbacks.
-    fn materialize<'py, const DIRECT: bool, const DICT: bool>(
+    fn materialize<'py, const DIRECT: bool, const DICT: bool, const BINARY: bool>(
         &self,
         py: Python<'py>,
         data: &ReadData,
@@ -485,9 +496,9 @@ impl Reader {
         let mut progress = FetchProgress::default();
         if DIRECT {
             if one {
-                self.row_tuple::<true, DICT>(py, data, types, start, start, &mut progress, keys)
+                self.row_tuple::<true, DICT, BINARY>(py, data, types, start, start, &mut progress, keys)
             } else if range.len() == 1 {
-                let row = self.row_tuple::<true, DICT>(
+                let row = self.row_tuple::<true, DICT, BINARY>(
                     py,
                     data,
                     types,
@@ -501,7 +512,7 @@ impl Reader {
                 output::tuple_from_values(
                     py,
                     range.map(|index| {
-                        self.row_tuple::<true, DICT>(
+                        self.row_tuple::<true, DICT, BINARY>(
                             py,
                             data,
                             types,
@@ -521,7 +532,7 @@ impl Reader {
                 .map_err(|_| errors::memory_error(py))?;
             for index in range {
                 result.push(
-                    self.row_tuple::<false, DICT>(
+                    self.row_tuple::<false, DICT, BINARY>(
                         py,
                         data,
                         types,
@@ -547,6 +558,34 @@ impl Reader {
             } else {
                 output::tuple_from_ready_vec(py, result).map(Bound::into_any)
             }
+        }
+    }
+
+    fn materialize_format<'py, const BINARY: bool>(
+        &self,
+        py: Python<'py>,
+        data: &ReadData,
+        range: std::ops::Range<usize>,
+        one: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let types = self.types.borrow(py);
+        // Select a monomorphized strategy once per fetch. Wide rows keep
+        // the original field and result buffers, outside the narrow fast path.
+        if self.dictionary {
+            let metadata = { self.lock(py)?.metadata.clone() };
+            let metadata = metadata.ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "dictionary result metadata is unavailable",
+                )
+            })?;
+            let keys = metadata.key_tuple(py)?;
+            self.materialize::<true, true, BINARY>(py, data, &types, range, one, Some(&keys))
+        } else if data.plans.len() <= 4 {
+            self.materialize::<true, false, BINARY>(py, data, &types, range, one, None)
+        } else {
+            self.materialize::<false, false, BINARY>(py, data, &types, range, one, None)
         }
     }
 
@@ -589,24 +628,13 @@ impl Reader {
                 "unread Cursor rows have no native owner",
             ));
         };
-        let types = self.types.borrow(py);
-        // Select a monomorphized strategy once per fetch. Wide rows keep
-        // the original field and result buffers, outside the narrow fast path.
-        let output = if self.dictionary {
-            let metadata = { self.lock(py)?.metadata.clone() };
-            let metadata = metadata.ok_or_else(|| {
-                errors::client(
-                    py,
-                    ClientErrorCode::InternalState,
-                    "dictionary result metadata is unavailable",
-                )
-            })?;
-            let keys = metadata.key_tuple(py)?;
-            self.materialize::<true, true>(py, &data, &types, start..end, one, Some(&keys))?
-        } else if data.plans.len() <= 4 {
-            self.materialize::<true, false>(py, &data, &types, start..end, one, None)?
-        } else {
-            self.materialize::<false, false>(py, &data, &types, start..end, one, None)?
+        // Choose the wire representation once per fetch, leaving the existing
+        // text specialization free of a per-field binary dispatch branch.
+        let output = match data.rows.encoding {
+            sqlaero_core::result::value::RowEncoding::Text =>
+                self.materialize_format::<false>(py, &data, start..end, one)?,
+            sqlaero_core::result::value::RowEncoding::Binary =>
+                self.materialize_format::<true>(py, &data, start..end, one)?,
         };
         py.check_signals()?;
         // Buffered navigation retains this current set's native rows at EOF.

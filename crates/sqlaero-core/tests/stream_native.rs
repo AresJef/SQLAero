@@ -62,6 +62,8 @@ fn try_connect_mode(
             .unwrap()
             .unwrap(),
             name: "127.0.0.1".to_owned().try_into().unwrap(),
+            minimum: tls::Version::Tls12,
+            maximum: None,
         }),
         server_public_key: None,
         compression,

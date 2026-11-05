@@ -13,7 +13,8 @@ def test_public_projection_preserves_roles_and_result_position(connection: Any) 
         cur.execute("SELECT 10 AS a UNION ALL SELECT 11; SELECT 12 AS b")
         columns = cur.columns
         assert connection.escape([1, None, "x"]) == ("1", "NULL", "'x'")
-        assert cur.escape([(1,), (2,)], many=True) == [("1",), ("2",)]
+        assert connection.escape([(1,), (2,)], many=True) == [("1",), ("2",)]
+        assert not hasattr(cur, "escape")
         assert cur.mogrify("SELECT %s AS v", None) == "SELECT NULL AS v"
         assert cur.mogrify("SELECT '%s', '%%'") == "SELECT '%s', '%%'"
         assert cur.mogrify("SELECT %s AS v", [(1,), (2,)], many=True) == [
@@ -35,7 +36,7 @@ def test_auxiliary_functions_remain_local_after_close(connection: Any) -> None:
     cur.close()
     connection.close()
     assert connection.escape("value") == "'value'"
-    assert cur.escape(42) == "42"
+    assert connection.escape(42) == "42"
     assert cur.mogrify("SELECT %s", 3) == "SELECT 3"
 
 
