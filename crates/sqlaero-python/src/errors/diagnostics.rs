@@ -232,6 +232,40 @@ fn notes<'py>(value: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
     }
     output::tuple_from_ready_vec(py, frozen)
 }
+/// Copy bounded note text for one retained boundary, preferring the latest
+/// actual execution facts added by the binding. No live exception is retained.
+pub(super) fn retained_notes<'py>(
+    value: &Bound<'py, PyAny>,
+    remaining: &mut usize,
+) -> PyResult<(Bound<'py, PyTuple>, bool)> {
+    let py = value.py();
+    let notes = match super::attribute(value, c"__notes__") {
+        Ok(notes) => notes,
+        Err(error) if error.is_instance_of::<PyAttributeError>(py) => {
+            return Ok((PyTuple::empty(py), true));
+        }
+        Err(error) => return Err(error),
+    };
+    let Ok(notes) = notes.cast::<PyList>() else {
+        return Ok((PyTuple::empty(py), false));
+    };
+    let mut copied = Vec::new();
+    let mut complete = true;
+    for note in notes.iter().rev() {
+        match super::saved_text(&note, remaining)? {
+            Some(text) => {
+                copied.try_reserve(1).map_err(|_| super::memory_error(py))?;
+                copied.push(text.into_any().unbind());
+            }
+            None => {
+                complete = false;
+                break;
+            }
+        }
+    }
+    copied.reverse();
+    Ok((output::tuple_from_ready_vec(py, copied)?, complete))
+}
 fn stack(py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<Option<Py<PyAny>>> {
     let traceback = attribute(value, c"__traceback__")?;
     if traceback.is_none() {

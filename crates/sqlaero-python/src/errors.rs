@@ -883,126 +883,457 @@ fn escaped_error_text<'py>(py: Python<'py>, message: &[u8]) -> PyResult<Bound<'p
         None,
     )
 }
-/// Frame-free facts for a host-side failure after a trusted result prefix.
-/// The live exception, Python type object and traceback are never retained.
+/// A bounded, frame-free failure boundary owned only by the Python binding.
+/// No exception instance, traceback, arbitrary arguments or custom state survive.
 pub(crate) struct SavedFailure {
-    class: SavedClass,
-    message: String,
+    typ: Option<Py<PyType>>,
+    name: String,
+    base: SavedBase,
+    args: Py<PyTuple>,
+    notes: Py<PyTuple>,
     code: Option<BigInt>,
     server: Option<bool>,
+    native: Option<diagnostics::Native>,
+    stage: Option<&'static str>,
+    unavailable: Option<&'static str>,
 }
 #[derive(Clone, Copy)]
-enum SavedClass {
-    Library(Option<ExceptionClass>),
-    Value,
-    Type,
-    Overflow,
-    Memory,
-    Interrupt,
-    Exit,
+enum SavedBase {
+    Library,
+    Encode,
     Os,
-    Runtime,
+    Exception,
+}
+impl SavedBase {
+    fn typ(self, py: Python<'_>) -> Bound<'_, PyType> {
+        match self {
+            Self::Library => py.get_type::<SQLAeroError>(),
+            Self::Encode => py.get_type::<pyo3::exceptions::PyUnicodeEncodeError>(),
+            Self::Os => py.get_type::<pyo3::exceptions::PyOSError>(),
+            Self::Exception => py.get_type::<pyo3::exceptions::PyBaseException>(),
+        }
+    }
+}
+/// Reuse the earlier retained-message limit for the whole copied text payload.
+/// Four bytes per code point conservatively bounds native Unicode storage and
+/// permits lone surrogates without creating an unbounded UTF-8 cache first.
+const SAVED_FAILURE_TEXT_BYTES: usize = 4096;
+fn saved_text<'py>(
+    value: &Bound<'py, PyAny>,
+    remaining: &mut usize,
+) -> PyResult<Option<Bound<'py, PyString>>> {
+    if !value.is_instance_of::<PyString>() {
+        return Ok(None);
+    }
+    // SAFETY: checked Unicode object, attached thread; length does not allocate.
+    let length = unsafe { pyo3::ffi::PyUnicode_GetLength(value.as_ptr()) };
+    if length < 0 {
+        return Err(PyErr::fetch(value.py()));
+    }
+    let Some(size) = (length as usize)
+        .checked_mul(4)
+        .and_then(|n| n.checked_add(16))
+    else {
+        return Ok(None);
+    };
+    if size > *remaining {
+        return Ok(None);
+    }
+    *remaining -= size;
+    // Explicitly copy bounded code points: a full-range Unicode_Substring can
+    // return the source itself, which would retain an original input object.
+    // SAFETY: Unicode input and checked bounded size. Both public constructors
+    // copy their input; the temporary UCS4 allocation is freed on either exit.
+    unsafe {
+        let points = pyo3::ffi::PyUnicode_AsUCS4Copy(value.as_ptr());
+        if points.is_null() {
+            return Err(PyErr::fetch(value.py()));
+        }
+        let pointer = pyo3::ffi::PyUnicode_FromKindAndData(
+            pyo3::ffi::PyUnicode_4BYTE_KIND as i32,
+            points.cast(),
+            length,
+        );
+        pyo3::ffi::PyMem_Free(points.cast());
+        Bound::<PyAny>::from_owned_ptr_or_err(value.py(), pointer)?
+    }
+    .cast_into()
+    .map(Some)
+    .map_err(Into::into)
+}
+fn saved_native_fits(native: &diagnostics::Native, remaining: &mut usize) -> bool {
+    let Some(required) = native
+        .message
+        .len()
+        .checked_add(std::mem::size_of::<diagnostics::Native>())
+    else {
+        return false;
+    };
+    if required > *remaining {
+        return false;
+    }
+    *remaining -= required;
+    native
+        .cause
+        .as_deref()
+        .is_none_or(|cause| saved_native_fits(cause, remaining))
 }
 impl SavedFailure {
     pub(crate) fn capture(py: Python<'_>, error: &PyErr) -> PyResult<Self> {
-        let library = error.value(py).extract::<PyRef<'_, SQLAeroError>>().ok();
-        let class = if library.is_some() {
-            let mut found = None;
-            for candidate in [
-                ExceptionClass::InterfaceBusy,
-                ExceptionClass::OperationalTimeout,
-                ExceptionClass::Interface,
-                ExceptionClass::Data,
-                ExceptionClass::Operational,
-                ExceptionClass::Integrity,
-                ExceptionClass::Internal,
-                ExceptionClass::Programming,
-                ExceptionClass::NotSupported,
-                ExceptionClass::Database,
-            ] {
-                if error.is_instance(py, &exception_type(py, candidate)) {
-                    found = Some(candidate);
+        let value = error.value(py).as_any();
+        let typ = value.get_type();
+        let mut remaining = SAVED_FAILURE_TEXT_BYTES;
+        let name = typ.name()?;
+        let name = if let Some(name) = saved_text(name.as_any(), &mut remaining)? {
+            message(py, format_args!("{}", name.to_str()?))?
+        } else {
+            message(
+                py,
+                format_args!("exception whose type name exceeds the retained diagnostic limit"),
+            )?
+        };
+        let library = value.extract::<PyRef<'_, SQLAeroError>>().ok();
+        let base = if library.is_some() {
+            SavedBase::Library
+        } else if error.is_instance_of::<pyo3::exceptions::PyUnicodeEncodeError>(py) {
+            SavedBase::Encode
+        } else if error.is_instance_of::<pyo3::exceptions::PyOSError>(py) {
+            SavedBase::Os
+        } else {
+            SavedBase::Exception
+        };
+        let mut result = Self {
+            typ: Some(typ.clone().unbind()),
+            name,
+            base,
+            args: PyTuple::empty(py).unbind(),
+            notes: PyTuple::empty(py).unbind(),
+            code: None,
+            server: None,
+            native: None,
+            stage: None,
+            unavailable: None,
+        };
+        // Dynamic exception state is not replayable data. The ordinary custom
+        // subclass with inherited display and no extra instance state is safe.
+        // SAFETY: a live BaseException owns CPython's intrinsic dictionary;
+        // generic dictionary access bypasses user attribute overrides.
+        let dictionary = unsafe {
+            Bound::<PyAny>::from_owned_ptr_or_err(
+                py,
+                pyo3::ffi::PyObject_GenericGetDict(value.as_ptr(), std::ptr::null_mut()),
+            )?
+        }
+        .cast_into::<PyDict>()?;
+        for (key, _) in dictionary.iter() {
+            if key.extract::<&str>().ok() != Some("__notes__") {
+                result.unavailable =
+                    Some("custom exception attributes cannot be safely reconstructed");
+                break;
+            }
+        }
+        let safe_type = base.typ(py);
+        // SAFETY: both attached type objects remain owned. Fixed layout sizes
+        // are immutable; extra C-extension/builtin fields cannot be initialized
+        // safely by this selected base allocator and are never reconstructed.
+        let same_layout = unsafe {
+            (*typ.as_type_ptr()).tp_basicsize == (*safe_type.as_type_ptr()).tp_basicsize
+                && (*typ.as_type_ptr()).tp_itemsize == (*safe_type.as_type_ptr()).tp_itemsize
+        };
+        if !same_layout {
+            result.unavailable = Some(
+                "additional native exception layout cannot be safely initialized by the retained base constructor",
+            );
+        }
+        if !attribute(typ.as_any(), c"__str__")?.is(attribute(safe_type.as_any(), c"__str__")?) {
+            result.unavailable =
+                Some("custom exception display requires state that was not retained");
+        }
+        if !attribute(typ.as_any(), c"__getattribute__")?
+            .is(attribute(safe_type.as_any(), c"__getattribute__")?)
+        {
+            result.unavailable =
+                Some("custom exception attribute access cannot be safely reconstructed");
+        }
+        match attribute(typ.as_any(), c"__del__") {
+            Ok(_) => {
+                result.unavailable =
+                    Some("custom exception finalization requires state that was not retained")
+            }
+            Err(error) if error.is_instance_of::<pyo3::exceptions::PyAttributeError>(py) => (),
+            Err(error) => return Err(error),
+        }
+        if matches!(base, SavedBase::Encode) {
+            for field in [c"encoding", c"object", c"start", c"end", c"reason"] {
+                if !attribute(typ.as_any(), field)?.is(attribute(safe_type.as_any(), field)?) {
+                    result.unavailable =
+                        Some("custom Unicode diagnostic descriptors cannot be safely copied");
                     break;
                 }
             }
-            SavedClass::Library(found)
-        } else if error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py) {
-            SavedClass::Memory
-        } else if error.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py) {
-            SavedClass::Interrupt
-        } else if error.is_instance_of::<pyo3::exceptions::PySystemExit>(py) {
-            SavedClass::Exit
-        } else if error.is_instance_of::<pyo3::exceptions::PyTypeError>(py) {
-            SavedClass::Type
-        } else if error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {
-            SavedClass::Overflow
-        } else if error.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
-            SavedClass::Value
-        } else if error.is_instance_of::<pyo3::exceptions::PyOSError>(py) {
-            SavedClass::Os
-        } else {
-            SavedClass::Runtime
-        };
-        let text = match &library {
-            Some(value) => value.message.bind(py).clone(),
-            None => error.value(py).str()?,
-        };
-        let encoded = match text.to_str() {
-            Ok(text) => message(py, format_args!("{text}"))?,
-            Err(_) => message(py, format_args!("{}", text.repr()?.to_str()?))?,
-        };
-        // Result-chain failure storage is bounded independently of the full
-        // immediate exception and user-owned diagnostic snapshot.
-        let mut text = encoded;
-        if text.len() > 4096 {
-            let mut end = 4096;
-            while !text.is_char_boundary(end) {
-                end -= 1;
-            }
-            text.truncate(end);
-            text.try_reserve(12).map_err(|_| memory_error(py))?;
-            text.push_str(" [truncated]");
         }
-        Ok(Self {
-            class,
-            message: text,
-            code: library.as_ref().and_then(|value| value.code.clone()),
-            server: library.as_ref().and_then(|value| value.is_server_error),
-        })
+        for ancestor in typ.mro().iter() {
+            if ancestor.is(&safe_type) {
+                break;
+            }
+            let dict = attribute(&ancestor, c"__dict__")?;
+            let slots = PyString::from_bytes(py, b"__slots__")?;
+            match dict.get_item(slots) {
+                Ok(_) => {
+                    result.unavailable =
+                        Some("custom exception slots cannot be safely reconstructed");
+                    break;
+                }
+                Err(error) if error.is_instance_of::<pyo3::exceptions::PyKeyError>(py) => (),
+                Err(error) => return Err(error),
+            }
+        }
+        if matches!(base, SavedBase::Os)
+            && (!attribute(value, c"errno")?.is_none()
+                || !attribute(value, c"filename")?.is_none()
+                || !attribute(value, c"filename2")?.is_none())
+        {
+            result.unavailable =
+                Some("structured OS error fields require data beyond the retained scalar payload");
+        }
+        if matches!(base, SavedBase::Exception) {
+            let args = attribute(value, c"args")?.cast_into::<PyTuple>()?;
+            if args.len() > 1
+                || (args.len() == 1 && !args.get_item(0)?.is_instance_of::<PyString>())
+            {
+                result.unavailable = Some(
+                    "non-text exception arguments cannot be safely reconstructed without retaining original parameters",
+                );
+            }
+        }
+        if !attribute(value, c"__cause__")?.is_none()
+            || !attribute(value, c"__context__")?.is_none()
+        {
+            result.unavailable = Some(
+                "external exception chains cannot be safely retained as bounded scalar failure facts",
+            );
+        }
+        if let Some(library) = &library {
+            if let Some(code) = &library.code {
+                let bytes = code.bits().div_ceil(8);
+                if bytes > remaining as u64 {
+                    result.unavailable =
+                        Some("original error code exceeds the bounded retained failure facts");
+                } else {
+                    remaining -= bytes as usize;
+                    result.code = Some(code.clone());
+                }
+            }
+            result.server = library.is_server_error;
+            let state = library.diagnostics.lock().map_err(|_| {
+                builtin_message::<PyRuntimeError>(py, "error diagnostic ownership is unavailable")
+            })?;
+            result.stage = state.stage;
+            if !state.additional.is_empty() {
+                result.unavailable = Some(
+                    "additional exception graphs are outside the bounded retained failure facts",
+                );
+            }
+            if let Some(native) = &state.native {
+                if saved_native_fits(native, &mut remaining) {
+                    result.native = Some(native.clone());
+                } else {
+                    result.unavailable =
+                        Some("native cause text exceeds the retained diagnostic limit");
+                }
+            }
+        }
+        if result.unavailable.is_none() {
+            let mut arguments = Vec::new();
+            arguments
+                .try_reserve_exact(if matches!(base, SavedBase::Encode) {
+                    5
+                } else {
+                    1
+                })
+                .map_err(|_| memory_error(py))?;
+            if matches!(base, SavedBase::Encode) {
+                for key in [c"encoding", c"object"] {
+                    match saved_text(&attribute(value, key)?, &mut remaining)? {
+                        Some(text) => arguments.push(text.into_any().unbind()),
+                        None => {
+                            result.unavailable = Some(
+                                "Unicode diagnostic text exceeds the retained limit or is not safely copyable",
+                            );
+                            break;
+                        }
+                    }
+                }
+                if result.unavailable.is_none() {
+                    for key in [c"start", c"end"] {
+                        let number: isize = attribute(value, key)?.extract()?;
+                        // SAFETY: attached scalar constructor; NULL preserves
+                        // the actual allocation error instead of panicking.
+                        let number = unsafe {
+                            Bound::<PyAny>::from_owned_ptr_or_err(
+                                py,
+                                pyo3::ffi::PyLong_FromSsize_t(number),
+                            )?
+                        };
+                        arguments.push(number.unbind());
+                    }
+                    match saved_text(&attribute(value, c"reason")?, &mut remaining)? {
+                        Some(text) => arguments.push(text.into_any().unbind()),
+                        None => {
+                            result.unavailable =
+                                Some("Unicode diagnostic reason exceeds the retained limit")
+                        }
+                    }
+                }
+            } else if matches!(base, SavedBase::Library)
+                || !attribute(value, c"args")?
+                    .cast_into::<PyTuple>()?
+                    .is_empty()
+            {
+                let text = match &library {
+                    Some(error) => error.message.bind(py).clone(),
+                    None => value.str()?,
+                };
+                match saved_text(text.as_any(), &mut remaining)? {
+                    Some(text) => arguments.push(text.into_any().unbind()),
+                    None => {
+                        result.unavailable =
+                            Some("original exception text exceeds the retained diagnostic limit")
+                    }
+                }
+            }
+            if result.unavailable.is_none() {
+                result.args = output::tuple_from_ready_vec(py, arguments)?.unbind();
+            }
+        }
+        let (notes, complete) = diagnostics::retained_notes(value, &mut remaining)?;
+        result.notes = notes.unbind();
+        if !complete {
+            result
+                .unavailable
+                .get_or_insert("not all original notes fit the bounded retained failure facts");
+        }
+        if result.unavailable.is_some() {
+            // An unreconstructible boundary needs its copied type name only.
+            // Do not keep arbitrary class dictionaries/closures alive for it.
+            result.typ = None;
+        }
+        Ok(result)
+    }
+    pub(crate) fn traverse(
+        &self,
+        visit: &pyo3::class::PyVisit<'_>,
+    ) -> Result<(), pyo3::class::PyTraverseError> {
+        visit.call(&self.typ)?;
+        visit.call(&self.args)?;
+        visit.call(&self.notes)
     }
     pub(crate) fn restore(&self, py: Python<'_>) -> PyErr {
-        let typ = match self.class {
-            SavedClass::Library(Some(class)) => exception_type(py, class),
-            SavedClass::Library(None) => py.get_type::<SQLAeroError>(),
-            SavedClass::Value => py.get_type::<pyo3::exceptions::PyValueError>(),
-            SavedClass::Type => py.get_type::<pyo3::exceptions::PyTypeError>(),
-            SavedClass::Overflow => py.get_type::<pyo3::exceptions::PyOverflowError>(),
-            SavedClass::Memory => return memory_error(py),
-            SavedClass::Interrupt => py.get_type::<pyo3::exceptions::PyKeyboardInterrupt>(),
-            SavedClass::Exit => py.get_type::<pyo3::exceptions::PySystemExit>(),
-            SavedClass::Os => py.get_type::<pyo3::exceptions::PyOSError>(),
-            SavedClass::Runtime => py.get_type::<pyo3::exceptions::PyRuntimeError>(),
-        };
-        if !matches!(self.class, SavedClass::Library(_)) {
-            return builtin_error(&typ, &self.message);
+        if let Some(reason) = self.unavailable {
+            let error = client_format(
+                py,
+                ClientErrorCode::SessionState,
+                format_args!(
+                    "The original {} failure cannot be reconstructed safely at this retained boundary: {reason}. The immediate original exception was preserved in full; this is a local diagnostic limitation, not a new database failure.",
+                    self.name
+                ),
+            );
+            return match self.restore_notes(py, error.value(py).as_any()) {
+                Ok(()) => error,
+                Err(resource) => resource,
+            };
         }
-        let make = || -> PyResult<Bound<'_, PyAny>> {
-            let keywords = dictionary(py)?;
+        match self.rebuild(py) {
+            Ok(value) => PyErr::from_value(value),
+            Err(error) => error,
+        }
+    }
+    fn restore_notes(&self, py: Python<'_>, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        let source = self.notes.bind(py);
+        // SAFETY: exact new list with a bounded tuple length. NULL is checked;
+        // each successful SetItem steals only its own newly owned reference.
+        let notes = unsafe {
+            let list = Bound::<PyAny>::from_owned_ptr_or_err(
+                py,
+                pyo3::ffi::PyList_New(source.len() as isize),
+            )?;
+            for (index, note) in source.iter().enumerate() {
+                if pyo3::ffi::PyList_SetItem(list.as_ptr(), index as isize, note.into_ptr()) < 0 {
+                    return Err(PyErr::fetch(py));
+                }
+            }
+            list
+        };
+        // Bypass a custom __setattr__/__notes__ descriptor. Only the exception's
+        // intrinsic dictionary is changed; arbitrary old attributes are absent.
+        // SAFETY: this newly allocated BaseException owns the intrinsic dict;
+        // the returned dictionary is a new reference or the real Python error.
+        let dict = unsafe {
+            Bound::<PyAny>::from_owned_ptr_or_err(
+                py,
+                pyo3::ffi::PyObject_GenericGetDict(value.as_ptr(), std::ptr::null_mut()),
+            )?
+        }
+        .cast_into::<PyDict>()?;
+        dict.set_item(PyString::from_bytes(py, b"__notes__")?, notes)
+    }
+    fn rebuild<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        let Some(typ) = &self.typ else {
+            return Err(builtin_message::<PyRuntimeError>(
+                py,
+                "retained failure type is unavailable",
+            ));
+        };
+        let base = self.base.typ(py);
+        let args = self.args.bind(py);
+        let keywords = dictionary(py)?;
+        if matches!(self.base, SavedBase::Library) {
             if let Some(code) = &self.code {
                 keywords.set_item(PyString::from_bytes(py, b"code")?, code_object(py, code)?)?;
             }
             if let Some(server) = self.server {
                 keywords.set_item(PyString::from_bytes(py, b"is_server_error")?, server)?;
             }
-            typ.call(
-                (PyString::from_bytes(py, self.message.as_bytes())?,),
-                Some(&keywords),
-            )
-        };
-        match make() {
-            Ok(value) => PyErr::from_value(value),
-            Err(error) => error,
         }
+        // SAFETY: these slots belong to the fixed trusted built-in/library base,
+        // never the retained user's type. Both accept a true subtype and return
+        // its fully allocated layout. No user __new__ or __init__ is dispatched.
+        let value = unsafe {
+            let slot = pyo3::ffi::PyType_GetSlot(base.as_type_ptr(), pyo3::ffi::Py_tp_new);
+            if slot.is_null() {
+                return Err(builtin_message::<PyRuntimeError>(
+                    py,
+                    "safe exception allocator is unavailable",
+                ));
+            }
+            let create: pyo3::ffi::newfunc = std::mem::transmute(slot);
+            let value = Bound::<PyAny>::from_owned_ptr_or_err(
+                py,
+                create(typ.bind(py).as_type_ptr(), args.as_ptr(), keywords.as_ptr()),
+            )?;
+            if !matches!(self.base, SavedBase::Library) {
+                let slot = pyo3::ffi::PyType_GetSlot(base.as_type_ptr(), pyo3::ffi::Py_tp_init);
+                if !slot.is_null() {
+                    let initialize: pyo3::ffi::initproc = std::mem::transmute(slot);
+                    if initialize(value.as_ptr(), args.as_ptr(), keywords.as_ptr()) < 0 {
+                        return Err(PyErr::fetch(py));
+                    }
+                }
+            }
+            value
+        };
+        self.restore_notes(py, &value)?;
+        if let Ok(library) = value.extract::<PyRef<'_, SQLAeroError>>() {
+            let mut state = library.diagnostics.lock().map_err(|_| {
+                builtin_message::<PyRuntimeError>(
+                    py,
+                    "restored diagnostic ownership is unavailable",
+                )
+            })?;
+            state.native = self.native.clone();
+            state.stage = self.stage;
+        }
+        Ok(value)
     }
 }
 
