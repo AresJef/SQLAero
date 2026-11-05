@@ -7,6 +7,7 @@ use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::sync::Arc;
 
+pub mod info;
 pub mod materials;
 
 // Keep native platform trust objects in this transport boundary. The supported
