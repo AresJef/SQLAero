@@ -60,6 +60,7 @@ pub(crate) struct NumpyTypes {
     datetime_data: Py<PyAny>,
     array: Py<PyType>,
     record: Py<PyType>,
+    void: Py<PyType>,
 }
 
 /// The two owned public API references needed by bounded column re-preparation.
@@ -130,6 +131,7 @@ impl NumpyTypes {
             datetime_data: datetime_data.unbind(),
             array: exact_type(&module, c"ndarray")?,
             record: exact_type(&module, c"record")?,
+            void: exact_type(&module, c"void")?,
         })
     }
 
@@ -166,13 +168,14 @@ impl NumpyTypes {
         value: &Bound<'py, PyAny>,
         budget: &IoBudget,
     ) -> PyResult<Option<RecordSource<'py>>> {
-        if !value.get_type().is(self.record.bind(value.py())) {
+        let exact_void = value.get_type().is(self.void.bind(value.py()));
+        if !exact_void && !value.get_type().is(self.record.bind(value.py())) {
             return Ok(None);
         }
         super::check(value.py(), budget)?;
-        let source = RecordSource::new(value, &self.array, budget)?;
+        let source = RecordSource::new(value, &self.array, budget, exact_void)?;
         super::check(value.py(), budget)?;
-        Ok(Some(source))
+        Ok(source)
     }
 
     /// Read a recognized immutable numeric scalar into a native value.

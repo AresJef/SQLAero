@@ -361,7 +361,6 @@ def test_numpy_record_public_getter_retains_object_identity_and_cycle_protection
 
 
 @pytest.mark.parametrize("value", [
-    np.array((1, 2), dtype=[("a", "i8"), ("b", "i8")])[()],
     np.array([1, 2]).view(np.matrix),
     np.zeros((1,), dtype=[("a", "i8")]),
     np.array(1),

@@ -276,6 +276,116 @@ impl Row<'_, '_> {
             RowInput::Scalar => 1,
         }
     }
+
+    /// Adapt one logical row directly into native prepared parameters.
+    /// Container roles are the same roles used by positional text binding.
+    pub(crate) fn write_parameters<
+        S: sqlaero_core::bind::value::ValueSink<Error = sqlaero_core::bind::value::ValueError>,
+    >(
+        mut self,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &IoBudget,
+        sink: &mut S,
+    ) -> PyResult<()> {
+        let py = self.value.py();
+        check(py, budget)?;
+        let width = self.width();
+        let mut visit = Visit {
+            types,
+            context,
+            budget,
+            active: SmallVec::new(),
+            path: self.path,
+            work: 0,
+            native_depth: 0,
+            active_depth: 0,
+        };
+        if let Some(identity) = self.outer {
+            visit.enter(py, identity)?;
+        }
+        let sequence = match std::mem::replace(&mut self.input, RowInput::Scalar) {
+            RowInput::Sequence(sequence) => Some(sequence),
+            input => {
+                self.input = input;
+                None
+            }
+        };
+        let sequence = sequence
+            .as_ref()
+            .filter(|_| self.itemize)
+            .map(SequenceRef::sequence);
+        if let Some(sequence) = sequence {
+            visit.enter_sequence(py, sequence)?;
+        }
+        let mut native = match &mut self.input {
+            RowInput::Native(native) => Some(native),
+            _ => None,
+        };
+        if let Some(native) = native.as_ref() {
+            visit.enter(py, self.value.as_ptr() as usize)?;
+            if matches!(
+                (native.source.shape(), native.row),
+                (Shape::Table { .. }, Some(_))
+            ) {
+                visit.enter_native(py)?;
+            }
+        }
+        for index in 0..width {
+            let result = if let Some(native) = native.as_deref_mut() {
+                let shape = native.source.shape();
+                let coordinates = match (self.itemize, shape, native.row) {
+                    (_, Shape::Vector { .. }, Some(row)) => Some((row, 0, false)),
+                    (true, Shape::Vector { .. }, None) => Some((index, 0, true)),
+                    (true, Shape::Record { .. }, _) => Some((0, index, true)),
+                    (true, Shape::Table { .. }, Some(row)) => Some((row, index, true)),
+                    _ => None,
+                };
+                if let Some((row, column, positional)) = coordinates {
+                    if positional {
+                        visit.push_index(py, index)?;
+                    }
+                    let result = native
+                        .source
+                        .source()
+                        .write_parameter_cell(row, column, sink, context, budget, &mut visit);
+                    if result.is_ok() && positional {
+                        visit.pop_index();
+                    }
+                    result
+                } else {
+                    Err(crate::input::sink::fragment_error(py))
+                }
+            } else {
+                let value = match sequence {
+                    Some(sequence) => sequence.row_item(index).inspect_err(|error| {
+                        errors::note_format(
+                            py,
+                            error,
+                            format_args!(
+                                "while binding {}[{index}]; current request was not sent",
+                                path_text(&visit.path),
+                            ),
+                        );
+                    })?,
+                    None => self.value.clone(),
+                };
+                visit.native_python(&value, sink, sequence.map(|_| index))
+            };
+            if let Err(error) = result {
+                errors::note_format(
+                    py,
+                    &error,
+                    format_args!(
+                        "while binding {}; current request was not sent",
+                        path_text(&visit.path)
+                    ),
+                );
+                return Err(error);
+            }
+        }
+        check(py, budget)
+    }
     pub(crate) fn bind(
         self,
         template: &Template,
@@ -820,6 +930,36 @@ impl Visit<'_> {
 }
 
 impl CellWriter for Visit<'_> {
+    fn native_python(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        sink: &mut dyn sqlaero_core::bind::value::ValueSink<Error = sqlaero_core::bind::value::ValueError>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
+        let py = value.py();
+        let result = (|| {
+            self.checkpoint(py, 1)?;
+            if self.types.try_write_to(
+                value,
+                &mut crate::input::sink::Native(sink),
+                self.context,
+                Some(self.budget),
+            )? {
+                return Ok(());
+            }
+            if Sequence::from(value, self.types, &self.active)?.is_some()
+                || source::prepare(value, self.types, self.budget)?.is_some()
+            {
+                return Err(crate::input::sink::fragment_error(py));
+            }
+            Err(crate::input::unsupported(value))
+        })();
+        if let Err(error) = &result {
+            self.failed_value(value, child, error);
+        }
+        result
+    }
+
     fn python(
         &mut self,
         value: &Bound<'_, PyAny>,

@@ -1,7 +1,9 @@
 //! Attached error and source-null boundaries around the shared native writer.
 
+use super::sink::{Destination, emit};
 use pyo3::prelude::*;
-use sqlaero_core::bind::{Context, temporal, writer};
+use sqlaero_core::bind::value::ValueRef;
+use sqlaero_core::bind::{Context, temporal};
 use sqlaero_core::transport::deadline::IoBudget;
 
 pub(crate) use temporal::{TimeKind, TimeUnit};
@@ -16,13 +18,12 @@ pub(crate) fn write(
     unit: TimeUnit,
     multiplier: u64,
     kind: TimeKind,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
     budget: Option<&IoBudget>,
 ) -> PyResult<()> {
     if ticks == i64::MIN {
-        return writer::append(output, b"NULL", context.limit)
-            .map_err(|error| crate::errors::wire(py, error));
+        return emit(output, py, ValueRef::Null, context);
     }
     if multiplier == 0 {
         return Err(crate::errors::builtin_message::<
@@ -44,12 +45,21 @@ pub(crate) fn write_valid(
     unit: TimeUnit,
     multiplier: u64,
     kind: TimeKind,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
     _budget: Option<&IoBudget>,
 ) -> PyResult<()> {
-    temporal::write(output, ticks, unit, multiplier, kind, context.limit)
-        .map_err(|error| super::scalar_error(py, error))
+    emit(
+        output,
+        py,
+        ValueRef::Ticks {
+            value: ticks,
+            unit,
+            multiplier,
+            kind,
+        },
+        context,
+    )
 }
 
 pub(crate) fn write_clock(
@@ -57,21 +67,28 @@ pub(crate) fn write_clock(
     ticks: i64,
     unit: TimeUnit,
     multiplier: u64,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
     _budget: Option<&IoBudget>,
 ) -> PyResult<()> {
-    temporal::write_clock(output, ticks, unit, multiplier, context.limit)
-        .map_err(|error| super::scalar_error(py, error))
+    emit(
+        output,
+        py,
+        ValueRef::ClockTicks {
+            value: ticks,
+            unit,
+            multiplier,
+        },
+        context,
+    )
 }
 
 pub(crate) fn write_date(
     py: Python<'_>,
     days: i64,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
     _budget: Option<&IoBudget>,
 ) -> PyResult<()> {
-    temporal::write_date(output, days, context.limit)
-        .map_err(|error| super::scalar_error(py, error))
+    emit(output, py, ValueRef::DateDays(days), context)
 }

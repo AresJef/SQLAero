@@ -2,6 +2,7 @@
 
 use pyo3::prelude::*;
 use sqlaero_core::bind::Context;
+use sqlaero_core::bind::value::{ValueError, ValueSink};
 use sqlaero_core::transport::deadline::IoBudget;
 
 /// Prepare a recognized typed provider at the Python boundary. The caller
@@ -74,6 +75,14 @@ pub(crate) trait CellWriter {
         child: Option<usize>,
     ) -> PyResult<()>;
 
+    /// Read the same Python leaf into one immediate native scalar sink.
+    fn native_python(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        sink: &mut dyn ValueSink<Error = ValueError>,
+        child: Option<usize>,
+    ) -> PyResult<()>;
+
     /// Account for a native nested sequence under the common depth limit.
     fn enter_native(&mut self, py: Python<'_>) -> PyResult<()>;
 
@@ -111,4 +120,54 @@ pub(crate) trait PreparedSource<'py> {
         budget: &IoBudget,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()>;
+
+    /// Read the same actual logical cell into a prepared parameter sink.
+    /// No escaped SQL bytes or per-value Python SQL strings are involved.
+    fn write_parameter_cell(
+        &mut self,
+        row: usize,
+        column: usize,
+        sink: &mut dyn ValueSink<Error = ValueError>,
+        context: &Context,
+        budget: &IoBudget,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()>;
 }
+
+/// Keep text statically specialized while sharing actual cell acquisition.
+macro_rules! cell_destinations {
+    () => {
+        fn write_cell(
+            &mut self,
+            row: usize,
+            column: usize,
+            output: &mut Vec<u8>,
+            context: &sqlaero_core::bind::Context,
+            budget: &sqlaero_core::transport::deadline::IoBudget,
+            visitor: &mut dyn $crate::input::source::CellWriter,
+        ) -> pyo3::PyResult<()> {
+            self.write_cell_to(row, column, output, context, budget, visitor)
+        }
+        fn write_parameter_cell(
+            &mut self,
+            row: usize,
+            column: usize,
+            sink: &mut dyn sqlaero_core::bind::value::ValueSink<
+                Error = sqlaero_core::bind::value::ValueError,
+            >,
+            context: &sqlaero_core::bind::Context,
+            budget: &sqlaero_core::transport::deadline::IoBudget,
+            visitor: &mut dyn $crate::input::source::CellWriter,
+        ) -> pyo3::PyResult<()> {
+            self.write_cell_to(
+                row,
+                column,
+                &mut $crate::input::sink::Native(sink),
+                context,
+                budget,
+                visitor,
+            )
+        }
+    };
+}
+pub(crate) use cell_destinations;

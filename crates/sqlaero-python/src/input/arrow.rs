@@ -3,6 +3,7 @@
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 
+use super::sink::{self, Destination};
 use arrow_array::ffi::{FFI_ArrowArray, from_ffi_and_data_type};
 use arrow_array::types::{
     Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type, UInt16Type, UInt32Type, UInt64Type,
@@ -24,7 +25,8 @@ use arrow_schema::{DataType, Field, TimeUnit as ArrowTimeUnit, ffi::FFI_ArrowSch
 use pyo3::exceptions::{PyBufferError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString, PyTuple, PyType};
-use sqlaero_core::bind::{Context, scalar, writer};
+use sqlaero_core::bind::Context;
+use sqlaero_core::bind::value::{ValueError, ValueRef};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::deadline::IoBudget;
@@ -218,7 +220,7 @@ impl Int64Views {
         py: Python<'_>,
         row: usize,
         column: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         context: &Context,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
@@ -233,10 +235,10 @@ impl Int64Views {
             return Err(invalid(py, "Arrow child index is outside its array"));
         }
         if values.is_null(row) {
-            writer::append(output, b"NULL", context.limit).map_err(|error| errors::wire(py, error))
+            sink::emit(output, py, ValueRef::Null, context)
         } else {
-            scalar::integer(output, values.value(row), context.limit)
-                .map_err(|error| errors::wire(py, error))
+            sink::integer(output, values.value(row), context)
+                .map_err(|error| sink::failure(py, error))
         }
     }
 }
@@ -254,7 +256,7 @@ impl<T: ArrowNativeType + Into<f64>> FloatReader<T> {
         &self,
         py: Python<'_>,
         row: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         context: &Context,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
@@ -265,15 +267,14 @@ impl<T: ArrowNativeType + Into<f64>> FloatReader<T> {
         // Read the actual retained validity bitmap on every call. NULL never
         // reads the value buffer, and no borrowed buffer survives a callback.
         if self.nulls.as_ref().is_some_and(|nulls| nulls.is_null(row)) {
-            writer::append(output, b"NULL", context.limit).map_err(|error| errors::wire(py, error))
+            sink::emit(output, py, ValueRef::Null, context)
         } else {
             let value = self
                 .values
                 .get(row)
                 .copied()
                 .ok_or_else(|| invalid(py, "Arrow child index is outside its array"))?;
-            scalar::float(output, value.into(), context.limit)
-                .map_err(|error| errors::wire(py, error))
+            sink::float(output, value.into(), context).map_err(|error| sink::failure(py, error))
         }
     }
 }
@@ -302,7 +303,7 @@ impl BooleanReader {
         &self,
         py: Python<'_>,
         row: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         context: &Context,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
@@ -313,11 +314,12 @@ impl BooleanReader {
         // Consult the actual mask every time and never read a NULL data bit.
         // Only the owned Rust metadata survives the checkpoint above.
         if self.nulls.as_ref().is_some_and(|nulls| nulls.is_null(row)) {
-            writer::append(output, b"NULL", context.limit).map_err(|error| errors::wire(py, error))
+            sink::emit(output, py, ValueRef::Null, context)
         } else {
             let value = self.values.value(row);
-            scalar::integer(output, u8::from(value), context.limit)
-                .map_err(|error| errors::wire(py, error))
+            output
+                .write(ValueRef::Boolean(value), context)
+                .map_err(|error| sink::failure(py, error))
         }
     }
 }
@@ -821,64 +823,7 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         self.shape
     }
 
-    fn write_cell(
-        &mut self,
-        row: usize,
-        column: usize,
-        output: &mut Vec<u8>,
-        context: &Context,
-        budget: &IoBudget,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        let py = self.owner.py();
-        visitor.checkpoint(py, 1)?;
-        let (array, index) = self.current_array(row, budget)?;
-        if index >= array.len() {
-            return Err(invalid(py, "Arrow source row is outside its current array"));
-        }
-        let table = if let Shape::Table { columns, .. } = self.shape {
-            if column >= columns {
-                return Err(invalid(
-                    py,
-                    "Arrow source column is outside its prepared schema",
-                ));
-            }
-            true
-        } else {
-            if column != 0 {
-                return Err(invalid(
-                    py,
-                    "Arrow vector has only one logical cell per element",
-                ));
-            }
-            false
-        };
-        match self.fast_path.as_deref_mut() {
-            Some(FastPath::Int64(views)) => {
-                views.write(py, index, column, output, context, visitor)
-            }
-            Some(FastPath::Float32(reader)) => reader.write(py, index, output, context, visitor),
-            Some(FastPath::Boolean(reader)) => reader.write(py, index, output, context, visitor),
-            Some(FastPath::Float64(reader)) => reader.write(py, index, output, context, visitor),
-            Some(FastPath::Dictionary(cache)) => {
-                let value = cell_array(py, &array, table, column)?;
-                if !table || cache.has_column(column) {
-                    cache.write(py, column, value, index, output, context, budget, visitor)
-                } else {
-                    write_value(py, value, index, output, context, budget, visitor)
-                }
-            }
-            None => write_value(
-                py,
-                cell_array(py, &array, table, column)?,
-                index,
-                output,
-                context,
-                budget,
-                visitor,
-            ),
-        }
-    }
+    crate::input::source::cell_destinations!();
 }
 
 fn cell_array<'a>(
@@ -902,7 +847,7 @@ fn write_value(
     py: Python<'_>,
     array: &ArrayRef,
     index: usize,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
     budget: &IoBudget,
     visitor: &mut dyn CellWriter,
@@ -912,8 +857,7 @@ fn write_value(
         return Err(invalid(py, "Arrow child index is outside its array"));
     }
     if array.is_null(index) {
-        return writer::append(output, b"NULL", context.limit)
-            .map_err(|error| errors::wire(py, error));
+        return sink::emit(output, py, ValueRef::Null, context);
     }
     macro_rules! native {
         ($kind:ty) => {
@@ -925,33 +869,30 @@ fn write_value(
         };
     }
     match array.data_type() {
-        DataType::Null => {
-            writer::append(output, b"NULL", context.limit).map_err(|error| errors::wire(py, error))
-        }
-        DataType::Boolean => {
-            scalar::integer(output, u8::from(native!(BooleanArray)), context.limit)
-                .map_err(|error| errors::wire(py, error))
-        }
-        DataType::Int8 => scalar::integer(output, native!(Int8Array), context.limit)
-            .map_err(|error| errors::wire(py, error)),
-        DataType::Int16 => scalar::integer(output, native!(Int16Array), context.limit)
-            .map_err(|error| errors::wire(py, error)),
-        DataType::Int32 => scalar::integer(output, native!(Int32Array), context.limit)
-            .map_err(|error| errors::wire(py, error)),
-        DataType::Int64 => scalar::integer(output, native!(Int64Array), context.limit)
-            .map_err(|error| errors::wire(py, error)),
-        DataType::UInt8 => scalar::integer(output, native!(UInt8Array), context.limit)
-            .map_err(|error| errors::wire(py, error)),
-        DataType::UInt16 => scalar::integer(output, native!(UInt16Array), context.limit)
-            .map_err(|error| errors::wire(py, error)),
-        DataType::UInt32 => scalar::integer(output, native!(UInt32Array), context.limit)
-            .map_err(|error| errors::wire(py, error)),
-        DataType::UInt64 => scalar::integer(output, native!(UInt64Array), context.limit)
-            .map_err(|error| errors::wire(py, error)),
-        DataType::Float32 => scalar::float(output, f64::from(native!(Float32Array)), context.limit)
-            .map_err(|error| errors::wire(py, error)),
-        DataType::Float64 => scalar::float(output, native!(Float64Array), context.limit)
-            .map_err(|error| errors::wire(py, error)),
+        DataType::Null => sink::emit(output, py, ValueRef::Null, context),
+        DataType::Boolean => output
+            .write(ValueRef::Boolean(native!(BooleanArray)), context)
+            .map_err(|error| sink::failure(py, error)),
+        DataType::Int8 => sink::integer(output, native!(Int8Array), context)
+            .map_err(|error| sink::failure(py, error)),
+        DataType::Int16 => sink::integer(output, native!(Int16Array), context)
+            .map_err(|error| sink::failure(py, error)),
+        DataType::Int32 => sink::integer(output, native!(Int32Array), context)
+            .map_err(|error| sink::failure(py, error)),
+        DataType::Int64 => sink::integer(output, native!(Int64Array), context)
+            .map_err(|error| sink::failure(py, error)),
+        DataType::UInt8 => sink::integer(output, native!(UInt8Array), context)
+            .map_err(|error| sink::failure(py, error)),
+        DataType::UInt16 => sink::integer(output, native!(UInt16Array), context)
+            .map_err(|error| sink::failure(py, error)),
+        DataType::UInt32 => sink::integer(output, native!(UInt32Array), context)
+            .map_err(|error| sink::failure(py, error)),
+        DataType::UInt64 => sink::integer(output, native!(UInt64Array), context)
+            .map_err(|error| sink::failure(py, error)),
+        DataType::Float32 => sink::float(output, f64::from(native!(Float32Array)), context)
+            .map_err(|error| sink::failure(py, error)),
+        DataType::Float64 => sink::float(output, native!(Float64Array), context)
+            .map_err(|error| sink::failure(py, error)),
         DataType::Utf8
         | DataType::LargeUtf8
         | DataType::Utf8View
@@ -1050,7 +991,7 @@ fn write_bytes(
     py: Python<'_>,
     array: &ArrayRef,
     index: usize,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
     budget: &IoBudget,
 ) -> PyResult<()> {
@@ -1063,13 +1004,9 @@ fn write_bytes(
         let length = source.len();
         let short = if length <= super::WORK_BYTES {
             Some(if text {
-                std::str::from_utf8(source).map(|text| {
-                    context
-                        .codec
-                        .literal(text, output, context.no_backslash_escapes, context.limit)
-                })
+                std::str::from_utf8(source).map(|text| output.write(ValueRef::Text(text), context))
             } else {
-                Ok(writer::binary(output, source, context.limit).map_err(CodecError::Wire))
+                Ok(output.write(ValueRef::Bytes(source), context))
             })
         } else {
             None
@@ -1079,12 +1016,16 @@ fn write_bytes(
     // No external slice reaches Python error diagnosis or a later checkpoint.
     if let Some(result) = short {
         let result = result.map_err(|error| utf8_error(py, error, 0))?;
-        return result.map_err(|error| {
-            byte_codec_error(py, array, index, 0, error, context.codec.name(), budget)
+        return result.map_err(|error| match error {
+            ValueError::Encoding(error) => {
+                byte_codec_error(py, array, index, 0, error, context.codec.name(), budget)
+            }
+            error => sink::failure(py, error),
         });
     }
     if !text {
-        writer::binary_width(output.len(), length, context.limit)
+        output
+            .check_binary_width(length, context)
             .map_err(|error| errors::wire(py, error))?;
     }
     let mut scratch = Vec::new();
@@ -1093,10 +1034,13 @@ fn write_bytes(
         .map_err(|_| errors::memory_error(py))?;
     super::check(py, budget)?;
     if text {
-        writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))?;
+        output
+            .text_start(length, context)
+            .map_err(|error| sink::failure(py, error))?;
     } else {
-        writer::binary_start(output, length, context.limit)
-            .map_err(|error| errors::wire(py, error))?;
+        output
+            .bytes_start(length, context)
+            .map_err(|error| sink::failure(py, error))?;
     }
     let mut start = 0;
     while start < length {
@@ -1126,27 +1070,35 @@ fn write_bytes(
         // The source borrow ended above. Only Rust-owned scratch bytes reach
         // encoding, error construction or the next Python signal checkpoint.
         if text {
-            context
-                .codec
-                .literal_fragment(
-                    utf8(py, &scratch, start)?,
-                    output,
-                    context.no_backslash_escapes,
-                    context.limit,
-                )
-                .map_err(|error| {
-                    byte_codec_error(py, array, index, start, error, context.codec.name(), budget)
+            output
+                .text_fragment(utf8(py, &scratch, start)?, context)
+                .map_err(|error| match error {
+                    ValueError::Encoding(error) => byte_codec_error(
+                        py,
+                        array,
+                        index,
+                        start,
+                        error,
+                        context.codec.name(),
+                        budget,
+                    ),
+                    error => sink::failure(py, error),
                 })?;
         } else {
-            writer::binary_fragment(output, &scratch, context.limit)
-                .map_err(|error| errors::wire(py, error))?;
+            output
+                .bytes_fragment(&scratch, context)
+                .map_err(|error| sink::failure(py, error))?;
         }
         start = end;
     }
     if text {
-        writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))
+        output
+            .text_end(context)
+            .map_err(|error| sink::failure(py, error))
     } else {
-        writer::binary_end(output, context.limit).map_err(|error| errors::wire(py, error))
+        output
+            .bytes_end(context)
+            .map_err(|error| sink::failure(py, error))
     }
 }
 
@@ -1207,7 +1159,7 @@ fn write_extended(
     py: Python<'_>,
     array: &ArrayRef,
     index: usize,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
     budget: &IoBudget,
     visitor: &mut dyn CellWriter,
@@ -1484,7 +1436,7 @@ fn write_list(
     values: &ArrayRef,
     start: usize,
     end: usize,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
     budget: &IoBudget,
     visitor: &mut dyn CellWriter,
@@ -1516,11 +1468,10 @@ fn write_list(
                     return Err(invalid(py, "Arrow child index is outside its array"));
                 }
                 if integers.is_null(row) {
-                    writer::append(output, b"NULL", context.limit)
-                        .map_err(|error| errors::wire(py, error))
+                    sink::emit(output, py, ValueRef::Null, context)
                 } else {
-                    scalar::integer(output, integers.value(row), context.limit)
-                        .map_err(|error| errors::wire(py, error))
+                    sink::integer(output, integers.value(row), context)
+                        .map_err(|error| sink::failure(py, error))
                 }
             } else {
                 write_value(py, values, row, output, context, budget, visitor)
@@ -1529,28 +1480,90 @@ fn write_list(
     )
 }
 
-fn write_sequence(
+fn write_sequence<D: Destination + ?Sized>(
     py: Python<'_>,
     width: usize,
-    output: &mut Vec<u8>,
+    output: &mut D,
     context: &Context,
     visitor: &mut dyn CellWriter,
-    mut value: impl FnMut(usize, &mut Vec<u8>, &mut dyn CellWriter) -> PyResult<()>,
+    mut value: impl FnMut(usize, &mut D, &mut dyn CellWriter) -> PyResult<()>,
 ) -> PyResult<()> {
     visitor.enter_native(py)?;
     let result = (|| {
-        writer::append(output, b"(", context.limit).map_err(|error| errors::wire(py, error))?;
+        output.fragment(py, b"(", context)?;
         for index in 0..width {
             visitor.push_index(py, index)?;
             if index != 0 {
-                writer::append(output, b",", context.limit)
-                    .map_err(|error| errors::wire(py, error))?;
+                output.fragment(py, b",", context)?;
             }
             value(index, output, visitor)?;
             visitor.pop_index();
         }
-        writer::append(output, b")", context.limit).map_err(|error| errors::wire(py, error))
+        output.fragment(py, b")", context)
     })();
     visitor.leave_native();
     result
+}
+
+impl<'py> Prepared<'py> {
+    fn write_cell_to(
+        &mut self,
+        row: usize,
+        column: usize,
+        output: &mut (impl Destination + ?Sized),
+        context: &Context,
+        budget: &IoBudget,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        let py = self.owner.py();
+        visitor.checkpoint(py, 1)?;
+        let (array, index) = self.current_array(row, budget)?;
+        if index >= array.len() {
+            return Err(invalid(py, "Arrow source row is outside its current array"));
+        }
+        let table = if let Shape::Table { columns, .. } = self.shape {
+            if column >= columns {
+                return Err(invalid(
+                    py,
+                    "Arrow source column is outside its prepared schema",
+                ));
+            }
+            true
+        } else {
+            if column != 0 {
+                return Err(invalid(
+                    py,
+                    "Arrow vector has only one logical cell per element",
+                ));
+            }
+            false
+        };
+        match self.fast_path.as_deref_mut() {
+            Some(FastPath::Int64(views)) => {
+                views.write(py, index, column, output, context, visitor)
+            }
+            Some(FastPath::Float32(reader)) => reader.write(py, index, output, context, visitor),
+            Some(FastPath::Boolean(reader)) => reader.write(py, index, output, context, visitor),
+            Some(FastPath::Float64(reader)) => reader.write(py, index, output, context, visitor),
+            Some(FastPath::Dictionary(cache)) => {
+                let value = cell_array(py, &array, table, column)?;
+                if (!table || cache.has_column(column))
+                    && let Some(text) = output.text_buffer()
+                {
+                    cache.write(py, column, value, index, text, context, budget, visitor)
+                } else {
+                    write_value(py, value, index, output, context, budget, visitor)
+                }
+            }
+            None => write_value(
+                py,
+                cell_array(py, &array, table, column)?,
+                index,
+                output,
+                context,
+                budget,
+                visitor,
+            ),
+        }
+    }
 }

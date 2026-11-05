@@ -10,13 +10,13 @@
 use super::allocation::{Allocation, Export};
 use super::{Kind, half_to_f64};
 use crate::errors;
+use crate::input::sink::{self, Destination};
 use crate::input::source::{CellWriter, PreparedSource, Shape};
 use crate::input::temporal::{self, TimeKind, TimeUnit};
 use pyo3::exceptions::{PyBufferError, PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple, PyType};
-use sqlaero_core::bind::{Context, scalar, writer};
-use sqlaero_core::protocol::framing::WireError;
+use sqlaero_core::bind::Context;
 use sqlaero_core::transport::deadline::IoBudget;
 
 const RAW_BLOCK_ITEMS: usize = 1024;
@@ -589,7 +589,7 @@ impl<'py> NumpySource<'py> {
         &mut self,
         row: usize,
         column: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         context: &Context,
         budget: &IoBudget,
     ) -> PyResult<()> {
@@ -608,37 +608,44 @@ impl<'py> NumpySource<'py> {
                 }
                 end = start;
             }
-            writer::binary_start(output, length, context.limit)
-                .map_err(|error| errors::wire(py, error))?;
+            output
+                .bytes_start(length, context)
+                .map_err(|error| sink::failure(py, error))?;
             for fragment in cell[..length].chunks(4096) {
                 crate::input::check(py, budget)?;
-                writer::binary_fragment(output, fragment, context.limit)
-                    .map_err(|error| errors::wire(py, error))?;
+                output
+                    .bytes_fragment(fragment, context)
+                    .map_err(|error| sink::failure(py, error))?;
             }
-            return writer::binary_end(output, context.limit)
-                .map_err(|error| errors::wire(py, error));
+            return output
+                .bytes_end(context)
+                .map_err(|error| sink::failure(py, error));
         }
         let length = self.content_width(row, column, budget)?;
-        writer::binary_start(output, length, context.limit)
-            .map_err(|error| errors::wire(py, error))?;
+        output
+            .bytes_start(length, context)
+            .map_err(|error| sink::failure(py, error))?;
         let mut chunk = [0u8; 4096];
         let mut start = 0;
         while start < length {
             crate::input::check(py, budget)?;
             let take = (length - start).min(chunk.len());
             self.copy_cell_range(row, column, start, &mut chunk[..take], budget)?;
-            writer::binary_fragment(output, &chunk[..take], context.limit)
-                .map_err(|error| errors::wire(py, error))?;
+            output
+                .bytes_fragment(&chunk[..take], context)
+                .map_err(|error| sink::failure(py, error))?;
             start += take;
         }
-        writer::binary_end(output, context.limit).map_err(|error| errors::wire(py, error))
+        output
+            .bytes_end(context)
+            .map_err(|error| sink::failure(py, error))
     }
 
     fn write_unicode(
         &mut self,
         row: usize,
         column: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         context: &Context,
         budget: &IoBudget,
     ) -> PyResult<()> {
@@ -646,15 +653,8 @@ impl<'py> NumpySource<'py> {
         let swap = self.swap;
         let mut scratch = self.utf8.take();
         if let Some(cell) = self.owned_cell(row, column, budget)? {
-            let valid = Self::owned_unicode_text(
-                py,
-                cell,
-                swap,
-                output.len(),
-                context.limit,
-                budget,
-                &mut scratch,
-            )?;
+            let valid =
+                Self::owned_unicode_text(py, cell, swap, output, context, budget, &mut scratch)?;
             // The helper only retains owned UTF-8, so the cell borrow has ended
             // before either the codec or the exceptional real getter runs.
             let result = if valid {
@@ -662,13 +662,7 @@ impl<'py> NumpySource<'py> {
                 crate::input::text_utf8(py, text, output, context, Some(budget))
             } else {
                 let source = self.element(row, column)?;
-                crate::input::text(
-                    source.cast::<PyString>()?,
-                    output,
-                    context,
-                    true,
-                    Some(budget),
-                )
+                output.text(source.cast::<PyString>()?, context, Some(budget))
             };
             if let Some(scratch) = scratch.as_deref_mut() {
                 scratch.text.clear();
@@ -681,19 +675,9 @@ impl<'py> NumpySource<'py> {
         // Every logical non-padding code point needs at least one output byte
         // for the supported client codecs. Reject this known minimum before
         // allocating the cell's UTF-8 representation.
-        let minimum = output
-            .len()
-            .checked_add(length / 4)
-            .and_then(|n| n.checked_add(2));
-        if minimum.is_none_or(|minimum| minimum > context.limit) {
-            return Err(errors::wire(
-                py,
-                WireError::Limit {
-                    required: minimum.unwrap_or(usize::MAX),
-                    limit: context.limit,
-                },
-            ));
-        }
+        output
+            .check_text_minimum(length / 4, context)
+            .map_err(|error| errors::wire(py, error))?;
         let mut text = String::new();
         let mut chunk = [0u8; 4096];
         let mut start = 0;
@@ -716,13 +700,7 @@ impl<'py> NumpySource<'py> {
                     // scalar provides the existing codec's original Python
                     // exception payload only on this exceptional path.
                     let source = self.element(row, column)?;
-                    return crate::input::text(
-                        source.cast::<PyString>()?,
-                        output,
-                        context,
-                        true,
-                        Some(budget),
-                    );
+                    return output.text(source.cast::<PyString>()?, context, Some(budget));
                 };
                 text.push(character);
             }
@@ -737,8 +715,8 @@ impl<'py> NumpySource<'py> {
         py: Python<'_>,
         cell: &[u8],
         swap: bool,
-        output_length: usize,
-        limit: usize,
+        output: &(impl Destination + ?Sized),
+        context: &Context,
         budget: &IoBudget,
         scratch: &mut Option<Box<UnicodeScratch>>,
     ) -> PyResult<bool> {
@@ -755,18 +733,9 @@ impl<'py> NumpySource<'py> {
         }
         // Keep the original minimum-width rejection before UTF-8 allocation
         // or the canonical getter for an invalid UCS4 point.
-        let minimum = output_length
-            .checked_add(length / 4)
-            .and_then(|length| length.checked_add(2));
-        if minimum.is_none_or(|minimum| minimum > limit) {
-            return Err(errors::wire(
-                py,
-                WireError::Limit {
-                    required: minimum.unwrap_or(usize::MAX),
-                    limit,
-                },
-            ));
-        }
+        output
+            .check_text_minimum(length / 4, context)
+            .map_err(|error| errors::wire(py, error))?;
         if length == 0 {
             if let Some(scratch) = scratch.as_deref_mut() {
                 scratch.text.clear();
@@ -821,11 +790,15 @@ impl<'py> PreparedSource<'py> for NumpySource<'py> {
         self.shape
     }
 
-    fn write_cell(
+    crate::input::source::cell_destinations!();
+}
+
+impl<'py> NumpySource<'py> {
+    fn write_cell_to(
         &mut self,
         row: usize,
         column: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         context: &Context,
         budget: &IoBudget,
         visitor: &mut dyn CellWriter,
@@ -843,39 +816,42 @@ impl<'py> PreparedSource<'py> for NumpySource<'py> {
                 // distinct from this returned-reference ownership guarantee.
                 let value = self.element(row, column)?;
                 crate::input::check(py, budget)?;
-                return visitor.python(&value, output, None);
+                return output.python(visitor, &value, None);
             }
         };
         let b = self.cell_bytes(row, column, budget)?;
         let result = match kind {
-            Kind::I8 => scalar::integer(output, i8::from_ne_bytes([b[0]]), context.limit),
-            Kind::I16 => scalar::integer(output, i16::from_ne_bytes([b[0], b[1]]), context.limit),
-            Kind::I32 => scalar::integer(
+            Kind::I8 => sink::integer(output, i8::from_ne_bytes([b[0]]), context),
+            Kind::I16 => sink::integer(output, i16::from_ne_bytes([b[0], b[1]]), context),
+            Kind::I32 => sink::integer(
                 output,
                 i32::from_ne_bytes([b[0], b[1], b[2], b[3]]),
-                context.limit,
+                context,
             ),
-            Kind::I64 => scalar::integer(output, i64::from_ne_bytes(b), context.limit),
-            Kind::U8 => scalar::integer(output, b[0], context.limit),
-            Kind::U16 => scalar::integer(output, u16::from_ne_bytes([b[0], b[1]]), context.limit),
-            Kind::U32 => scalar::integer(
+            Kind::I64 => sink::integer(output, i64::from_ne_bytes(b), context),
+            Kind::U8 => sink::integer(output, b[0], context),
+            Kind::U16 => sink::integer(output, u16::from_ne_bytes([b[0], b[1]]), context),
+            Kind::U32 => sink::integer(
                 output,
                 u32::from_ne_bytes([b[0], b[1], b[2], b[3]]),
-                context.limit,
+                context,
             ),
-            Kind::U64 => scalar::integer(output, u64::from_ne_bytes(b), context.limit),
-            Kind::F16 => scalar::float(
+            Kind::U64 => sink::integer(output, u64::from_ne_bytes(b), context),
+            Kind::F16 => sink::float(
                 output,
                 half_to_f64(u16::from_ne_bytes([b[0], b[1]])),
-                context.limit,
+                context,
             ),
-            Kind::F32 => scalar::float(
+            Kind::F32 => sink::float(
                 output,
                 f64::from(f32::from_ne_bytes([b[0], b[1], b[2], b[3]])),
-                context.limit,
+                context,
             ),
-            Kind::F64 => scalar::float(output, f64::from_ne_bytes(b), context.limit),
-            Kind::Bool => scalar::integer(output, u8::from(b[0] != 0), context.limit),
+            Kind::F64 => sink::float(output, f64::from_ne_bytes(b), context),
+            Kind::Bool => output.write(
+                sqlaero_core::bind::value::ValueRef::Boolean(b[0] != 0),
+                context,
+            ),
             Kind::DateTime | Kind::Duration => {
                 let Some((unit, multiplier, kind)) = self.temporal else {
                     return Err(errors::builtin_message::<PyTypeError>(
@@ -895,6 +871,6 @@ impl<'py> PreparedSource<'py> for NumpySource<'py> {
                 );
             }
         };
-        result.map_err(|error| errors::wire(py, error))
+        result.map_err(|error| sink::failure(py, error))
     }
 }

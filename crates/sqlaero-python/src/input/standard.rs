@@ -1,7 +1,7 @@
 //! Approved standard scalar subclasses and the canonical struct_time boundary.
 
 use super::sink::{Destination, emit};
-use super::{ScalarTypes, clock, date, delta, integer_to, sink};
+use super::{ScalarTypes, clock, date, delta, integer_to};
 use crate::{errors, output};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -115,7 +115,7 @@ fn struct_time<D: Destination + ?Sized>(
                 ),
             ));
         }
-        integer_to(&converted, &mut sink::Text(part), context)?;
+        integer_to(&converted, part, context)?;
     }
     emit(
         result,

@@ -293,11 +293,34 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         self.shape
     }
 
-    fn write_cell(
+    crate::input::source::cell_destinations!();
+}
+
+fn write_object(
+    series: &Bound<'_, PyAny>,
+    row: usize,
+    output: &mut (impl crate::input::sink::Destination + ?Sized),
+    budget: &IoBudget,
+    visitor: &mut dyn CellWriter,
+) -> PyResult<()> {
+    super::check(series.py(), budget)?;
+    // SAFETY: the attached constructor returns an owned exact int or its
+    // original error; no infallible Rust-tuple argument conversion is used.
+    let index = unsafe {
+        Bound::<PyAny>::from_owned_ptr_or_err(series.py(), pyo3::ffi::PyLong_FromSize_t(row))?
+    };
+    let arguments = crate::output::tuple_from_ready(series.py(), [index])?;
+    let value = series.call_method1(c"item", arguments)?;
+    super::check(series.py(), budget)?;
+    output.python(visitor, &value, None)
+}
+
+impl<'py> Prepared<'py> {
+    fn write_cell_to(
         &mut self,
         row: usize,
         column: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl crate::input::sink::Destination + ?Sized),
         context: &Context,
         budget: &IoBudget,
         visitor: &mut dyn CellWriter,
@@ -306,7 +329,7 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         visitor.checkpoint(py, 1)?;
         match &mut self.storage {
             Storage::Native(source) => {
-                source.write_cell(row, column, output, context, budget, visitor)
+                output.source_cell(source, row, column, context, budget, visitor)
             }
             Storage::Object(series) => {
                 if column != 0 {
@@ -320,30 +343,11 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
                     .ok_or_else(|| invalid(py, "Polars column is outside its prepared table"))?;
                 match column {
                     Column::Native(source) => {
-                        source.write_cell(row, 0, output, context, budget, visitor)
+                        output.source_cell(source, row, 0, context, budget, visitor)
                     }
                     Column::Object(series) => write_object(series, row, output, budget, visitor),
                 }
             }
         }
     }
-}
-
-fn write_object(
-    series: &Bound<'_, PyAny>,
-    row: usize,
-    output: &mut Vec<u8>,
-    budget: &IoBudget,
-    visitor: &mut dyn CellWriter,
-) -> PyResult<()> {
-    super::check(series.py(), budget)?;
-    // SAFETY: the attached constructor returns an owned exact int or its
-    // original error; no infallible Rust-tuple argument conversion is used.
-    let index = unsafe {
-        Bound::<PyAny>::from_owned_ptr_or_err(series.py(), pyo3::ffi::PyLong_FromSize_t(row))?
-    };
-    let arguments = crate::output::tuple_from_ready(series.py(), [index])?;
-    let value = series.call_method1(c"item", arguments)?;
-    super::check(series.py(), budget)?;
-    visitor.python(&value, output, None)
 }

@@ -2,6 +2,7 @@
 
 use super::allocation::Allocation;
 use crate::errors;
+use crate::input::sink::Destination;
 use crate::input::source::{CellWriter, PreparedSource, Shape};
 use pyo3::exceptions::{PyIndexError, PyTypeError};
 use pyo3::prelude::*;
@@ -21,10 +22,15 @@ impl<'py> RecordSource<'py> {
         value: &Bound<'py, PyAny>,
         array_type: &Py<PyType>,
         budget: &IoBudget,
-    ) -> PyResult<Self> {
+        exact_void: bool,
+    ) -> PyResult<Option<Self>> {
         let py = value.py();
         let dtype = errors::attribute(value, c"dtype")?;
-        let fields = errors::attribute(&dtype, c"names")?.cast_into::<PyTuple>()?;
+        let fields = match errors::attribute(&dtype, c"names")?.cast_into::<PyTuple>() {
+            Ok(fields) => fields,
+            Err(_) if exact_void => return Ok(None),
+            Err(error) => return Err(error.into()),
+        };
         for field in fields.iter() {
             crate::input::check(py, budget)?;
             if !field.is_exact_instance_of::<PyString>() {
@@ -34,11 +40,11 @@ impl<'py> RecordSource<'py> {
                 ));
             }
         }
-        Ok(Self {
+        Ok(Some(Self {
             owner: value.clone(),
             fields,
             allocation: Allocation::new(value, array_type, budget)?,
-        })
+        }))
     }
 }
 
@@ -53,11 +59,15 @@ impl<'py> PreparedSource<'py> for RecordSource<'py> {
         }
     }
 
-    fn write_cell(
+    crate::input::source::cell_destinations!();
+}
+
+impl<'py> RecordSource<'py> {
+    fn write_cell_to(
         &mut self,
         row: usize,
         column: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         _context: &Context,
         budget: &IoBudget,
         visitor: &mut dyn CellWriter,
@@ -76,6 +86,6 @@ impl<'py> PreparedSource<'py> for RecordSource<'py> {
         // pointer, private dtype offset, or borrowed Object slot reaches Visit.
         let value = self.owner.get_item(name)?;
         crate::input::check(py, budget)?;
-        visitor.python(&value, output, None)
+        output.python(visitor, &value, None)
     }
 }

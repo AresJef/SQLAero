@@ -1,6 +1,7 @@
 //! Public column preparation and row-wise writes, without Python row objects.
 
 use crate::errors;
+use crate::input::sink::{self, Destination};
 use crate::input::source::{CellWriter, PreparedSource, Shape};
 use crate::input::temporal::{self, TimeKind, TimeUnit};
 use crate::input::{
@@ -11,7 +12,8 @@ use pyo3::exceptions::{PyIndexError, PyOverflowError, PyTypeError, PyValueError}
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple, PyType};
 use smallvec::SmallVec;
-use sqlaero_core::bind::{Context, scalar, writer};
+use sqlaero_core::bind::Context;
+use sqlaero_core::bind::value::ValueRef;
 use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::deadline::IoBudget;
 use std::ffi::CStr;
@@ -558,38 +560,7 @@ impl<'py> PreparedSource<'py> for PandasSource<'py> {
     fn shape(&self) -> Shape {
         self.shape
     }
-    fn write_cell(
-        &mut self,
-        row: usize,
-        column: usize,
-        output: &mut Vec<u8>,
-        context: &Context,
-        budget: &IoBudget,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        let py = self.owner.py();
-        let length = match self.shape {
-            Shape::Vector { length } => length,
-            Shape::Table { rows, .. } => rows,
-            Shape::Record { .. } => {
-                return Err(invalid(py, "Pandas source cannot have record shape"));
-            }
-        };
-        if row >= length {
-            return Err(errors::builtin_message::<PyIndexError>(
-                py,
-                "Pandas row is outside its prepared shape",
-            ));
-        }
-        let source = self.columns.get_mut(column).ok_or_else(|| {
-            errors::builtin_message::<PyIndexError>(
-                py,
-                "Pandas column is outside its prepared shape",
-            )
-        })?;
-        visitor.checkpoint(py, 1)?;
-        source.write(row, output, context, budget, visitor, &self.numpy)
-    }
+    crate::input::source::cell_destinations!();
 }
 
 enum Column<'py> {
@@ -635,32 +606,32 @@ impl Column<'_> {
     fn write(
         &mut self,
         row: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         context: &Context,
         budget: &IoBudget,
         visitor: &mut dyn CellWriter,
         api: &NumpyArrayApi,
     ) -> PyResult<()> {
         match self {
-            Self::Numpy(source) => source.write_cell(row, 0, output, context, budget, visitor),
-            Self::Arrow(source) => source.write_cell(row, 0, output, context, budget, visitor),
+            Self::Numpy(source) => output.source_cell(source, row, 0, context, budget, visitor),
+            Self::Arrow(source) => output.source_cell(source, row, 0, context, budget, visitor),
             Self::Masked(source) => source.write(row, output, context, budget, visitor, api),
             Self::Range { owner, native, .. } => {
                 if let Some(value) = native
                     .and_then(|(start, step)| (row as i128).checked_mul(step)?.checked_add(start))
                 {
                     let result = match i64::try_from(value) {
-                        Ok(value) => scalar::integer(output, value, context.limit),
-                        Err(_) => scalar::integer(output, value, context.limit),
+                        Ok(value) => sink::integer(output, value, context),
+                        Err(_) => sink::integer(output, value, context),
                     };
-                    return result.map_err(|error| errors::wire(owner.py(), error));
+                    return result.map_err(|error| sink::failure(owner.py(), error));
                 }
                 let value = owner.get_item(crate::input::python_index(owner.py(), row)?)?;
-                visitor.python(&value, output, None)
+                output.python(visitor, &value, None)
             }
             Self::Python { owner, .. } => {
                 let value = owner.get_item(crate::input::python_index(owner.py(), row)?)?;
-                visitor.python(&value, output, None)
+                output.python(visitor, &value, None)
             }
             Self::Categorical(source) => source.write(row, output, context, budget, visitor, api),
             Self::Time { ticks, unit, .. } => {
@@ -703,7 +674,7 @@ impl<'py> Category<'py> {
     fn write(
         &mut self,
         row: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         context: &Context,
         budget: &IoBudget,
         visitor: &mut dyn CellWriter,
@@ -712,8 +683,7 @@ impl<'py> Category<'py> {
         let py = self.categories.py();
         let code = self.codes.signed_at(row, budget)?;
         if code == -1 {
-            return writer::append(output, b"NULL", context.limit)
-                .map_err(|error| errors::wire(py, error));
+            return sink::emit(output, py, ValueRef::Null, context);
         }
         let code = usize::try_from(code)
             .ok()
@@ -759,7 +729,7 @@ impl<'py> Category<'py> {
                             let label = self
                                 .categories
                                 .get_item(crate::input::python_index(py, code)?)?;
-                            return visitor.python(&label, output, None);
+                            return output.python(visitor, &label, None);
                         }
                         Column::Numpy(numpy_source(api, &converted, budget, self.labels)?)
                     }
@@ -795,7 +765,7 @@ impl<'py> Category<'py> {
                             let label = self
                                 .categories
                                 .get_item(crate::input::python_index(py, code)?)?;
-                            return visitor.python(&label, output, None);
+                            return output.python(visitor, &label, None);
                         };
                         Column::Arrow(arrow::prepare_exported(
                             &storage,
@@ -819,7 +789,7 @@ impl<'py> Category<'py> {
         let label = self
             .categories
             .get_item(crate::input::python_index(py, code)?)?;
-        visitor.python(&label, output, None)
+        output.python(visitor, &label, None)
     }
 }
 
@@ -887,17 +857,16 @@ impl OwnedLeaf<'_> {
         &self,
         py: Python<'_>,
         index: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         context: &Context,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         match self {
-            Self::Python(value) => visitor.python(value, output, Some(index)),
+            Self::Python(value) => output.python(visitor, value, Some(index)),
             Self::Signed(value) => {
                 visitor.push_index(py, index)?;
                 let result = visitor.checkpoint(py, 1).and_then(|()| {
-                    scalar::integer(output, *value, context.limit)
-                        .map_err(|error| errors::wire(py, error))
+                    sink::integer(output, *value, context).map_err(|error| sink::failure(py, error))
                 });
                 if result.is_ok() {
                     visitor.pop_index();
@@ -927,69 +896,7 @@ impl<'py> PreparedSource<'py> for Multi<'py> {
         }
     }
 
-    fn write_cell(
-        &mut self,
-        row: usize,
-        column: usize,
-        output: &mut Vec<u8>,
-        context: &Context,
-        budget: &IoBudget,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        let py = self.owner.py();
-        if row >= self.length {
-            return Err(errors::builtin_message::<PyIndexError>(
-                py,
-                "Pandas row is outside its prepared shape",
-            ));
-        }
-        if column != 0 {
-            return Err(errors::builtin_message::<PyIndexError>(
-                py,
-                "Pandas column is outside its prepared shape",
-            ));
-        }
-        // Match the original PandasSource boundary checkpoint; the tuple
-        // checkpoint below remains separate after all labels are acquired.
-        visitor.checkpoint(py, 1)?;
-        // Both inline buffers are bounded by the qualified eight-level plan.
-        // Read this actual row only, before any label getter or SQL write.
-        let mut positions = SmallVec::<[usize; 8]>::new();
-        for level in &mut self.levels {
-            let code = level.codes.signed_at(row, budget)?;
-            let Some(position) = usize::try_from(code)
-                .ok()
-                .filter(|position| *position < level.length)
-            else {
-                // Includes -1: preserve the original np.nan leaf and all
-                // diagnostics, as well as unusual negative-code semantics.
-                let value = self.owner.get_item(crate::input::python_index(py, row)?)?;
-                return visitor.python(&value, output, None);
-            };
-            positions.push(position);
-        }
-        let mut labels = SmallVec::<[OwnedLeaf<'_>; 8]>::new();
-        for (level, position) in self.levels.iter_mut().zip(positions) {
-            labels.push(level.value(position, &self.numpy, &self.numpy_extension, budget)?);
-        }
-        // The original MultiIndex getter obtains every label before its tuple
-        // reaches Visit. Keep that order, without constructing a Python tuple.
-        visitor.checkpoint(py, 1)?;
-        visitor.enter_native(py)?;
-        let result = (|| {
-            writer::append(output, b"(", context.limit).map_err(|error| errors::wire(py, error))?;
-            for (index, label) in labels.iter().enumerate() {
-                if index != 0 {
-                    writer::append(output, b",", context.limit)
-                        .map_err(|error| errors::wire(py, error))?;
-                }
-                label.write(py, index, output, context, visitor)?;
-            }
-            writer::append(output, b")", context.limit).map_err(|error| errors::wire(py, error))
-        })();
-        visitor.leave_native();
-        result
-    }
+    crate::input::source::cell_destinations!();
 }
 
 struct Masked<'py> {
@@ -1018,7 +925,7 @@ impl<'py> Masked<'py> {
     fn write(
         &mut self,
         row: usize,
-        output: &mut Vec<u8>,
+        output: &mut (impl Destination + ?Sized),
         context: &Context,
         budget: &IoBudget,
         visitor: &mut dyn CellWriter,
@@ -1091,16 +998,13 @@ impl<'py> Masked<'py> {
         let local = row - block.start;
         match &mut block.values {
             BlockValues::Arrow(source) => {
-                source.write_cell(local, 0, output, context, budget, visitor)
+                output.source_cell(source.as_mut(), local, 0, context, budget, visitor)
             }
             BlockValues::Numpy(source) => {
                 if source.mask.bool_at(local, budget)? {
-                    writer::append(output, b"NULL", context.limit)
-                        .map_err(|error| errors::wire(py, error))
+                    sink::emit(output, py, ValueRef::Null, context)
                 } else {
-                    source
-                        .data
-                        .write_cell(local, 0, output, context, budget, visitor)
+                    output.source_cell(&mut source.data, local, 0, context, budget, visitor)
                 }
             }
         }
@@ -1225,4 +1129,104 @@ fn column_error(py: Python<'_>, error: PyErr, column: usize) -> PyErr {
         errors::note(py, &error, message);
     }
     error
+}
+
+impl<'py> PandasSource<'py> {
+    fn write_cell_to(
+        &mut self,
+        row: usize,
+        column: usize,
+        output: &mut (impl Destination + ?Sized),
+        context: &Context,
+        budget: &IoBudget,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        let py = self.owner.py();
+        let length = match self.shape {
+            Shape::Vector { length } => length,
+            Shape::Table { rows, .. } => rows,
+            Shape::Record { .. } => {
+                return Err(invalid(py, "Pandas source cannot have record shape"));
+            }
+        };
+        if row >= length {
+            return Err(errors::builtin_message::<PyIndexError>(
+                py,
+                "Pandas row is outside its prepared shape",
+            ));
+        }
+        let source = self.columns.get_mut(column).ok_or_else(|| {
+            errors::builtin_message::<PyIndexError>(
+                py,
+                "Pandas column is outside its prepared shape",
+            )
+        })?;
+        visitor.checkpoint(py, 1)?;
+        source.write(row, output, context, budget, visitor, &self.numpy)
+    }
+}
+
+impl<'py> Multi<'py> {
+    fn write_cell_to(
+        &mut self,
+        row: usize,
+        column: usize,
+        output: &mut (impl Destination + ?Sized),
+        context: &Context,
+        budget: &IoBudget,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        let py = self.owner.py();
+        if row >= self.length {
+            return Err(errors::builtin_message::<PyIndexError>(
+                py,
+                "Pandas row is outside its prepared shape",
+            ));
+        }
+        if column != 0 {
+            return Err(errors::builtin_message::<PyIndexError>(
+                py,
+                "Pandas column is outside its prepared shape",
+            ));
+        }
+        // Match the original PandasSource boundary checkpoint; the tuple
+        // checkpoint below remains separate after all labels are acquired.
+        visitor.checkpoint(py, 1)?;
+        // Both inline buffers are bounded by the qualified eight-level plan.
+        // Read this actual row only, before any label getter or SQL write.
+        let mut positions = SmallVec::<[usize; 8]>::new();
+        for level in &mut self.levels {
+            let code = level.codes.signed_at(row, budget)?;
+            let Some(position) = usize::try_from(code)
+                .ok()
+                .filter(|position| *position < level.length)
+            else {
+                // Includes -1: preserve the original np.nan leaf and all
+                // diagnostics, as well as unusual negative-code semantics.
+                let value = self.owner.get_item(crate::input::python_index(py, row)?)?;
+                return output.python(visitor, &value, None);
+            };
+            positions.push(position);
+        }
+        let mut labels = SmallVec::<[OwnedLeaf<'_>; 8]>::new();
+        for (level, position) in self.levels.iter_mut().zip(positions) {
+            labels.push(level.value(position, &self.numpy, &self.numpy_extension, budget)?);
+        }
+        // The original MultiIndex getter obtains every label before its tuple
+        // reaches Visit. Keep that order, without constructing a Python tuple.
+        visitor.checkpoint(py, 1)?;
+        visitor.enter_native(py)?;
+        let result = (|| {
+            output.fragment(py, b"(", context)?;
+            for (index, label) in labels.iter().enumerate() {
+                if index != 0 {
+                    output.fragment(py, b",", context)?;
+                }
+                label.write(py, index, output, context, visitor)?;
+            }
+            output.fragment(py, b")", context)
+        })();
+        visitor.leave_native();
+        result
+    }
 }

@@ -143,7 +143,7 @@ impl ScalarTypes {
         context: &Context,
         budget: Option<&IoBudget>,
     ) -> PyResult<bool> {
-        self.try_write_to(value, &mut sink::Text(output), context, budget)
+        self.try_write_to(value, output, context, budget)
     }
 
     /// Consume one scalar through the common recognition and protocol boundary.
@@ -161,7 +161,7 @@ impl ScalarTypes {
         }
     }
 
-    fn try_write_to<D: Destination + ?Sized>(
+    pub(crate) fn try_write_to<D: Destination + ?Sized>(
         &self,
         value: &Bound<'_, PyAny>,
         output: &mut D,
@@ -642,11 +642,14 @@ fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
 pub(crate) fn text_utf8(
     py: Python<'_>,
     source: &str,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
     budget: Option<&IoBudget>,
 ) -> PyResult<()> {
-    let convert_error = |error: CodecError, start: usize| -> PyErr {
+    let convert_error = |error: ValueError, start: usize| -> PyErr {
+        let ValueError::Encoding(error) = error else {
+            return sink::failure(py, error);
+        };
         match error {
             CodecError::Encode { offset, point } => {
                 // SAFETY: source is valid UTF-8 and remains borrowed only for
@@ -683,13 +686,14 @@ pub(crate) fn text_utf8(
         }
     };
     if source.len() <= WORK_BYTES {
-        return context
-            .codec
-            .literal(source, output, context.no_backslash_escapes, context.limit)
+        return output
+            .write(ValueRef::Text(source), context)
             .map_err(|error| convert_error(error, 0));
     }
     checkpoint(py, budget)?;
-    writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))?;
+    output
+        .text_start(source.len(), context)
+        .map_err(|error| convert_error(error, 0))?;
     let mut start = 0;
     while start < source.len() {
         checkpoint(py, budget)?;
@@ -697,18 +701,14 @@ pub(crate) fn text_utf8(
         while !source.is_char_boundary(end) {
             end -= 1;
         }
-        context
-            .codec
-            .literal_fragment(
-                &source[start..end],
-                output,
-                context.no_backslash_escapes,
-                context.limit,
-            )
+        output
+            .text_fragment(&source[start..end], context)
             .map_err(|error| convert_error(error, start))?;
         start = end;
     }
-    writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))
+    output
+        .text_end(context)
+        .map_err(|error| convert_error(error, 0))
 }
 
 /// Write a bounded Arrow/Polars two's-complement coefficient without Python.
@@ -716,7 +716,7 @@ pub(crate) fn decimal_bytes(
     py: Python<'_>,
     signed_le: &[u8],
     scale: i8,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
 ) -> PyResult<()> {
     if signed_le.is_empty() || signed_le.len() > 32 {
@@ -766,14 +766,16 @@ pub(crate) fn decimal_bytes(
         for (digit, ascii) in digits.iter_mut().zip(ascii) {
             *digit = *ascii - b'0';
         }
-        return scalar::decimal(
+        return emit(
             output,
-            negative,
-            &digits[..ascii.len()],
-            -i64::from(scale),
-            context.limit,
-        )
-        .map_err(|error| scalar_error(py, error));
+            py,
+            ValueRef::Decimal {
+                negative,
+                digits: &digits[..ascii.len()],
+                exponent: -i64::from(scale),
+            },
+            context,
+        );
     }
     decimal_wide(py, signed_le, scale, output, context)
 }
@@ -785,7 +787,7 @@ fn decimal_wide(
     py: Python<'_>,
     signed_le: &[u8],
     scale: i8,
-    output: &mut Vec<u8>,
+    output: &mut (impl Destination + ?Sized),
     context: &Context,
 ) -> PyResult<()> {
     // decimal_bytes already checked 1..=32 bytes. Unsigned two's-complement
@@ -836,14 +838,16 @@ fn decimal_wide(
             *digit = ascii - b'0';
         }
     }
-    scalar::decimal(
+    emit(
         output,
-        negative,
-        &digits[start..],
-        -i64::from(scale),
-        context.limit,
+        py,
+        ValueRef::Decimal {
+            negative,
+            digits: &digits[start..],
+            exponent: -i64::from(scale),
+        },
+        context,
     )
-    .map_err(|error| scalar_error(py, error))
 }
 
 /// The same strict text conversion serves SQL source and quoted value content.
