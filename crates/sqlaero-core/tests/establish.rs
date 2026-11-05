@@ -115,6 +115,7 @@ fn configuration(
         },
         compression: Default::default(),
         multi_statements: false,
+        local_infile: false,
         connect_timeout: Some(Duration::from_secs(5)),
         read_timeout: Some(Duration::from_secs(2)),
         write_timeout: Some(Duration::from_secs(2)),

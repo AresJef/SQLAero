@@ -63,6 +63,7 @@ fn connect_mode(label: &str, compression: compression::Options, secure: bool) ->
         server_public_key: None,
         compression,
         multi_statements: false,
+        local_infile: false,
         connect_timeout: Some(Duration::from_secs(5)),
         read_timeout: Some(Duration::from_secs(3)),
         write_timeout: Some(Duration::from_secs(3)),

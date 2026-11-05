@@ -64,6 +64,8 @@ pub struct ConnectParams {
     pub compression: CompressionOptions,
     /// Whether one text command may contain several SQL statements.
     pub multi_statements: bool,
+    /// Enable client LOCAL capability, without authorizing any particular file.
+    pub local_infile: bool,
     /// Explicitly resolved TLS policy; None means no TLS on this internal path.
     pub tls: Option<ConnectTls>,
     /// Optional trusted local RSA SPKI public-key file, validated even if unused.
@@ -440,6 +442,18 @@ impl Establish {
                     .map_err(ConnectError::Configuration)?;
                 self.capabilities |= compression.capabilities;
                 self.compression = Some(compression);
+                if self.params.local_infile {
+                    if !greeting
+                        .capabilities()
+                        .contains(CapabilityFlags::CLIENT_LOCAL_FILES)
+                    {
+                        return Err(ConnectError::Unsupported(
+                            "server does not support requested local_infile",
+                        ));
+                    }
+                    self.capabilities
+                        .insert(CapabilityFlags::CLIENT_LOCAL_FILES);
+                }
                 if self.params.multi_statements {
                     if !greeting
                         .capabilities()

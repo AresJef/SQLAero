@@ -2,6 +2,7 @@
 
 use crate::memory::{Pool, Scope};
 use crate::protocol::framing::{MessageReader, MessageWriter, WireError};
+use crate::protocol::local_infile::{LocalError, Source, Upload, UploadProgress};
 use crate::result::text::{self, Receiver, Response, ResultError};
 use crate::result::value::RowEncoding;
 use crate::transport::channel::{Channel, ChannelError, Step};
@@ -14,6 +15,9 @@ use std::sync::Arc;
 /// A command failure whose server/transport/resource origin remains explicit.
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
+    /// The explicitly authorized LOCAL source or upload failed.
+    #[error(transparent)]
+    Local(#[from] LocalError),
     /// A complete result failed protocol, data or resource validation.
     #[error(transparent)]
     Result(#[from] ResultError),
@@ -113,6 +117,9 @@ pub struct Query {
     capabilities: CapabilityFlags,
     encoding: RowEncoding,
     max_receive: usize,
+    max_send: usize,
+    local_upload: Option<Upload>,
+    local_progress: Option<UploadProgress>,
     scope: Arc<Scope>,
     sent: bool,
     started: bool,
@@ -206,6 +213,9 @@ impl Query {
             capabilities,
             encoding,
             max_receive,
+            max_send,
+            local_upload: None,
+            local_progress: None,
             scope,
             sent: false,
             started: false,
@@ -215,6 +225,35 @@ impl Query {
             pool,
             finished: false,
         })
+    }
+
+    /// Attach one already opened source before SQL transmission and old-result
+    /// handoff. The boundary has already verified single plain-text LOAD shape.
+    ///
+    /// # Errors
+    /// Rejects late, repeated, non-text or unnegotiated permission and reserves
+    /// bounded work storage before the shared channel is touched.
+    pub fn with_local_infile(mut self, source: Source) -> Result<Self, QueryError> {
+        if self.started || self.local_upload.is_some() || self.request[0] != 3 {
+            return Err(WireError::Malformed("invalid LOCAL source command").into());
+        }
+        if !self
+            .capabilities
+            .contains(CapabilityFlags::CLIENT_LOCAL_FILES)
+        {
+            return Err(WireError::Malformed("LOCAL client capability is disabled").into());
+        }
+        self.local_upload = Some(Upload::new(source, self.max_send, Arc::clone(&self.scope))?);
+        Ok(self)
+    }
+
+    /// Actual LOCAL observations even if the final server response is unknown.
+    #[must_use]
+    pub fn local_progress(&self) -> Option<UploadProgress> {
+        self.local_upload
+            .as_ref()
+            .map(Upload::progress)
+            .or(self.local_progress)
     }
 
     /// Receive the next complete result of this command, retaining framing
@@ -291,6 +330,23 @@ impl Query {
                     Step::Control => return Ok(Step::Control),
                 }
             }
+            if let Some(upload) = self.local_upload.as_mut()
+                && upload.is_requested()
+            {
+                match upload.advance(channel, budget)? {
+                    Step::Ready(progress) => {
+                        self.local_progress = Some(progress);
+                        self.local_upload = None;
+                    }
+                    Step::Control => return Ok(Step::Control),
+                    Step::Wait(direction) => {
+                        if channel.wait(direction, budget)? == WaitStatus::Control {
+                            return Ok(Step::Control);
+                        }
+                        continue;
+                    }
+                }
+            }
             let data = match channel.receive_step(&mut self.incoming, budget, Some(&self.scope))? {
                 Step::Ready(data) => data,
                 Step::Wait(direction) => {
@@ -302,6 +358,17 @@ impl Query {
                 Step::Control => return Ok(Step::Control),
             };
             self.incoming = MessageReader::tracked(self.max_receive, &self.scope);
+            // An unused permission belongs only to this command's first
+            // response. Drop it on any other packet, before row parsing, so a
+            // later text row beginning with a NULL byte cannot trigger upload.
+            if let Some(mut upload) = self.local_upload.take() {
+                if data.first() == Some(&0xfb) {
+                    upload.accept_request()?;
+                    self.local_upload = Some(upload);
+                    return Ok(Step::Control);
+                }
+                self.local_progress = Some(upload.progress());
+            }
             processed = processed.saturating_add(data.len());
             if let Some(response) = self.collector.push(&data)? {
                 self.next_set = text::has_more(&response);
