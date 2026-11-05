@@ -119,7 +119,12 @@ fn prepare(connection: &mut Authenticated, sql: &str) -> Result<Statement, Query
 }
 
 fn close(connection: &mut Authenticated, statement: Statement) {
-    let mut job = Close::new(statement.id, LIMIT).unwrap();
+    let scope = if connection.channel.is_compressed() {
+        Some(sqlaero_core::memory::Scope::new(Pool::new(LIMIT), LIMIT).unwrap())
+    } else {
+        None
+    };
+    let mut job = Close::new(statement.id, LIMIT, scope).unwrap();
     let mut budget = budget();
     loop {
         match job.advance(&mut connection.channel, &mut budget).unwrap() {

@@ -117,13 +117,18 @@ impl Prepare {
             return Err(WireError::Malformed("prepare exchange already ended").into());
         }
         if !self.started {
-            channel.new_command();
+            channel.new_command()?;
             self.started = true;
         }
         let mut processed = 0_usize;
         loop {
             if !self.sent {
-                match channel.send_step(&mut self.sender, &self.request, budget)? {
+                match channel.send_step(
+                    &mut self.sender,
+                    &self.request,
+                    budget,
+                    Some(&self.scope),
+                )? {
                     Step::Ready(()) => self.sent = true,
                     Step::Control => return Ok(Step::Control),
                     Step::Wait(direction) => {
@@ -134,16 +139,17 @@ impl Prepare {
                     }
                 }
             }
-            let packet = match channel.receive_step(&mut self.incoming, budget)? {
-                Step::Ready(packet) => packet,
-                Step::Control => return Ok(Step::Control),
-                Step::Wait(direction) => {
-                    if channel.wait(direction, budget)? == WaitStatus::Control {
-                        return Ok(Step::Control);
+            let packet =
+                match channel.receive_step(&mut self.incoming, budget, Some(&self.scope))? {
+                    Step::Ready(packet) => packet,
+                    Step::Control => return Ok(Step::Control),
+                    Step::Wait(direction) => {
+                        if channel.wait(direction, budget)? == WaitStatus::Control {
+                            return Ok(Step::Control);
+                        }
+                        continue;
                     }
-                    continue;
-                }
-            };
+                };
             self.incoming = MessageReader::tracked(self.max_receive, &self.scope);
             processed = processed.saturating_add(packet.len());
             if let Some(statement) = self.receiver.push(&packet)? {
@@ -164,6 +170,7 @@ pub struct Close {
     sender: MessageWriter,
     started: bool,
     finished: bool,
+    scope: Option<Arc<Scope>>,
 }
 
 impl Close {
@@ -171,7 +178,11 @@ impl Close {
     ///
     /// # Errors
     /// Returns a send-limit failure before a channel is touched.
-    pub fn new(statement_id: u32, max_send: usize) -> Result<Self, WireError> {
+    pub fn new(
+        statement_id: u32,
+        max_send: usize,
+        scope: Option<Arc<Scope>>,
+    ) -> Result<Self, WireError> {
         let mut request = [0x19, 0, 0, 0, 0];
         request[1..].copy_from_slice(&statement_id.to_le_bytes());
         Ok(Self {
@@ -179,6 +190,7 @@ impl Close {
             sender: MessageWriter::new(5, max_send)?,
             started: false,
             finished: false,
+            scope,
         })
     }
 
@@ -213,11 +225,11 @@ impl Close {
             return Err(WireError::Malformed("close exchange already ended").into());
         }
         if !self.started {
-            channel.new_command();
+            channel.new_command()?;
             self.started = true;
         }
         loop {
-            match channel.send_step(&mut self.sender, &self.request, budget)? {
+            match channel.send_step(&mut self.sender, &self.request, budget, self.scope.as_ref())? {
                 Step::Ready(()) => {
                     self.finished = true;
                     return Ok(Step::Ready(()));
