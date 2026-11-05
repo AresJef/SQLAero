@@ -6,7 +6,7 @@ use pyo3::types::{PyDateTime, PyString, PyTzInfo};
 use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::tls::{
     Mode,
-    info::{Certificate, ContentError, Details, Snapshot, UtcDateTime},
+    info::{Certificate, ContentError, Details, DetailsError, Snapshot, UtcDateTime},
 };
 use std::sync::{Arc, Mutex, MutexGuard};
 
@@ -251,9 +251,18 @@ impl TlsCertificate {
         errors::tls_certificate(py, self.index, FIELDS[field], source)
     }
     fn details(&self, py: Python<'_>, field: usize) -> PyResult<&Details> {
-        self.certificate
-            .details()
+        self.prepared_details(py)?
             .map_err(|source| self.content(py, field, source))
+    }
+    fn prepared_details(&self, py: Python<'_>) -> PyResult<Result<&Details, &ContentError>> {
+        match self.certificate.details() {
+            Ok(details) => Ok(Ok(details)),
+            Err(DetailsError::Content(error)) => Ok(Err(error)),
+            Err(DetailsError::Allocation(_)) => Err(errors::memory_error(py)),
+            Err(DetailsError::Invariant(message)) => {
+                Err(errors::client(py, ClientErrorCode::InternalState, message))
+            }
+        }
     }
     fn datetime<'py>(
         &self,
@@ -331,10 +340,17 @@ impl TlsCertificate {
                 };
             }
             if field == 13 {
-                let pem = self
-                    .certificate
-                    .pem()
-                    .map_err(|_| errors::memory_error(py))?;
+                let pem = self.certificate.pem().map_err(|error| {
+                    if error.is_resource() {
+                        errors::memory_error(py)
+                    } else {
+                        errors::client_format(
+                            py,
+                            ClientErrorCode::InternalState,
+                            format_args!("cannot encode original certificate DER: {error}"),
+                        )
+                    }
+                })?;
                 return text(py, &pem);
             }
             let details = self.details(py, field)?;
@@ -366,8 +382,20 @@ impl TlsCertificate {
                         .as_ref()
                         .map_err(|source| self.content(py, field, source))?,
                 )),
-                9 => text(py, &details.signature_algorithm_oid),
-                10 => text(py, &details.public_key_algorithm_oid),
+                9 => text(
+                    py,
+                    details
+                        .signature_algorithm_oid
+                        .as_ref()
+                        .map_err(|source| self.content(py, field, source))?,
+                ),
+                10 => text(
+                    py,
+                    details
+                        .public_key_algorithm_oid
+                        .as_ref()
+                        .map_err(|source| self.content(py, field, source))?,
+                ),
                 _ => Err(errors::client(
                     py,
                     ClientErrorCode::InternalState,
@@ -377,22 +405,24 @@ impl TlsCertificate {
         })
     }
 
-    fn field_error(&self, field: usize) -> Option<&ContentError> {
+    fn field_error(&self, py: Python<'_>, field: usize) -> PyResult<Option<&ContentError>> {
         if field == 11 {
-            return None;
+            return Ok(None);
         }
-        let details = match self.certificate.details() {
+        let details = match self.prepared_details(py)? {
             Ok(details) => details,
-            Err(error) => return Some(error),
+            Err(error) => return Ok(Some(error)),
         };
-        match field {
+        Ok(match field {
             0 => details.subject.as_ref().err(),
             1 => details.issuer.as_ref().err(),
             6 => details.dns_names.as_ref().err(),
             7 => details.ip_addresses.as_ref().err(),
             8 => details.is_ca.as_ref().err(),
+            9 => details.signature_algorithm_oid.as_ref().err(),
+            10 => details.public_key_algorithm_oid.as_ref().err(),
             _ => None,
-        }
+        })
     }
 
     fn display<'py>(&self, py: Python<'py>, multiline: bool) -> PyResult<Bound<'py, PyString>> {
@@ -408,7 +438,7 @@ impl TlsCertificate {
                 if field != 0 { append(if multiline { ",\n    " } else { ", " })?; }
                 append(name)?;
                 append("=")?;
-                if let Some(error) = self.field_error(field) {
+                if let Some(error) = self.field_error(py, field)? {
                     append(&errors::message(py, format_args!("<unavailable: {error}>"))?)?;
                     continue;
                 }

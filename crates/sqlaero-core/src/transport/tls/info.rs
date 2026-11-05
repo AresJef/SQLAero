@@ -8,6 +8,41 @@ use std::sync::{Arc, OnceLock};
 mod details;
 pub use details::{ContentError, Details, UtcDateTime};
 
+/// A lazy detail access failure; only Content is retained as a cached failure.
+#[derive(Debug, thiserror::Error)]
+pub enum DetailsError<'a> {
+    /// Deterministic malformed or unrepresentable X.509 content.
+    #[error("{0}")]
+    Content(&'a ContentError),
+    /// Storage reservation failed; a later access may retry preparation.
+    #[error("cannot allocate certificate metadata: {0}")]
+    Allocation(#[from] TryReserveError),
+    /// The owned immutable cache could not expose its completed publication.
+    #[error("{0}")]
+    Invariant(&'static str),
+}
+
+/// An original-DER PEM export failure, independent of structured X.509 details.
+#[derive(Debug, thiserror::Error)]
+pub enum PemError {
+    /// The output's checked storage reservation failed.
+    #[error("cannot allocate certificate PEM: {0}")]
+    Allocation(#[from] TryReserveError),
+    /// The mature encoder rejected its output length or encoding.
+    #[error("cannot encode certificate PEM: {0}")]
+    Encoding(#[from] pem_rfc7468::Error),
+}
+impl PemError {
+    /// Whether this failure denotes storage or checked output-size exhaustion.
+    #[must_use]
+    pub fn is_resource(&self) -> bool {
+        matches!(
+            self,
+            Self::Allocation(_) | Self::Encoding(pem_rfc7468::Error::Length)
+        )
+    }
+}
+
 /// A failure to copy complete established engine facts.
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotError {
@@ -156,8 +191,25 @@ impl Certificate {
     ///
     /// # Errors
     /// Returns the mature PEM encoder's error without requiring X.509 parsing.
-    pub fn pem(&self) -> Result<String, pem_rfc7468::Error> {
-        pem_rfc7468::encode_string("CERTIFICATE", pem_rfc7468::LineEnding::LF, self.der())
+    pub fn pem(&self) -> Result<String, PemError> {
+        let length = pem_rfc7468::encapsulated_len(
+            "CERTIFICATE",
+            pem_rfc7468::LineEnding::LF,
+            self.der().len(),
+        )?;
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(length)?;
+        bytes.resize(length, 0);
+        let length = pem_rfc7468::encode(
+            "CERTIFICATE",
+            pem_rfc7468::LineEnding::LF,
+            self.der(),
+            &mut bytes,
+        )?
+        .len();
+        bytes.truncate(length);
+        String::from_utf8(bytes)
+            .map_err(|_| PemError::Encoding(pem_rfc7468::Error::CharacterEncoding))
     }
     /// Compute SHA-256 of the original DER once, independent of parsed details.
     #[must_use]
@@ -176,10 +228,30 @@ impl Certificate {
     ///
     /// # Errors
     /// Returns a cached parse failure for malformed common X.509 structure.
-    pub fn details(&self) -> Result<&Details, &ContentError> {
-        self.details
-            .get_or_init(|| details::parse(self.der()))
-            .as_ref()
+    pub fn details(&self) -> Result<&Details, DetailsError<'_>> {
+        self.prepare_details(|| details::parse(self.der()))
+    }
+    fn prepare_details(
+        &self,
+        prepare: impl FnOnce() -> Result<Details, details::PreparationError>,
+    ) -> Result<&Details, DetailsError<'_>> {
+        if self.details.get().is_none() {
+            let prepared = match prepare() {
+                Ok(value) => Ok(value),
+                Err(details::PreparationError::Content(error)) => Err(error),
+                Err(details::PreparationError::Allocation(error)) => {
+                    return Err(DetailsError::Allocation(error));
+                }
+            };
+            let _ = self.details.set(prepared);
+        }
+        match self.details.get() {
+            Some(Ok(value)) => Ok(value),
+            Some(Err(error)) => Err(DetailsError::Content(error)),
+            None => Err(DetailsError::Invariant(
+                "certificate metadata publication is missing",
+            )),
+        }
     }
 }
 
@@ -213,13 +285,35 @@ mod tests {
     fn malformed_common_structure_is_cached_without_disabling_raw_facts() {
         let certificate = Certificate::new(vec![0x31, 0x00].into());
         assert!(certificate.details().is_err());
-        assert!(std::ptr::eq(
-            certificate.details().unwrap_err(),
-            certificate.details().unwrap_err()
-        ));
+        let first = match certificate.details().unwrap_err() {
+            DetailsError::Content(error) => error,
+            error => panic!("unexpected detail error: {error}"),
+        };
+        let second = match certificate.details().unwrap_err() {
+            DetailsError::Content(error) => error,
+            error => panic!("unexpected detail error: {error}"),
+        };
+        assert!(std::ptr::eq(first, second));
         assert_eq!(certificate.der(), &[0x31, 0]);
         assert_eq!(certificate.fingerprint().len(), 32);
         assert!(certificate.pem().unwrap().contains("CERTIFICATE"));
+    }
+
+    #[test]
+    fn allocator_failure_is_not_cached_as_invalid_certificate_content() {
+        let der = super::super::certificates(include_bytes!(
+            "../../../tests/fixtures/tls-diagnostics/rich.pem"
+        ))
+        .unwrap()
+        .remove(0);
+        let certificate = Certificate::new(der);
+        let allocation = Vec::<u8>::new().try_reserve(usize::MAX).unwrap_err();
+        assert!(matches!(
+            certificate.prepare_details(|| Err(details::PreparationError::Allocation(allocation))),
+            Err(DetailsError::Allocation(_))
+        ));
+        assert!(certificate.details.get().is_none());
+        assert!(certificate.details().is_ok());
     }
 
     #[test]
@@ -342,7 +436,10 @@ mod tests {
             assert_eq!(details.dns_names.as_ref().unwrap(), &["localhost"]);
             assert_eq!(details.ip_addresses.as_ref().unwrap(), &["127.0.0.1"]);
             assert_eq!(details.version, 3);
-            assert_eq!(details.public_key_algorithm_oid, "1.2.840.113549.1.1.1");
+            assert_eq!(
+                details.public_key_algorithm_oid.as_ref().unwrap(),
+                "1.2.840.113549.1.1.1"
+            );
             assert!(details.serial_number.bits() > 64);
         }
     }
