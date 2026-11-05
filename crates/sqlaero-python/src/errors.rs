@@ -895,6 +895,7 @@ pub(crate) struct SavedFailure {
     server: Option<bool>,
     native: Option<diagnostics::Native>,
     stage: Option<&'static str>,
+    summary: Option<String>,
     unavailable: Option<&'static str>,
 }
 #[derive(Clone, Copy)]
@@ -918,6 +919,69 @@ impl SavedBase {
 /// Four bytes per code point conservatively bounds native Unicode storage and
 /// permits lone surrogates without creating an unbounded UTF-8 cache first.
 const SAVED_FAILURE_TEXT_BYTES: usize = 4096;
+fn saved_intrinsic<'py>(
+    value: &Bound<'py, PyAny>,
+    base: &Bound<'py, PyType>,
+    name: &CStr,
+) -> PyResult<Bound<'py, PyAny>> {
+    let descriptor = attribute(base.as_any(), name)?;
+    // SAFETY: the descriptor comes from a fixed trusted builtin base. Calling
+    // its descriptor slot bypasses a user's __getattribute__ or field override.
+    unsafe {
+        let slot = pyo3::ffi::PyType_GetSlot(
+            descriptor.get_type().as_type_ptr(),
+            pyo3::ffi::Py_tp_descr_get,
+        );
+        if slot.is_null() {
+            return Err(builtin_message::<PyRuntimeError>(
+                value.py(),
+                "intrinsic exception descriptor is unavailable",
+            ));
+        }
+        let get: pyo3::ffi::descrgetfunc = std::mem::transmute(slot);
+        Bound::from_owned_ptr_or_err(
+            value.py(),
+            get(
+                descriptor.as_ptr(),
+                value.as_ptr(),
+                value.get_type().as_ptr(),
+            ),
+        )
+    }
+}
+fn saved_summary(value: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    if !value.is_exact_instance_of::<PyString>() {
+        return Ok(None);
+    }
+    let py = value.py();
+    // SAFETY: exact Unicode and a bounded slice. The source is only borrowed
+    // during copying; only this escaped finite summary is retained.
+    let (length, preview) = unsafe {
+        let length = pyo3::ffi::PyUnicode_GetLength(value.as_ptr());
+        if length < 0 {
+            return Err(PyErr::fetch(py));
+        }
+        let preview = Bound::<PyAny>::from_owned_ptr_or_err(
+            py,
+            pyo3::ffi::PyUnicode_Substring(value.as_ptr(), 0, length.min(160)),
+        )?;
+        (length, preview)
+    };
+    let display = preview.repr()?;
+    message(
+        py,
+        format_args!(
+            "{}{}",
+            display.to_str()?,
+            if length > 160 {
+                " [truncated original text]"
+            } else {
+                ""
+            }
+        ),
+    )
+    .map(Some)
+}
 fn saved_text<'py>(
     value: &Bound<'py, PyAny>,
     remaining: &mut usize,
@@ -1012,8 +1076,51 @@ impl SavedFailure {
             server: None,
             native: None,
             stage: None,
+            summary: None,
             unavailable: None,
         };
+        let summary = if let Some(error) = &library {
+            saved_summary(error.message.bind(py).as_any())?
+        } else if matches!(base, SavedBase::Encode) {
+            let base = base.typ(py);
+            let encoding = saved_summary(&saved_intrinsic(value, &base, c"encoding")?)?;
+            let reason = saved_summary(&saved_intrinsic(value, &base, c"reason")?)?;
+            let start: isize = saved_intrinsic(value, &base, c"start")?.extract()?;
+            let end: isize = saved_intrinsic(value, &base, c"end")?.extract()?;
+            Some(message(
+                py,
+                format_args!(
+                    "encoding={}, start={start}, end={end}, reason={}",
+                    encoding.as_deref().unwrap_or("not safely available"),
+                    reason.as_deref().unwrap_or("not safely available")
+                ),
+            )?)
+        } else {
+            let args = saved_intrinsic(
+                value,
+                &py.get_type::<pyo3::exceptions::PyBaseException>(),
+                c"args",
+            )?
+            .cast_into::<PyTuple>()?;
+            let mut summary = None;
+            for (index, argument) in args.iter().take(SAVED_FAILURE_TEXT_BYTES).enumerate() {
+                if let Some(text) = saved_summary(&argument)? {
+                    summary = Some(if args.len() == 1 {
+                        text
+                    } else {
+                        message(py, format_args!("text argument[{index}]={text}"))?
+                    });
+                    break;
+                }
+            }
+            summary
+        };
+        if let Some(summary) = summary
+            && summary.len() <= remaining
+        {
+            remaining -= summary.len();
+            result.summary = Some(summary);
+        }
         // Dynamic exception state is not replayable data. The ordinary custom
         // subclass with inherited display and no extra instance state is safe.
         // SAFETY: a live BaseException owns CPython's intrinsic dictionary;
@@ -1089,15 +1196,20 @@ impl SavedFailure {
             }
         }
         if matches!(base, SavedBase::Os)
-            && (!attribute(value, c"errno")?.is_none()
-                || !attribute(value, c"filename")?.is_none()
-                || !attribute(value, c"filename2")?.is_none())
+            && (!saved_intrinsic(value, &safe_type, c"errno")?.is_none()
+                || !saved_intrinsic(value, &safe_type, c"filename")?.is_none()
+                || !saved_intrinsic(value, &safe_type, c"filename2")?.is_none())
         {
             result.unavailable =
                 Some("structured OS error fields require data beyond the retained scalar payload");
         }
         if matches!(base, SavedBase::Exception) {
-            let args = attribute(value, c"args")?.cast_into::<PyTuple>()?;
+            let args = saved_intrinsic(
+                value,
+                &py.get_type::<pyo3::exceptions::PyBaseException>(),
+                c"args",
+            )?
+            .cast_into::<PyTuple>()?;
             if args.len() > 1
                 || (args.len() == 1 && !args.get_item(0)?.is_instance_of::<PyString>())
             {
@@ -1106,8 +1218,18 @@ impl SavedFailure {
                 );
             }
         }
-        if !attribute(value, c"__cause__")?.is_none()
-            || !attribute(value, c"__context__")?.is_none()
+        if !saved_intrinsic(
+            value,
+            &py.get_type::<pyo3::exceptions::PyBaseException>(),
+            c"__cause__",
+        )?
+        .is_none()
+            || !saved_intrinsic(
+                value,
+                &py.get_type::<pyo3::exceptions::PyBaseException>(),
+                c"__context__",
+            )?
+            .is_none()
         {
             result.unavailable = Some(
                 "external exception chains cannot be safely retained as bounded scalar failure facts",
@@ -1186,9 +1308,13 @@ impl SavedFailure {
                     }
                 }
             } else if matches!(base, SavedBase::Library)
-                || !attribute(value, c"args")?
-                    .cast_into::<PyTuple>()?
-                    .is_empty()
+                || !saved_intrinsic(
+                    value,
+                    &py.get_type::<pyo3::exceptions::PyBaseException>(),
+                    c"args",
+                )?
+                .cast_into::<PyTuple>()?
+                .is_empty()
             {
                 let text = match &library {
                     Some(error) => error.message.bind(py).clone(),
@@ -1234,8 +1360,13 @@ impl SavedFailure {
                 py,
                 ClientErrorCode::SessionState,
                 format_args!(
-                    "The original {} failure cannot be reconstructed safely at this retained boundary: {reason}. The immediate original exception was preserved in full; this is a local diagnostic limitation, not a new database failure.",
-                    self.name
+                    "The original {} failure cannot be reconstructed safely at this retained boundary: {reason}. Original reason summary: {}; original code={:?}, is_server_error={:?}. The immediate original exception was preserved in full; this is a local diagnostic limitation, not a new database failure.",
+                    self.name,
+                    self.summary
+                        .as_deref()
+                        .unwrap_or("not safely available from intrinsic text diagnostics"),
+                    self.code.as_ref().and_then(|code| u32::try_from(code).ok()),
+                    self.server
                 ),
             );
             return match self.restore_notes(py, error.value(py).as_any()) {

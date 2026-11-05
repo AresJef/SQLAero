@@ -10,7 +10,7 @@ use num_bigint::BigInt;
 use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::exceptions::{PyAttributeError, PyRuntimeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyInt, PyList, PyString, PyTuple, PyType};
+use pyo3::types::{PyDict, PyInt, PyList, PyString, PyTuple, PyType};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::OnceLock;
 
@@ -239,12 +239,17 @@ pub(super) fn retained_notes<'py>(
     remaining: &mut usize,
 ) -> PyResult<(Bound<'py, PyTuple>, bool)> {
     let py = value.py();
-    let notes = match super::attribute(value, c"__notes__") {
-        Ok(notes) => notes,
-        Err(error) if error.is_instance_of::<PyAttributeError>(py) => {
-            return Ok((PyTuple::empty(py), true));
-        }
-        Err(error) => return Err(error),
+    // SAFETY: a live BaseException's intrinsic dictionary can be read without
+    // invoking its custom __getattribute__ or a user __notes__ descriptor.
+    let dictionary = unsafe {
+        Bound::<PyAny>::from_owned_ptr_or_err(
+            py,
+            pyo3::ffi::PyObject_GenericGetDict(value.as_ptr(), std::ptr::null_mut()),
+        )?
+    }
+    .cast_into::<PyDict>()?;
+    let Some(notes) = dictionary.get_item(PyString::from_bytes(py, b"__notes__")?)? else {
+        return Ok((PyTuple::empty(py), true));
     };
     let Ok(notes) = notes.cast::<PyList>() else {
         return Ok((PyTuple::empty(py), false));
