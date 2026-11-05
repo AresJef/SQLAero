@@ -5,6 +5,7 @@ use rustls::crypto::{CryptoProvider, aws_lc_rs};
 use rustls::sign::CertifiedKey;
 use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
+use std::collections::TryReserveError;
 use std::sync::Arc;
 
 pub mod info;
@@ -24,22 +25,27 @@ type PreparedRoots = rustls::RootCertStore;
 #[cfg(windows)]
 mod windows;
 
-fn prepare_anchors(
-    certificates: Vec<CertificateDer<'static>>,
-) -> Result<PreparedRoots, ConfigError> {
+#[cfg(target_vendor = "apple")]
+type ValidatedRoots = PreparedRoots;
+#[cfg(not(target_vendor = "apple"))]
+type ValidatedRoots = rustls::RootCertStore;
+
+fn validate_anchors(
+    certificates: &[CertificateDer<'static>],
+) -> Result<ValidatedRoots, ConfigError> {
     if certificates.is_empty() {
         return Err(ConfigError::Invalid("ca_file contains no trust anchors"));
     }
     #[cfg(target_vendor = "apple")]
     {
-        certificates
-            .iter()
-            .map(|certificate| {
-                TrustAnchor::from_der(certificate.as_ref()).map_err(|_| {
-                    ConfigError::Invalid("ca_file contains an invalid X.509 certificate")
-                })
-            })
-            .collect()
+        let mut roots = Vec::new();
+        roots.try_reserve_exact(certificates.len())?;
+        for certificate in certificates {
+            roots.push(TrustAnchor::from_der(certificate.as_ref()).map_err(|_| {
+                ConfigError::Invalid("ca_file contains an invalid X.509 certificate")
+            })?);
+        }
+        Ok(roots)
     }
     #[cfg(not(target_vendor = "apple"))]
     {
@@ -47,15 +53,30 @@ fn prepare_anchors(
         // verifier borrows this store; it does not reload or reparse CA files
         // while advancing the connection state machine.
         let mut store = rustls::RootCertStore::empty();
-        for certificate in &certificates {
-            store.add(certificate.clone()).map_err(|_| {
-                ConfigError::Invalid("ca_file contains an invalid X.509 certificate")
-            })?;
+        store.roots.try_reserve_exact(certificates.len())?;
+        for certificate in certificates {
+            store
+                .add(CertificateDer::from(certificate.as_ref()))
+                .map_err(|_| {
+                    ConfigError::Invalid("ca_file contains an invalid X.509 certificate")
+                })?;
         }
-        #[cfg(windows)]
-        return Ok(certificates);
-        #[cfg(not(windows))]
-        return Ok(store);
+        Ok(store)
+    }
+}
+
+fn prepare_anchors(
+    certificates: Vec<CertificateDer<'static>>,
+) -> Result<PreparedRoots, ConfigError> {
+    let roots = validate_anchors(&certificates)?;
+    #[cfg(windows)]
+    {
+        let _ = roots;
+        Ok(certificates)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(roots)
     }
 }
 
@@ -71,6 +92,7 @@ fn system_ca_policy() -> Result<Policy, ConfigError> {
         // not discard other usable roots, but an empty store is never trusted.
         let loaded = rustls_native_certs::load_native_certs();
         let mut roots = rustls::RootCertStore::empty();
+        roots.roots.try_reserve_exact(loaded.certs.len())?;
         roots.add_parsable_certificates(loaded.certs);
         if roots.is_empty() {
             return Err(ConfigError::Invalid(
@@ -88,6 +110,9 @@ fn system_ca_policy() -> Result<Policy, ConfigError> {
 /// A non-secret explanation of invalid TLS configuration material.
 #[derive(Debug, thiserror::Error)]
 pub enum MaterialError {
+    /// Native material storage could not be reserved.
+    #[error("cannot allocate TLS material storage: {0}")]
+    Allocation(#[from] TryReserveError),
     /// A certificate bundle was malformed or contained no certificates.
     #[error("invalid or empty X.509 PEM certificate bundle")]
     Certificates,
@@ -119,13 +144,23 @@ pub fn provider() -> Arc<CryptoProvider> {
 /// # Errors
 /// Returns [`MaterialError::Certificates`] for malformed or empty material.
 pub fn certificates(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, MaterialError> {
-    let result: Vec<_> = CertificateDer::pem_slice_iter(pem)
-        .collect::<Result<_, _>>()
-        .map_err(|_| MaterialError::Certificates)?;
+    let mut result = Vec::new();
+    for certificate in CertificateDer::pem_slice_iter(pem) {
+        let certificate = certificate.map_err(|_| MaterialError::Certificates)?;
+        result.try_reserve(1)?;
+        result.push(certificate);
+    }
     if result.is_empty() {
         return Err(MaterialError::Certificates);
     }
     Ok(result)
+}
+
+fn owned_bytes(bytes: &[u8]) -> Result<Vec<u8>, TryReserveError> {
+    let mut owned = Vec::new();
+    owned.try_reserve_exact(bytes.len())?;
+    owned.extend_from_slice(bytes);
+    Ok(owned)
 }
 
 /// Decode a PEM private key, decrypting modern PBES2 PKCS#8 when necessary.
@@ -152,13 +187,13 @@ pub fn private_key(
             let plaintext = encrypted
                 .decrypt(password)
                 .map_err(|_| MaterialError::Decryption)?;
-            Ok(PrivatePkcs8KeyDer::from(plaintext.as_bytes().to_vec()).into())
+            Ok(PrivatePkcs8KeyDer::from(owned_bytes(plaintext.as_bytes())?).into())
         }
         "PRIVATE KEY" | "RSA PRIVATE KEY" | "EC PRIVATE KEY" => {
             if password.is_some() {
                 return Err(MaterialError::UnexpectedPassword);
             }
-            PrivateKeyDer::try_from(document.as_bytes().to_vec())
+            PrivateKeyDer::try_from(owned_bytes(document.as_bytes())?)
                 .map_err(|_| MaterialError::PrivateKey)
         }
         _ => Err(MaterialError::PrivateKey),
@@ -273,6 +308,9 @@ pub fn validate_range(minimum: Version, maximum: Option<Version>) -> Result<(), 
 /// A TLS configuration failure, separate from a peer's later handshake error.
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    /// Native configuration storage could not be reserved.
+    #[error("cannot allocate TLS configuration storage: {0}")]
+    Allocation(#[from] TryReserveError),
     /// A declared configuration combination or textual token was invalid.
     #[error("{0}")]
     Invalid(&'static str),
@@ -408,6 +446,7 @@ fn explicit_policy(
     let roots = if ca_mode == CaMode::Append {
         let loaded = rustls_native_certs::load_native_certs();
         let mut system = rustls::RootCertStore::empty();
+        system.roots.try_reserve_exact(loaded.certs.len())?;
         system.add_parsable_certificates(loaded.certs);
         if system.is_empty() {
             return Err(ConfigError::Invalid(
@@ -415,6 +454,7 @@ fn explicit_policy(
             ));
         }
         let mut roots = roots;
+        roots.roots.try_reserve(system.roots.len())?;
         roots.extend(system.roots);
         roots
     } else {

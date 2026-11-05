@@ -1,19 +1,24 @@
 //! Filesystem material loading for one immutable TLS configuration snapshot.
 
-use super::{ConfigError, MaterialError, certificates, prepare_anchors};
+use super::{ConfigError, MaterialError, certificates, validate_anchors};
 use rustls_pki_types::CertificateDer;
+use std::borrow::Cow;
+use std::collections::TryReserveError;
 use std::fs::{self, OpenOptions};
 use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// A failed CA directory operation, preserving its exact member and root cause.
 #[derive(Debug, thiserror::Error)]
-pub enum DirectoryError {
+pub enum DirectoryError<'a> {
+    /// Native member or certificate storage could not be reserved.
+    #[error("cannot allocate CA directory snapshot: {0}")]
+    Allocation(#[from] TryReserveError),
     /// An enumeration, metadata, open, or read operation failed.
     #[error("ca_dir member {path:?}: {source}")]
     Io {
         /// The directory or member which failed.
-        path: PathBuf,
+        path: Cow<'a, Path>,
         /// The original operating-system failure.
         #[source]
         source: io::Error,
@@ -22,7 +27,7 @@ pub enum DirectoryError {
     #[error("ca_dir member {path:?}: {source}")]
     Material {
         /// The candidate member which failed.
-        path: PathBuf,
+        path: Cow<'a, Path>,
         /// The non-secret PEM failure.
         #[source]
         source: MaterialError,
@@ -31,19 +36,19 @@ pub enum DirectoryError {
     #[error("ca_dir member {path:?}: {source}")]
     Trust {
         /// The candidate member which failed.
-        path: PathBuf,
+        path: Cow<'a, Path>,
         /// The native trust-material failure.
         #[source]
         source: ConfigError,
     },
     /// No eligible certificate files were found.
     #[error("ca_dir {0:?} contains no CA certificates")]
-    Empty(PathBuf),
+    Empty(Cow<'a, Path>),
 }
 
-fn io_error(path: &Path, source: io::Error) -> DirectoryError {
+fn io_error(path: &Path, source: io::Error) -> DirectoryError<'_> {
     DirectoryError::Io {
-        path: path.to_owned(),
+        path: Cow::Borrowed(path),
         source,
     }
 }
@@ -98,7 +103,24 @@ pub fn regular_file(path: &Path) -> io::Result<Vec<u8>> {
 /// Returns the backend's original configuration failure; no partial bundle is
 /// accepted and no system roots are loaded.
 pub fn validate_roots(certificates: &[CertificateDer<'static>]) -> Result<(), ConfigError> {
-    prepare_anchors(certificates.to_vec()).map(|_| ())
+    validate_anchors(certificates).map(|_| ())
+}
+
+/// Copy an explicit root snapshot through checked native storage reservations.
+///
+/// # Errors
+/// Returns the actual reservation failure without yielding a partial bundle.
+pub fn clone_roots(
+    certificates: &[CertificateDer<'static>],
+) -> Result<Vec<CertificateDer<'static>>, TryReserveError> {
+    let mut result = Vec::new();
+    result.try_reserve_exact(certificates.len())?;
+    for certificate in certificates {
+        result.push(CertificateDer::from(super::owned_bytes(
+            certificate.as_ref(),
+        )?));
+    }
+    Ok(result)
 }
 
 /// Snapshot eligible direct CA members in native filename order.
@@ -110,38 +132,67 @@ pub fn validate_roots(certificates: &[CertificateDer<'static>]) -> Result<(), Co
 ///
 /// # Errors
 /// Returns a path-specific IO or material error, or Empty when no CA is found.
-pub fn directory_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>>, DirectoryError> {
-    let mut members = fs::read_dir(path)
-        .map_err(|error| io_error(path, error))?
-        .map(|entry| {
-            entry
-                .map(|entry| entry.path())
-                .map_err(|error| io_error(path, error))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    members.sort_by(|a, b| a.file_name().cmp(&b.file_name()));
+pub fn directory_certificates(
+    path: &Path,
+) -> Result<Vec<CertificateDer<'static>>, DirectoryError<'_>> {
+    let mut members = Vec::new();
+    for entry in fs::read_dir(path).map_err(|error| io_error(path, error))? {
+        let member = entry.map_err(|error| io_error(path, error))?.path();
+        members.try_reserve(1)?;
+        members.push(member);
+    }
+    members.sort_unstable_by(|a, b| a.file_name().cmp(&b.file_name()));
     let mut result = Vec::new();
     for member in members {
         if !candidate(&member) {
             continue;
         }
-        let metadata = fs::metadata(&member).map_err(|error| io_error(&member, error))?;
+        let metadata = match fs::metadata(&member) {
+            Ok(metadata) => metadata,
+            Err(source) => {
+                return Err(DirectoryError::Io {
+                    path: Cow::Owned(member),
+                    source,
+                });
+            }
+        };
         if metadata.is_dir() {
             continue;
         }
-        let bytes = regular_file(&member).map_err(|error| io_error(&member, error))?;
-        let chain = certificates(&bytes).map_err(|source| DirectoryError::Material {
-            path: member.clone(),
-            source,
-        })?;
-        validate_roots(&chain).map_err(|source| DirectoryError::Trust {
-            path: member,
-            source,
-        })?;
+        let bytes = match regular_file(&member) {
+            Ok(bytes) => bytes,
+            Err(source) => {
+                return Err(DirectoryError::Io {
+                    path: Cow::Owned(member),
+                    source,
+                });
+            }
+        };
+        let chain = match certificates(&bytes) {
+            Ok(chain) => chain,
+            Err(MaterialError::Allocation(error)) => return Err(DirectoryError::Allocation(error)),
+            Err(source) => {
+                return Err(DirectoryError::Material {
+                    path: Cow::Owned(member),
+                    source,
+                });
+            }
+        };
+        match validate_roots(&chain) {
+            Ok(()) => (),
+            Err(ConfigError::Allocation(error)) => return Err(DirectoryError::Allocation(error)),
+            Err(source) => {
+                return Err(DirectoryError::Trust {
+                    path: Cow::Owned(member),
+                    source,
+                });
+            }
+        }
+        result.try_reserve(chain.len())?;
         result.extend(chain);
     }
     if result.is_empty() {
-        return Err(DirectoryError::Empty(path.to_owned()));
+        return Err(DirectoryError::Empty(Cow::Borrowed(path)));
     }
     Ok(result)
 }
@@ -149,6 +200,7 @@ pub fn directory_certificates(path: &Path) -> Result<Vec<CertificateDer<'static>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn suffix_selection_uses_entry_name_and_ascii_case() {
