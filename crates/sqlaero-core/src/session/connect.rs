@@ -41,6 +41,14 @@ pub struct ConnectTls {
     pub name: ServerName<'static>,
 }
 
+/// One explicitly trusted RSA SPKI source, prepared before any connection.
+pub enum PublicKeySource {
+    /// A native lossless filesystem path.
+    Path(PathBuf),
+    /// Immutable owned SPKI PEM bytes; never an automatically fetched key.
+    Pem(Vec<u8>),
+}
+
 /// Establishment-only inputs. Python objects and callbacks are not permitted.
 /// This internal Rust API receives a resolved TLS policy, not Python defaults.
 pub struct ConnectParams {
@@ -59,7 +67,7 @@ pub struct ConnectParams {
     /// Explicitly resolved TLS policy; None means no TLS on this internal path.
     pub tls: Option<ConnectTls>,
     /// Optional trusted local RSA SPKI public-key file, validated even if unused.
-    pub server_public_key: Option<PathBuf>,
+    pub server_public_key: Option<PublicKeySource>,
     /// Original establishment budget, shared with later session initialization.
     pub connect_timeout: Option<Duration>,
     /// Maximum continuous read wait without actual progress.
@@ -213,10 +221,11 @@ impl Establish {
         let key = params
             .server_public_key
             .as_ref()
-            .map(|path| {
-                std::fs::read(path)
+            .map(|source| match source {
+                PublicKeySource::Path(path) => crate::transport::tls::materials::regular_file(path)
                     .map_err(ConnectError::from)
-                    .and_then(|bytes| auth::server_key(&bytes).map_err(ConnectError::from))
+                    .and_then(|bytes| auth::server_key(&bytes).map_err(ConnectError::from)),
+                PublicKeySource::Pem(bytes) => auth::server_key(bytes).map_err(ConnectError::from),
             })
             .transpose()?;
         let addresses = match &params.endpoint {

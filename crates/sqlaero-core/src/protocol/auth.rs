@@ -26,12 +26,12 @@ pub enum AuthError {
     UnsupportedPlugin(String),
     /// Bare TCP full authentication requires a separately trusted local key.
     #[error(
-        "bare TCP full authentication requires server_public_key_path; automatic server-key fetching is disabled"
+        "bare TCP full authentication requires server_public_key (a trusted path or SPKI PEM bytes); automatic server-key fetching is disabled"
     )]
     TrustedKeyRequired,
     /// The explicit local key was not a supported RSA SPKI key.
     #[error(
-        "server_public_key_path must contain a supported RSA SubjectPublicKeyInfo PEM public key"
+        "server_public_key must contain a supported RSA SubjectPublicKeyInfo PEM public key"
     )]
     PublicKey,
     /// The password cannot fit, or the selected crypto provider rejected it.

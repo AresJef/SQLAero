@@ -270,7 +270,7 @@ impl TlsCertificate {
         field: usize,
         value: UtcDateTime,
     ) -> PyResult<Bound<'py, PyAny>> {
-        if !(1..=9999).contains(&value.year) || value.nanosecond % 1000 != 0 {
+        if !(1..=9999).contains(&value.year) || !value.nanosecond.is_multiple_of(1000) {
             return Err(self.content(
                 py,
                 field,
@@ -449,7 +449,7 @@ impl TlsCertificate {
                 if matches!(field, 4 | 5) {
                     let details = self.details(py, field)?;
                     let value = if field == 4 { details.not_before } else { details.not_after };
-                    if !(1..=9999).contains(&value.year) || value.nanosecond % 1000 != 0 {
+                    if !(1..=9999).contains(&value.year) || !value.nanosecond.is_multiple_of(1000) {
                         append("<unavailable: validity time cannot be represented exactly as Python datetime>")?;
                         continue;
                     }

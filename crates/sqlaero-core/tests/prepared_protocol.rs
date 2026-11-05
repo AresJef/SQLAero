@@ -50,7 +50,9 @@ fn connect_mode(label: &str, compression: compression::Options, secure: bool) ->
         tls: secure.then(|| ConnectTls {
             config: tls::client_config(
                 tls::Mode::VerifyIdentity,
-                tls::MinimumVersion::Tls12,
+                tls::Version::Tls12,
+                None,
+                tls::CaMode::Replace,
                 Some(tls::certificates(&std::fs::read(root.join("tls/ca.pem")).unwrap()).unwrap()),
                 None,
             )

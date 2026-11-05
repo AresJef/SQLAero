@@ -31,7 +31,7 @@ use sqlaero_core::{
     },
 };
 use std::{
-    sync::{Arc, Mutex, MutexGuard, atomic::AtomicBool},
+    sync::{Arc, Mutex, MutexGuard, OnceLock, atomic::AtomicBool},
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
@@ -94,9 +94,13 @@ impl FailureOutcome {
 pub(crate) struct DriveFailure {
     error: PyErr,
     unavailable: bool,
-    confirmed: Option<CommandConfirmation>,
+    facts: FailureFacts,
     outcome: FailureOutcome,
-    native_failure: Option<sqlaero_core::result::chain::Failure>,
+}
+enum FailureFacts {
+    None,
+    Confirmed(CommandConfirmation),
+    Native(Arc<QueryError>),
 }
 impl DriveFailure {
     fn new(
@@ -110,22 +114,32 @@ impl DriveFailure {
         Self {
             error,
             unavailable,
-            confirmed,
+            facts: confirmed.map_or(FailureFacts::None, FailureFacts::Confirmed),
             outcome,
-            native_failure: None,
         }
     }
-    fn with_native(mut self, error: Arc<QueryError>, codec: Option<OutputCodec>) -> Self {
-        self.native_failure = Some(sqlaero_core::result::chain::Failure { error, codec });
+    fn with_native(mut self, error: Arc<QueryError>, _codec: Option<OutputCodec>) -> Self {
+        // Confirmed completion is the stronger execution fact. Its mapped
+        // primary already owns native diagnostic facts; retain no second owner.
+        if matches!(self.facts, FailureFacts::None) {
+            self.facts = FailureFacts::Native(error);
+        }
         self
     }
+    fn confirmation(&self) -> Option<CommandConfirmation> {
+        match self.facts {
+            FailureFacts::Confirmed(value) => Some(value),
+            _ => None,
+        }
+    }
     pub(crate) fn native_failure(&self) -> Option<sqlaero_core::result::chain::Failure> {
-        self.native_failure
-            .as_ref()
-            .map(|failure| sqlaero_core::result::chain::Failure {
-                error: Arc::clone(&failure.error),
-                codec: failure.codec,
-            })
+        match &self.facts {
+            FailureFacts::Native(error) => Some(sqlaero_core::result::chain::Failure {
+                error: Arc::clone(error),
+                codec: None,
+            }),
+            _ => None,
+        }
     }
     pub(crate) fn record_prefix(
         self,
@@ -133,7 +147,7 @@ impl DriveFailure {
         prefix: &mut sqlaero_core::session::query::ConfirmedPrefix,
         rows: std::ops::Range<usize>,
     ) -> PyErr {
-        if let Some(confirmed) = self.confirmed
+        if let Some(confirmed) = self.confirmation()
             && let Err(error) = prefix.record_confirmation(rows.clone(), confirmed)
         {
             errors::note(
@@ -198,8 +212,8 @@ pub(crate) struct Connection {
     max_send: usize,
     max_receive: usize,
     total_result_limit: usize,
-    ssl_mode: &'static str,
-    tls_version: Option<&'static str>,
+    tls_snapshot: Option<Arc<sqlaero_core::transport::tls::info::Snapshot>>,
+    tls_info_value: OnceLock<Py<crate::tls_info::TlsInfo>>,
     pub(crate) transaction_scope: Arc<AtomicBool>,
 }
 impl Connection {
@@ -590,7 +604,7 @@ impl Connection {
         input::check(py, budget)?;
         if let Err(failure) = self.drive(py, lease, job, budget, CommandRole::InternalControl) {
             attempt.started = !matches!(failure.outcome, FailureOutcome::NotSent);
-            attempt.confirmed = failure.confirmed.is_some();
+            attempt.confirmed = failure.confirmation().is_some();
             if failure.outcome.unknown() {
                 // These are this library's fixed controls, not a parser or
                 // inference over arbitrary user SQL.
@@ -749,10 +763,18 @@ macro_rules! connection_api {
             #[getter] fn server_version(&self)->&str { &self.native.metadata.version }
             /// Actual server connection ID; remains readable after close.
             #[getter] fn connection_id(&self)->u32 { self.native.metadata.connection_id }
-            /// Resolved TLS mode for this connection, still readable after close.
-            #[getter] fn ssl_mode(&self)->&str { self.ssl_mode }
-            /// Actual negotiated TLS version, or None for plain transport.
-            #[getter] fn tls_version(&self)->Option<&str> { self.tls_version }
+            /// Actual immutable TLS diagnostics, or None for a plain channel.
+            /// Facts and peer certificates remain available after close. Details
+            /// are decoded lazily and successful Python representations reused.
+            /// Access sends no SQL and never needs the network command lease.
+            #[getter] fn tls_info(&self,py:Python<'_>)->PyResult<Option<Py<crate::tls_info::TlsInfo>>> {
+                let Some(snapshot)=&self.tls_snapshot else {return Ok(None);};
+                if let Some(value)=self.tls_info_value.get() {return Ok(Some(value.clone_ref(py)));}
+                let value=Py::new(py,crate::tls_info::TlsInfo::new(Arc::clone(snapshot)))?;
+                let _=self.tls_info_value.set(value);
+                self.tls_info_value.get().map(|value|Some(value.clone_ref(py))).ok_or_else(||
+                    errors::client(py,ClientErrorCode::InternalState,"TLS information representation was not published"))
+            }
             /// Client-side establishment timeout in seconds. None disables
             /// its total limit. Read-only after creation and readable after close.
             /// Default 10; exact positive int/float or None, excluding bool and numeric
@@ -968,9 +990,9 @@ fn configured_size(
 /// version-specific upper limit or normalization. Later remote changes use
 /// explicit set_* methods; three local runtime timeouts use property assignment.
 #[pyfunction]
-#[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,server_public_key_path=None,autocommit=Argument::default(),sql_mode=None,multi_statements=Argument::default(),connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
+#[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,server_public_key=None,autocommit=Argument::default(),sql_mode=None,multi_statements=Argument::default(),connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
 #[pyo3(
-    text_signature = "(*, user, host='127.0.0.1', port=3306, unix_socket=None, password=None, database=None, charset=None, collation=None, ssl=None, server_public_key_path=None, autocommit=True, sql_mode=None, multi_statements=True, connect_timeout=10, read_timeout=None, write_timeout=None, operation_timeout=None, net_read_timeout=None, net_write_timeout=None, wait_timeout=None, innodb_lock_wait_timeout=None, max_allowed_packet='64MB', max_received_packet='64MB', result_memory_limit='256MB', total_result_memory_limit='512MB', decode_json=False, decode_set=False, decode_bit=False, use_decimal=True, use_timedelta=True, decode_text_strict=True, decode_date_strict=True)"
+    text_signature = "(*, user, host='127.0.0.1', port=3306, unix_socket=None, password=None, database=None, charset=None, collation=None, ssl=None, server_public_key=None, autocommit=True, sql_mode=None, multi_statements=True, connect_timeout=10, read_timeout=None, write_timeout=None, operation_timeout=None, net_read_timeout=None, net_write_timeout=None, wait_timeout=None, innodb_lock_wait_timeout=None, max_allowed_packet='64MB', max_received_packet='64MB', result_memory_limit='256MB', total_result_memory_limit='512MB', decode_json=False, decode_set=False, decode_bit=False, use_decimal=True, use_timedelta=True, decode_text_strict=True, decode_date_strict=True)"
 )]
 #[expect(
     clippy::too_many_arguments,
@@ -987,7 +1009,7 @@ pub(crate) fn connect(
     charset: Option<&Bound<'_, PyAny>>,
     collation: Option<&Bound<'_, PyAny>>,
     ssl: Option<&Bound<'_, PyAny>>,
-    server_public_key_path: Option<&Bound<'_, PyAny>>,
+    server_public_key: Option<&Bound<'_, PyAny>>,
     autocommit: Argument<'_>,
     sql_mode: Option<&Bound<'_, PyAny>>,
     multi_statements: Argument<'_>,
@@ -1104,8 +1126,7 @@ pub(crate) fn connect(
         512 * 1024 * 1024,
         isize::MAX as usize,
     )?;
-    let server_public_key =
-        config::optional_path(server_public_key_path, "server_public_key_path")?;
+    let server_public_key = config::public_key(server_public_key)?;
     let server_timeouts = [
         net_read_timeout,
         net_write_timeout,
@@ -1144,8 +1165,11 @@ pub(crate) fn connect(
         .map(|value| value.extract::<PyRef<'_, Ssl>>())
         .transpose()?;
     let selected = ssl.as_deref().unwrap_or(&default_ssl);
-    let ssl_mode = selected.mode_name(unix);
     let tls = selected.prepare(py, unix, &host)?;
+    let diagnostic_name = tls
+        .as_ref()
+        .filter(|_| !unix || selected.has_explicit_server_name())
+        .map(|tls| tls.name.clone());
     input::check(py, &budget).map_err(|error| errors::at(py, error, "connect"))?;
     let multi_statements = multi_statements
         .0
@@ -1198,15 +1222,34 @@ pub(crate) fn connect(
             }
         }
     };
-    let tls_version = ready
+    let tls_snapshot = ready
         .transport
         .channel
-        .tls_version()
-        .and_then(|version| match version {
-            rustls::ProtocolVersion::TLSv1_2 => Some("TLSv1.2"),
-            rustls::ProtocolVersion::TLSv1_3 => Some("TLSv1.3"),
-            _ => None,
-        });
+        .tls_session()
+        .map(|session| {
+            let name = diagnostic_name
+                .as_ref()
+                .map(rustls_pki_types::ServerName::to_str);
+            sqlaero_core::transport::tls::info::Snapshot::capture(
+                session,
+                selected.resolved_mode(unix),
+                selected.minimum(),
+                selected.maximum(),
+                name.as_deref(),
+            )
+            .map(Arc::new)
+            .map_err(|error| match error {
+                sqlaero_core::transport::tls::info::SnapshotError::Allocation(_) => {
+                    errors::memory_error(py)
+                }
+                error => errors::client_format(
+                    py,
+                    ClientErrorCode::InternalState,
+                    format_args!("Cannot preserve TLS handshake facts: {error}"),
+                ),
+            })
+        })
+        .transpose()?;
     let types = module
         .getattr("_scalar_types")?
         .cast_into::<ScalarTypes>()?
@@ -1222,8 +1265,8 @@ pub(crate) fn connect(
         max_send,
         max_receive,
         total_result_limit: total_limit,
-        ssl_mode,
-        tls_version,
+        tls_snapshot,
+        tls_info_value: OnceLock::new(),
         transaction_scope: Arc::new(AtomicBool::new(false)),
     })
 }

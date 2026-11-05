@@ -107,7 +107,9 @@ fn configuration(
         database: Some("sqlaero_test".to_owned()),
         tls: prepared,
         server_public_key: if !local && mode.is_none() {
-            Some(root.join(label).join("data/public_key.pem"))
+            Some(sqlaero_core::session::connect::PublicKeySource::Path(
+                root.join(label).join("data/public_key.pem"),
+            ))
         } else {
             None
         },

@@ -1,5 +1,5 @@
 """SQLAero: synchronous MySQL commands and result conversion in a native Rust core."""
 
-from ._sqlaero import ColumnInfo, Columns, Connection, Cursor, SSL, connect
+from ._sqlaero import ColumnInfo, Columns, Connection, Cursor, SSL, TLSInfo, TLSCertificate, connect
 
-__all__: list[str] = ['connect', 'Connection', 'Cursor', 'SSL', 'ColumnInfo', 'Columns']
+__all__: list[str] = ['connect', 'Connection', 'Cursor', 'SSL', 'ColumnInfo', 'Columns', 'TLSInfo', 'TLSCertificate']

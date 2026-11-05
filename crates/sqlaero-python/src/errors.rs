@@ -867,52 +867,85 @@ pub(crate) struct SavedFailure {
 #[derive(Clone, Copy)]
 enum SavedClass {
     Library(Option<ExceptionClass>),
-    Value, Type, Overflow, Memory, Interrupt, Exit, Os, Runtime,
+    Value,
+    Type,
+    Overflow,
+    Memory,
+    Interrupt,
+    Exit,
+    Os,
+    Runtime,
 }
 impl SavedFailure {
     pub(crate) fn capture(py: Python<'_>, error: &PyErr) -> PyResult<Self> {
         let library = error.value(py).extract::<PyRef<'_, SQLAeroError>>().ok();
         let class = if library.is_some() {
             let mut found = None;
-            for candidate in [ExceptionClass::InterfaceBusy, ExceptionClass::OperationalTimeout,
-                ExceptionClass::Interface, ExceptionClass::Data, ExceptionClass::Operational,
-                ExceptionClass::Integrity, ExceptionClass::Internal, ExceptionClass::Programming,
-                ExceptionClass::NotSupported, ExceptionClass::Database] {
+            for candidate in [
+                ExceptionClass::InterfaceBusy,
+                ExceptionClass::OperationalTimeout,
+                ExceptionClass::Interface,
+                ExceptionClass::Data,
+                ExceptionClass::Operational,
+                ExceptionClass::Integrity,
+                ExceptionClass::Internal,
+                ExceptionClass::Programming,
+                ExceptionClass::NotSupported,
+                ExceptionClass::Database,
+            ] {
                 if error.is_instance(py, &exception_type(py, candidate)) {
-                    found = Some(candidate); break;
+                    found = Some(candidate);
+                    break;
                 }
             }
             SavedClass::Library(found)
-        } else if error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py) {SavedClass::Memory}
-        else if error.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py) {SavedClass::Interrupt}
-        else if error.is_instance_of::<pyo3::exceptions::PySystemExit>(py) {SavedClass::Exit}
-        else if error.is_instance_of::<pyo3::exceptions::PyTypeError>(py) {SavedClass::Type}
-        else if error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {SavedClass::Overflow}
-        else if error.is_instance_of::<pyo3::exceptions::PyValueError>(py) {SavedClass::Value}
-        else if error.is_instance_of::<pyo3::exceptions::PyOSError>(py) {SavedClass::Os}
-        else {SavedClass::Runtime};
-        let text = match &library { Some(value) => value.message.bind(py).clone(), None => error.value(py).str()? };
+        } else if error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py) {
+            SavedClass::Memory
+        } else if error.is_instance_of::<pyo3::exceptions::PyKeyboardInterrupt>(py) {
+            SavedClass::Interrupt
+        } else if error.is_instance_of::<pyo3::exceptions::PySystemExit>(py) {
+            SavedClass::Exit
+        } else if error.is_instance_of::<pyo3::exceptions::PyTypeError>(py) {
+            SavedClass::Type
+        } else if error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {
+            SavedClass::Overflow
+        } else if error.is_instance_of::<pyo3::exceptions::PyValueError>(py) {
+            SavedClass::Value
+        } else if error.is_instance_of::<pyo3::exceptions::PyOSError>(py) {
+            SavedClass::Os
+        } else {
+            SavedClass::Runtime
+        };
+        let text = match &library {
+            Some(value) => value.message.bind(py).clone(),
+            None => error.value(py).str()?,
+        };
         let encoded = match text.to_str() {
             Ok(text) => message(py, format_args!("{text}"))?,
-            Err(_) => message(py,format_args!("{}", text.repr()?.to_str()?))?,
+            Err(_) => message(py, format_args!("{}", text.repr()?.to_str()?))?,
         };
         // Result-chain failure storage is bounded independently of the full
         // immediate exception and user-owned diagnostic snapshot.
         let mut text = encoded;
         if text.len() > 4096 {
             let mut end = 4096;
-            while !text.is_char_boundary(end) {end -= 1;}
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
             text.truncate(end);
-            text.try_reserve(12).map_err(|_|memory_error(py))?;
+            text.try_reserve(12).map_err(|_| memory_error(py))?;
             text.push_str(" [truncated]");
         }
-        Ok(Self {class, message:text,
-            code:library.as_ref().and_then(|value|value.code.clone()),
-            server:library.as_ref().and_then(|value|value.is_server_error)})
+        Ok(Self {
+            class,
+            message: text,
+            code: library.as_ref().and_then(|value| value.code.clone()),
+            server: library.as_ref().and_then(|value| value.is_server_error),
+        })
     }
     pub(crate) fn restore(&self, py: Python<'_>) -> PyErr {
         let typ = match self.class {
-            SavedClass::Library(Some(class)) => exception_type(py,class),
+            SavedClass::Library(Some(class)) => exception_type(py, class),
             SavedClass::Library(None) => py.get_type::<SQLAeroError>(),
             SavedClass::Value => py.get_type::<pyo3::exceptions::PyValueError>(),
             SavedClass::Type => py.get_type::<pyo3::exceptions::PyTypeError>(),
@@ -923,16 +956,26 @@ impl SavedFailure {
             SavedClass::Os => py.get_type::<pyo3::exceptions::PyOSError>(),
             SavedClass::Runtime => py.get_type::<pyo3::exceptions::PyRuntimeError>(),
         };
-        if !matches!(self.class,SavedClass::Library(_)) {
-            return builtin_error(&typ,&self.message);
+        if !matches!(self.class, SavedClass::Library(_)) {
+            return builtin_error(&typ, &self.message);
         }
-        let make = || -> PyResult<Bound<'_,PyAny>> {
-            let keywords=dictionary(py)?;
-            if let Some(code)=&self.code {keywords.set_item(PyString::from_bytes(py,b"code")?,code_object(py,code)?)?;}
-            if let Some(server)=self.server {keywords.set_item(PyString::from_bytes(py,b"is_server_error")?,server)?;}
-            typ.call((PyString::from_bytes(py,self.message.as_bytes())?,),Some(&keywords))
+        let make = || -> PyResult<Bound<'_, PyAny>> {
+            let keywords = dictionary(py)?;
+            if let Some(code) = &self.code {
+                keywords.set_item(PyString::from_bytes(py, b"code")?, code_object(py, code)?)?;
+            }
+            if let Some(server) = self.server {
+                keywords.set_item(PyString::from_bytes(py, b"is_server_error")?, server)?;
+            }
+            typ.call(
+                (PyString::from_bytes(py, self.message.as_bytes())?,),
+                Some(&keywords),
+            )
         };
-        match make() {Ok(value)=>PyErr::from_value(value),Err(error)=>error}
+        match make() {
+            Ok(value) => PyErr::from_value(value),
+            Err(error) => error,
+        }
     }
 }
 

@@ -14,11 +14,6 @@ use pyo3::exceptions::PyStopIteration;
 use pyo3::prelude::*;
 use pyo3::types::PyString;
 use sqlaero_core::{
-    bind::{
-        Context,
-        batch::{Blocks, Layout},
-        template::{Compiler, Template},
-    },
     charset::output::OutputCodec,
     error::ClientErrorCode,
     result::{
@@ -62,79 +57,6 @@ struct Counts {
     last_id: Option<u64>,
     warnings: u128,
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct BindingKey {
-    charset: &'static str,
-    no_backslash: bool,
-    ansi: bool,
-    utc: bool,
-}
-impl BindingKey {
-    fn new(context: &Context, ansi: bool) -> Self {
-        Self {
-            charset: context.codec.name(),
-            no_backslash: context.no_backslash_escapes,
-            ansi,
-            utc: context.utc_confirmed,
-        }
-    }
-}
-struct Prepared {
-    key: BindingKey,
-    template: Template,
-    layout: Option<Layout>,
-    blocks: Option<Blocks>,
-}
-impl Prepared {
-    fn new(
-        py: Python<'_>,
-        sql: &Bound<'_, PyString>,
-        context: &Context,
-        ansi: bool,
-        many: bool,
-        itemize: bool,
-        budget: &sqlaero_core::transport::deadline::IoBudget,
-    ) -> PyResult<Self> {
-        let mut encoded = Vec::new();
-        input::text(
-            sql,
-            &mut encoded,
-            &Context {
-                limit: usize::MAX,
-                ..*context
-            },
-            false,
-            Some(budget),
-        )?;
-        let mut compiler = if many && itemize {
-            Compiler::for_batch(encoded, context.codec, context.no_backslash_escapes, ansi)
-        } else {
-            Compiler::new(encoded, context.codec, context.no_backslash_escapes, ansi)
-        };
-        let mut template = loop {
-            let step = py
-                .detach(|| compiler.advance())
-                .map_err(|error| binding::template_error(py, error))?;
-            input::check(py, budget)?;
-            if let Some(value) = step {
-                break value;
-            }
-        };
-        let layout = template.prepare_merge();
-        let blocks = layout
-            .as_ref()
-            .map(|layout| Blocks::new(&template, layout, context.limit, context.limit))
-            .transpose()
-            .map_err(|error| errors::wire(py, error))?;
-        Ok(Self {
-            key: BindingKey::new(context, ansi),
-            template,
-            layout,
-            blocks,
-        })
-    }
-}
-
 /// Independent buffered result and read position. Commands use their owning
 /// Connection; local fetches never acquire the connection's network lease.
 #[pyclass(frozen, module = "sqlaero")]
@@ -151,7 +73,10 @@ impl Cursor {
     pub(crate) fn retire(&self) {
         self.reader.retire();
         let old = match self.results.lock() {
-            Ok(mut state) => { state.failure_note = None; std::mem::take(&mut state.pending) }
+            Ok(mut state) => {
+                state.failure_note = None;
+                std::mem::take(&mut state.pending)
+            }
             Err(error) => std::mem::take(&mut error.into_inner().pending),
         };
         drop(old);
@@ -390,115 +315,23 @@ impl Cursor {
         let mut begun = false;
         let result = (|| {
             connection.ensure_context(py, &mut lease, &mut budget)?;
-            if let Some(args) = args.0 {
-                let mut rows = binding::Rows::new(&args, many, itemize, &types, &budget)?;
-                let batch = rows.is_batch();
-                let empty = rows.empty_root();
-                let mut prepared: Option<Prepared> = None;
-                // Only an overflow row is retained here, as already encoded
-                // native bytes. The original root remains owned by Rows.
-                let mut pending: Option<(usize, Vec<u8>, BindingKey)> = None;
-                loop {
-                    input::check(py, &budget)?;
-                    let (context, ansi, names_codec) = connection.context(py)?;
-                    let key = BindingKey::new(&context, ansi);
-                    if prepared.as_ref().is_none_or(|value| value.key != key) {
-                        prepared = Some(Prepared::new(
-                            py, sql, &context, ansi, batch, itemize, &budget,
-                        )?);
-                    }
-                    let prepared = prepared.as_mut().ok_or_else(|| {
-                        errors::client(
-                            py,
-                            ClientErrorCode::InternalState,
-                            "SQL preparation was not published",
-                        )
-                    })?;
-                    let start = collected.prefix.source_rows;
-                    let (request, end) = if let (Some(layout), Some(blocks)) =
-                        (&prepared.layout, &mut prepared.blocks)
-                    {
-                        let mut fragment = Vec::new();
-                        let mut end = start;
-                        loop {
-                            let index;
-                            if let Some((saved, bytes, saved_key)) = pending.take() {
-                                index = saved;
-                                fragment = bytes;
-                                if saved_key != key {
-                                    rows.at(index, &types, &budget)?.bind_fragment(
-                                        &prepared.template,
-                                        &types,
-                                        &context,
-                                        &budget,
-                                        layout.row.clone(),
-                                        &mut fragment,
-                                    )?;
-                                }
-                            } else {
-                                index = rows.position();
-                                let Some(row) = rows.next(&types, &budget)? else {
-                                    break;
-                                };
-                                row.bind_fragment(
-                                    &prepared.template,
-                                    &types,
-                                    &context,
-                                    &budget,
-                                    layout.row.clone(),
-                                    &mut fragment,
-                                )?;
-                            }
-                            if !blocks
-                                .push(&fragment)
-                                .map_err(|error| errors::wire(py, error))?
-                            {
-                                pending = Some((index, fragment, key));
-                                break;
-                            }
-                            end = if empty { 0 } else { index + 1 };
-                        }
-                        let Some(request) =
-                            blocks.take().map_err(|error| errors::wire(py, error))?
-                        else {
-                            break;
-                        };
-                        (request, end)
-                    } else {
-                        let end = if empty { 0 } else { rows.position() + 1 };
-                        let Some(row) = rows.next(&types, &budget)? else {
-                            break;
-                        };
-                        (
-                            row.bind(&prepared.template, &types, &context, &budget)?,
-                            end,
-                        )
-                    };
-                    let final_request = pending.is_none() && rows.remaining() == 0;
-                    let job = connection.query_job(py, &mut lease, request, false)?;
-                    input::check(py, &budget)?;
-                    self.handoff(py, &mut begun)?;
-                    self.receive_request(
-                        py,
-                        &connection,
-                        &mut lease,
-                        job,
-                        &mut budget,
-                        start..end,
-                        final_request,
-                        names_codec,
-                        options,
-                        &mut collected,
-                    )?;
-                    if final_request {
-                        break;
-                    }
-                }
-            } else {
-                let (context, _, names_codec) = connection.context(py)?;
-                let mut request = vec![3];
-                input::text(sql, &mut request, &context, false, Some(&budget))?;
-                let job = connection.query_job(py, &mut lease, request, false)?;
+            let mut planner = binding::Planner::new(
+                sql,
+                args.0.as_ref(),
+                many,
+                itemize,
+                binding::PlanMode::Text,
+                &types,
+                &budget,
+            )?;
+            loop {
+                input::check(py, &budget)?;
+                connection.ensure_context(py, &mut lease, &mut budget)?;
+                let (context, ansi, names_codec) = connection.context(py)?;
+                let Some(request) = planner.next(py, &context, ansi, &budget)? else {
+                    break;
+                };
+                let job = connection.query_job(py, &mut lease, request.bytes, false)?;
                 input::check(py, &budget)?;
                 self.handoff(py, &mut begun)?;
                 self.receive_request(
@@ -507,8 +340,8 @@ impl Cursor {
                     &mut lease,
                     job,
                     &mut budget,
-                    0..0,
-                    true,
+                    request.source_rows,
+                    request.final_request,
                     names_codec,
                     options,
                     &mut collected,
@@ -523,13 +356,21 @@ impl Cursor {
             errors::note(py, error, collected.prefix.diagnostic());
         }
         let failed = result.is_err();
-        let failure_note = result.as_ref().err().and_then(|error|
-            errors::SavedFailure::capture(py,error).ok().map(std::sync::Arc::new));
-        let batch = (!collected.total_unknown && collected.final_first_known).then_some(collected.total);
+        let failure_note = result.as_ref().err().and_then(|error| {
+            errors::SavedFailure::capture(py, error)
+                .ok()
+                .map(std::sync::Arc::new)
+        });
+        let batch =
+            (!collected.total_unknown && collected.final_first_known).then_some(collected.total);
         let first = collected.chain.take_next();
         let publication = first.map_or(Ok(()), |set| self.publish_set(py, set));
         *self.results(py)? = Results {
-            pending: if self.reader.is_closed() {Chain::default()} else {collected.chain},
+            pending: if self.reader.is_closed() {
+                Chain::default()
+            } else {
+                collected.chain
+            },
             batch,
             failed,
             started: true,
