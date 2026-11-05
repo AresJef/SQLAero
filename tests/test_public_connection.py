@@ -44,7 +44,7 @@ class StopBeforeNativePreparation:
 @pytest.mark.parametrize('value', [sys.maxsize + 1, str(sys.maxsize + 1), 2 * sys.maxsize + 1])
 def test_result_memory_limit_rejects_above_signed_platform_bound(name: str, value: object) -> None:
     with pytest.raises(ValueError, match=name):
-        connect(user='unopened', server_public_key_path=StopBeforeNativePreparation(),
+        connect(user='unopened', server_public_key=StopBeforeNativePreparation(),
                 **{name: value})  # type: ignore[arg-type]
 
 
@@ -52,7 +52,7 @@ def test_result_memory_limit_rejects_above_signed_platform_bound(name: str, valu
 @pytest.mark.parametrize('value', [sys.maxsize, str(sys.maxsize)])
 def test_result_memory_limit_accepts_signed_bound_without_allocating_it(name: str, value: object) -> None:
     with pytest.raises(PreparationReached):
-        connect(user='unopened', server_public_key_path=StopBeforeNativePreparation(),
+        connect(user='unopened', server_public_key=StopBeforeNativePreparation(),
                 **{name: value})  # type: ignore[arg-type]
 
 
@@ -69,7 +69,7 @@ def test_connect_preparation_deadline_uses_the_connect_code(tmp_path: Path) -> N
 
     with pytest.raises(OperationalTimeoutError) as caught:
         connect(user='unopened', unix_socket=tmp_path / 'unopened.sock',
-                ssl=SSL(mode='DISABLED'), server_public_key_path=SlowPath(), connect_timeout=1)
+                ssl=SSL(mode='DISABLED'), server_public_key=SlowPath(), connect_timeout=1)
     assert caught.value.code == SQLAeroErrorCode.CONNECT_DEADLINE
     assert caught.value.is_server_error is False
     assert caught.value.error_info.stage == 'connect'
@@ -81,7 +81,7 @@ def test_native_file_preparation_keeps_source_and_connect_stage(tmp_path: Path) 
 
     with pytest.raises(OperationalError) as caught:
         connect(user='unopened', unix_socket=tmp_path / 'unopened.sock',
-                ssl=SSL(mode='DISABLED'), server_public_key_path=tmp_path / 'missing-key.pem')
+                ssl=SSL(mode='DISABLED'), server_public_key=tmp_path / 'missing-key.pem')
     assert caught.value.code == SQLAeroErrorCode.TRANSPORT
     info = caught.value.error_info
     assert info.stage == 'connect' and info.native_type is not None
@@ -232,9 +232,10 @@ def test_public_signatures_and_input_preflight() -> None:
 def test_actual_connect_bind_and_independent_buffered_cursors(connection: Connection) -> None:
     assert connection.autocommit and connection.ping()
     if os.name == 'nt':
-        assert connection.ssl_mode == 'VERIFY_IDENTITY' and connection.tls_version is not None
+        info = connection.tls_info
+        assert info is not None and info.mode == 'VERIFY_IDENTITY' and info.version is not None
     else:
-        assert connection.ssl_mode == 'DISABLED' and connection.tls_version is None
+        assert connection.tls_info is None
     assert connection.connection_id > 0 and connection.server_version
     first = connection.cursor(tuple)
     second = connection.cursor(Cursor)
@@ -455,12 +456,14 @@ def test_public_tcp_and_unix_tls_share_prepared_materials(label: str) -> None:
                         min_tls_version='TLS 1.3', server_name='localhost')
     with live(label, unix_socket=None, host='127.0.0.1',
               port=fixture_port(label), ssl=configuration) as tcp:
-        assert tcp.ssl_mode == 'VERIFY_IDENTITY' and tcp.tls_version == 'TLSv1.3'
+        info = tcp.tls_info
+        assert info is not None and info.mode == 'VERIFY_IDENTITY' and info.version == 'TLSv1.3'
         with tcp.cursor() as cursor:
             cursor.execute('SELECT %s', b'\x00\xff')
             assert cursor.fetchone() == (b'\x00\xff',)
     with live(label, ssl=configuration) as unix:
-        assert unix.ssl_mode == 'VERIFY_IDENTITY' and unix.ping()
+        unix_info = unix.tls_info
+        assert unix_info is not None and unix_info.mode == 'VERIFY_IDENTITY' and unix.ping()
     assert tcp.closed and unix.closed
 
 
@@ -474,7 +477,9 @@ def test_explicit_tls_roots_preserve_name_policy_and_replace_trust(label: str) -
     # The real peer contains an IP SAN. Explicit roots retain OS name policy.
     with live(label, **settings, ssl=SSL(ca_file=ROOT / 'tls/ca.pem',
                                         mode='VERIFY_IDENTITY')) as value:
-        assert value.ping() and value.tls_version
+        assert value.ping()
+        info = value.tls_info
+        assert info is not None and info.version
     with live(label, ssl=SSL(ca_file=ROOT / 'tls/ca.pem', mode='VERIFY_CA')) as value:
         assert value.ping()
     with pytest.raises(OperationalError) as caught:
@@ -1297,7 +1302,8 @@ def test_verified_tls_resumes_large_requests_without_losing_bytes(label: str, si
     secret: dict[str, str] = json.loads((ROOT / label / 'state.json').read_text())
     with live(label, host='127.0.0.1', port=int(secret['port']), unix_socket=None,
               ssl=SSL(ca_file=ROOT / 'tls/ca.pem'), operation_timeout=20) as value:
-        assert value.ssl_mode == 'VERIFY_IDENTITY' and value.tls_version is not None
+        info = value.tls_info
+        assert info is not None and info.mode == 'VERIFY_IDENTITY' and info.version is not None
         source = 'x' * size
         current = value.cursor()
         assert current.execute('SELECT %s', (source,)) == 1
@@ -1666,7 +1672,7 @@ def test_direct_commit_lost_confirmation_reports_unknown_without_replay(label: s
 
         future = executor.submit(drop_only_commit_ack)
         value = live(label, unix_socket=None, host=endpoint[0], port=endpoint[1],
-                     ssl=SSL(mode='DISABLED'), server_public_key_path=ROOT / label / 'data/public_key.pem',
+                     ssl=SSL(mode='DISABLED'), server_public_key=ROOT / label / 'data/public_key.pem',
                      autocommit=False, connect_timeout=3)
         name = f'sqlaero_commit_ack_{value.connection_id}'
         check = observer.cursor()
