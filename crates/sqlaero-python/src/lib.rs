@@ -417,6 +417,8 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(input::probe::_encode_native_rows, module)?)?;
     module.add_function(wrap_pyfunction!(input::probe::_plan_sql, module)?)?;
     module.add_function(wrap_pyfunction!(input::probe::_escape_projection, module)?)?;
+    module.add_function(wrap_pyfunction!(input::control::_savepoint_request, module)?)?;
+    module.add_function(wrap_pyfunction!(input::control::_prepare_init_sql, module)?)?;
     module.add_class::<_EncodedValue>()?;
     module.add_class::<_ValueEncoder>()?;
     module.add_function(wrap_pyfunction!(_encode_value, module)?)?;

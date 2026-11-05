@@ -16,6 +16,7 @@ use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::deadline::IoBudget;
 
 pub(crate) mod arrow;
+pub(crate) mod control;
 mod decimal;
 mod diagnostic;
 pub(crate) mod sink;
