@@ -421,6 +421,11 @@ impl CursorCore {
         if !begun {
             return result.map(|()| py.None().into_bound(py));
         }
+        // Network confirmation has already been committed by the driver. Host
+        // publication must not hold a wire guard, and its failure belongs to
+        // this operation's retained boundary just like a later native failure.
+        drop(lease);
+        let result = result.and_then(|()| output::count(py, collected.total));
         if let Err(error) = &result {
             errors::note(py, error, collected.prefix.diagnostic());
         }
@@ -451,8 +456,8 @@ impl CursorCore {
                 Err(error)
             }
             (Err(error), Ok(())) => Err(error),
-            (Ok(()), Err(error)) => Err(error),
-            (Ok(()), Ok(())) => Ok(collected.total.into_pyobject(py)?.into_any()),
+            (Ok(_), Err(error)) => Err(error),
+            (Ok(value), Ok(())) => Ok(value),
         }
     }
 }
@@ -573,7 +578,7 @@ macro_rules! cursor_api {
             }
             /// Sum only the first result count of each actual request. None
             /// means a contribution or an unattempted request remains unknown.
-            #[getter] fn batch_row_count(&self,py:Python<'_>)->PyResult<Option<u128>> {Ok(self.results(py)?.batch)}
+            #[getter] fn batch_row_count<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {let count=self.results(py)?.batch;output::optional_count(py,count)}
             /// Move within the current result. Buffered results allow both
             /// directions, including EOF. Invalid positions raise IndexError.
             #[pyo3(signature=(value,mode="relative"))]
@@ -613,20 +618,20 @@ macro_rules! cursor_api {
                 let rows=self.counters(py)?.as_ref().map(|value|value.rows);
                 match rows {
                     None=>Ok((-1i32).into_pyobject(py)?.into_any()),
-                    Some(rows)=>Ok(rows.into_pyobject(py)?.into_any()),
+                    Some(rows)=>output::count(py,rows),
                 }
             }
             /// Actual row count, or None if unknown; alias of affected_rows.
-            #[getter] fn row_count(&self,py:Python<'_>)->PyResult<Option<u128>>{Ok(self.counters(py)?.as_ref().map(|value|value.rows))}
+            #[getter] fn row_count<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{let count=self.counters(py)?.as_ref().map(|value|value.rows);output::optional_count(py,count)}
             /// Actual affected/result row count, or None if unknown.
-            #[getter] fn affected_rows(&self,py:Python<'_>)->PyResult<Option<u128>>{self.row_count(py)}
+            #[getter] fn affected_rows<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{self.row_count(py)}
             /// Actual final command insert ID, or None; no ID range is inferred.
-            #[getter] fn lastrowid(&self,py:Python<'_>)->PyResult<Option<u64>>{Ok(self.counters(py)?.as_ref().and_then(|value|value.last_id))}
+            #[getter] fn lastrowid<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{let count=self.counters(py)?.as_ref().and_then(|value|value.last_id).map(u128::from);output::optional_count(py,count)}
             /// Alias of lastrowid, reliably readable after close.
-            #[getter] fn last_row_id(&self,py:Python<'_>)->PyResult<Option<u64>>{self.lastrowid(py)}
+            #[getter] fn last_row_id<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{self.lastrowid(py)}
             /// Actual warnings summed once per completed command, or None if
             /// this call's overall result is unknown. Readable after close.
-            #[getter] fn warning_count(&self,py:Python<'_>)->PyResult<Option<u128>>{Ok(self.counters(py)?.as_ref().map(|value|value.warnings))}
+            #[getter] fn warning_count<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{let count=self.counters(py)?.as_ref().map(|value|value.warnings);output::optional_count(py,count)}
             /// Immutable current-result metadata, available lazily after close.
             #[getter] fn columns(&self,py:Python<'_>)->PyResult<Py<metadata::Columns>>{self.reader.columns(py)}
             /// Seven-field PEP 249 metadata, or None without a row result.

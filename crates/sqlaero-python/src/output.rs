@@ -10,6 +10,40 @@ use sqlaero_core::memory::{Buffer, MemoryError, Scope};
 use sqlaero_core::result::decode::{self, ContentError, Integer, Kind, Plan};
 use std::sync::Arc;
 
+/// Publish an exact native count without an infallible host conversion. The
+/// common range uses one scalar constructor; larger sums use a stack buffer.
+pub(crate) fn count<'py>(py: Python<'py>, value: u128) -> PyResult<Bound<'py, PyAny>> {
+    // SAFETY: each constructor copies its input and returns an owned integer
+    // or NULL with the original Python error. The leading zero byte keeps the
+    // complete unsigned range positive for the signed native-byte constructor.
+    unsafe {
+        let pointer = if let Ok(value) = u64::try_from(value) {
+            pyo3::ffi::PyLong_FromUnsignedLongLong(value)
+        } else {
+            let mut bytes = [0u8; 17];
+            bytes[..16].copy_from_slice(&value.to_le_bytes());
+            #[cfg(Py_3_13)]
+            let pointer = pyo3::ffi::PyLong_FromNativeBytes(
+                bytes.as_ptr().cast(),
+                bytes.len(),
+                pyo3::ffi::Py_ASNATIVEBYTES_LITTLE_ENDIAN,
+            );
+            #[cfg(not(Py_3_13))]
+            let pointer = pyo3::ffi::_PyLong_FromByteArray(bytes.as_ptr(), bytes.len(), 1, 0);
+            pointer
+        };
+        Bound::from_owned_ptr_or_err(py, pointer)
+    }
+}
+
+/// Materialize a saved optional counter with the same checked constructor.
+pub(crate) fn optional_count<'py>(
+    py: Python<'py>,
+    value: Option<u128>,
+) -> PyResult<Bound<'py, PyAny>> {
+    value.map_or_else(|| Ok(py.None().into_bound(py)), |value| count(py, value))
+}
+
 /// Materialize an already interpreted native binary field under its saved plan.
 /// The byte view is borrowed only for this attached call; final values own their
 /// Python storage before the caller may release or advance the row owner.
