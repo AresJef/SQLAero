@@ -478,15 +478,22 @@ impl CommandConfirmation {
     /// Capture only a complete native response, never a sent/partial command.
     #[must_use]
     pub fn from_response(response: &Response) -> Self {
+        Self::from_completion(response.completion(), match response {
+            Response::Command(_) => None,
+            Response::Rows(result) => Some(result.row_count),
+            Response::Counted { rows, .. } => Some(*rows),
+        })
+    }
+
+    /// Capture a real streaming set terminator, without inventing a buffered
+    /// response or retaining any row data merely to describe its confirmation.
+    #[must_use]
+    pub fn from_completion(completion: &OkPacket<'_>, rows: Option<usize>) -> Self {
         Self {
-            count: match response {
-                Response::Command(ok) => u128::from(ok.affected_rows()),
-                Response::Rows(result) => result.row_count as u128,
-                Response::Counted { rows, .. } => *rows as u128,
-            },
-            warnings: response.completion().warnings(),
-            last_insert_id: response.completion().last_insert_id(),
-            status: response.completion().status_flags(),
+            count: rows.map_or_else(|| u128::from(completion.affected_rows()), |rows| rows as u128),
+            warnings: completion.warnings(),
+            last_insert_id: completion.last_insert_id(),
+            status: completion.status_flags(),
         }
     }
 }

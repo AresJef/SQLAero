@@ -140,7 +140,17 @@ impl Connection {
     /// Returns Busy for a true overlapping command, Closed after invalidation,
     /// or Poisoned after disabling native state following an unexpected panic.
     pub fn try_command(&self) -> Result<CommandLease<'_>, AccessError> {
-        self.try_lease(None)
+        self.try_lease(None, false)
+    }
+
+    /// Acquire only an immediately available close boundary. An idle persistent
+    /// response owner may be retired without draining; an actual overlapping
+    /// I/O lease still returns Busy. Inspect `has_owned_response` before I/O.
+    ///
+    /// # Errors
+    /// Returns the same closed, poisoned or immediate-overlap failures.
+    pub fn try_close_command(&self) -> Result<CommandLease<'_>, AccessError> {
+        self.try_lease(None, true)
     }
 
     /// Reserve one command across host calls without retaining a mutex guard.
@@ -150,6 +160,21 @@ impl Connection {
     /// Returns the same immediate availability errors as `try_command`.
     pub fn try_owned(self: &Arc<Self>) -> Result<OwnedCommand, AccessError> {
         let mut lease = self.try_command()?;
+        self.retain_command(&mut lease)
+    }
+
+    /// Retain an already acquired command at its real streaming send handoff,
+    /// without releasing/reacquiring the wire or retiring on local preflight.
+    ///
+    /// # Errors
+    /// Rejects a foreign connection lease or an existing response owner.
+    pub fn retain_command(self: &Arc<Self>, lease: &mut CommandLease<'_>) -> Result<OwnedCommand, AccessError> {
+        if !std::ptr::eq(lease.closed, &self.closed) {
+            return Err(AccessError::Busy);
+        }
+        if lease.session()?.owner.is_some() {
+            return Err(AccessError::Busy);
+        }
         let key = Arc::new(());
         lease.session()?.owner = Some(Arc::clone(&key));
         Ok(OwnedCommand {
@@ -175,7 +200,7 @@ impl Connection {
         }
     }
 
-    fn try_lease(&self, owner: Option<&Arc<()>>) -> Result<CommandLease<'_>, AccessError> {
+    fn try_lease(&self, owner: Option<&Arc<()>>, closing: bool) -> Result<CommandLease<'_>, AccessError> {
         if self.is_closed() {
             return Err(AccessError::Closed);
         }
@@ -194,6 +219,7 @@ impl Connection {
         }
         let actual = wire.as_ref().and_then(|session| session.owner.as_ref());
         let matches = match (owner, actual) {
+            (None, _) if closing => true,
             (None, None) => true,
             (Some(expected), Some(actual)) => Arc::ptr_eq(expected, actual),
             _ => false,
@@ -228,7 +254,7 @@ impl OwnedCommand {
         if !self.active.load(Ordering::Acquire) {
             return Err(AccessError::Closed);
         }
-        self.connection.try_lease(Some(&self.key))
+        self.connection.try_lease(Some(&self.key), false)
     }
 }
 
@@ -248,6 +274,12 @@ pub struct CommandLease<'a> {
 }
 
 impl CommandLease<'_> {
+    /// Whether closing must retire an unread response without COM_QUIT or
+    /// further reads. Call only while this exclusive close lease is held.
+    #[must_use]
+    pub fn has_owned_response(&self) -> bool {
+        self.wire.as_ref().is_some_and(|session| session.owner.is_some())
+    }
     /// Release persistent ownership only after the caller has consumed the
     /// command's complete response, including every result and internal tail.
     ///
@@ -437,6 +469,43 @@ mod tests {
     use mysql_common::constants::StatusFlags;
     use std::net::TcpListener;
     use std::sync::Arc;
+
+    #[test]
+    fn idle_unread_close_owns_the_actual_boundary_without_draining() {
+        let connection=connection();
+        let response=connection.try_owned().unwrap();
+        let mut close=connection.try_close_command().unwrap();
+        assert!(close.has_owned_response());
+        close.invalidate();
+        drop(close);
+        assert!(connection.is_closed());
+        assert!(matches!(response.resume(),Err(AccessError::Closed)));
+    }
+
+    #[test]
+    fn actual_response_operation_keeps_close_immediately_busy() {
+        let connection=connection();
+        let response=connection.try_owned().unwrap();
+        let mut active=response.resume().unwrap();
+        assert!(matches!(connection.try_close_command(),Err(AccessError::Busy)));
+        active.finish_owned(&response).unwrap();
+        drop(active);
+        let close=connection.try_close_command().unwrap();
+        assert!(!close.has_owned_response());
+        drop(close);
+        assert!(!connection.is_closed());
+    }
+
+    #[test]
+    fn persistent_handoff_rejects_a_foreign_connection_lease() {
+        let first=connection();
+        let second=connection();
+        let mut lease=first.try_command().unwrap();
+        assert!(matches!(second.retain_command(&mut lease),Err(AccessError::Busy)));
+        assert!(!lease.has_owned_response());
+        let response=first.retain_command(&mut lease).unwrap();
+        lease.finish_owned(&response).unwrap();
+    }
 
     fn connection() -> Arc<Connection> {
         let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
