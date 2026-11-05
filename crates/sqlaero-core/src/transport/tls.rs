@@ -41,9 +41,9 @@ fn validate_anchors(
         let mut roots = Vec::new();
         roots.try_reserve_exact(certificates.len())?;
         for certificate in certificates {
-            roots.push(TrustAnchor::from_der(certificate.as_ref()).map_err(|_| {
-                ConfigError::Invalid("ca_file contains an invalid X.509 certificate")
-            })?);
+            roots.push(
+                TrustAnchor::from_der(certificate.as_ref()).map_err(ConfigError::InvalidAnchor)?,
+            );
         }
         Ok(roots)
     }
@@ -57,9 +57,7 @@ fn validate_anchors(
         for certificate in certificates {
             store
                 .add(CertificateDer::from(certificate.as_ref()))
-                .map_err(|_| {
-                    ConfigError::Invalid("ca_file contains an invalid X.509 certificate")
-                })?;
+                .map_err(ConfigError::InvalidAnchor)?;
         }
         Ok(store)
     }
@@ -169,6 +167,7 @@ pub fn ca_certificates(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, Mater
     // BEGIN to replace an unfinished section. Only CA source policy is stricter:
     // gate labels and complete, unnested sections before delegating decoding.
     // Like that reader, recognize CR and LF and allow trailing ASCII spaces.
+    // END markers retain that reader's existing prefix/suffix tolerance.
     // No decoded body or input-derived label is copied into an error.
     for line in pem.split(|byte| matches!(byte, b'\r' | b'\n')) {
         let line = line.trim_ascii_end();
@@ -178,7 +177,7 @@ pub fn ca_certificates(pem: &[u8]) -> Result<Vec<CertificateDer<'static>>, Mater
             }
             inside = true;
         } else if line.trim_ascii_start().starts_with(b"-----END") {
-            if !inside || line != b"-----END CERTIFICATE-----" {
+            if !inside || !line.starts_with(b"-----END CERTIFICATE-----") {
                 return Err(MaterialError::Certificates);
             }
             inside = false;
@@ -352,6 +351,14 @@ pub enum ConfigError {
     /// Native configuration storage could not be reserved.
     #[error("cannot allocate TLS configuration storage: {0}")]
     Allocation(#[from] TryReserveError),
+    /// The actual Apple certificate-decoding failure for one explicit anchor.
+    #[cfg(target_vendor = "apple")]
+    #[error("ca_file contains an invalid X.509 certificate: {0}")]
+    InvalidAnchor(#[source] security_framework::base::Error),
+    /// The actual native rustls trust-anchor decoding failure.
+    #[cfg(not(target_vendor = "apple"))]
+    #[error("ca_file contains an invalid X.509 certificate: {0}")]
+    InvalidAnchor(#[source] rustls::Error),
     /// The native root loader returned no usable system trust anchors.
     #[cfg(not(any(target_vendor = "apple", windows)))]
     #[error(

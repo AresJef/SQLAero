@@ -48,6 +48,16 @@ fn explanation_text_and_multiple_valid_cas_are_accepted_without_deduplication() 
             1
         );
     }
+    let trailing_note = text.replace(
+        "-----END CERTIFICATE-----",
+        "-----END CERTIFICATE----- retained legacy trailing note",
+    );
+    assert_eq!(
+        tls::ca_certificates(trailing_note.as_bytes())
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -57,6 +67,7 @@ fn empty_broken_and_incomplete_ca_sections_fail_the_complete_bundle() {
         &b"-----BEGIN CERTIFICATE-----\nnot base64!\n-----END CERTIFICATE-----\n"[..],
         &b"-----BEGIN CERTIFICATE-----\nQQ==\n"[..],
         &b"-----BEGIN CERTIFICATE-----\nQQ==\n-----END PUBLIC KEY-----\n"[..],
+        &b"-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE EXTRA-----\n"[..],
         &b"-----BEGIN CERTIFICATE-----\nQQ==\n-----BEGIN CERTIFICATE-----\nQQ==\n-----END CERTIFICATE-----\n"[..],
         &b"-----END CERTIFICATE-----\n"[..],
         &b"  -----BEGIN PUBLIC KEY-----\nQQ==\n  -----END PUBLIC KEY-----\n"[..],
@@ -106,4 +117,18 @@ fn directory_members_consume_the_same_complete_ca_policy() {
         }
         assert!(!error.to_string().contains("U0VDUkVUX01BUktFUg"));
     }
+}
+
+#[test]
+fn native_anchor_preparation_preserves_its_real_underlying_failure() {
+    let error =
+        tls::materials::validate_roots(&[rustls_pki_types::CertificateDer::from(vec![0x30, 0])])
+            .unwrap_err();
+    assert!(matches!(&error, tls::ConfigError::InvalidAnchor(_)));
+    assert!(std::error::Error::source(&error).is_some());
+    assert!(
+        error
+            .to_string()
+            .starts_with("ca_file contains an invalid X.509 certificate")
+    );
 }
