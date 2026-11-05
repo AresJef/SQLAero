@@ -572,6 +572,11 @@ enum Phase {
     Finished,
 }
 
+pub(crate) enum Delivery {
+    Buffered(Response),
+    Streaming(StreamEvent),
+}
+
 /// Collector for one result under a shared allocation scope. Intermediate
 /// results use the same parser while retaining only counts and completion.
 pub struct Receiver {
@@ -587,6 +592,9 @@ pub struct Receiver {
     confirmation: Option<CommandConfirmation>,
     server_err_received: bool,
     discard: bool,
+    streaming: bool,
+    frozen_columns: Option<Arc<Columns>>,
+    batch_rows: usize,
     scope: Arc<Scope>,
     _owner: Reservation,
 }
@@ -633,6 +641,9 @@ impl Receiver {
             confirmation: None,
             server_err_received: false,
             discard,
+            streaming: false,
+            frozen_columns: None,
+            batch_rows: 0,
             scope,
             _owner: owner,
         })
@@ -655,14 +666,99 @@ impl Receiver {
     /// Returns real server, unsupported, malformed or capacity failures. An
     /// incomplete or rejected result is never exposed as successful rows.
     pub fn push(&mut self, data: &[u8]) -> Result<Option<Response>, ResultError> {
+        if self.streaming {
+            return Err(WireError::Malformed("streaming receiver needs stream delivery").into());
+        }
+        self.consume(data, usize::MAX)?
+            .map(|event| match event {
+                Delivery::Buffered(response) => Ok(response),
+                Delivery::Streaming(_) => Err(WireError::Malformed("wrong result delivery").into()),
+            })
+            .transpose()
+    }
+
+    pub(crate) fn enable_streaming(&mut self) -> Result<(), ResultError> {
+        if !matches!(self.phase, Phase::First) || self.discard {
+            return Err(WireError::Malformed("invalid streaming receiver state").into());
+        }
+        self.streaming = true;
+        Ok(())
+    }
+
+    pub(crate) fn push_stream(
+        &mut self,
+        data: &[u8],
+        rows: usize,
+    ) -> Result<Option<StreamEvent>, ResultError> {
+        if !self.streaming || rows == 0 {
+            return Err(WireError::Malformed("invalid streaming delivery").into());
+        }
+        self.consume(data, rows)?
+            .map(|event| match event {
+                Delivery::Streaming(event) => Ok(event),
+                Delivery::Buffered(_) => Err(WireError::Malformed("wrong result delivery").into()),
+            })
+            .transpose()
+    }
+
+    fn consume(&mut self, data: &[u8], rows: usize) -> Result<Option<Delivery>, ResultError> {
         if matches!(self.phase, Phase::Finished) {
             return Err(WireError::Malformed("result collector already consumed").into());
         }
-        let result = self.push_inner(data);
+        let result = self.push_inner(data, rows);
         if result.is_err() {
             self.phase = Phase::Finished;
         }
         result
+    }
+
+    fn freeze_columns(&mut self) -> Result<Arc<Columns>, ResultError> {
+        if let Some(columns) = &self.frozen_columns {
+            return Ok(Arc::clone(columns));
+        }
+        let owner = self
+            .scope
+            .charge(size_of::<Columns>() + 2 * size_of::<usize>())?;
+        let columns = Arc::new(Columns {
+            items: std::mem::take(&mut self.columns),
+            bytes: std::mem::take(&mut self.metadata),
+            _owner: owner,
+        });
+        self.frozen_columns = Some(Arc::clone(&columns));
+        Ok(columns)
+    }
+
+    fn take_rows(&mut self) -> Result<RowBatch, ResultError> {
+        let owner = self.scope.charge(size_of::<RowBatch>())?;
+        let columns = self.freeze_columns()?;
+        Ok(RowBatch {
+            encoding: self.encoding,
+            columns,
+            bytes: std::mem::replace(&mut self.bytes, Buffer::tracked(&self.scope)),
+            fields: std::mem::replace(&mut self.fields, Buffer::tracked(&self.scope)),
+            row_count: if self.streaming {
+                std::mem::take(&mut self.batch_rows)
+            } else {
+                self.row_count
+            },
+            _owner: owner,
+        })
+    }
+
+    pub(crate) fn take_stream_rows(&mut self) -> Result<Option<RowBatch>, ResultError> {
+        if self.streaming && self.batch_rows != 0 {
+            self.take_rows().map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn header(&mut self, metadata_status: Option<StatusFlags>) -> Result<Delivery, ResultError> {
+        Ok(Delivery::Streaming(StreamEvent::Header(Header {
+            encoding: self.encoding,
+            columns: self.freeze_columns()?,
+            metadata_status,
+        })))
     }
     /// Take facts recorded after a validated final OK/EOF but before fallible
     /// ownership. No row buffer or reference to the incoming packet is retained.
@@ -688,7 +784,7 @@ impl Receiver {
             });
         }
     }
-    fn push_inner(&mut self, data: &[u8]) -> Result<Option<Response>, ResultError> {
+    fn push_inner(&mut self, data: &[u8], rows: usize) -> Result<Option<Delivery>, ResultError> {
         if data.first() == Some(&0xff) {
             let packet = packets::server_error(data, self.capabilities)?;
             self.server_err_received = true;
@@ -704,7 +800,15 @@ impl Receiver {
                     self.confirm(&packet, None);
                     let completion = Completion::new(packet, &self.scope)?;
                     self.phase = Phase::Finished;
-                    return Ok(Some(Response::Command(completion)));
+                    return Ok(Some(if self.streaming {
+                        Delivery::Streaming(StreamEvent::End {
+                            tail: None,
+                            completion,
+                            total_rows: None,
+                        })
+                    } else {
+                        Delivery::Buffered(Response::Command(completion))
+                    }));
                 }
                 if data.first() == Some(&0xfb) {
                     return Err(ResultError::Unsupported("LOCAL INFILE is disabled"));
@@ -739,10 +843,16 @@ impl Receiver {
                 } else {
                     Phase::Columns(remaining - 1)
                 };
+                if self.streaming && matches!(self.phase, Phase::Rows) {
+                    return self.header(None).map(Some);
+                }
             }
             Phase::MetadataEnd => {
-                packets::ok(data, self.capabilities, OkKind::LegacyEnd)?;
+                let metadata = packets::ok(data, self.capabilities, OkKind::LegacyEnd)?;
                 self.phase = Phase::Rows;
+                if self.streaming {
+                    return self.header(Some(metadata.status_flags())).map(Some);
+                }
             }
             Phase::Rows => {
                 // Canonical 0xFE field lengths need at least 2^24 data bytes.
@@ -768,32 +878,22 @@ impl Receiver {
                     let packet = packets::ok(data, self.capabilities, kind)?;
                     self.confirm(&packet, Some(self.row_count));
                     let completion = Completion::new(packet, &self.scope)?;
-                    let response = if self.discard {
-                        Response::Counted {
+                    let response = if self.streaming {
+                        Delivery::Streaming(StreamEvent::End {
+                            tail: self.take_stream_rows()?,
+                            completion,
+                            total_rows: Some(self.row_count),
+                        })
+                    } else if self.discard {
+                        Delivery::Buffered(Response::Counted {
                             rows: self.row_count,
                             completion,
-                        }
-                    } else {
-                        let metadata_owner = self
-                            .scope
-                            .charge(size_of::<Columns>() + 2 * size_of::<usize>())?;
-                        let row_owner = self.scope.charge(size_of::<RowBatch>())?;
-                        let columns = Arc::new(Columns {
-                            items: std::mem::take(&mut self.columns),
-                            bytes: std::mem::take(&mut self.metadata),
-                            _owner: metadata_owner,
-                        });
-                        Response::Rows(Buffered {
-                            rows: RowBatch {
-                                encoding: self.encoding,
-                                columns,
-                                bytes: std::mem::take(&mut self.bytes),
-                                fields: std::mem::take(&mut self.fields),
-                                row_count: self.row_count,
-                                _owner: row_owner,
-                            },
-                            completion,
                         })
+                    } else {
+                        Delivery::Buffered(Response::Rows(Buffered {
+                            rows: self.take_rows()?,
+                            completion,
+                        }))
                     };
                     self.phase = Phase::Finished;
                     return Ok(Some(response));
@@ -802,7 +902,9 @@ impl Receiver {
                 if self.encoding == super::value::RowEncoding::Binary {
                     crate::protocol::binary::scan_row(
                         data,
-                        self.columns.as_slice(),
+                        self.frozen_columns
+                            .as_deref()
+                            .map_or(self.columns.as_slice(), |columns| &columns[..]),
                         base,
                         if self.discard {
                             None
@@ -853,6 +955,17 @@ impl Receiver {
                     .row_count
                     .checked_add(1)
                     .ok_or(WireError::Malformed("row count overflow"))?;
+                if self.streaming {
+                    self.batch_rows = self
+                        .batch_rows
+                        .checked_add(1)
+                        .ok_or(WireError::Malformed("batch row count overflow"))?;
+                }
+                if self.streaming && self.batch_rows >= rows {
+                    return self
+                        .take_rows()
+                        .map(|rows| Some(Delivery::Streaming(StreamEvent::Rows(rows))));
+                }
             }
             Phase::Finished => {
                 return Err(WireError::Malformed("result collector already consumed").into());

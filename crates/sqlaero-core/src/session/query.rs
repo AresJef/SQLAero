@@ -3,12 +3,13 @@
 use crate::memory::{Pool, Scope};
 use crate::protocol::framing::{MessageReader, MessageWriter, WireError};
 use crate::protocol::local_infile::{LocalError, Source, Upload, UploadProgress};
-use crate::result::text::{self, Receiver, Response, ResultError};
+use crate::result::text::{self, Delivery, Receiver, Response, ResultError, StreamEvent};
 use crate::result::value::RowEncoding;
 use crate::transport::channel::{Channel, ChannelError, Step};
 use crate::transport::deadline::IoBudget;
 use crate::transport::socket::WaitStatus;
 use mysql_common::constants::{CapabilityFlags, Command};
+use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -128,6 +129,8 @@ pub struct Query {
     memory_limit: usize,
     pool: Arc<Pool>,
     finished: bool,
+    streaming: bool,
+    stream_boundary: bool,
 }
 
 impl Query {
@@ -224,6 +227,8 @@ impl Query {
             memory_limit,
             pool,
             finished: false,
+            streaming: false,
+            stream_boundary: false,
         })
     }
 
@@ -256,6 +261,62 @@ impl Query {
             .or(self.local_progress)
     }
 
+    /// Select resumable row delivery before transmission. Row parsing, native
+    /// ownership, encoding, limits and the original channel remain identical.
+    ///
+    /// # Errors
+    /// Rejects changing a started query or a discard-only collector.
+    pub fn with_streaming(mut self) -> Result<Self, QueryError> {
+        if self.started || self.streaming {
+            return Err(WireError::Malformed("invalid streaming command state").into());
+        }
+        self.collector.enable_streaming()?;
+        self.streaming = true;
+        Ok(self)
+    }
+
+    /// A Header/Rows/End was returned and no later logical message was started.
+    /// The host can reserve its accumulation slot here before calling advance:
+    /// a local reservation failure outside Query leaves this state and all
+    /// already delivered batches intact. Native receive failures are separate.
+    #[must_use]
+    pub const fn at_stream_boundary(&self) -> bool {
+        self.streaming && self.stream_boundary
+    }
+
+    /// Advance only to completed column definitions, a bounded complete-row
+    /// batch, or an actual set terminator. A delivered batch has no fabricated
+    /// Completion and remains owned for conversion retry before the next call.
+    ///
+    /// # Errors
+    /// Native framing/required storage/parser failure is terminal. Host-side
+    /// batch-slot reservation before this call is the controlled retry branch.
+    pub fn advance_stream(
+        &mut self,
+        channel: &mut Channel,
+        budget: &mut IoBudget,
+        row_limit: NonZeroUsize,
+    ) -> Result<Step<StreamEvent>, QueryError> {
+        self.stream_boundary = false;
+        let result = if self.streaming {
+            self.advance_inner(channel, budget, Some(row_limit))
+                .and_then(|step| match step {
+                    Step::Ready(Delivery::Streaming(event)) => Ok(Step::Ready(event)),
+                    Step::Ready(Delivery::Buffered(_)) => {
+                        Err(WireError::Malformed("wrong query delivery").into())
+                    }
+                    Step::Control => Ok(Step::Control),
+                    Step::Wait(direction) => Ok(Step::Wait(direction)),
+                })
+        } else {
+            Err(WireError::Malformed("query is not streaming").into())
+        };
+        if result.is_err() {
+            self.finished = true;
+        }
+        result
+    }
+
     /// Receive the next complete result of this command, retaining framing
     /// across waits, host checks and set boundaries. `Ready` publishes one set;
     /// consult `is_finished` before releasing command ownership. The caller
@@ -269,7 +330,19 @@ impl Query {
         channel: &mut Channel,
         budget: &mut IoBudget,
     ) -> Result<Step<Response>, QueryError> {
-        let result = self.advance_inner(channel, budget);
+        let result = if self.streaming {
+            Err(WireError::Malformed("streaming query needs stream delivery").into())
+        } else {
+            self.advance_inner(channel, budget, None)
+                .and_then(|step| match step {
+                    Step::Ready(Delivery::Buffered(response)) => Ok(Step::Ready(response)),
+                    Step::Ready(Delivery::Streaming(_)) => {
+                        Err(WireError::Malformed("wrong query delivery").into())
+                    }
+                    Step::Control => Ok(Step::Control),
+                    Step::Wait(direction) => Ok(Step::Wait(direction)),
+                })
+        };
         if result.is_err() {
             self.finished = true;
         }
@@ -286,7 +359,8 @@ impl Query {
         &mut self,
         channel: &mut Channel,
         budget: &mut IoBudget,
-    ) -> Result<Step<Response>, QueryError> {
+        row_limit: Option<NonZeroUsize>,
+    ) -> Result<Step<Delivery>, QueryError> {
         if self.finished {
             return Err(WireError::Malformed("command exchange already ended").into());
         }
@@ -296,12 +370,15 @@ impl Query {
             // only after the previous complete set was returned to its owner.
             let scope =
                 Scope::new(Arc::clone(&self.pool), self.memory_limit).map_err(ResultError::from)?;
-            let collector = Receiver::with_encoding(
+            let mut collector = Receiver::with_encoding(
                 self.capabilities,
                 Arc::clone(&scope),
                 self.discard,
                 self.encoding,
             )?;
+            if self.streaming {
+                collector.enable_streaming()?;
+            }
             self.incoming = MessageReader::tracked(self.max_receive, &scope);
             self.collector = collector;
             self.scope = scope;
@@ -370,12 +447,35 @@ impl Query {
                 self.local_progress = Some(upload.progress());
             }
             processed = processed.saturating_add(data.len());
-            if let Some(response) = self.collector.push(&data)? {
-                self.next_set = text::has_more(&response);
-                self.finished = !self.next_set;
-                return Ok(Step::Ready(response));
+            let delivery = if let Some(limit) = row_limit {
+                self.collector
+                    .push_stream(&data, limit.get())?
+                    .map(Delivery::Streaming)
+            } else {
+                self.collector.push(&data)?.map(Delivery::Buffered)
+            };
+            if let Some(delivery) = delivery {
+                match &delivery {
+                    Delivery::Buffered(response) => {
+                        self.next_set = text::has_more(response);
+                        self.finished = !self.next_set;
+                    }
+                    Delivery::Streaming(StreamEvent::End { completion, .. }) => {
+                        self.next_set = completion.status_flags().contains(
+                            mysql_common::constants::StatusFlags::SERVER_MORE_RESULTS_EXISTS,
+                        );
+                        self.finished = !self.next_set;
+                    }
+                    Delivery::Streaming(_) => (),
+                }
+                self.stream_boundary = self.streaming;
+                return Ok(Step::Ready(delivery));
             }
             if processed >= 256 * 1024 {
+                if let Some(rows) = self.collector.take_stream_rows()? {
+                    self.stream_boundary = true;
+                    return Ok(Step::Ready(Delivery::Streaming(StreamEvent::Rows(rows))));
+                }
                 return Ok(Step::Control);
             }
         }
