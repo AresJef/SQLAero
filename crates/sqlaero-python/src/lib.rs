@@ -436,6 +436,7 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(_decode_text, module)?)?;
     module.add_function(wrap_pyfunction!(_bind_sql, module)?)?;
     module.add_function(wrap_pyfunction!(_decode_field, module)?)?;
+    module.add_function(wrap_pyfunction!(output::_decode_binary_field, module)?)?;
     module.add_class::<reader::Reader>()?;
     module.add_class::<metadata::Columns>()?;
     module.add_class::<metadata::ColumnInfo>()?;
