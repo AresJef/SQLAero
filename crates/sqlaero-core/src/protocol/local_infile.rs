@@ -98,13 +98,20 @@ impl Upload {
     /// absent from this API: it cannot select or authorize a different source.
     ///
     /// # Errors
-    /// Rejects an additional request after this operation's permission was used.
+    /// Rejects a request after this operation's permission was used or ended.
     pub fn accept_request(&mut self) -> Result<(), LocalError> {
-        if self.requested {
+        if self.requested || self.finished {
+            self.finished = true;
             return Err(WireError::Malformed("unexpected additional LOCAL request").into());
         }
         self.requested = true;
         Ok(())
+    }
+
+    /// Whether this operation accepted its one expected LOCAL request.
+    #[must_use]
+    pub const fn is_requested(&self) -> bool {
+        self.requested
     }
 
     /// Current actual transfer observations, without claiming server receipt.
@@ -298,6 +305,7 @@ mod tests {
     use std::io::Write;
     use std::net::TcpListener;
     use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::thread::JoinHandle;
     use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -307,12 +315,16 @@ mod tests {
     }
     impl Case {
         fn new(bytes: &[u8]) -> Self {
+            static NEXT: AtomicU64 = AtomicU64::new(0);
             let nonce = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_nanos();
-            let directory = std::env::temp_dir()
-                .join(format!("sqlaero-c-local-{}-{nonce}", std::process::id()));
+            let serial = NEXT.fetch_add(1, Ordering::Relaxed);
+            let directory = std::env::temp_dir().join(format!(
+                "sqlaero-c-local-{}-{nonce}-{serial}",
+                std::process::id()
+            ));
             fs::create_dir(&directory).unwrap();
             let case = Self { directory };
             let mut file = OpenOptions::new()
@@ -667,5 +679,32 @@ mod tests {
                 limit: 0
             }))
         ));
+    }
+
+    #[test]
+    fn unauthorized_or_repeated_requests_end_the_one_operation_permission() {
+        let case = Case::new(b"unread");
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let mut channel = Channel::new(
+            Transport::tcp(listener.local_addr().unwrap()).unwrap(),
+            false,
+        );
+        let mut budget = IoBudget::new(TimeoutKind::Operation, None, None, None);
+        for duplicate in [false, true] {
+            let scope = Scope::new(Pool::new(2_000_000), 2_000_000).unwrap();
+            let mut upload =
+                Upload::new(Source::open(&case.path()).unwrap(), 64 * 1024, scope).unwrap();
+            if duplicate {
+                upload.accept_request().unwrap();
+                assert!(upload.accept_request().is_err());
+            }
+            assert!(matches!(
+                upload.advance(&mut channel, &mut budget),
+                Err(LocalError::Wire(WireError::Malformed(_)))
+            ));
+            assert!(upload.accept_request().is_err());
+            assert_eq!(upload.progress().read_bytes, 0);
+            assert!(!upload.progress().eof_flushed);
+        }
     }
 }
