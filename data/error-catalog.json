@@ -183,6 +183,14 @@
       "name": "WRITE_DEADLINE",
       "class": "OperationalTimeoutError",
       "meaning": "a write made no progress before its deadline."
+    },
+    {
+      "code": 65555,
+      "rust_name": "TlsCertificateContent",
+      "name": "TLS_CERTIFICATE_CONTENT",
+      "class": "DataError",
+      "meaning": "received TLS certificate content cannot satisfy the requested diagnostic property.",
+      "basis": "Final extension specification EX-083-Q13: client-origin DataError, stage tls_certificate_details; independent field dependencies preserve valid exports and basic TLS facts."
     }
   ],
   "server": [

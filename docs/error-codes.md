@@ -1,6 +1,6 @@
 # SQLAero error code registry
 
-Generated from data/error-catalog.json (SHA-256 60741095b355992c95153838d9f3f4bbd52d4c57f83e1b4802b1ddb55c9844e2); edit the registry and run tools/error_catalog.py.
+Generated from data/error-catalog.json (SHA-256 01fec0d842fb05737fc8b067ad3d292c3cd8f6d45feb173627036bbfbd42e865); edit the registry and run tools/error_catalog.py.
 
 Registered official client-message conditions plus applicable shared globals; no log-only MY or other libraries CR codes. Warning/Note responses never automatically raise; mappings apply only to an actual protocol ERR.
 
@@ -31,6 +31,7 @@ Only functional names, codes and SQLSTATE facts are extracted from official mate
 | 65552 | CONNECT_DEADLINE | OperationalTimeoutError | original connection establishment deadline. |
 | 65553 | READ_DEADLINE | OperationalTimeoutError | a read made no progress before its deadline. |
 | 65554 | WRITE_DEADLINE | OperationalTimeoutError | a write made no progress before its deadline. |
+| 65555 | TLS_CERTIFICATE_CONTENT | DataError | received TLS certificate content cannot satisfy the requested diagnostic property. |
 
 ## Server codes
 

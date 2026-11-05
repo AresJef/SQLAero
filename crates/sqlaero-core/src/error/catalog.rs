@@ -1,4 +1,4 @@
-//! Generated from data/error-catalog.json (SHA-256 60741095b355992c95153838d9f3f4bbd52d4c57f83e1b4802b1ddb55c9844e2); edit the registry and run tools/error_catalog.py.
+//! Generated from data/error-catalog.json (SHA-256 01fec0d842fb05737fc8b067ad3d292c3cd8f6d45feb173627036bbfbd42e865); edit the registry and run tools/error_catalog.py.
 use super::ExceptionClass;
 
 /// One maintained server condition, with aliases and exact category.

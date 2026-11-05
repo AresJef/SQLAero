@@ -46,7 +46,15 @@ fn every_maintained_code_matches_the_independent_semantic_audit() {
     }
     assert_eq!(counts, [2046, 19]);
     assert_eq!(SERVER_CODES.len(), counts[0]);
-    assert_eq!(CLIENT_CODES.len(), counts[1]);
+    // Keep the original audit oracle unchanged; this later diagnostic code is
+    // independently required by extension specification EX-083-Q13.
+    assert_eq!(CLIENT_CODES.len(), counts[1] + 1);
+    let certificate = CLIENT_CODES
+        .iter()
+        .find(|entry| entry.code as u32 == 65555)
+        .unwrap();
+    assert_eq!(certificate.name, "TLS_CERTIFICATE_CONTENT");
+    assert_eq!(certificate.class, C::Data);
 }
 
 #[test]

@@ -1,4 +1,4 @@
-//! Generated from data/error-catalog.json (SHA-256 60741095b355992c95153838d9f3f4bbd52d4c57f83e1b4802b1ddb55c9844e2); edit the registry and run tools/error_catalog.py.
+//! Generated from data/error-catalog.json (SHA-256 01fec0d842fb05737fc8b067ad3d292c3cd8f6d45feb173627036bbfbd42e865); edit the registry and run tools/error_catalog.py.
 
 /// Exact native exception categories used by the maintained error registry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +67,8 @@ pub enum ClientErrorCode {
     ReadDeadline = 65553,
     /// OperationalTimeoutError: a write made no progress before its deadline.
     WriteDeadline = 65554,
+    /// DataError: received TLS certificate content cannot satisfy the requested diagnostic property.
+    TlsCertificateContent = 65555,
 }
 
 /// One maintained client identity and its precise public behavior.
@@ -196,6 +198,12 @@ pub static CLIENT_CODES: &[ClientEntry] = &[
         class: ExceptionClass::OperationalTimeout,
         doc: "A write made no progress before its deadline. Code 65554; client origin (is_server_error=False); exact exception class OperationalTimeoutError.",
     },
+    ClientEntry {
+        code: ClientErrorCode::TlsCertificateContent,
+        name: "TLS_CERTIFICATE_CONTENT",
+        class: ExceptionClass::Data,
+        doc: "Received tls certificate content cannot satisfy the requested diagnostic property. Code 65555; client origin (is_server_error=False); exact exception class DataError.",
+    },
 ];
 impl ClientErrorCode {
     /// The one registered source for this client code's class and public name.
@@ -221,6 +229,7 @@ impl ClientErrorCode {
             Self::ConnectDeadline => &CLIENT_CODES[16],
             Self::ReadDeadline => &CLIENT_CODES[17],
             Self::WriteDeadline => &CLIENT_CODES[18],
+            Self::TlsCertificateContent => &CLIENT_CODES[19],
         }
     }
 }

@@ -1,4 +1,4 @@
-"""Generated from data/error-catalog.json (SHA-256 60741095b355992c95153838d9f3f4bbd52d4c57f83e1b4802b1ddb55c9844e2); edit the registry and run tools/error_catalog.py."""
+"""Generated from data/error-catalog.json (SHA-256 01fec0d842fb05737fc8b067ad3d292c3cd8f6d45feb173627036bbfbd42e865); edit the registry and run tools/error_catalog.py."""
 from enum import IntEnum
 from ._sqlaero import (
     SQLAeroError as SQLAeroError,
@@ -56,6 +56,8 @@ class SQLAeroErrorCode(IntEnum):
     "A read made no progress before its deadline. Code 65553; client origin (is_server_error=False); exact exception class OperationalTimeoutError."
     WRITE_DEADLINE = 65554
     "A write made no progress before its deadline. Code 65554; client origin (is_server_error=False); exact exception class OperationalTimeoutError."
+    TLS_CERTIFICATE_CONTENT = 65555
+    "Received tls certificate content cannot satisfy the requested diagnostic property. Code 65555; client origin (is_server_error=False); exact exception class DataError."
 
 class MySQLErrorCode(IntEnum):
     """Known direct server ERR numbers; ordinary warnings are not automatically raised."""

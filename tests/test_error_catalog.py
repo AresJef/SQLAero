@@ -27,6 +27,9 @@ def reviewed_expectations() -> dict[str, dict[int, str]]:
 def test_complete_registry_matches_independent_reviewed_semantics() -> None:
     source: dict[str, Any] = json.loads((Path(__file__).resolve().parents[1] / 'data/error-catalog.json').read_text(encoding='utf-8'))
     expected = reviewed_expectations()
+    # A later explicit specification, independent of the product generator;
+    # the historical 2026-10-26 audit oracle remains frozen and unchanged.
+    expected['client'][65555] = 'DataError'  # EX-083-Q13 TLS certificate content.
     for origin in ('client', 'server'):
         actual = {row['code']: row['class'] for row in source[origin]}
         assert actual == expected[origin]
