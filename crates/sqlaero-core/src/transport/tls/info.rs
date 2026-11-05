@@ -5,6 +5,9 @@ use rustls_pki_types::CertificateDer;
 use std::collections::TryReserveError;
 use std::sync::{Arc, OnceLock};
 
+mod details;
+pub use details::{ContentError, Details, UtcDateTime};
+
 /// A failure to copy complete established engine facts.
 #[derive(Debug, thiserror::Error)]
 pub enum SnapshotError {
@@ -131,6 +134,7 @@ fn cipher_name(id: u16) -> Option<&'static str> {
 pub struct Certificate {
     der: CertificateDer<'static>,
     fingerprint: OnceLock<[u8; 32]>,
+    details: OnceLock<Result<Details, ContentError>>,
 }
 
 impl Certificate {
@@ -140,6 +144,7 @@ impl Certificate {
         Self {
             der,
             fingerprint: OnceLock::new(),
+            details: OnceLock::new(),
         }
     }
     /// Borrow the exact original DER under this certificate's owned lifetime.
@@ -164,6 +169,18 @@ impl Certificate {
             bytes
         })
     }
+
+    /// Prepare and reuse native metadata only when explicitly requested.
+    /// Deterministic content failures are cached; no Python exception is stored.
+    /// Individual optional fields preserve their own dependency failures.
+    ///
+    /// # Errors
+    /// Returns a cached parse failure for malformed common X.509 structure.
+    pub fn details(&self) -> Result<&Details, &ContentError> {
+        self.details
+            .get_or_init(|| details::parse(self.der()))
+            .as_ref()
+    }
 }
 
 #[cfg(test)]
@@ -174,11 +191,14 @@ mod tests {
     fn raw_exports_and_fingerprint_do_not_parse_certificate_details() {
         let bytes = b"not an X.509 certificate".to_vec();
         let certificate = Certificate::new(bytes.clone().into());
+        assert!(certificate.details.get().is_none());
+        assert!(certificate.fingerprint.get().is_none());
         assert_eq!(certificate.der(), bytes);
         let pem = certificate.pem().unwrap();
         assert_eq!(pem_rfc7468::decode_vec(pem.as_bytes()).unwrap().1, bytes);
         assert!(pem.ends_with("-----END CERTIFICATE-----\n"));
         assert_eq!(certificate.fingerprint().len(), 32);
+        assert!(certificate.details.get().is_none());
     }
 
     #[test]
@@ -187,6 +207,53 @@ mod tests {
             assert!(cipher_name(u16::from(suite.suite())).is_some());
         }
         assert_eq!(cipher_name(0x1302), Some("TLS_AES_256_GCM_SHA384"));
+    }
+
+    #[test]
+    fn malformed_common_structure_is_cached_without_disabling_raw_facts() {
+        let certificate = Certificate::new(vec![0x31, 0x00].into());
+        assert!(certificate.details().is_err());
+        assert!(std::ptr::eq(
+            certificate.details().unwrap_err(),
+            certificate.details().unwrap_err()
+        ));
+        assert_eq!(certificate.der(), &[0x31, 0]);
+        assert_eq!(certificate.fingerprint().len(), 32);
+        assert!(certificate.pem().unwrap().contains("CERTIFICATE"));
+    }
+
+    #[test]
+    #[ignore = "requires the owned fixture certificate"]
+    fn malformed_san_does_not_disable_unrelated_details_or_raw_exports() {
+        use x509_parser::nom::Parser;
+        use x509_parser::oid_registry::OID_X509_EXT_SUBJECT_ALT_NAME;
+        use x509_parser::prelude::*;
+        let fixture =
+            std::path::PathBuf::from(std::env::var_os("SQLAERO_TEST_MYSQL_ROOT").unwrap());
+        let mut chain =
+            super::super::certificates(&std::fs::read(fixture.join("tls/server.pem")).unwrap())
+                .unwrap();
+        let original = chain.remove(0);
+        let (_, parsed) = X509CertificateParser::new()
+            .with_deep_parse_extensions(false)
+            .parse(original.as_ref())
+            .unwrap();
+        let san = parsed
+            .get_extension_unique(&OID_X509_EXT_SUBJECT_ALT_NAME)
+            .unwrap()
+            .unwrap();
+        let offset = san.value.as_ptr() as usize - original.as_ref().as_ptr() as usize;
+        let mut der = original.as_ref().to_vec();
+        der[offset] = 0x31;
+        let certificate = Certificate::new(der.clone().into());
+        let details = certificate.details().unwrap();
+        assert!(details.subject.as_ref().unwrap().contains("SQLAero server"));
+        assert!(details.dns_names.is_err());
+        assert!(details.ip_addresses.is_err());
+        assert!(!details.is_ca.as_ref().unwrap());
+        assert_eq!(details.version, 3);
+        assert_eq!(certificate.der(), der);
+        assert_eq!(certificate.fingerprint().len(), 32);
     }
 
     #[test]
@@ -271,6 +338,12 @@ mod tests {
             drop(client);
             drop(server);
             assert_eq!(snapshot.peer_certificates[0].der(), chain[0].as_ref());
+            let details = snapshot.peer_certificates[0].details().unwrap();
+            assert_eq!(details.dns_names.as_ref().unwrap(), &["localhost"]);
+            assert_eq!(details.ip_addresses.as_ref().unwrap(), &["127.0.0.1"]);
+            assert_eq!(details.version, 3);
+            assert_eq!(details.public_key_algorithm_oid, "1.2.840.113549.1.1.1");
+            assert!(details.serial_number.bits() > 64);
         }
     }
 }
