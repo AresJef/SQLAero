@@ -94,6 +94,37 @@ impl Codec {
         self.write::<0>(text, output, limit)
     }
 
+    /// Quote one identifier without using SQL value escaping. Embedded
+    /// backticks are doubled only when they are complete encoded characters.
+    ///
+    /// # Errors
+    /// Returns precise encoding, capacity or allocation failure.
+    pub fn identifier(
+        &self,
+        text: &str,
+        output: &mut Vec<u8>,
+        limit: usize,
+    ) -> Result<(), CodecError> {
+        append(output, b"`", limit)?;
+        self.identifier_fragment(text, output, limit)?;
+        append(output, b"`", limit)?;
+        Ok(())
+    }
+
+    /// Write a bounded fragment inside an already opened identifier. Hosts
+    /// retain their normal signal/deadline checks between source fragments.
+    ///
+    /// # Errors
+    /// Returns the same strict encoding and request failures as identifier.
+    pub fn identifier_fragment(
+        &self,
+        text: &str,
+        output: &mut Vec<u8>,
+        limit: usize,
+    ) -> Result<(), CodecError> {
+        self.write::<3>(text, output, limit)
+    }
+
     /// Encode and quote a SQL value under the actual backslash mode. The mode
     /// is selected outside the conversion loop; multibyte trail bytes must
     /// never be mistaken for independent quote/backslash characters.
@@ -368,6 +399,9 @@ fn bmp_escaped<const MODE: u8>(
 fn escape<const MODE: u8>(byte: u8) -> Option<&'static [u8]> {
     if MODE == 0 {
         return None;
+    }
+    if MODE == 3 {
+        return if byte == b'`' { Some(b"``") } else { None };
     }
     if MODE == 2 {
         return if byte == b'\'' { Some(b"''") } else { None };

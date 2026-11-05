@@ -262,3 +262,25 @@ fn prepared_mapping_yields_between_large_native_copies_and_checks_full_limit() {
         }
     }
 }
+
+#[test]
+fn identifier_quotes_are_distinct_from_values_and_preserve_multibyte_trail_bytes() {
+    let codec = Codec::new(resolve(None, None).unwrap().charset);
+    let mut output = Vec::new();
+    codec
+        .identifier(" x`'; SELECT 1 \\ ", &mut output, 4096)
+        .unwrap();
+    assert_eq!(output, b"` x``'; SELECT 1 \\ `");
+    let mut output = Vec::new();
+    let codec = Codec::new(resolve(Some("sjis"), None).unwrap().charset);
+    codec.identifier("表`〜", &mut output, 4096).unwrap();
+    assert_eq!(output, b"`\x95\x5c``\x81\x60`");
+    let mut output = Vec::new();
+    assert!(codec.identifier("表`〜", &mut output, 7).is_err());
+    let mut output = Vec::new();
+    let codec = Codec::new(resolve(Some("utf8mb3"), None).unwrap().charset);
+    assert!(matches!(
+        codec.identifier("中😀", &mut output, 4096),
+        Err(CodecError::Encode { offset: 3, .. })
+    ));
+}
