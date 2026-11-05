@@ -31,17 +31,25 @@ def test_public_stub_modules_export_the_same_native_identities() -> None:
 
 def test_installed_types_reject_forbidden_construction_and_subclassing(tmp_path: Path) -> None:
     """Use the real Pyright executable, not string checks on the stub source."""
-    positive = '''from typing import Literal, assert_type
-from sqlaero import connect, Connection, Cursor, Columns, ColumnInfo, SSL
+    positive = '''# pyright: reportPrivateUsage=false
+from typing import Literal, assert_type
+from sqlaero import connect, Connection, Cursor, DictCursor, SSCursor, SSDictCursor, Columns, ColumnInfo, SSL, Compression, TLSInfo, TLSCertificate, _sqlaero
 from sqlaero.errors import SQLAeroError, ErrorInfo, OperationalError, MySQLErrorCode
 from sqlaero.retry import Retry, RetryRule, retry
 connection = connect(user="type check only", ssl=SSL())
 assert_type(connection, Connection)
-assert_type(connection.ssl_mode, Literal["DISABLED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"])
-assert_type(connection.tls_version, Literal["TLSv1.2", "TLSv1.3"] | None)
-def accepts_mode(_mode: Literal["DISABLED", "REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"]) -> None:
-    pass
-accepts_mode(connection.ssl_mode)
+assert_type(connection.tls_info, TLSInfo | None)
+info = connection.tls_info
+if info is not None:
+    assert_type(info.mode, Literal["REQUIRED", "VERIFY_CA", "VERIFY_IDENTITY"])
+    assert_type(info.version, Literal["TLSv1.2", "TLSv1.3"])
+    assert_type(info.peer_certificates, tuple[TLSCertificate, ...])
+assert_type(Compression(algorithms="zstd").zstd_compression_level, int | None)
+assert_type(connection.cursor(dict), DictCursor)
+assert_type(connection.cursor(Cursor, streaming=True), SSCursor)
+assert_type(connection.cursor(SSDictCursor, streaming=False), DictCursor)
+assert_type(connection.cursor(dict, streaming=True, prepared=True), SSDictCursor)
+assert_type(_sqlaero._decode_binary_field(8, b"\\x01" * 8, decimals=0), object)
 cursor = connection.cursor()
 cursor.execute("SELECT %s", {"one": 1})
 cursor.execute("SELECT %s", range(3), many=True)
@@ -61,12 +69,13 @@ class ApplicationError(SQLAeroError):
     pass
 '''
     imports = [
-        'from sqlaero import Connection, Cursor, Columns, ColumnInfo, SSL',
+        'from sqlaero import Connection, Cursor, DictCursor, SSCursor, SSDictCursor, Columns, ColumnInfo, SSL, Compression, TLSInfo, TLSCertificate',
         'from sqlaero.errors import ErrorInfo',
         'from sqlaero.retry import Retry, RetryRule, RetryAttempt',
     ]
-    constructors = ['Connection', 'Cursor', 'Columns', 'ColumnInfo', 'ErrorInfo', 'RetryAttempt']
-    final_classes = ['SSL', *constructors, 'Retry', 'RetryRule']
+    constructors = ['Connection', 'Cursor', 'DictCursor', 'SSCursor', 'SSDictCursor',
+                    'Columns', 'ColumnInfo', 'TLSInfo', 'TLSCertificate', 'ErrorInfo', 'RetryAttempt']
+    final_classes = ['SSL', 'Compression', *constructors, 'Retry', 'RetryRule']
     negative = imports + [f'{name}()' for name in constructors]
     negative += [f'class Invalid{name}({name}): pass' for name in final_classes]
     (tmp_path / 'positive.py').write_text(positive)
@@ -81,9 +90,12 @@ class ApplicationError(SQLAeroError):
                             timeout=30, check=False)
     report: dict[str, Any] = json.loads(result.stdout)
     errors = [entry for entry in report['generalDiagnostics'] if entry['severity'] == 'error']
-    assert result.returncode == 1 and len(errors) == 15, result.stdout + result.stderr
+    expected_count = len(constructors) + len(final_classes)
+    assert result.returncode == 1 and len(errors) == expected_count, result.stdout + result.stderr
     assert all(Path(entry['file']).name == 'negative.py' for entry in errors), result.stdout
-    assert {entry['range']['start']['line'] for entry in errors} == set(range(3, 18)), result.stdout
+    assert {entry['range']['start']['line'] for entry in errors} == set(
+        range(len(imports), len(imports) + expected_count)
+    ), result.stdout
 
 
 def test_installed_escape_alias_keeps_optional_families_and_rejects_forbidden_roots(tmp_path: Path) -> None:

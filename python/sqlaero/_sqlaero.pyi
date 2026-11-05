@@ -289,6 +289,15 @@ def _decode_field(type_code: int, data: bytes | None, *, collation_id: int = 255
     """Exercise the prepared native output action for real column metadata."""
     ...
 
+def _decode_binary_field(type_code: int, data: bytes | None, *, collation_id: int = 255,
+                         flags: int = 0, length: int = 0, decimals: int = 0,
+                         decode_json: bool = False, decode_set: bool = False,
+                         decode_bit: bool = False, use_decimal: bool = True,
+                         use_timedelta: bool = True, decode_text_strict: bool = True,
+                         decode_date_strict: bool = True) -> object:
+    """Exercise the production binary field interpreter and final output policies."""
+    ...
+
 class _Rows:
     """Private production buffered read component; Cursor embeds it in Rust."""
     def fetchone(self) -> tuple[object, ...] | None: ...
