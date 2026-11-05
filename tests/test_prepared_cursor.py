@@ -301,6 +301,37 @@ def test_prepared_handle_slot_reuses_switches_and_closes_on_the_same_connection(
 
 @requires_mysql
 @pytest.mark.parametrize('dictionary', [False, True], ids=['tuple', 'dict'])
+def test_prepared_reuse_compares_complete_sql_contents_and_confirmed_sql_mode(
+    connection: Connection, dictionary: bool,
+) -> None:
+    with connection.cursor() as setup:
+        setup.execute("SET SESSION sql_mode=''")
+    with buffered(connection, dictionary) as current:
+        sql = "SELECT 'a\\n' AS value /* same template */"
+        same = bytearray(sql, 'ascii').decode('ascii')
+        assert same == sql and same is not sql
+        before = statement_counts(connection)
+        for source in (sql, same):
+            assert current.execute(source) == 1
+            assert current.fetchone() == row(dictionary, value='a\n')
+        repeated = statement_counts(connection)
+        assert repeated['Com_stmt_prepare'] == before['Com_stmt_prepare'] + 1
+        with connection.cursor() as setup:
+            setup.execute("SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'")
+        assert current.execute(sql) == 1
+        assert current.fetchone() == row(dictionary, value='a\\n')
+        changed_context = statement_counts(connection)
+        assert changed_context['Com_stmt_prepare'] == repeated['Com_stmt_prepare'] + 1
+        assert changed_context['Com_stmt_close'] == repeated['Com_stmt_close'] + 1
+        assert current.execute(sql + ' ') == 1
+        assert current.fetchone() == row(dictionary, value='a\\n')
+        changed_sql = statement_counts(connection)
+        assert changed_sql['Com_stmt_prepare'] == changed_context['Com_stmt_prepare'] + 1
+        assert changed_sql['Com_stmt_close'] == changed_context['Com_stmt_close'] + 1
+
+
+@requires_mysql
+@pytest.mark.parametrize('dictionary', [False, True], ids=['tuple', 'dict'])
 @pytest.mark.parametrize('many_method', ['execute', 'executemany'])
 def test_prepared_many_keeps_every_result_and_separates_current_and_batch_counts(
     connection: Connection, dictionary: bool, many_method: str,
@@ -373,6 +404,15 @@ def test_prepared_many_insert_is_per_row_and_later_error_keeps_the_real_prefix(
         with connection.cursor() as check:
             assert check.execute('SELECT id FROM prepared_prefix ORDER BY id') == 2
             assert check.fetchall() == ((1,), (2,))
+        # A fresh explicit user execution may reuse this still valid handle;
+        # the earlier failed batch must not have sent its fourth source row.
+        assert current.execute('INSERT INTO prepared_prefix VALUES (%s)', (3,)) == 1
+        reused = statement_counts(connection)
+        assert reused['Com_stmt_prepare'] == counts['Com_stmt_prepare']
+        assert reused['Com_stmt_execute'] == counts['Com_stmt_execute'] + 1
+        with connection.cursor() as check:
+            assert check.execute('SELECT id FROM prepared_prefix ORDER BY id') == 3
+            assert check.fetchall() == ((1,), (2,), (3,))
 
 
 @requires_mysql
