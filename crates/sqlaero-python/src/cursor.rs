@@ -59,15 +59,69 @@ struct Counts {
 }
 /// Independent buffered result and read position. Commands use their owning
 /// Connection; local fetches never acquire the connection's network lease.
-#[pyclass(frozen, module = "sqlaero")]
-pub(crate) struct Cursor {
+pub(crate) struct CursorCore {
     pub(crate) connection: Py<Connection>,
     reader: Reader,
     settings: Mutex<Settings>,
     counts: Mutex<Option<Counts>>,
     results: Mutex<Results>,
 }
-impl Cursor {
+/// Buffered tuple rows over the common native result implementation.
+#[pyclass(frozen, module = "sqlaero")]
+pub(crate) struct Cursor {
+    core: CursorCore,
+}
+/// Buffered dictionary rows over the same native result implementation.
+#[pyclass(frozen, module = "sqlaero")]
+pub(crate) struct DictCursor {
+    core: CursorCore,
+}
+impl std::ops::Deref for Cursor {
+    type Target = CursorCore;
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
+}
+impl std::ops::Deref for DictCursor {
+    type Target = CursorCore;
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
+}
+
+/// Typed owners let transaction cleanup use Rust dispatch rather than Python
+/// method lookup, arbitrary subclasses or a second result implementation.
+pub(crate) enum CursorHandle {
+    Tuple(Py<Cursor>),
+    Dictionary(Py<DictCursor>),
+}
+impl CursorHandle {
+    pub(crate) fn clone_ref(&self, py: Python<'_>) -> Self {
+        match self {
+            Self::Tuple(value) => Self::Tuple(value.clone_ref(py)),
+            Self::Dictionary(value) => Self::Dictionary(value.clone_ref(py)),
+        }
+    }
+    pub(crate) fn object(&self, py: Python<'_>) -> Py<PyAny> {
+        match self {
+            Self::Tuple(value) => value.clone_ref(py).into_any(),
+            Self::Dictionary(value) => value.clone_ref(py).into_any(),
+        }
+    }
+    pub(crate) fn close(&self, py: Python<'_>) -> PyResult<()> {
+        match self {
+            Self::Tuple(value) => value.borrow(py).close(py),
+            Self::Dictionary(value) => value.borrow(py).close(py),
+        }
+    }
+    pub(crate) fn retire(&self, py: Python<'_>) {
+        match self {
+            Self::Tuple(value) => value.borrow(py).retire(),
+            Self::Dictionary(value) => value.borrow(py).retire(),
+        }
+    }
+}
+impl CursorCore {
     /// Stop future operations after mandatory transaction cleanup failed. Any
     /// already active Reader operation retains and releases its own data.
     pub(crate) fn retire(&self) {
@@ -82,20 +136,35 @@ impl Cursor {
         drop(old);
     }
 
-    pub(crate) fn new(
+    fn with_format(
         connection: Py<Connection>,
         types: Py<ScalarTypes>,
         options: Options,
+        dictionary: bool,
     ) -> Self {
         Self {
             connection,
-            reader: Reader::empty(types),
+            reader: Reader::with_format(types, dictionary),
             settings: Mutex::new(Settings {
                 options,
                 arraysize: BigUint::from(1u8),
             }),
             counts: Mutex::new(None),
             results: Mutex::new(Results::default()),
+        }
+    }
+    pub(crate) fn create(
+        py: Python<'_>,
+        connection: Py<Connection>,
+        types: Py<ScalarTypes>,
+        options: Options,
+        dictionary: bool,
+    ) -> PyResult<CursorHandle> {
+        let core = Self::with_format(connection, types, options, dictionary);
+        if dictionary {
+            Py::new(py, DictCursor { core }).map(CursorHandle::Dictionary)
+        } else {
+            Py::new(py, Cursor { core }).map(CursorHandle::Tuple)
         }
     }
     fn settings(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Settings>> {
@@ -389,8 +458,12 @@ impl Cursor {
 }
 macro_rules! cursor_api {
     ($(($name:ident,$set:ident,$doc:literal)),* $(,)?) => {
+        cursor_api!(@impl Cursor; $(($name,$set,$doc)),*);
+        cursor_api!(@impl DictCursor; $(($name,$set,$doc)),*);
+    };
+    (@impl $class:ident; $(($name:ident,$set:ident,$doc:literal)),* $(,)?) => {
         #[pymethods]
-        impl Cursor {
+        impl $class {
             /// Project values through Connection.escape without executing SQL
             /// or changing this Cursor, even after Cursor or Connection close.
             /// many and itemize must be exact bool; returned fragments are str.

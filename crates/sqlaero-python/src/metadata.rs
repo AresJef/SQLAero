@@ -134,6 +134,13 @@ fn text_bytes(value: &Option<Arc<NativeText>>) -> &[u8] {
 }
 
 impl Snapshot {
+    /// Share exactly the same lazily prepared key strings as Columns.keys.
+    /// Call only when an actual dictionary row will be materialized.
+    pub(crate) fn key_tuple<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        self.value(py, usize::MAX, Attr::Keys)?
+            .cast_into()
+            .map_err(Into::into)
+    }
     /// Reuse only a previously prepared unique key for optional failure detail.
     /// This never prepares all keys or creates a Columns/ColumnInfo object.
     pub(crate) fn diagnostic_key(&self, py: Python<'_>, index: usize) -> Option<String> {
@@ -514,10 +521,7 @@ impl Columns {
     /// or source labels. Dots are access labels, not reversible SQL paths.
     #[getter]
     fn keys<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
-        self.snapshot
-            .value(py, usize::MAX, Attr::Keys)?
-            .cast_into()
-            .map_err(Into::into)
+        self.snapshot.key_tuple(py)
     }
     fn __getitem__<'py>(
         &self,

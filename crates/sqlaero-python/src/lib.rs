@@ -432,6 +432,7 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<tls_info::TlsCertificate>()?;
     module.add_class::<connection::Connection>()?;
     module.add_class::<cursor::Cursor>()?;
+    module.add_class::<cursor::DictCursor>()?;
     module.add_class::<transaction::Transaction>()?;
     module.add_class::<retry::RetryRule>()?;
     module.add_class::<retry::Retry>()?;

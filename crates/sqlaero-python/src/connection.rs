@@ -701,18 +701,24 @@ impl Connection {
         })()
         .map_err(|error| errors::at(py, error, stage))
     }
-    pub(crate) fn selector(py: Python<'_>, selector: Option<&Bound<'_, PyAny>>) -> PyResult<()> {
-        if selector.is_some_and(|value| {
-            !value.is_none()
-                && !value.is(py.get_type::<Cursor>())
-                && !value.is(py.get_type::<PyTuple>())
-        }) {
+    pub(crate) fn selector(py: Python<'_>, selector: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
+        let dictionary = selector.is_some_and(|value| {
+            value.is(py.get_type::<crate::cursor::DictCursor>())
+                || value.is(py.get_type::<pyo3::types::PyDict>())
+        });
+        if !dictionary
+            && selector.is_some_and(|value| {
+                !value.is_none()
+                    && !value.is(py.get_type::<Cursor>())
+                    && !value.is(py.get_type::<PyTuple>())
+            })
+        {
             return Err(crate::errors::builtin_message::<PyTypeError>(
                 py,
-                "cursor must be None, SQLAero Cursor, or tuple; arbitrary cursor classes and formats are not supported",
+                "cursor must be None, SQLAero Cursor/DictCursor, tuple, or dict; arbitrary cursor classes and formats are not supported",
             ));
         }
-        Ok(())
+        Ok(dictionary)
     }
 }
 macro_rules! connection_api {
@@ -744,11 +750,11 @@ macro_rules! connection_api {
             /// Create an independent buffered Cursor. Its decode defaults are
             /// copied now; later Connection property assignments do not change it.
             #[pyo3(signature=(cursor=None))]
-            fn cursor(slf:PyRef<'_,Self>, py:Python<'_>, cursor:Option<&Bound<'_,PyAny>>) -> PyResult<Cursor> {
-                slf.open(py)?; Self::selector(py,cursor)?;
+            fn cursor(slf:PyRef<'_,Self>, py:Python<'_>, cursor:Option<&Bound<'_,PyAny>>) -> PyResult<Py<PyAny>> {
+                slf.open(py)?; let dictionary=Self::selector(py,cursor)?;
                 let options=slf.runtime(py)?.options;
                 let types=slf.types.clone_ref(py);
-                Ok(Cursor::new(slf.into(), types, options))
+                crate::cursor::CursorCore::create(py,slf.into(),types,options,dictionary).map(|value|value.object(py))
             }
             /// Enter a managed transaction using a new Cursor of the selected
             /// built-in format. Existing server transactions or managed scopes
@@ -756,9 +762,9 @@ macro_rules! connection_api {
             /// body remain allowed; only the current transaction is ended on exit.
             #[pyo3(signature=(cursor=None))]
             fn transaction(slf:PyRef<'_,Self>,py:Python<'_>,cursor:Option<&Bound<'_,PyAny>>)->PyResult<crate::transaction::Transaction> {
-                slf.open(py)?;Self::selector(py,cursor)?;
+                slf.open(py)?;let dictionary=Self::selector(py,cursor)?;
                 let scope=Arc::clone(&slf.transaction_scope);
-                Ok(crate::transaction::Transaction::new(slf.into(),scope))
+                Ok(crate::transaction::Transaction::new(slf.into(),scope,dictionary))
             }
             /// Permanently retire this connection. COM_QUIT is sent without a response.
             /// Only write_timeout and operation_timeout apply; read_timeout is not used.

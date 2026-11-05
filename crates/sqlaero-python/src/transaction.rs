@@ -2,7 +2,7 @@
 
 use crate::{
     connection::{Connection, ControlAttempt},
-    cursor::Cursor,
+    cursor::{CursorCore, CursorHandle},
     errors, input,
 };
 use pyo3::prelude::*;
@@ -25,7 +25,8 @@ pub(crate) struct Transaction {
     entered: AtomicBool,
     finished: AtomicBool,
     active: AtomicBool,
-    cursor: Mutex<Option<Py<Cursor>>>,
+    cursor: Mutex<Option<CursorHandle>>,
+    dictionary: bool,
 }
 struct Operation<'a>(&'a AtomicBool);
 impl Drop for Operation<'_> {
@@ -34,7 +35,11 @@ impl Drop for Operation<'_> {
     }
 }
 impl Transaction {
-    pub(crate) fn new(connection: Py<Connection>, scope: Arc<AtomicBool>) -> Self {
+    pub(crate) fn new(
+        connection: Py<Connection>,
+        scope: Arc<AtomicBool>,
+        dictionary: bool,
+    ) -> Self {
         Self {
             connection,
             scope,
@@ -43,6 +48,7 @@ impl Transaction {
             finished: AtomicBool::new(false),
             active: AtomicBool::new(false),
             cursor: Mutex::new(None),
+            dictionary,
         }
     }
     fn operation(&self, py: Python<'_>) -> PyResult<Operation<'_>> {
@@ -121,7 +127,7 @@ impl Drop for Transaction {
 }
 #[pymethods]
 impl Transaction {
-    fn __enter__(&self, py: Python<'_>) -> PyResult<Py<Cursor>> {
+    fn __enter__(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let _operation = self.operation(py)?;
         if self.entered.swap(true, Ordering::AcqRel) {
             return Err(errors::client(
@@ -204,13 +210,12 @@ impl Transaction {
                     &mut begin,
                 )?;
                 let options = connection.runtime(py)?.options;
-                let cursor = Py::new(
+                let cursor = CursorCore::create(
                     py,
-                    Cursor::new(
-                        self.connection.clone_ref(py),
-                        connection.types.clone_ref(py),
-                        options,
-                    ),
+                    self.connection.clone_ref(py),
+                    connection.types.clone_ref(py),
+                    options,
+                    self.dictionary,
                 )?;
                 input::check(py, &budget)?;
                 *self.cursor.lock().map_err(|_| {
@@ -220,7 +225,7 @@ impl Transaction {
                         "transaction cursor ownership is unavailable",
                     )
                 })? = Some(cursor.clone_ref(py));
-                Ok(cursor)
+                Ok(cursor.object(py))
             })();
             if let Err(error) = &entered {
                 if begin.confirmed {
@@ -335,11 +340,11 @@ impl Transaction {
             }
         }
         if let Some(cursor) = cursor
-            && let Err(error) = cursor.borrow(py).close(py)
+            && let Err(error) = cursor.close(py)
         {
             // This mandatory cleanup differs from an ordinary busy close:
             // the completed context must not leave its Cursor reusable.
-            cursor.borrow(py).retire();
+            cursor.retire(py);
             if unattempted.is_some() {
                 cleanup_detail = format!(" Cleanup also failed: {error}.");
             }

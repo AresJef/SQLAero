@@ -79,12 +79,16 @@ pub(crate) struct Reader {
     state: Mutex<State>,
     lifecycle: Lifecycle,
     types: Py<ScalarTypes>,
+    dictionary: bool,
 }
 impl Reader {
     pub(crate) fn is_closed(&self) -> bool {
         self.lifecycle.is_retired()
     }
     pub(crate) fn empty(types: Py<ScalarTypes>) -> Self {
+        Self::with_format(types, false)
+    }
+    pub(crate) fn with_format(types: Py<ScalarTypes>, dictionary: bool) -> Self {
         Self {
             state: Mutex::new(State {
                 data: None,
@@ -97,6 +101,7 @@ impl Reader {
             }),
             lifecycle: Lifecycle::default(),
             types,
+            dictionary,
         }
     }
     pub(crate) fn operation(&self, py: Python<'_>) -> PyResult<Operation<'_>> {
@@ -335,7 +340,11 @@ impl Reader {
     /// Decode one row using the same checked field converter for both
     /// strategies. Const specialization removes per-row strategy branches.
     #[inline(always)]
-    fn row_tuple<'py, const DIRECT: bool>(
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one shared field loop preserves atomic position and common diagnostics for both final row formats"
+    )]
+    fn row_tuple<'py, const DIRECT: bool, const DICT: bool>(
         &self,
         py: Python<'py>,
         data: &ReadData,
@@ -343,6 +352,7 @@ impl Reader {
         row_index: usize,
         start: usize,
         progress: &mut FetchProgress,
+        keys: Option<&Bound<'py, PyTuple>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let fields = data.rows.row(row_index).ok_or_else(|| {
             errors::client(
@@ -395,7 +405,20 @@ impl Reader {
             progress.field(py, bytes)?;
             Ok(value)
         };
-        let row = if DIRECT {
+        let row = if DICT {
+            let keys = keys.ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "dictionary row keys are unavailable",
+                )
+            })?;
+            let row = errors::dictionary(py)?;
+            for (index, (cell, plan)) in fields.iter().zip(data.plans.iter()).enumerate() {
+                row.set_item(keys.get_item(index)?, decode(index, cell, *plan)?)?;
+            }
+            row.into_any()
+        } else if DIRECT {
             let mut values = fields
                 .iter()
                 .zip(data.plans.iter())
@@ -446,27 +469,44 @@ impl Reader {
     /// Materialize the final result without changing the caller's position.
     /// The buffered specialization preserves the old wide-row ownership graph;
     /// the direct specialization hides unfinished tuples across callbacks.
-    fn materialize<'py, const DIRECT: bool>(
+    fn materialize<'py, const DIRECT: bool, const DICT: bool>(
         &self,
         py: Python<'py>,
         data: &ReadData,
         types: &ScalarTypes,
         range: std::ops::Range<usize>,
         one: bool,
+        keys: Option<&Bound<'py, PyTuple>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let start = range.start;
         let mut progress = FetchProgress::default();
         if DIRECT {
             if one {
-                self.row_tuple::<true>(py, data, types, start, start, &mut progress)
+                self.row_tuple::<true, DICT>(py, data, types, start, start, &mut progress, keys)
             } else if range.len() == 1 {
-                let row = self.row_tuple::<true>(py, data, types, start, start, &mut progress)?;
+                let row = self.row_tuple::<true, DICT>(
+                    py,
+                    data,
+                    types,
+                    start,
+                    start,
+                    &mut progress,
+                    keys,
+                )?;
                 output::tuple_from_ready(py, [row]).map(Bound::into_any)
             } else {
                 output::tuple_from_values(
                     py,
                     range.map(|index| {
-                        self.row_tuple::<true>(py, data, types, index, start, &mut progress)
+                        self.row_tuple::<true, DICT>(
+                            py,
+                            data,
+                            types,
+                            index,
+                            start,
+                            &mut progress,
+                            keys,
+                        )
                     }),
                 )
                 .map(Bound::into_any)
@@ -478,8 +518,16 @@ impl Reader {
                 .map_err(|_| errors::memory_error(py))?;
             for index in range {
                 result.push(
-                    self.row_tuple::<false>(py, data, types, index, start, &mut progress)?
-                        .unbind(),
+                    self.row_tuple::<false, DICT>(
+                        py,
+                        data,
+                        types,
+                        index,
+                        start,
+                        &mut progress,
+                        keys,
+                    )?
+                    .unbind(),
                 );
             }
             if one {
@@ -541,10 +589,21 @@ impl Reader {
         let types = self.types.borrow(py);
         // Select a monomorphized strategy once per fetch. Wide rows keep
         // the original field and result buffers, outside the narrow fast path.
-        let output = if data.plans.len() <= 4 {
-            self.materialize::<true>(py, &data, &types, start..end, one)?
+        let output = if self.dictionary {
+            let metadata = { self.lock(py)?.metadata.clone() };
+            let metadata = metadata.ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "dictionary result metadata is unavailable",
+                )
+            })?;
+            let keys = metadata.key_tuple(py)?;
+            self.materialize::<true, true>(py, &data, &types, start..end, one, Some(&keys))?
+        } else if data.plans.len() <= 4 {
+            self.materialize::<true, false>(py, &data, &types, start..end, one, None)?
         } else {
-            self.materialize::<false>(py, &data, &types, start..end, one)?
+            self.materialize::<false, false>(py, &data, &types, start..end, one, None)?
         };
         py.check_signals()?;
         // Buffered navigation retains this current set's native rows at EOF.
