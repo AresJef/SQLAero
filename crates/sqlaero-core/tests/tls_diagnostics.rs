@@ -123,3 +123,71 @@ fn nonconforming_negative_serial_is_not_silently_made_positive() {
         Sign::Minus
     );
 }
+
+#[test]
+fn malformed_signature_oid_is_local_and_never_hides_original_der_or_fingerprint() {
+    let mut bytes = der(RICH);
+    let (_, parsed) = X509CertificateParser::new()
+        .with_deep_parse_extensions(false)
+        .parse(&bytes)
+        .unwrap();
+    let oid = parsed.signature_algorithm.algorithm.as_bytes();
+    let last = oid.as_ptr() as usize - bytes.as_ptr() as usize + oid.len() - 1;
+    bytes[last] = 0x80;
+    let certificate = Certificate::new(bytes.clone().into());
+    let fingerprint = *certificate.fingerprint();
+    let details = certificate.details().unwrap();
+    assert!(details.signature_algorithm_oid.is_err());
+    assert_eq!(
+        details.public_key_algorithm_oid.as_ref().unwrap(),
+        "1.2.840.113549.1.1.1"
+    );
+    assert!(details.subject.is_ok());
+    assert_eq!(details.dns_names.as_ref().unwrap().len(), 3);
+    assert_eq!(certificate.der(), bytes);
+    assert_eq!(*certificate.fingerprint(), fingerprint);
+    assert!(
+        certificate
+            .pem()
+            .unwrap()
+            .starts_with("-----BEGIN CERTIFICATE-----\n")
+    );
+}
+
+#[test]
+fn malformed_ip_encoding_does_not_hide_ordered_duplicate_dns_names() {
+    let mut bytes = der(RICH);
+    let (_, parsed) = X509CertificateParser::new()
+        .with_deep_parse_extensions(false)
+        .parse(&bytes)
+        .unwrap();
+    let san = parsed
+        .get_extension_unique(&OID_X509_EXT_SUBJECT_ALT_NAME)
+        .unwrap()
+        .unwrap();
+    let ip = [0x87, 0x04, 192, 0, 2, 10];
+    let offset = san.value.as_ptr() as usize - bytes.as_ptr() as usize
+        + san
+            .value
+            .windows(ip.len())
+            .position(|value| value == ip)
+            .unwrap();
+    // Keep the SAN envelope intact: shorten this IP to an invalid two-byte
+    // address and use its two remaining bytes as an empty RFC822Name. Neither
+    // the enclosing sequence length nor any DNS entry is malformed.
+    bytes[offset + 1] = 2;
+    bytes[offset + 4] = 0x81;
+    bytes[offset + 5] = 0;
+    let certificate = Certificate::new(bytes.into());
+    let details = certificate.details().unwrap();
+    assert!(details.ip_addresses.is_err());
+    assert_eq!(
+        details.dns_names.as_ref().unwrap(),
+        &[
+            "db.example.invalid",
+            "*.internal.invalid",
+            "db.example.invalid"
+        ]
+    );
+    assert!(details.subject.is_ok());
+}
