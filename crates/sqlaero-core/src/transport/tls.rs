@@ -7,6 +7,8 @@ use rustls_pki_types::pem::PemObject;
 use rustls_pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use std::sync::Arc;
 
+pub mod materials;
+
 // Keep native platform trust objects in this transport boundary. The supported
 // Apple wrapper owns its certificates and implements Send + Sync upstream.
 #[cfg(target_vendor = "apple")]
@@ -77,6 +79,7 @@ fn system_ca_policy() -> Result<Policy, ConfigError> {
         Ok(Policy::Explicit {
             roots,
             check_name: false,
+            include_system: false,
         })
     }
 }
@@ -193,14 +196,77 @@ pub enum Mode {
     VerifyIdentity,
 }
 
-/// The supported lower TLS protocol bound, parsed once from configuration.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum MinimumVersion {
-    /// Permit TLS 1.2 and 1.3, preferring the highest mutually supported version.
+/// The supported TLS protocol version, parsed once from configuration.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Version {
+    /// TLS protocol version 1.2; the default configured minimum.
     #[default]
     Tls12,
-    /// Permit TLS 1.3 only.
+    /// TLS protocol version 1.3.
     Tls13,
+}
+
+impl Version {
+    /// The normalized public spelling of this configured protocol version.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Tls12 => "TLSv1.2",
+            Self::Tls13 => "TLSv1.3",
+        }
+    }
+}
+
+/// How explicit CA material relates to native system trust.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CaMode {
+    /// Explicit roots replace system roots; no material means system trust.
+    #[default]
+    Replace,
+    /// Retain native system trust and add the explicit roots.
+    Append,
+}
+
+impl std::str::FromStr for CaMode {
+    type Err = ConfigError;
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let value = value.trim_matches(|c: char| c.is_ascii_whitespace());
+        if value.eq_ignore_ascii_case("replace") {
+            Ok(Self::Replace)
+        } else if value.eq_ignore_ascii_case("append") {
+            Ok(Self::Append)
+        } else {
+            Err(ConfigError::Invalid("ca_mode must be replace or append"))
+        }
+    }
+}
+
+fn protocol_versions(
+    minimum: Version,
+    maximum: Option<Version>,
+) -> Result<&'static [&'static rustls::SupportedProtocolVersion], ConfigError> {
+    static TLS12: [&rustls::SupportedProtocolVersion; 1] = [&rustls::version::TLS12];
+    static TLS13: [&rustls::SupportedProtocolVersion; 1] = [&rustls::version::TLS13];
+    static BOTH: [&rustls::SupportedProtocolVersion; 2] =
+        [&rustls::version::TLS13, &rustls::version::TLS12];
+    if maximum.is_some_and(|maximum| maximum < minimum) {
+        return Err(ConfigError::Invalid(
+            "min_tls_version exceeds max_tls_version",
+        ));
+    }
+    Ok(match (minimum, maximum) {
+        (Version::Tls12, Some(Version::Tls12)) => &TLS12,
+        (Version::Tls12, _) => &BOTH,
+        (Version::Tls13, _) => &TLS13,
+    })
+}
+
+/// Validate the configured range without enabling TLS or loading trust.
+///
+/// # Errors
+/// Returns an invalid configuration when the minimum exceeds the maximum.
+pub fn validate_range(minimum: Version, maximum: Option<Version>) -> Result<(), ConfigError> {
+    protocol_versions(minimum, maximum).map(|_| ())
 }
 
 /// A TLS configuration failure, separate from a peer's later handshake error.
@@ -234,13 +300,13 @@ impl std::str::FromStr for Mode {
     }
 }
 
-impl std::str::FromStr for MinimumVersion {
+impl std::str::FromStr for Version {
     type Err = ConfigError;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
         let value = value.trim_matches(|c: char| c.is_ascii_whitespace());
         if !value.is_ascii() {
             return Err(ConfigError::Invalid(
-                "min_tls_version must be TLS 1.2 or TLS 1.3",
+                "TLS version must be TLS 1.2 or TLS 1.3",
             ));
         }
         let value = if value
@@ -260,26 +326,29 @@ impl std::str::FromStr for MinimumVersion {
             "1.2" => Ok(Self::Tls12),
             "1.3" => Ok(Self::Tls13),
             _ => Err(ConfigError::Invalid(
-                "min_tls_version must be TLS 1.2 or TLS 1.3",
+                "TLS version must be TLS 1.2 or TLS 1.3",
             )),
         }
     }
 }
 
 /// Build one immutable TLS client configuration from prepared materials.
-/// Explicit roots replace the system store. REQUIRED skips chain/name trust
-/// only; all modes still verify the TLS handshake's cryptographic signatures.
+/// Explicit roots replace the system store unless append is selected. REQUIRED
+/// skips chain/name trust only; all modes verify handshake signatures.
 ///
 /// # Errors
 /// Returns invalid-combination, trust-material or provider failures. DISABLED
 /// accepts no roots or client signing identity and returns None.
 pub fn client_config(
     mode: Mode,
-    minimum: MinimumVersion,
+    minimum: Version,
+    maximum: Option<Version>,
+    ca_mode: CaMode,
     roots: Option<Vec<CertificateDer<'static>>>,
     identity: Option<Arc<CertifiedKey>>,
 ) -> Result<Option<Arc<rustls::ClientConfig>>, ConfigError> {
     use rustls::client::danger::ServerCertVerifier;
+    let versions = protocol_versions(minimum, maximum)?;
     if mode == Mode::Disabled {
         if roots.is_some() || identity.is_some() {
             return Err(ConfigError::Invalid(
@@ -289,7 +358,9 @@ pub fn client_config(
         return Ok(None);
     }
     if mode == Mode::Required && roots.is_some() {
-        return Err(ConfigError::Invalid("REQUIRED does not accept ca_file"));
+        return Err(ConfigError::Invalid(
+            "REQUIRED does not accept custom CA material",
+        ));
     }
     let provider = provider();
     let verifier: Arc<dyn ServerCertVerifier> = match (mode, roots) {
@@ -306,20 +377,13 @@ pub fn client_config(
         }),
         (_, Some(certificates)) => Arc::new(PolicyVerifier {
             provider: Arc::clone(&provider),
-            policy: Policy::Explicit {
-                roots: prepare_anchors(certificates)?,
-                check_name: mode == Mode::VerifyIdentity,
-            },
+            policy: explicit_policy(certificates, mode == Mode::VerifyIdentity, ca_mode)?,
         }),
         _ => {
             return Err(ConfigError::Invalid(
                 "invalid TLS mode/material combination",
             ));
         }
-    };
-    let versions = match minimum {
-        MinimumVersion::Tls12 => &[&rustls::version::TLS13, &rustls::version::TLS12][..],
-        MinimumVersion::Tls13 => &[&rustls::version::TLS13][..],
     };
     let builder = rustls::ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(versions)?
@@ -333,12 +397,42 @@ pub fn client_config(
     Ok(Some(Arc::new(config)))
 }
 
+fn explicit_policy(
+    certificates: Vec<CertificateDer<'static>>,
+    check_name: bool,
+    ca_mode: CaMode,
+) -> Result<Policy, ConfigError> {
+    let roots = prepare_anchors(certificates)?;
+    #[cfg(not(any(target_vendor = "apple", windows)))]
+    let roots = if ca_mode == CaMode::Append {
+        let loaded = rustls_native_certs::load_native_certs();
+        let mut system = rustls::RootCertStore::empty();
+        system.add_parsable_certificates(loaded.certs);
+        if system.is_empty() {
+            return Err(ConfigError::Invalid(
+                "ca_mode append requires usable system trust anchors; the system trust source is unavailable",
+            ));
+        }
+        let mut roots = roots;
+        roots.extend(system.roots);
+        roots
+    } else {
+        roots
+    };
+    Ok(Policy::Explicit {
+        roots,
+        check_name,
+        include_system: ca_mode == CaMode::Append,
+    })
+}
+
 #[derive(Debug)]
 enum Policy {
     Required,
     Explicit {
         roots: PreparedRoots,
         check_name: bool,
+        include_system: bool,
     },
     #[cfg(any(target_vendor = "apple", windows))]
     SystemCa,
@@ -361,19 +455,24 @@ impl rustls::client::danger::ServerCertVerifier for PolicyVerifier {
     ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
         match &self.policy {
             Policy::Required => (),
-            Policy::Explicit { roots, check_name } => {
+            Policy::Explicit {
+                roots,
+                check_name,
+                include_system,
+            } => {
                 verify_platform_trust(
                     end,
                     intermediates,
                     check_name.then_some(name),
                     Some(roots),
+                    *include_system,
                     ocsp,
                     now,
                 )?;
             }
             #[cfg(any(target_vendor = "apple", windows))]
             Policy::SystemCa => {
-                verify_platform_trust(end, intermediates, None, None, ocsp, now)?;
+                verify_platform_trust(end, intermediates, None, None, true, ocsp, now)?;
             }
         }
         Ok(rustls::client::danger::ServerCertVerified::assertion())
@@ -417,6 +516,7 @@ fn verify_platform_trust(
     intermediates: &[CertificateDer<'_>],
     name: Option<&rustls_pki_types::ServerName<'_>>,
     anchors: Option<&PreparedRoots>,
+    include_system: bool,
     ocsp: &[u8],
     now: rustls_pki_types::UnixTime,
 ) -> Result<(), rustls::Error> {
@@ -442,10 +542,10 @@ fn verify_platform_trust(
         trust
             .set_anchor_certificates(anchors)
             .map_err(|error| rustls::Error::General(error.to_string()))?;
-        // The explicit bundle replaces system roots without replacing the
-        // operating system's SSL policy, including applicable revocation rules.
+        // Root-source composition does not replace the native SSL policy,
+        // including its applicable revocation rules.
         trust
-            .set_trust_anchor_certificates_only(true)
+            .set_trust_anchor_certificates_only(!include_system)
             .map_err(|error| rustls::Error::General(error.to_string()))?;
     }
     trust
@@ -470,6 +570,7 @@ fn verify_platform_trust(
     intermediates: &[CertificateDer<'_>],
     name: Option<&rustls_pki_types::ServerName<'_>>,
     anchors: Option<&PreparedRoots>,
+    _include_system: bool,
     _ocsp: &[u8],
     now: rustls_pki_types::UnixTime,
 ) -> Result<(), rustls::Error> {
@@ -496,6 +597,7 @@ fn verify_platform_trust(
     intermediates: &[CertificateDer<'_>],
     name: Option<&rustls_pki_types::ServerName<'_>>,
     anchors: Option<&PreparedRoots>,
+    include_system: bool,
     ocsp: &[u8],
     now: rustls_pki_types::UnixTime,
 ) -> Result<(), rustls::Error> {
@@ -504,6 +606,7 @@ fn verify_platform_trust(
         intermediates,
         name,
         anchors.map(Vec::as_slice),
+        include_system,
         ocsp,
         now,
     )
@@ -512,6 +615,70 @@ fn verify_platform_trust(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn version_bounds_validate_even_when_tls_is_disabled() {
+        assert!(
+            client_config(
+                Mode::Disabled,
+                Version::Tls13,
+                Some(Version::Tls12),
+                CaMode::Replace,
+                None,
+                None,
+            )
+            .is_err()
+        );
+        assert!(
+            client_config(
+                Mode::Disabled,
+                Version::Tls12,
+                Some(Version::Tls13),
+                CaMode::Append,
+                None,
+                None,
+            )
+            .unwrap()
+            .is_none()
+        );
+        for (minimum, maximum, expected) in [
+            (
+                Version::Tls12,
+                None,
+                vec![
+                    rustls::ProtocolVersion::TLSv1_3,
+                    rustls::ProtocolVersion::TLSv1_2,
+                ],
+            ),
+            (
+                Version::Tls12,
+                Some(Version::Tls12),
+                vec![rustls::ProtocolVersion::TLSv1_2],
+            ),
+            (
+                Version::Tls13,
+                Some(Version::Tls13),
+                vec![rustls::ProtocolVersion::TLSv1_3],
+            ),
+        ] {
+            assert_eq!(
+                protocol_versions(minimum, maximum)
+                    .unwrap()
+                    .iter()
+                    .map(|v| v.version)
+                    .collect::<Vec<_>>(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn ca_policy_tokens_are_native_and_strict() {
+        assert_eq!(" APPEND\t".parse::<CaMode>().unwrap(), CaMode::Append);
+        assert_eq!("replace".parse::<CaMode>().unwrap(), CaMode::Replace);
+        assert!("add".parse::<CaMode>().is_err());
+        assert!("\u{a0}append".parse::<CaMode>().is_err());
+    }
 
     #[test]
     #[ignore = "requires the owned MySQL fixture certificate material"]
@@ -533,12 +700,13 @@ mod tests {
             policy: Policy::Explicit {
                 roots: prepare_anchors(ca.clone()).unwrap(),
                 check_name: true,
+                include_system: false,
             },
         };
+        let verification = identity.verify_server_cert(&chain[0], &[], &name, &[], now);
         assert!(
-            identity
-                .verify_server_cert(&chain[0], &[], &name, &[], now)
-                .is_ok()
+            verification.is_ok(),
+            "native identity verification: {verification:?}"
         );
         let absolute = rustls_pki_types::ServerName::try_from("localhost.").unwrap();
         assert!(
@@ -569,6 +737,7 @@ mod tests {
             policy: Policy::Explicit {
                 roots: prepare_anchors(ca).unwrap(),
                 check_name: false,
+                include_system: false,
             },
         };
         assert!(
@@ -581,6 +750,7 @@ mod tests {
             policy: Policy::Explicit {
                 roots: prepare_anchors(client).unwrap(),
                 check_name: false,
+                include_system: false,
             },
         };
         assert!(
@@ -597,13 +767,10 @@ mod tests {
             Mode::VerifyIdentity
         );
         for text in ["TLS 1.3", "TLSv1.3", "tlsv\t1.3", "1.3"] {
-            assert_eq!(
-                text.parse::<MinimumVersion>().unwrap(),
-                MinimumVersion::Tls13
-            );
+            assert_eq!(text.parse::<Version>().unwrap(), Version::Tls13);
         }
         for text in ["TLS 1 .3", "TLS1.1", "1.4", "TLS\u{a0}1.3"] {
-            assert!(text.parse::<MinimumVersion>().is_err());
+            assert!(text.parse::<Version>().is_err());
         }
         assert!("PREFERRED".parse::<Mode>().is_err());
     }

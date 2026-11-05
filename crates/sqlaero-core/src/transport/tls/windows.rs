@@ -19,12 +19,13 @@ use windows_sys::Win32::Security::Cryptography::{
     CERT_CHAIN_POLICY_SSL, CERT_CHAIN_POLICY_STATUS, CERT_CHAIN_REVOCATION_ACCUMULATIVE_TIMEOUT,
     CERT_CHAIN_REVOCATION_CHECK_END_CERT, CERT_CONTEXT, CERT_OCSP_RESPONSE_PROP_ID,
     CERT_SET_PROPERTY_IGNORE_PERSIST_ERROR_FLAG, CERT_STORE_ADD_ALWAYS,
-    CERT_STORE_DEFER_CLOSE_UNTIL_LAST_FREE_FLAG, CERT_STORE_PROV_MEMORY, CRYPT_INTEGER_BLOB,
-    CertAddEncodedCertificateToStore, CertCloseStore, CertCreateCertificateChainEngine,
-    CertFreeCertificateChain, CertFreeCertificateChainEngine, CertFreeCertificateContext,
-    CertGetCertificateChain, CertOpenStore, CertSetCertificateContextProperty,
-    CertVerifyCertificateChainPolicy, HCERTCHAINENGINE, HCERTSTORE, HTTPSPolicyCallbackData,
-    USAGE_MATCH_TYPE_AND, X509_ASN_ENCODING,
+    CERT_STORE_DEFER_CLOSE_UNTIL_LAST_FREE_FLAG, CERT_STORE_PROV_MEMORY,
+    CERT_TRUST_IS_OFFLINE_REVOCATION, CERT_TRUST_IS_PARTIAL_CHAIN, CERT_TRUST_IS_UNTRUSTED_ROOT,
+    CERT_TRUST_REVOCATION_STATUS_UNKNOWN, CRYPT_INTEGER_BLOB, CertAddEncodedCertificateToStore,
+    CertCloseStore, CertCreateCertificateChainEngine, CertFreeCertificateChain,
+    CertFreeCertificateChainEngine, CertFreeCertificateContext, CertGetCertificateChain,
+    CertOpenStore, CertSetCertificateContextProperty, CertVerifyCertificateChainPolicy,
+    HCERTCHAINENGINE, HCERTSTORE, HTTPSPolicyCallbackData, USAGE_MATCH_TYPE_AND, X509_ASN_ENCODING,
 };
 
 struct Store(HCERTSTORE);
@@ -167,6 +168,7 @@ pub(super) fn verify(
     intermediates: &[CertificateDer<'_>],
     name: Option<&ServerName<'_>>,
     anchors: Option<&[CertificateDer<'static>]>,
+    include_system: bool,
     ocsp: &[u8],
     now: UnixTime,
 ) -> Result<(), Error> {
@@ -216,7 +218,6 @@ pub(super) fn verify(
     parameters.RequestedUsage.dwType = USAGE_MATCH_TYPE_AND;
     parameters.RequestedUsage.Usage.cUsageIdentifier = 1;
     parameters.RequestedUsage.Usage.rgpszUsageIdentifier = usages.as_mut_ptr();
-    let mut chain = ptr::null_mut();
     // Request the same leaf revocation work and soft-fail treatment for
     // unavailable revocation data as rustls-platform-verifier on Windows.
     // Positive revocation, wrong usage, invalid time and untrusted roots are
@@ -224,27 +225,49 @@ pub(super) fn verify(
     let flags = CERT_CHAIN_REVOCATION_CHECK_END_CERT
         | CERT_CHAIN_REVOCATION_ACCUMULATIVE_TIMEOUT
         | CERT_CHAIN_CACHE_END_CERT;
-    // SAFETY: All referenced stores, certificate, usage strings, time and
-    // parameters remain alive until verification ends. The output starts null.
-    if unsafe {
-        CertGetCertificateChain(
-            engine
-                .as_ref()
-                .map_or(ptr::null_mut(), |engine| engine.handle),
-            end.0,
-            &time,
-            certificates.0,
-            &parameters,
-            flags,
-            ptr::null(),
-            &mut chain,
-        )
-    } == 0
-        || chain.is_null()
-    {
-        return Err(system_error());
+    let build = |handle| {
+        let mut chain = ptr::null_mut();
+        // SAFETY: The owned certificate, stores and initialized parameters
+        // outlive this call. The output starts null and becomes one owned chain.
+        if unsafe {
+            CertGetCertificateChain(
+                handle,
+                end.0,
+                &time,
+                certificates.0,
+                &parameters,
+                flags,
+                ptr::null(),
+                &mut chain,
+            )
+        } == 0
+            || chain.is_null()
+        {
+            return Err(system_error());
+        }
+        Ok(Chain(chain))
+    };
+    let mut chain = build(if include_system {
+        ptr::null_mut()
+    } else {
+        engine
+            .as_ref()
+            .map_or(ptr::null_mut(), |engine| engine.handle)
+    })?;
+    if include_system && let Some(engine) = &engine {
+        // Select an extra-anchor chain only for an otherwise incomplete trust
+        // path. This mirrors the platform backend's chain-building strategy,
+        // not an OR between two completed policy decisions. Positive time,
+        // revocation, signature, usage or constraint failures never trigger it.
+        // SAFETY: `chain` owns the successful nonnull chain context.
+        let errors = unsafe { (*chain.0).TrustStatus.dwErrorStatus };
+        let missing = CERT_TRUST_IS_PARTIAL_CHAIN | CERT_TRUST_IS_UNTRUSTED_ROOT;
+        let retryable =
+            missing | CERT_TRUST_REVOCATION_STATUS_UNKNOWN | CERT_TRUST_IS_OFFLINE_REVOCATION;
+        if errors & missing != 0 && errors & !retryable == 0 {
+            chain = build(engine.handle)?;
+        }
     }
-    let chain = Chain(chain);
     let mut hostname: Option<Vec<u16>> = name.map(|name| {
         // Match the selected platform verifier's public DNS policy: the final
         // root label does not change the identity, but Crypt32 compares it
