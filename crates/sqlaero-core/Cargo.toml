@@ -12,6 +12,7 @@ mysql_common.workspace = true
 flate2.workspace = true
 zstd.workspace = true
 x509-parser.workspace = true
+asn1-rs.workspace = true
 pem-rfc7468.workspace = true
 mio.workspace = true
 socket2.workspace = true
