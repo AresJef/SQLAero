@@ -638,6 +638,64 @@ fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
     }
 }
 
+/// Encode unquoted native SQL source into the existing request, without a
+/// command byte or a Python string on the successful path. The caller owns
+/// execution and supplies one unchanged deadline for all initialization units.
+pub(crate) fn sql_utf8(
+    py: Python<'_>,
+    source: &str,
+    request: &mut Vec<u8>,
+    context: &Context,
+    budget: &IoBudget,
+) -> PyResult<()> {
+    check(py, budget)?;
+    let mut start = 0;
+    while start < source.len() {
+        let mut end = start.saturating_add(WORK_BYTES).min(source.len());
+        while !source.is_char_boundary(end) {
+            end -= 1;
+        }
+        context
+            .codec
+            .encode(&source[start..end], request, context.limit)
+            .map_err(|error| native_codec_error(py, source, context, error, start))?;
+        check(py, budget)?;
+        start = end;
+    }
+    Ok(())
+}
+
+/// Retain full original character coordinates for native UTF-8 sources. The
+/// exception's source object is allocated only when encoding actually fails.
+fn native_codec_error(
+    py: Python<'_>,
+    source: &str,
+    context: &Context,
+    error: CodecError,
+    base: usize,
+) -> PyErr {
+    match error {
+        CodecError::Encode { offset, point } => match PyString::from_bytes(py, source.as_bytes()) {
+            Ok(original) => codec_error(
+                &original,
+                source,
+                context.codec.name(),
+                CodecError::Encode {
+                    offset: base + offset,
+                    point,
+                },
+            ),
+            Err(error) => error,
+        },
+        CodecError::Wire(error) => errors::wire(py, error),
+        error => errors::client_format(
+            py,
+            ClientErrorCode::UnsupportedCharset,
+            format_args!("{error}"),
+        ),
+    }
+}
+
 /// Encode native UTF-8 content through the same codec and checked work windows.
 /// A Python string is constructed only if the codec needs its error payload.
 pub(crate) fn text_utf8(
@@ -648,42 +706,9 @@ pub(crate) fn text_utf8(
     budget: Option<&IoBudget>,
 ) -> PyResult<()> {
     let convert_error = |error: ValueError, start: usize| -> PyErr {
-        let ValueError::Encoding(error) = error else {
-            return sink::failure(py, error);
-        };
         match error {
-            CodecError::Encode { offset, point } => {
-                // SAFETY: source is valid UTF-8 and remains borrowed only for
-                // this synchronous call. Construction is checked and attached.
-                let original = unsafe {
-                    Bound::<PyAny>::from_owned_ptr_or_err(
-                        py,
-                        pyo3::ffi::PyUnicode_FromStringAndSize(
-                            source.as_ptr().cast(),
-                            source.len() as pyo3::ffi::Py_ssize_t,
-                        ),
-                    )
-                }
-                .and_then(|value| value.cast_into::<PyString>().map_err(Into::into));
-                match original {
-                    Ok(original) => codec_error(
-                        &original,
-                        source,
-                        context.codec.name(),
-                        CodecError::Encode {
-                            offset: start + offset,
-                            point,
-                        },
-                    ),
-                    Err(error) => error,
-                }
-            }
-            CodecError::Wire(error) => errors::wire(py, error),
-            error => errors::client_format(
-                py,
-                ClientErrorCode::UnsupportedCharset,
-                format_args!("{error}"),
-            ),
+            ValueError::Encoding(error) => native_codec_error(py, source, context, error, start),
+            error => sink::failure(py, error),
         }
     };
     if source.len() <= WORK_BYTES {

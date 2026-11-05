@@ -423,6 +423,7 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
         module
     )?)?;
     module.add_function(wrap_pyfunction!(input::control::_prepare_init_sql, module)?)?;
+    module.add_function(wrap_pyfunction!(input::control::_sql_utf8, module)?)?;
     module.add_function(wrap_pyfunction!(
         diagnostics::_warnings_from_packets,
         module

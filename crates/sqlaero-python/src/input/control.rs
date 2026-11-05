@@ -215,3 +215,34 @@ pub(crate) fn _prepare_init_sql(value: Option<&Bound<'_, PyAny>>) -> PyResult<Ve
         &IoBudget::new(TimeoutKind::Connect, None, None, None),
     )
 }
+
+/// Observe native SQL-source encoding independently of command execution.
+#[pyfunction]
+#[pyo3(signature = (source, *, charset=None, prefix=b"".as_slice(), limit=67108864, timeout_ns=None))]
+pub(crate) fn _sql_utf8<'py>(
+    py: Python<'py>,
+    source: &str,
+    charset: Option<&str>,
+    prefix: &[u8],
+    limit: usize,
+    timeout_ns: Option<u64>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let selected = sqlaero_core::charset::resolve(charset, None)
+        .map_err(|error| errors::builtin_message::<PyValueError>(py, error.to_string()))?;
+    let context = Context {
+        codec: Codec::new(selected.charset),
+        no_backslash_escapes: false,
+        utc_confirmed: true,
+        limit,
+    };
+    let mut request = Vec::new();
+    writer::append(&mut request, prefix, limit).map_err(|error| errors::wire(py, error))?;
+    let budget = IoBudget::new(
+        TimeoutKind::Operation,
+        timeout_ns.map(std::time::Duration::from_nanos),
+        None,
+        None,
+    );
+    super::sql_utf8(py, source, &mut request, &context, &budget)?;
+    Ok(PyBytes::new(py, &request))
+}

@@ -106,3 +106,26 @@ def test_control_long_values_keep_original_unicode_positions_and_work_checks() -
         request("x" * 300_000, timeout_ns=1)
     sql = "SELECT '" + "中" * 100_000 + "'"
     assert initialize([sql, "SELECT 2"]) == [sql, "SELECT 2"]
+
+
+def test_native_rust_sql_source_encoding_adds_no_quotes_or_command_and_preserves_prefix() -> None:
+    encode = getattr(_sqlaero, "_sql_utf8")
+    assert encode("SELECT '中' \\ %s %%") == "SELECT '中' \\ %s %%".encode()
+    assert encode("é'\\", charset="latin1", prefix=b"\x03") == b"\x03\xe9'\\"
+    assert encode("\\", charset="sjis") == b"\x81\x5f"
+    assert encode("", prefix=b"kept") == b"kept"
+
+
+def test_native_rust_sql_source_encoding_checks_complete_size_work_and_global_error_offset() -> None:
+    encode = getattr(_sqlaero, "_sql_utf8")
+    source = "中" * 100_000 + "😀"
+    with pytest.raises(UnicodeEncodeError) as failure:
+        encode(source, charset="utf8mb3")
+    assert failure.value.object == source and type(failure.value.object) is str
+    assert (failure.value.encoding, failure.value.start, failure.value.end) == ("utf8mb3", 100_000, 100_001)
+    assert encode("abc", prefix=b"\x03", limit=4) == b"\x03abc"
+    from sqlaero.errors import OperationalError, OperationalTimeoutError
+    with pytest.raises(OperationalError):
+        encode("abc", prefix=b"\x03", limit=3)
+    with pytest.raises(OperationalTimeoutError):
+        encode("x" * 300_000, timeout_ns=1)
