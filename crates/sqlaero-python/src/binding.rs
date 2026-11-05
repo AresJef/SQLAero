@@ -2,7 +2,7 @@
 
 use crate::errors;
 use crate::input::sequence::Sequence;
-use crate::input::source::{self, CellWriter, PreparedSource, Shape};
+use crate::input::source::{self, CellWriter, FragmentRole, PreparedSource, Shape};
 use crate::input::{ScalarTypes, check};
 use pyo3::prelude::*;
 use pyo3::types::PyString;
@@ -117,7 +117,7 @@ pub(crate) struct Planner<'types, 'py> {
     mode: PlanMode,
     merge: bool,
     prepared: Option<Prepared>,
-    pending: Option<(usize, Vec<u8>, ContextKey)>,
+    pending: Option<(usize, Vec<u8>, ContextKey, FragmentRole)>,
     source_end: usize,
     finished: bool,
 }
@@ -135,7 +135,7 @@ impl<'types, 'py> Planner<'types, 'py> {
         let rows = args
             .map(|args| Rows::new(args, many, itemize, types, budget))
             .transpose()?;
-        let merge = mode == PlanMode::Text && itemize && rows.as_ref().is_some_and(Rows::is_batch);
+        let merge = mode == PlanMode::Text && rows.as_ref().is_some_and(Rows::is_batch);
         Ok(Self {
             sql: sql.clone(),
             rows,
@@ -197,47 +197,74 @@ impl<'types, 'py> Planner<'types, 'py> {
             if let (Some(layout), Some(blocks)) = (&prepared.layout, &mut prepared.blocks) {
                 let mut fragment = Vec::new();
                 let mut end = start;
+                let mut ordinary = None;
                 loop {
                     let index;
-                    if let Some((saved, bytes, saved_key)) = self.pending.take() {
+                    let role;
+                    if let Some((saved, bytes, saved_key, saved_role)) = self.pending.take() {
                         index = saved;
                         fragment = bytes;
-                        if saved_key != key {
-                            rows.at(index, self.types, budget)?.bind_fragment(
+                        role = if saved_key != key {
+                            rows.at(index, self.types, budget)?.bind_repeated(
                                 &prepared.template,
                                 self.types,
                                 context,
                                 budget,
-                                layout.row.clone(),
+                                layout,
                                 &mut fragment,
-                            )?;
-                        }
+                            )?
+                        } else {
+                            saved_role
+                        };
                     } else {
                         index = rows.position();
                         let Some(row) = rows.next(self.types, budget)? else {
                             break;
                         };
-                        row.bind_fragment(
+                        role = row.bind_repeated(
                             &prepared.template,
                             self.types,
                             context,
                             budget,
-                            layout.row.clone(),
+                            layout,
                             &mut fragment,
                         )?;
+                    }
+                    if role != FragmentRole::Row {
+                        blocks
+                            .check_single(&fragment)
+                            .map_err(|error| errors::wire(py, error))?;
+                        if blocks.rows() != 0 {
+                            self.pending = Some((index, fragment, key, role));
+                        } else {
+                            ordinary = Some(
+                                blocks
+                                    .single(&fragment)
+                                    .map_err(|error| errors::wire(py, error))?,
+                            );
+                            end = if empty { 0 } else { index + 1 };
+                        }
+                        break;
                     }
                     if !blocks
                         .push(&fragment)
                         .map_err(|error| errors::wire(py, error))?
                     {
-                        self.pending = Some((index, fragment, key));
+                        self.pending = Some((index, fragment, key, role));
                         break;
                     }
                     end = if empty { 0 } else { index + 1 };
                 }
-                let Some(bytes) = blocks.take().map_err(|error| errors::wire(py, error))? else {
-                    self.finished = true;
-                    return Ok(None);
+                let bytes = match ordinary {
+                    Some(bytes) => bytes,
+                    None => {
+                        let Some(bytes) = blocks.take().map_err(|error| errors::wire(py, error))?
+                        else {
+                            self.finished = true;
+                            return Ok(None);
+                        };
+                        bytes
+                    }
                 };
                 (bytes, end)
             } else {
@@ -654,7 +681,7 @@ impl Row<'_, '_> {
         let mut output = Vec::new();
         writer::append(&mut output, &[3], context.limit)
             .map_err(|error| errors::wire(py, error))?;
-        self.fill(template, types, context, budget, 0..end, &mut output)?;
+        self.fill::<false>(template, types, context, budget, 0..end, &mut output)?;
         Ok(output)
     }
 
@@ -669,10 +696,30 @@ impl Row<'_, '_> {
         output: &mut Vec<u8>,
     ) -> PyResult<()> {
         output.clear();
-        self.fill(template, types, context, budget, range, output)
+        self.fill::<false>(template, types, context, budget, range, output)
+            .map(|_| ())
     }
 
-    fn fill(
+    /// Bind one repeated fragment and publish its writer-proven row role.
+    fn bind_repeated(
+        self,
+        template: &Template,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &IoBudget,
+        layout: &Layout,
+        output: &mut Vec<u8>,
+    ) -> PyResult<FragmentRole> {
+        output.clear();
+        if layout.whole_row {
+            self.fill::<true>(template, types, context, budget, layout.row.clone(), output)
+        } else {
+            self.fill::<false>(template, types, context, budget, layout.row.clone(), output)
+                .map(|_| FragmentRole::Row)
+        }
+    }
+
+    fn fill<const TRACK_ROLE: bool>(
         mut self,
         template: &Template,
         types: &ScalarTypes,
@@ -680,7 +727,7 @@ impl Row<'_, '_> {
         budget: &IoBudget,
         range: Range<usize>,
         output: &mut Vec<u8>,
-    ) -> PyResult<()> {
+    ) -> PyResult<FragmentRole> {
         let py = self.value.py();
         check(py, budget)?;
         let width = self.width();
@@ -741,6 +788,7 @@ impl Row<'_, '_> {
             }
         }
         let mut cursor = 0;
+        let mut role = FragmentRole::Scalar;
         for index in 0..width {
             let source = if let Some(row) = row {
                 row.row_item(index).inspect_err(|error| {
@@ -779,20 +827,20 @@ impl Row<'_, '_> {
                         (Shape::Table { .. }, None) => (0, 0),
                     };
                     if matches!((shape, source_row), (Shape::Table { .. }, None)) {
-                        visit.native_value(native.source.source(), output)
+                        visit
+                            .native_value(native.source.source(), output)
+                            .map(|()| FragmentRole::Row)
                     } else {
                         let positional =
                             !matches!((shape, source_row), (Shape::Vector { .. }, Some(_)));
                         if positional {
                             visit.push_index(py, index)?;
                         }
-                        let result = native.source.source().write_cell(
+                        let result = visit.native_cell::<TRACK_ROLE>(
+                            native.source.source(),
                             coordinates.0,
                             coordinates.1,
                             output,
-                            context,
-                            budget,
-                            &mut visit,
                         );
                         if result.is_ok() && positional {
                             visit.pop_index();
@@ -801,34 +849,48 @@ impl Row<'_, '_> {
                     }
                 } else if let Some(row) = source_row {
                     match shape {
-                        Shape::Vector { .. } => native
-                            .source
-                            .source()
-                            .write_cell(row, 0, output, context, budget, &mut visit),
-                        Shape::Table { columns, .. } => {
-                            visit.native_row(native.source.source(), row, columns, output)
+                        Shape::Vector { .. } => {
+                            visit.native_cell::<TRACK_ROLE>(native.source.source(), row, 0, output)
                         }
-                        Shape::Record { .. } => visit.native_value(native.source.source(), output),
+                        Shape::Table { columns, .. } => visit
+                            .native_row(native.source.source(), row, columns, output)
+                            .map(|()| FragmentRole::Row),
+                        Shape::Record { .. } => visit
+                            .native_value(native.source.source(), output)
+                            .map(|()| FragmentRole::Row),
                     }
                 } else {
-                    visit.native_value(native.source.source(), output)
+                    visit
+                        .native_value(native.source.source(), output)
+                        .map(|()| FragmentRole::Row)
                 }
             } else if let Some(sequence) = sequence.as_ref().filter(|_| !self.itemize) {
-                visit.sequence(sequence.sequence(), output, None)
+                visit
+                    .sequence(sequence.sequence(), output, None)
+                    .map(|()| FragmentRole::Row)
             } else {
-                visit.value(&source, output, row.map(|_| index))
+                if TRACK_ROLE {
+                    visit.value_role(&source, output, row.map(|_| index))
+                } else {
+                    visit
+                        .value(&source, output, row.map(|_| index))
+                        .map(|()| FragmentRole::Scalar)
+                }
             };
-            if let Err(error) = result {
-                errors::note_format(
-                    py,
-                    &error,
-                    format_args!(
-                        "while binding {}; current request was not sent",
-                        path_text(&visit.path)
-                    ),
-                );
-                return Err(error);
-            }
+            role = match result {
+                Ok(role) => role,
+                Err(error) => {
+                    errors::note_format(
+                        py,
+                        &error,
+                        format_args!(
+                            "while binding {}; current request was not sent",
+                            path_text(&visit.path)
+                        ),
+                    );
+                    return Err(error);
+                }
+            };
         }
         if template
             .append_range_until_slot(&range, &mut cursor, output, context.limit)
@@ -842,7 +904,7 @@ impl Row<'_, '_> {
             ));
         }
         check(py, budget)?;
-        Ok(())
+        Ok(role)
     }
 }
 
@@ -887,6 +949,22 @@ pub(crate) fn encode_value(
 }
 
 impl Visit<'_> {
+    fn native_cell<const TRACK_ROLE: bool>(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        row: usize,
+        column: usize,
+        output: &mut Vec<u8>,
+    ) -> PyResult<FragmentRole> {
+        if TRACK_ROLE {
+            source.write_role_cell(row, column, output, self.context, self.budget, self)
+        } else {
+            source
+                .write_cell(row, column, output, self.context, self.budget, self)
+                .map(|()| FragmentRole::Scalar)
+        }
+    }
+
     fn enter(&mut self, py: Python<'_>, identity: usize) -> PyResult<()> {
         if self.active_depth + self.native_depth >= 64 || self.active.contains(&identity) {
             return Err(errors::client_format(
@@ -914,6 +992,14 @@ impl Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<()> {
+        self.value_role(value, output, child).map(|_| ())
+    }
+    fn value_role(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<FragmentRole> {
         let py = value.py();
         self.work += 1;
         if self.work >= 16384 {
@@ -940,7 +1026,7 @@ impl Visit<'_> {
                 .types
                 .try_write(value, output, self.context, Some(self.budget))
             {
-                Ok(true) => return Ok(()),
+                Ok(true) => return Ok(FragmentRole::Scalar),
                 Err(error) => {
                     self.failed_value(value, child, &error);
                     return Err(error);
@@ -957,8 +1043,10 @@ impl Visit<'_> {
         };
         if let Some(sequence) = sequence {
             self.sequence(&sequence, output, child)
+                .map(|()| FragmentRole::Row)
         } else {
             self.native_or_unsupported(value, output, child)
+                .map(|()| FragmentRole::Row)
         }
     }
 
@@ -1186,6 +1274,15 @@ impl Visit<'_> {
 }
 
 impl CellWriter for Visit<'_> {
+    fn python_role(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<FragmentRole> {
+        self.value_role(value, output, child)
+    }
+
     fn native_python(
         &mut self,
         value: &Bound<'_, PyAny>,

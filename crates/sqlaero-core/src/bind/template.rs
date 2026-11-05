@@ -36,7 +36,7 @@ enum Piece {
 /// Fixed fragments borrow ranges of this same owned buffer; %% never triggers
 /// a second scan, and there is no copied SQL string for each parameter.
 pub struct Template {
-    source: Vec<u8>,
+    pub(crate) source: Vec<u8>,
     pieces: Vec<Piece>,
     slots: usize,
     pub(crate) merge_tokens: Option<Vec<super::batch::Token>>,
@@ -73,7 +73,7 @@ impl Template {
     pub fn prepare_merge(&mut self) -> Option<super::batch::Layout> {
         self.merge_tokens
             .take()
-            .and_then(|tokens| super::batch::recognize(&tokens))
+            .and_then(|tokens| super::batch::recognize(&tokens, &self.source))
     }
 
     /// Encoded source length used by range-based request assembly.

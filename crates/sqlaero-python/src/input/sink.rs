@@ -372,3 +372,110 @@ pub(crate) fn float(
 ) -> Result<(), ValueError> {
     output.write(ValueRef::Float(value), context)
 }
+
+/// Observe only explicit writer operations, never parse escaped SQL bytes.
+/// This destination is instantiated solely for a whole-row layout proof;
+/// ordinary text and native parameter hot paths keep their static sinks.
+pub(crate) struct RoleSink<'a> {
+    output: &'a mut Vec<u8>,
+    role: Option<super::source::FragmentRole>,
+}
+impl<'a> RoleSink<'a> {
+    pub(crate) fn new(output: &'a mut Vec<u8>) -> Self {
+        Self { output, role: None }
+    }
+    pub(crate) fn role(&self) -> super::source::FragmentRole {
+        self.role.unwrap_or(super::source::FragmentRole::Scalar)
+    }
+    fn observe(&mut self, role: super::source::FragmentRole) {
+        self.role.get_or_insert(role);
+    }
+    fn scalar(&mut self) {
+        self.observe(super::source::FragmentRole::Scalar);
+    }
+}
+impl Destination for RoleSink<'_> {
+    fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
+        self.scalar();
+        self.output.write(value, context)
+    }
+    fn text(
+        &mut self,
+        source: &Bound<'_, PyString>,
+        context: &Context,
+        budget: Option<&IoBudget>,
+    ) -> PyResult<()> {
+        self.scalar();
+        self.output.text(source, context, budget)
+    }
+    fn binary(
+        &mut self,
+        py: Python<'_>,
+        source: &[u8],
+        context: &Context,
+        budget: Option<&IoBudget>,
+    ) -> PyResult<()> {
+        self.scalar();
+        self.output.binary(py, source, context, budget)
+    }
+    fn text_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError> {
+        self.scalar();
+        self.output.text_start(length, context)
+    }
+    fn text_fragment(&mut self, text: &str, context: &Context) -> Result<(), ValueError> {
+        self.output.text_fragment(text, context)
+    }
+    fn text_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        self.output.text_end(context)
+    }
+    fn bytes_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError> {
+        self.scalar();
+        self.output.bytes_start(length, context)
+    }
+    fn bytes_fragment(&mut self, bytes: &[u8], context: &Context) -> Result<(), ValueError> {
+        self.output.bytes_fragment(bytes, context)
+    }
+    fn bytes_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        self.output.bytes_end(context)
+    }
+    fn fragment(&mut self, py: Python<'_>, bytes: &[u8], context: &Context) -> PyResult<()> {
+        // Typed providers emit this explicit operation only for row structure.
+        // Literal quoting and binary CAST syntax use typed scalar operations.
+        if bytes == b"(" {
+            self.observe(super::source::FragmentRole::Row);
+        }
+        self.output.fragment(py, bytes, context)
+    }
+    fn python(
+        &mut self,
+        visitor: &mut dyn CellWriter,
+        value: &Bound<'_, PyAny>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
+        let role = visitor.python_role(value, self.output, child)?;
+        self.observe(role);
+        Ok(())
+    }
+    fn source_cell<'py>(
+        &mut self,
+        source: &mut dyn PreparedSource<'py>,
+        row: usize,
+        column: usize,
+        context: &Context,
+        budget: &IoBudget,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        let role = source.write_role_cell(row, column, self.output, context, budget, visitor)?;
+        self.observe(role);
+        Ok(())
+    }
+    fn text_buffer(&mut self) -> Option<&mut Vec<u8>> {
+        None
+    }
+    fn check_text_minimum(&self, characters: usize, context: &Context) -> Result<(), WireError> {
+        self.output.check_text_minimum(characters, context)
+    }
+    fn check_binary_width(&self, length: usize, context: &Context) -> Result<(), WireError> {
+        self.output.check_binary_width(length, context)
+    }
+}

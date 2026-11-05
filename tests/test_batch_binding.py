@@ -36,12 +36,17 @@ def test_fixed_suffix_is_preserved_once_per_complete_request() -> None:
 
 @pytest.mark.parametrize(("sql", "args", "expected"), [
     ("INSERT t VALUES %s", [(1, "A"), (2, "B")], [b"\x03INSERT t VALUES (1,'A')", b"\x03INSERT t VALUES (2,'B')"]),
-    ("INSERT t VALUES (1,%s)", [7, 8], [b"\x03INSERT t VALUES (1,7)", b"\x03INSERT t VALUES (1,8)"]),
     ("INSERT t VALUES (%s) ON DUPLICATE KEY UPDATE x=%s", [(1, 7), (2, 8)], [b"\x03INSERT t VALUES (1) ON DUPLICATE KEY UPDATE x=7", b"\x03INSERT t VALUES (2) ON DUPLICATE KEY UPDATE x=8"]),
 ])
 def test_outside_merge_scope_keeps_ordinary_per_row_binding(sql: str, args: object, expected: list[bytes]) -> None:
     itemize = not sql.endswith("VALUES %s")
     assert _sqlaero._bind_sql(sql, args, many=True, itemize=itemize) == expected
+
+
+def test_fixed_numeric_literal_and_parameter_are_now_in_approved_merge_scope() -> None:
+    assert _sqlaero._bind_sql("INSERT t VALUES (1,%s)", [7, 8], many=True) == [
+        b"\x03INSERT t VALUES (1,7),(1,8)",
+    ]
 
 
 def test_hard_bound_uses_encoded_and_escaped_complete_bytes() -> None:

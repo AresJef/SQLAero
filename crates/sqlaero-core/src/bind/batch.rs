@@ -56,16 +56,23 @@ fn identifier(symbol: Option<u8>) -> bool {
     symbol.is_some_and(|symbol| symbol == b'i' || (INSERT..=UPDATE).contains(&symbol))
 }
 
-/// Source ranges of a repeatable, placeholder-only VALUES row. Prefix and
-/// suffix stay in the original encoded template; no SQL AST or copied text.
+/// Source range of one complete, indivisible input fragment. Prefix and
+/// suffix retain ranges of the original encoded template, without an SQL AST.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Layout {
-    /// Encoded source range including this row's opening and closing brackets.
+    /// Opening through closing boundary of all original VALUES groups.
     pub row: Range<usize>,
+    /// One whole-row placeholder needs a role proof from the value writer.
+    pub whole_row: bool,
 }
 
-pub(crate) fn recognize(tokens: &[Token]) -> Option<Layout> {
+pub(crate) fn recognize(tokens: &[Token], source: &[u8]) -> Option<Layout> {
     let at = |index: usize| tokens.get(index).map(|token| token.symbol);
+    let is_word = |index: usize, expected: &[u8]| {
+        tokens.get(index).is_some_and(|token| {
+            token.symbol == b'i' && source[token.start..token.end].eq_ignore_ascii_case(expected)
+        })
+    };
     let replace = match at(0)? {
         INSERT => false,
         REPLACE => true,
@@ -91,34 +98,70 @@ pub(crate) fn recognize(tokens: &[Token]) -> Option<Layout> {
         }
         i += 2;
     }
+    if is_word(i, b"PARTITION") {
+        if at(i + 1) != Some(b'(') {
+            return None;
+        }
+        i = names(tokens, i + 1, false)?;
+    }
     if at(i) == Some(b'(') {
         i = names(tokens, i, true)?;
     }
-    if at(i) != Some(VALUES) || at(i + 1) != Some(b'(') {
+    if at(i) != Some(VALUES) {
         return None;
     }
     i += 1;
-    let start = tokens[i].start;
-    i += 1;
-    if at(i) != Some(b')') {
-        if at(i) != Some(b'?') {
+    let start = tokens.get(i)?.start;
+    let whole_row = at(i) == Some(b'?');
+    let row_constructor = is_word(i, b"ROW");
+    if whole_row {
+        if &source[tokens[i].start..tokens[i].end] != b"%s" {
             return None;
         }
         i += 1;
-        while at(i) == Some(b',') {
-            if at(i + 1) != Some(b'?') {
+    } else {
+        loop {
+            if row_constructor {
+                if !is_word(i, b"ROW") {
+                    return None;
+                }
+                i += 1;
+            }
+            if at(i) != Some(b'(') {
                 return None;
             }
-            i += 2;
+            i += 1;
+            if at(i) != Some(b')') {
+                loop {
+                    let first = i;
+                    while at(i).is_some() && !matches!(at(i), Some(b',' | b')')) {
+                        if matches!(at(i), Some(b'(' | b';')) {
+                            return None;
+                        }
+                        i += 1;
+                    }
+                    if !value_item(&tokens[first..i], source) {
+                        return None;
+                    }
+                    if at(i) != Some(b',') {
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            if at(i) != Some(b')') {
+                return None;
+            }
+            i += 1;
+            if at(i) != Some(b',') {
+                break;
+            }
+            i += 1;
         }
     }
-    if at(i) != Some(b')') {
-        return None;
-    }
-    let end = tokens[i].end;
-    i += 1;
+    let end = tokens.get(i.checked_sub(1)?)?.end;
     if at(i) == Some(AS) {
-        if !identifier(at(i + 1)) {
+        if replace || row_constructor || !identifier(at(i + 1)) {
             return None;
         }
         i += 2;
@@ -127,7 +170,11 @@ pub(crate) fn recognize(tokens: &[Token]) -> Option<Layout> {
         }
     }
     if at(i) == Some(ON) {
-        if at(i + 1) != Some(DUPLICATE) || at(i + 2) != Some(KEY) || at(i + 3) != Some(UPDATE) {
+        if replace
+            || at(i + 1) != Some(DUPLICATE)
+            || at(i + 2) != Some(KEY)
+            || at(i + 3) != Some(UPDATE)
+        {
             return None;
         }
         i += 4;
@@ -145,7 +192,100 @@ pub(crate) fn recognize(tokens: &[Token]) -> Option<Layout> {
     if at(i) == Some(b';') {
         i += 1;
     }
-    (i == tokens.len()).then_some(Layout { row: start..end })
+    (i == tokens.len()).then_some(Layout {
+        row: start..end,
+        whole_row,
+    })
+}
+
+fn value_item(tokens: &[Token], source: &[u8]) -> bool {
+    let Some(first) = tokens.first() else {
+        return false;
+    };
+    let bytes = &source[first.start..tokens[tokens.len() - 1].end];
+    if tokens.len() == 1 {
+        if first.symbol == b'?' && bytes == b"%s" {
+            return true;
+        }
+        if first.symbol == b'x' && matches!(bytes.first(), Some(b'\'' | b'"')) {
+            return true;
+        }
+        if [b"NULL".as_slice(), b"TRUE", b"FALSE", b"DEFAULT"]
+            .iter()
+            .any(|word| bytes.eq_ignore_ascii_case(word))
+        {
+            return true;
+        }
+    }
+    if let [prefix, quoted] = tokens {
+        let prefix_bytes = &source[prefix.start..prefix.end];
+        let quote = &source[quoted.start..quoted.end];
+        if prefix.end == quoted.start
+            && quoted.symbol == b'x'
+            && quote.first() == Some(&b'\'')
+            && quote.last() == Some(&b'\'')
+        {
+            let contents = &quote[1..quote.len() - 1];
+            if prefix_bytes.eq_ignore_ascii_case(b"X") {
+                return contents.len().is_multiple_of(2)
+                    && contents.iter().all(u8::is_ascii_hexdigit);
+            }
+            if prefix_bytes.eq_ignore_ascii_case(b"B") {
+                return contents.iter().all(|byte| matches!(byte, b'0' | b'1'));
+            }
+            if prefix_bytes.eq_ignore_ascii_case(b"N") {
+                return true;
+            }
+        }
+    }
+    number(bytes)
+}
+
+/// A small literal grammar over the original source span, not an expression
+/// parser. Unsupported forms take ordinary per-row execution unchanged.
+fn number(mut bytes: &[u8]) -> bool {
+    if matches!(bytes.first(), Some(b'+' | b'-')) {
+        bytes = &bytes[1..];
+        while bytes.first().is_some_and(u8::is_ascii_whitespace) {
+            bytes = &bytes[1..];
+        }
+    }
+    if bytes.starts_with(b"0x") || bytes.starts_with(b"0X") {
+        return bytes.len() > 2 && bytes[2..].iter().all(u8::is_ascii_hexdigit);
+    }
+    if bytes.starts_with(b"0b") || bytes.starts_with(b"0B") {
+        return bytes.len() > 2 && bytes[2..].iter().all(|byte| matches!(byte, b'0' | b'1'));
+    }
+    let mut i = 0;
+    while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+        i += 1;
+    }
+    let mut digits = i;
+    if bytes.get(i) == Some(&b'.') {
+        i += 1;
+        let start = i;
+        while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        digits += i - start;
+    }
+    if digits == 0 {
+        return false;
+    }
+    if matches!(bytes.get(i), Some(b'e' | b'E')) {
+        i += 1;
+        if matches!(bytes.get(i), Some(b'+' | b'-')) {
+            i += 1;
+        }
+        let start = i;
+        while bytes.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        if i == start {
+            return false;
+        }
+    }
+    i == bytes.len()
 }
 
 fn names(tokens: &[Token], start: usize, empty: bool) -> Option<usize> {
@@ -222,14 +362,11 @@ impl Blocks {
         })
     }
 
-    /// Append one already-encoded complete row. False means seal and send the
-    /// current block, then offer these same row bytes again under the confirmed
-    /// context. No row is partly appended or silently skipped.
+    /// Validate one complete fragment without changing an unsent block.
     ///
     /// # Errors
-    /// Returns a complete single-row hard-limit or allocation failure, before
-    /// the current block is sent. Checked arithmetic never wraps a size.
-    pub fn push(&mut self, row: &[u8]) -> Result<bool, WireError> {
+    /// Returns the same hard-limit error as push, before any source is sent.
+    pub fn check_single(&self, row: &[u8]) -> Result<(), WireError> {
         let fixed = self.prefix.len().checked_add(self.suffix.len());
         let single = fixed
             .and_then(|fixed| fixed.checked_add(row.len()))
@@ -240,6 +377,29 @@ impl Blocks {
                 limit: self.limit,
             });
         }
+        Ok(())
+    }
+
+    /// Assemble one ordinary request for a value without a complete row role.
+    /// This does not alter any buffered merged rows.
+    ///
+    /// # Errors
+    /// Returns the same hard-limit and allocation failures as normal assembly.
+    pub fn single(&self, fragment: &[u8]) -> Result<Vec<u8>, WireError> {
+        self.check_single(fragment)?;
+        let mut output = Vec::new();
+        writer::append(&mut output, &self.prefix, self.limit)?;
+        writer::append(&mut output, fragment, self.limit)?;
+        writer::append(&mut output, &self.suffix, self.limit)?;
+        Ok(output)
+    }
+
+    /// Append an indivisible fragment, or return false for normal rollover.
+    ///
+    /// # Errors
+    /// Returns a hard-limit or allocation failure before changing the block.
+    pub fn push(&mut self, row: &[u8]) -> Result<bool, WireError> {
+        self.check_single(row)?;
         let required = self
             .current
             .len()
@@ -313,11 +473,7 @@ mod tests {
             "UPDATE t SET a=%s",
             "INSERT INTO t SELECT %s",
             "INSERT INTO t SET a=%s",
-            "INSERT INTO t VALUES %s",
-            "INSERT INTO t VALUES (1,%s)",
-            "INSERT INTO t VALUES (DEFAULT,%s)",
             "INSERT INTO t VALUES (ABS(%s))",
-            "INSERT INTO t VALUES (%s),(%s)",
             "INSERT INTO t VALUES (%s) ON DUPLICATE KEY UPDATE a=%s",
             "INSERT INTO t VALUES (%s); SELECT 1",
             "INSERT /*! IGNORE */ INTO t VALUES (%s)",
@@ -360,6 +516,7 @@ mod tests {
         let matched = regex().captures(&symbols)?.name("row")?;
         Some(Layout {
             row: tokens[matched.start()].start..tokens[matched.end() - 1].end,
+            whole_row: false,
         })
     }
 
@@ -375,8 +532,6 @@ mod tests {
     #[test]
     fn scanner_and_precompiled_regex_recognize_the_same_lexical_inputs() {
         for sql in PROBE_SQL.iter().copied().chain([
-            "INSERT INTO t VALUES (%s),(%s)",
-            "INSERT INTO t VALUES (DEFAULT,%s)",
             "INSERT INTO t VALUES (ABS(%s))",
             "INSERT INTO t VALUES (%s) AS new()",
             "INSERT INTO t VALUES (%s); SELECT 1",
@@ -384,7 +539,11 @@ mod tests {
         ]) {
             let template = prepared(sql);
             let tokens = template.merge_tokens.unwrap();
-            assert_eq!(recognize(&tokens), recognize_regex(&tokens), "{sql}");
+            assert_eq!(
+                recognize(&tokens, &template.source),
+                recognize_regex(&tokens),
+                "{sql}"
+            );
         }
     }
 
@@ -458,7 +617,7 @@ mod tests {
             let layout = if regular {
                 recognize_regex(&tokens)
             } else {
-                recognize(&tokens)
+                recognize(&tokens, &template.source)
             };
             if assembled {
                 if let Some(layout) = layout {

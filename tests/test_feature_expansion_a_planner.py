@@ -87,3 +87,82 @@ def test_natural_table_and_zero_field_record_keep_the_shared_row_roles() -> None
         ]
     assert plan("SELECT 1", np.empty((0, 2))) == [(b"\x03SELECT 1", 0, 0, True)]
     assert plan("SELECT 1", np.empty((1,), dtype=[])[0]) == [(b"\x03SELECT 1", 0, 1, True)]
+
+
+@pytest.mark.parametrize(("sql", "args", "expected"), [
+    ("INSERT t VALUES (1,%s,NULL,TRUE,FALSE,DEFAULT)", [7, 8],
+     b"\x03INSERT t VALUES (1,7,NULL,TRUE,FALSE,DEFAULT),(1,8,NULL,TRUE,FALSE,DEFAULT)"),
+    ("INSERT t VALUES (%s),(%s) AS new ON DUPLICATE KEY UPDATE a=new.a+1", [(1, 2), (3, 4)],
+     b"\x03INSERT t VALUES (1),(2),(3),(4) AS new ON DUPLICATE KEY UPDATE a=new.a+1"),
+    ("REPLACE t PARTITION (p0,p1) (a,b) VALUES (%s,2)", [7, 8],
+     b"\x03REPLACE t PARTITION (p0,p1) (a,b) VALUES (7,2),(8,2)"),
+    ("INSERT t VALUES ROW(%s,DEFAULT),ROW(2,%s) ON DUPLICATE KEY UPDATE b=b+1", [(1, 3), (4, 5)],
+     b"\x03INSERT t VALUES ROW(1,DEFAULT),ROW(2,3),ROW(4,DEFAULT),ROW(2,5) ON DUPLICATE KEY UPDATE b=b+1"),
+])
+def test_approved_expansions_keep_exact_complete_fragments(
+    sql: str, args: object, expected: bytes,
+) -> None:
+    assert plan(sql, args, many=True) == [(expected, 0, 2, True)]
+
+
+def test_whole_row_proof_comes_from_the_shared_value_writer() -> None:
+    assert plan("INSERT t VALUES %s", [(1, "A"), [2, "B"]], many=True, itemize=False) == [
+        (b"\x03INSERT t VALUES (1,'A'),(2,'B')", 0, 2, True),
+    ]
+    assert plan("INSERT t VALUES %s", [((1, 2),), ((3, 4),)], many=True) == [
+        (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
+    ]
+    assert plan("INSERT t VALUES %s", [(), ()], many=True, itemize=False) == [
+        (b"\x03INSERT t VALUES (),()", 0, 2, True),
+    ]
+    with pytest.raises(ProgrammingError):
+        plan("INSERT t VALUES %s", [], many=True, itemize=False)
+
+
+def test_mixed_whole_row_and_scalar_values_flush_in_input_order() -> None:
+    assert plan("INSERT t VALUES %s", [(1,), (2,), "(3)", "(4)", (5,), (6,)],
+                many=True, itemize=False) == [
+        (b"\x03INSERT t VALUES (1),(2)", 0, 2, False),
+        (b"\x03INSERT t VALUES '(3)'", 2, 3, False),
+        (b"\x03INSERT t VALUES '(4)'", 3, 4, False),
+        (b"\x03INSERT t VALUES (5),(6)", 4, 6, True),
+    ]
+    assert plan("INSERT t VALUES %s", [b"(1)", b"(2)"], many=True, itemize=False) == [
+        (b"\x03INSERT t VALUES CAST(X'283129' AS BINARY)", 0, 1, False),
+        (b"\x03INSERT t VALUES CAST(X'283229' AS BINARY)", 1, 2, True),
+    ]
+
+
+def test_native_object_and_nested_arrow_cells_publish_actual_writer_roles() -> None:
+    import numpy as np
+    import pandas as pd
+    import pyarrow as pa
+
+    array = np.empty(2, dtype=object)
+    array[:] = [(1, 2), (3, 4)]
+    for vector in (array, pd.Series([(1, 2), (3, 4)]), pa.array([[1, 2], [3, 4]])):
+        assert plan("INSERT t VALUES %s", vector, many=True) == [
+            (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
+        ]
+    for table in (np.array([[1, 2], [3, 4]]), pd.DataFrame({"a": [1, 3], "b": [2, 4]})):
+        assert plan("INSERT t VALUES %s", table, itemize=False) == [
+            (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
+        ]
+
+
+def test_original_multiple_groups_cannot_be_split_to_satisfy_request_limit() -> None:
+    sql = "INSERT t VALUES (%s),(%s) AS new ON DUPLICATE KEY UPDATE a=new.a+1"
+    request = b"\x03INSERT t VALUES (1),(2) AS new ON DUPLICATE KEY UPDATE a=new.a+1"
+    assert plan(sql, [(1, 2), (3, 4)], many=True, limit=len(request)) == [
+        (request, 0, 1, False),
+        (b"\x03INSERT t VALUES (3),(4) AS new ON DUPLICATE KEY UPDATE a=new.a+1", 1, 2, True),
+    ]
+    from sqlaero.errors import OperationalError
+    with pytest.raises(OperationalError):
+        plan(sql, [(1, 2)], many=True, limit=len(request) - 1)
+
+
+def test_old_measurement_probe_does_not_guess_new_whole_row_roles() -> None:
+    assert getattr(_sqlaero, "_bind_sql")("INSERT t VALUES %s", ["(1)", "(2)"], many=True) == [
+        b"\x03INSERT t VALUES '(1)'", b"\x03INSERT t VALUES '(2)'",
+    ]

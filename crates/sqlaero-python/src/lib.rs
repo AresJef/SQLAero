@@ -238,7 +238,7 @@ fn _bind_sql<'py>(
         }
     };
     let output = pyo3::types::PyList::empty(py);
-    if let Some(layout) = template.prepare_merge() {
+    if let Some(layout) = template.prepare_merge().filter(|layout| !layout.whole_row) {
         let mut blocks = sqlaero_core::bind::batch::Blocks::new(&template, &layout, limit, limit)
             .map_err(|error| errors::wire(py, error))?;
         // One bounded native row fragment handles unknown expansion and normal

@@ -64,6 +64,13 @@ pub(crate) enum Shape {
     Table { rows: usize, columns: usize },
 }
 
+/// The writer's structural role, independent of literal bytes or Python type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum FragmentRole {
+    Scalar,
+    Row,
+}
+
 /// Reuse the production visitor for Python leaves and native nesting facts.
 /// Implementations live at the attached Python boundary, never in the core.
 pub(crate) trait CellWriter {
@@ -74,6 +81,14 @@ pub(crate) trait CellWriter {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<()>;
+
+    /// Return the structural role from the same actual value traversal.
+    fn python_role(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<FragmentRole>;
 
     /// Read the same Python leaf into one immediate native scalar sink.
     fn native_python(
@@ -121,6 +136,17 @@ pub(crate) trait PreparedSource<'py> {
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()>;
 
+    /// Observe structural writes during the same single cell acquisition.
+    fn write_role_cell(
+        &mut self,
+        row: usize,
+        column: usize,
+        output: &mut Vec<u8>,
+        context: &Context,
+        budget: &IoBudget,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<FragmentRole>;
+
     /// Read the same actual logical cell into a prepared parameter sink.
     /// No escaped SQL bytes or per-value Python SQL strings are involved.
     fn write_parameter_cell(
@@ -147,6 +173,19 @@ macro_rules! cell_destinations {
             visitor: &mut dyn $crate::input::source::CellWriter,
         ) -> pyo3::PyResult<()> {
             self.write_cell_to(row, column, output, context, budget, visitor)
+        }
+        fn write_role_cell(
+            &mut self,
+            row: usize,
+            column: usize,
+            output: &mut Vec<u8>,
+            context: &sqlaero_core::bind::Context,
+            budget: &sqlaero_core::transport::deadline::IoBudget,
+            visitor: &mut dyn $crate::input::source::CellWriter,
+        ) -> pyo3::PyResult<$crate::input::source::FragmentRole> {
+            let mut destination = $crate::input::sink::RoleSink::new(output);
+            self.write_cell_to(row, column, &mut destination, context, budget, visitor)?;
+            Ok(destination.role())
         }
         fn write_parameter_cell(
             &mut self,
