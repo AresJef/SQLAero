@@ -193,22 +193,121 @@ fn fraction(stamp: &mut Stamp, mut value: u32, mut precision: usize) -> Result<(
     stamp.padded(value, precision)
 }
 
-/// Write an epoch date/time or elapsed duration, preserving necessary nanoseconds.
-/// Null sentinels and timezone/session policy belong to the source adapter.
+/// Exact native temporal components shared by text and prepared writers.
+/// Fractions are always nanoseconds; no source precision is discarded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Temporal {
+    /// A Gregorian date whose year is not narrowed to the MySQL wire range.
+    Date {
+        /// Signed Gregorian year.
+        year: i128,
+        /// Calendar month.
+        month: u8,
+        /// Day of month.
+        day: u8,
+    },
+    /// An epoch-normalized Gregorian date and clock.
+    Datetime {
+        /// Signed Gregorian year.
+        year: i128,
+        /// Calendar month.
+        month: u8,
+        /// Day of month.
+        day: u8,
+        /// Second within the nonnegative day.
+        second: u32,
+        /// Fractional second, less than one billion.
+        nanosecond: u32,
+    },
+    /// A nonnegative clock within one day.
+    Clock {
+        /// Second within the nonnegative day.
+        second: u32,
+        /// Fractional second, less than one billion.
+        nanosecond: u32,
+    },
+    /// An elapsed duration without a MySQL TIME-range restriction.
+    Duration {
+        /// Original sign, also for negative subsecond durations.
+        negative: bool,
+        /// Absolute whole elapsed seconds.
+        second: u128,
+        /// Absolute fractional second, less than one billion.
+        nanosecond: u32,
+    },
+}
+
+impl Temporal {
+    fn stamp(self, quoted: bool) -> Result<Stamp, ScalarError> {
+        let mut stamp = Stamp::new();
+        if quoted {
+            stamp.append(b"'")?;
+        }
+        match self {
+            Self::Date { year, month, day } => date(&mut stamp, year, month, day)?,
+            Self::Datetime {
+                year,
+                month,
+                day,
+                second,
+                nanosecond,
+            } => {
+                date(&mut stamp, year, month, day)?;
+                stamp.append(b" ")?;
+                clock(&mut stamp, u128::from(second))?;
+                fraction(&mut stamp, nanosecond, 9)?;
+            }
+            Self::Clock { second, nanosecond } => {
+                clock(&mut stamp, u128::from(second))?;
+                fraction(&mut stamp, nanosecond, 9)?;
+            }
+            Self::Duration {
+                negative,
+                second,
+                nanosecond,
+            } => {
+                if negative {
+                    stamp.append(b"-")?;
+                }
+                clock(&mut stamp, second)?;
+                fraction(&mut stamp, nanosecond, 9)?;
+            }
+        }
+        if quoted {
+            stamp.append(b"'")?;
+        }
+        Ok(stamp)
+    }
+
+    /// Write a character parameter's temporal content, without SQL quotes.
+    ///
+    /// # Errors
+    /// Returns a formatting, allocation or destination-limit failure.
+    pub fn write_text(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError> {
+        self.stamp(false)?.finish(output, limit)
+    }
+}
+
+fn nanoseconds(part: u32, precision: usize) -> u32 {
+    match precision {
+        3 => part * 1_000_000,
+        6 => part * 1_000,
+        _ => part,
+    }
+}
+
+/// Decompose source ticks once, preserving wide calendar and exact fractions.
+/// Source-specific null sentinels and timezone policy belong to the adapter.
 ///
 /// # Errors
-/// Returns unsupported units, checked arithmetic overflow or request failure.
-pub fn write(
-    output: &mut Vec<u8>,
+/// Returns unsupported units or checked native arithmetic overflow.
+pub fn decompose(
     ticks: i64,
     unit: TimeUnit,
     multiplier: u64,
     kind: TimeKind,
-    limit: usize,
-) -> Result<(), ScalarError> {
+) -> Result<Temporal, ScalarError> {
     let value = scaled(ticks, multiplier)?;
-    let mut stamp = Stamp::new();
-    stamp.append(b"'")?;
     match kind {
         TimeKind::DateTime => {
             let (year, month, day, second, part, precision) = match unit {
@@ -238,16 +337,19 @@ pub fn write(
                         year,
                         month,
                         day,
-                        seconds.rem_euclid(86_400),
+                        seconds.rem_euclid(86_400) as u32,
                         part,
                         precision,
                     )
                 }
             };
-            date(&mut stamp, year, month, day)?;
-            stamp.append(b" ")?;
-            clock(&mut stamp, second as u128)?;
-            fraction(&mut stamp, part, precision)?;
+            Ok(Temporal::Datetime {
+                year,
+                month,
+                day,
+                second,
+                nanosecond: nanoseconds(part, precision),
+            })
         }
         TimeKind::Duration => {
             let negative = value < 0;
@@ -257,21 +359,66 @@ pub fn write(
                 TimeUnit::Month => (absolute.checked_mul(2_629_746).ok_or_else(range)?, 0, 0),
                 _ => seconds(absolute, unit)?,
             };
-            if negative {
-                stamp.append(b"-")?;
-            }
-            clock(&mut stamp, second as u128)?;
-            fraction(&mut stamp, part, precision)?;
+            Ok(Temporal::Duration {
+                negative,
+                second: second as u128,
+                nanosecond: nanoseconds(part, precision),
+            })
         }
     }
-    stamp.append(b"'")?;
-    stamp.finish(output, limit)
 }
 
-/// Write an Arrow/Polars clock value, which must lie within a single day.
+/// Decompose a clock source while enforcing its original one-day boundary.
 ///
 /// # Errors
-/// Returns an invalid clock, unsupported unit, overflow or request failure.
+/// Returns invalid clock values, unsupported units or checked overflow.
+pub fn decompose_clock(
+    ticks: i64,
+    unit: TimeUnit,
+    multiplier: u64,
+) -> Result<Temporal, ScalarError> {
+    let (second, part, precision) = seconds(scaled(ticks, multiplier)?, unit)?;
+    if !(0..86_400).contains(&second) {
+        return Err(ScalarError::Range(
+            "clock value must be within one nonnegative day",
+        ));
+    }
+    Ok(Temporal::Clock {
+        second: second as u32,
+        nanosecond: nanoseconds(part, precision),
+    })
+}
+
+/// Decompose Unix-epoch days without narrowing the calendar year.
+///
+/// # Errors
+/// Returns checked calendar arithmetic overflow.
+pub fn decompose_date(days: i64) -> Result<Temporal, ScalarError> {
+    let (year, month, day) = civil(i128::from(days))?;
+    Ok(Temporal::Date { year, month, day })
+}
+
+/// Write exact source ticks as a complete SQL temporal literal.
+///
+/// # Errors
+/// Returns unsupported units, checked overflow or destination failure.
+pub fn write(
+    output: &mut Vec<u8>,
+    ticks: i64,
+    unit: TimeUnit,
+    multiplier: u64,
+    kind: TimeKind,
+    limit: usize,
+) -> Result<(), ScalarError> {
+    decompose(ticks, unit, multiplier, kind)?
+        .stamp(true)?
+        .finish(output, limit)
+}
+
+/// Write a clock source as a complete SQL temporal literal.
+///
+/// # Errors
+/// Returns invalid clock values, unsupported units or destination failure.
 pub fn write_clock(
     output: &mut Vec<u8>,
     ticks: i64,
@@ -279,31 +426,17 @@ pub fn write_clock(
     multiplier: u64,
     limit: usize,
 ) -> Result<(), ScalarError> {
-    let (second, part, precision) = seconds(scaled(ticks, multiplier)?, unit)?;
-    if !(0..86_400).contains(&second) {
-        return Err(ScalarError::Range(
-            "clock value must be within one nonnegative day",
-        ));
-    }
-    let mut stamp = Stamp::new();
-    stamp.append(b"'")?;
-    clock(&mut stamp, second as u128)?;
-    fraction(&mut stamp, part, precision)?;
-    stamp.append(b"'")?;
-    stamp.finish(output, limit)
+    decompose_clock(ticks, unit, multiplier)?
+        .stamp(true)?
+        .finish(output, limit)
 }
 
-/// Write a date expressed as Unix-epoch days, without narrowing its year.
+/// Write Unix-epoch days as a complete SQL date literal.
 ///
 /// # Errors
-/// Returns checked calendar overflow or a request-buffer failure.
+/// Returns checked calendar overflow or destination failure.
 pub fn write_date(output: &mut Vec<u8>, days: i64, limit: usize) -> Result<(), ScalarError> {
-    let (year, month, day) = civil(i128::from(days))?;
-    let mut stamp = Stamp::new();
-    stamp.append(b"'")?;
-    date(&mut stamp, year, month, day)?;
-    stamp.append(b"'")?;
-    stamp.finish(output, limit)
+    decompose_date(days)?.stamp(true)?.finish(output, limit)
 }
 
 /// Write six nonnegative integer calendar components without imposing a target
@@ -317,6 +450,28 @@ pub fn write_components(
     parts: [&[u8]; 6],
     limit: usize,
 ) -> Result<(), ScalarError> {
+    components(output, parts, limit, true)
+}
+
+/// Write original calendar components as character-parameter content.
+/// This preserves server-owned calendar validation without parsing SQL text.
+///
+/// # Errors
+/// Returns malformed digits, checked overflow or destination failure.
+pub fn write_components_text(
+    output: &mut Vec<u8>,
+    parts: [&[u8]; 6],
+    limit: usize,
+) -> Result<(), ScalarError> {
+    components(output, parts, limit, false)
+}
+
+fn components(
+    output: &mut Vec<u8>,
+    parts: [&[u8]; 6],
+    limit: usize,
+    quoted: bool,
+) -> Result<(), ScalarError> {
     if parts
         .iter()
         .any(|value| value.is_empty() || !value.iter().all(u8::is_ascii_digit))
@@ -325,15 +480,17 @@ pub fn write_components(
             "calendar components must contain nonnegative integer digits",
         ));
     }
-    let size = parts
-        .iter()
-        .enumerate()
-        .try_fold(7usize, |size, (index, value)| {
+    let size = parts.iter().enumerate().try_fold(
+        5 + 2 * usize::from(quoted),
+        |size, (index, value)| {
             size.checked_add(value.len().max(if index == 0 { 4 } else { 2 }))
                 .ok_or_else(range)
-        })?;
+        },
+    )?;
     writer::reserve(output, size, limit)?;
-    output.push(b'\'');
+    if quoted {
+        output.push(b'\'');
+    }
     for (index, value) in parts.into_iter().enumerate() {
         if index != 0 {
             output.push(match index {
@@ -346,13 +503,67 @@ pub fn write_components(
         output.resize(output.len() + padding, b'0');
         output.extend_from_slice(value);
     }
-    output.push(b'\'');
+    if quoted {
+        output.push(b'\'');
+    }
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_decomposition_and_unquoted_display_share_exact_source_semantics() {
+        let value = decompose(-1, TimeUnit::Nanosecond, 1, TimeKind::DateTime).unwrap();
+        assert_eq!(
+            value,
+            Temporal::Datetime {
+                year: 1969,
+                month: 12,
+                day: 31,
+                second: 86_399,
+                nanosecond: 999_999_999,
+            }
+        );
+        let mut output = Vec::new();
+        value.write_text(&mut output, 128).unwrap();
+        assert_eq!(output, b"1969-12-31 23:59:59.999999999");
+        assert_eq!(
+            decompose_clock(123_456_789, TimeUnit::Nanosecond, 1).unwrap(),
+            Temporal::Clock {
+                second: 0,
+                nanosecond: 123_456_789
+            }
+        );
+        assert_eq!(
+            decompose_date(0).unwrap(),
+            Temporal::Date {
+                year: 1970,
+                month: 1,
+                day: 1
+            }
+        );
+        assert_eq!(
+            decompose(-1, TimeUnit::Month, 1, TimeKind::Duration).unwrap(),
+            Temporal::Duration {
+                negative: true,
+                second: 2_629_746,
+                nanosecond: 0
+            }
+        );
+    }
+
+    #[test]
+    fn unquoted_calendar_components_keep_original_digits_and_atomic_limits() {
+        let parts = [b"2024".as_slice(), b"13", b"31", b"25", b"59", b"61"];
+        let mut output = Vec::new();
+        write_components_text(&mut output, parts, 19).unwrap();
+        assert_eq!(output, b"2024-13-31 25:59:61");
+        let mut prefix = b"x".to_vec();
+        assert!(write_components_text(&mut prefix, parts, 19).is_err());
+        assert_eq!(prefix, b"x");
+    }
 
     #[test]
     fn wide_years_and_duration_hours_keep_exact_ascii_and_atomic_limits() {
