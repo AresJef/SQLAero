@@ -1,6 +1,7 @@
 """Public thin-command behavior on the A lane's owned MySQL sessions."""
 
 import pytest
+import sqlaero
 from sqlaero.errors import DatabaseError, InterfaceError, SQLAeroError
 from test_public_connection import live, requires_mysql
 
@@ -133,3 +134,88 @@ def test_init_sql_error_keeps_real_success_prefix_and_stops_later_steps(label: s
             assert cursor.fetchall() == ((1,),)
         finally:
             cursor.execute("DROP TABLE IF EXISTS a_init_receipts")
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
+def test_savepoint_rollback_retains_target_and_removes_later_markers(label: str) -> None:
+    with live(label, autocommit=False) as connection, connection.cursor() as cursor:
+        cursor.execute("CREATE TEMPORARY TABLE a_savepoint_order (v INT)")
+        connection.begin()
+        cursor.execute("INSERT a_savepoint_order VALUES (1)")
+        getattr(connection, "create_savepoint")("earlier")
+        cursor.execute("INSERT a_savepoint_order VALUES (2)")
+        cursor.execute("SAVEPOINT later")
+        cursor.execute("INSERT a_savepoint_order VALUES (3)")
+        getattr(connection, "rollback_to_savepoint")("earlier")
+        with pytest.raises(DatabaseError) as failure:
+            getattr(connection, "rollback_to_savepoint")("later")
+        assert failure.value.code == 1305 and failure.value.is_server_error is True
+        cursor.execute("INSERT a_savepoint_order VALUES (4)")
+        getattr(connection, "rollback_to_savepoint")("earlier")
+        cursor.execute("SELECT v FROM a_savepoint_order ORDER BY v")
+        assert cursor.fetchall() == ((1,),)
+        connection.rollback()
+        with pytest.raises(DatabaseError) as failure:
+            getattr(connection, "release_savepoint")("earlier")
+        assert failure.value.code == 1305 and failure.value.is_server_error is True
+        cursor.execute("SELECT v FROM a_savepoint_order")
+        assert cursor.fetchall() == ()
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
+def test_savepoint_ddl_lifetime_comes_from_mysql_and_keeps_implicit_commit_data(label: str) -> None:
+    with live(label, autocommit=False) as connection, connection.cursor() as cursor:
+        cursor.execute("DROP TABLE IF EXISTS a_savepoint_ddl")
+        cursor.execute("CREATE TABLE a_savepoint_ddl (v INT)")
+        try:
+            connection.begin()
+            cursor.execute("INSERT a_savepoint_ddl VALUES (1)")
+            getattr(connection, "create_savepoint")("before_ddl")
+            cursor.execute("CREATE TEMPORARY TABLE a_savepoint_temp (v INT)")
+            assert getattr(connection, "rollback_to_savepoint")("before_ddl") is None
+            cursor.execute("ALTER TABLE a_savepoint_ddl ADD COLUMN extra INT DEFAULT 0")
+            for action in ("rollback_to_savepoint", "release_savepoint"):
+                with pytest.raises(DatabaseError) as failure:
+                    getattr(connection, action)("before_ddl")
+                assert failure.value.code == 1305 and failure.value.is_server_error is True
+            connection.rollback()
+            cursor.execute("SELECT v,extra FROM a_savepoint_ddl")
+            assert cursor.fetchall() == ((1, 0),)
+        finally:
+            cursor.execute("DROP TABLE IF EXISTS a_savepoint_ddl")
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
+def test_session_helpers_reject_unread_stream_without_draining_it_and_reject_closed_connection(label: str) -> None:
+    from sqlaero.errors import InterfaceBusyError
+
+    connection = live(label, autocommit=False)
+    actions = ("create_savepoint", "rollback_to_savepoint", "release_savepoint")
+    try:
+        connection.begin()
+        stream = connection.cursor(getattr(sqlaero, "SSCursor"))
+        try:
+            stream.execute("SELECT 1 AS v UNION ALL SELECT 2 UNION ALL SELECT 3")
+            assert stream.fetchone() == (1,)
+            columns, description = stream.columns, stream.description
+            for action in actions:
+                with pytest.raises(InterfaceBusyError):
+                    getattr(connection, action)("busy_marker")
+            with pytest.raises(InterfaceBusyError):
+                getattr(connection, "show_warnings")()
+            assert stream.columns is columns and stream.description == description
+            assert stream.fetchall() == ((2,), (3,))
+        finally:
+            stream.close()
+        assert getattr(connection, "create_savepoint")("after_stream") is None
+        assert getattr(connection, "release_savepoint")("after_stream") is None
+    finally:
+        connection.close()
+    for action in actions:
+        with pytest.raises(InterfaceError):
+            getattr(connection, action)("closed_marker")
+    with pytest.raises(InterfaceError):
+        getattr(connection, "show_warnings")()
