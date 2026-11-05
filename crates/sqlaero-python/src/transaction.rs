@@ -28,6 +28,7 @@ pub(crate) struct Transaction {
     cursor: Mutex<Option<CursorHandle>>,
     dictionary: bool,
     streaming: bool,
+    prepared: bool,
 }
 struct Operation<'a>(&'a AtomicBool);
 impl Drop for Operation<'_> {
@@ -41,6 +42,7 @@ impl Transaction {
         scope: Arc<AtomicBool>,
         dictionary: bool,
         streaming: bool,
+        prepared: bool,
     ) -> Self {
         Self {
             connection,
@@ -52,6 +54,7 @@ impl Transaction {
             cursor: Mutex::new(None),
             dictionary,
             streaming,
+            prepared,
         }
     }
     fn operation(&self, py: Python<'_>) -> PyResult<Operation<'_>> {
@@ -155,10 +158,7 @@ impl Transaction {
         self.owns.store(true, Ordering::Release);
         let result = (|| {
             let mut budget = connection.runtime(py)?.timeouts.operation();
-            let mut lease = connection
-                .native
-                .try_command()
-                .map_err(|error| errors::access(py, error))?;
+            let mut lease = connection.acquire(py, &mut budget)?;
             let mut status = connection
                 .native
                 .facts
@@ -220,6 +220,7 @@ impl Transaction {
                     options,
                     self.dictionary,
                     self.streaming,
+                    self.prepared,
                 )?;
                 input::check(py, &budget)?;
                 *self.cursor.lock().map_err(|_| {
@@ -293,10 +294,7 @@ impl Transaction {
                     primary = Some(errors::at(py, error, "transaction.drain"));
                 }
             }
-            let mut lease = connection
-                .native
-                .try_command()
-                .map_err(|error| errors::access(py, error))?;
+            let mut lease = connection.acquire(py, &mut budget)?;
             acquired = true;
             if let Some(primary) = &primary {
                 Self::rollback_after_error(&connection, py, &mut lease, &mut budget, primary);

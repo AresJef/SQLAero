@@ -263,6 +263,20 @@ pub(crate) struct Connection {
     pub(crate) transaction_scope: Arc<AtomicBool>,
 }
 impl Connection {
+    /// Acquire a safe physical command boundary and release only previously
+    /// registered native statement IDs within this same operation's budget.
+    pub(crate) fn acquire<'a>(
+        &'a self,
+        py: Python<'_>,
+        budget: &mut IoBudget,
+    ) -> PyResult<CommandLease<'a>> {
+        let mut lease = self
+            .native
+            .try_command()
+            .map_err(|error| errors::access(py, error))?;
+        crate::statement::flush(py, self, &mut lease, budget)?;
+        Ok(lease)
+    }
     pub(crate) fn runtime(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Runtime>> {
         self.runtime.lock().map_err(|error| {
             drop(error.into_inner());
@@ -667,10 +681,7 @@ impl Connection {
     }
     pub(crate) fn control(&self, py: Python<'_>, sql: &[u8]) -> PyResult<()> {
         let mut budget = self.runtime(py)?.timeouts.operation();
-        let mut lease = self
-            .native
-            .try_command()
-            .map_err(|error| errors::access(py, error))?;
+        let mut lease = self.acquire(py, &mut budget)?;
         self.control_with(py, &mut lease, sql, &mut budget)
     }
     pub(crate) fn control_with(
@@ -752,10 +763,7 @@ impl Connection {
         (|| {
             let mut budget = self.runtime(py)?.timeouts.operation();
             let value = config::positive(value, name)?;
-            let mut lease = self
-                .native
-                .try_command()
-                .map_err(|error| errors::access(py, error))?;
+            let mut lease = self.acquire(py, &mut budget)?;
             if self
                 .server_timeout(py, index, name)
                 .ok()
@@ -819,10 +827,7 @@ impl Connection {
         action: input::control::SavepointAction,
     ) -> PyResult<()> {
         let mut budget = self.runtime(py)?.timeouts.operation();
-        let mut lease = self
-            .native
-            .try_command()
-            .map_err(|error| errors::access(py, error))?;
+        let mut lease = self.acquire(py, &mut budget)?;
         self.ensure_context(py, &mut lease, &mut budget)?;
         let context = self.context(py)?.0;
         let request = input::control::savepoint(name, action, &context, &budget)?;
@@ -836,15 +841,15 @@ impl Connection {
         )?;
         input::check(py, &budget)
     }
-    fn confirm_initialization_state(
+    pub(crate) fn confirm_session_state(
         &self,
         py: Python<'_>,
         lease: &mut CommandLease<'_>,
         budget: &mut IoBudget,
     ) -> PyResult<bool> {
-        // Arbitrary initialization may change the tracker itself. Confirm each
-        // complete SQL unit before encoding the next, using actual field codecs.
-        // The ordinary no-init connection path never sends this query.
+        // Arbitrary SQL may invalidate the tracker or schema. Reuse the same
+        // complete confirmation before further initialization or prepared
+        // context reuse; a known ordinary-command context avoids this query.
         let mut request = Vec::new();
         writer::append(&mut request,b"\x03SELECT @@SESSION.character_set_client,@@SESSION.character_set_connection,@@SESSION.character_set_results,@@SESSION.collation_connection,@@SESSION.sql_mode,@@SESSION.time_zone,@@SESSION.net_read_timeout,@@SESSION.net_write_timeout,@@SESSION.wait_timeout,@@SESSION.innodb_lock_wait_timeout,@@SESSION.session_track_system_variables,@@SESSION.session_track_schema,CAST(CONVERT(DATABASE() USING utf8mb4) AS BINARY)",self.max_send).map_err(|error|errors::wire(py,error))?;
         let job = self.query_job(py, lease, request, false)?;
@@ -853,7 +858,7 @@ impl Connection {
             return Err(errors::client(
                 py,
                 ClientErrorCode::SessionState,
-                "init_sql state confirmation returned no row result",
+                "session state confirmation returned no row result",
             ));
         };
         let result = {
@@ -861,7 +866,7 @@ impl Connection {
                 errors::client(
                     py,
                     ClientErrorCode::InternalState,
-                    "initialization facts are unavailable",
+                    "session confirmation facts are unavailable",
                 )
             })?;
             facts.confirm_initialization(&rows)
@@ -879,10 +884,7 @@ impl Connection {
         units: &[String],
         budget: &mut IoBudget,
     ) -> PyResult<()> {
-        let mut lease = self
-            .native
-            .try_command()
-            .map_err(|error| errors::access(py, error))?;
+        let mut lease = self.acquire(py, budget)?;
         let mut tracking_ready = true;
         for (index, sql) in units.iter().enumerate() {
             let mut executed = false;
@@ -896,7 +898,7 @@ impl Connection {
                 let job = self.query_job(py, &mut lease, request, true)?;
                 self.drive(py, &mut lease, job, budget, CommandRole::UserSql)?;
                 executed = true;
-                tracking_ready = self.confirm_initialization_state(py, &mut lease, budget)?;
+                tracking_ready = self.confirm_session_state(py, &mut lease, budget)?;
                 input::check(py, budget)
             })();
             if let Err(primary) = result {
@@ -943,7 +945,7 @@ macro_rules! connection_api {
                     let mut budget=snapshot.timeouts.operation();
                     let options=snapshot.options;
                     drop(snapshot);
-                    let mut lease=self.native.try_command().map_err(|error|errors::access(py,error))?;
+                    let mut lease = self.acquire(py, &mut budget)?;
                     input::check(py,&budget)?;
                     let mut request=Vec::new();
                     writer::append(&mut request,b"\x03SHOW WARNINGS",self.max_send).map_err(|error|errors::wire(py,error))?;
@@ -991,24 +993,29 @@ macro_rules! connection_api {
                 let value=config::boolean(value,stringify!($name))?;
                 self.modify(py,stringify!($name))?.options.$name=value; Ok(())
             })*
-            /// Create an independent buffered Cursor. Its decode defaults are
-            /// copied now; later Connection property assignments do not change it.
-            #[pyo3(signature=(cursor=None,*,streaming=None))]
-            fn cursor(slf:PyRef<'_,Self>, py:Python<'_>, cursor:Option<&Bound<'_,PyAny>>,streaming:Option<&Bound<'_,PyAny>>) -> PyResult<Py<PyAny>> {
+            /// Create a built-in Cursor with fixed row, streaming and prepared
+            /// policy. Decode defaults are copied now; later Connection property
+            /// assignments do not change this Cursor. prepared accepts exact bool.
+            #[pyo3(signature=(cursor=None,*,streaming=None,prepared=Argument::default()))]
+            #[pyo3(text_signature="($self, cursor=None, *, streaming=None, prepared=False)")]
+            fn cursor(slf:PyRef<'_,Self>, py:Python<'_>, cursor:Option<&Bound<'_,PyAny>>,streaming:Option<&Bound<'_,PyAny>>,prepared:Argument<'_>) -> PyResult<Py<PyAny>> {
                 slf.open(py)?; let (dictionary,streaming)=Self::selector(py,cursor,streaming)?;
+                let prepared=prepared.0.as_ref().map_or(Ok(false),|value|config::boolean(value,"prepared"))?;
                 let options=slf.runtime(py)?.options;
                 let types=slf.types.clone_ref(py);
-                crate::cursor::CursorCore::create(py,slf.into(),types,options,dictionary,streaming).map(|value|value.object(py))
+                crate::cursor::CursorCore::create(py,slf.into(),types,options,dictionary,streaming,prepared).map(|value|value.object(py))
             }
             /// Enter a managed transaction using a new Cursor of the selected
             /// built-in format. Existing server transactions or managed scopes
             /// are rejected locally. Manual transaction boundaries inside the
             /// body remain allowed; only the current transaction is ended on exit.
-            #[pyo3(signature=(cursor=None,*,streaming=None))]
-            fn transaction(slf:PyRef<'_,Self>,py:Python<'_>,cursor:Option<&Bound<'_,PyAny>>,streaming:Option<&Bound<'_,PyAny>>)->PyResult<crate::transaction::Transaction> {
+            #[pyo3(signature=(cursor=None,*,streaming=None,prepared=Argument::default()))]
+            #[pyo3(text_signature="($self, cursor=None, *, streaming=None, prepared=False)")]
+            fn transaction(slf:PyRef<'_,Self>,py:Python<'_>,cursor:Option<&Bound<'_,PyAny>>,streaming:Option<&Bound<'_,PyAny>>,prepared:Argument<'_>)->PyResult<crate::transaction::Transaction> {
                 slf.open(py)?;let (dictionary,streaming)=Self::selector(py,cursor,streaming)?;
+                let prepared=prepared.0.as_ref().map_or(Ok(false),|value|config::boolean(value,"prepared"))?;
                 let scope=Arc::clone(&slf.transaction_scope);
-                Ok(crate::transaction::Transaction::new(slf.into(),scope,dictionary,streaming))
+                Ok(crate::transaction::Transaction::new(slf.into(),scope,dictionary,streaming,prepared))
             }
             /// Permanently retire this connection. An idle unread stream is
             /// retired locally without draining or sending a new command. On
@@ -1158,7 +1165,7 @@ macro_rules! connection_api {
                 (|| {
                     let mut budget=self.runtime(py)?.timeouts.operation();
                     let enabled=config::boolean(enabled,"enabled")?;
-                    let mut lease=self.native.try_command().map_err(|error|errors::access(py,error))?;
+                    let mut lease = self.acquire(py, &mut budget)?;
                     input::check(py,&budget)?;
                     if self.multi_statements(py).ok()==Some(enabled) {return Ok(());}
                     let bytes=if enabled {vec![0x1b,0,0]} else {vec![0x1b,1,0]};
@@ -1179,7 +1186,7 @@ macro_rules! connection_api {
                 (|| {
                     let mut budget=self.runtime(py)?.timeouts.operation();
                     let enabled=config::boolean(enabled,"enabled")?;
-                    let mut lease=self.native.try_command().map_err(|error|errors::access(py,error))?;
+                    let mut lease = self.acquire(py, &mut budget)?;
                     if self.autocommit(py).ok()==Some(enabled) {return Ok(())}
                     self.control_with(py,&mut lease,if enabled {b"SET SESSION autocommit=1"}else{b"SET SESSION autocommit=0"},&mut budget)
                 })().map_err(|error|errors::at(py,error,"connection.set_autocommit"))
@@ -1256,6 +1263,7 @@ macro_rules! connection_api {
                     Ok(value)=>value,Err(sqlaero_core::session::shared::AccessError::Closed)=>return Ok(false),
                     Err(error)=>return Err(errors::access(py,error)),
                 };
+                crate::statement::flush(py,self,&mut lease,&mut budget)?;
                 let job=self.query_job(py,&mut lease,vec![14],true)?;
                 match self.drive(py,&mut lease,job,&mut budget,CommandRole::InternalControl) {
                     Ok(_)=>{ py.check_signals()?; if budget.check().is_err(){Ok(false)}else{Ok(true)} },

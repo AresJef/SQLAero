@@ -46,6 +46,7 @@ struct Collected {
     total: u128,
     total_unknown: bool,
     final_first_known: bool,
+    statement_invalidated: bool,
 }
 
 /// Restore the native stream at every ordinary exit. Unwinding retires its
@@ -53,6 +54,31 @@ struct Collected {
 struct HeldStream<'a> {
     cursor: &'a CursorCore,
     value: Option<crate::stream::Stream>,
+}
+
+/// Keep the one current prepared handle outside state locks during Python
+/// checkpoints and wire work. A mandatory concurrent retirement prevents it
+/// from being restored and lets its native Drop record safe release instead.
+struct HeldStatement<'a> {
+    cursor: &'a CursorCore,
+    value: Option<crate::statement::Cached>,
+}
+impl Drop for HeldStatement<'_> {
+    fn drop(&mut self) {
+        let Some(value) = self.value.take() else {
+            return;
+        };
+        if self.cursor.reader.is_closed() {
+            return;
+        }
+        let old = self
+            .cursor
+            .statement
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .replace(value);
+        drop(old);
+    }
 }
 impl HeldStream<'_> {
     fn get(&mut self, py: Python<'_>) -> PyResult<&mut crate::stream::Stream> {
@@ -108,6 +134,8 @@ pub(crate) struct CursorCore {
     counts: Mutex<Option<Counts>>,
     results: Mutex<Results>,
     streaming: bool,
+    prepared: bool,
+    statement: Mutex<Option<crate::statement::Cached>>,
 }
 /// Buffered tuple rows over the common native result implementation.
 #[pyclass(frozen, module = "sqlaero")]
@@ -218,6 +246,24 @@ impl CursorCore {
         Ok(Some(held))
     }
 
+    fn hold_statement(&self, py: Python<'_>) -> PyResult<HeldStatement<'_>> {
+        let value = self
+            .statement
+            .lock()
+            .map_err(|_| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "The Cursor's prepared handle slot is unavailable",
+                )
+            })?
+            .take();
+        Ok(HeldStatement {
+            cursor: self,
+            value,
+        })
+    }
+
     fn stream_event(
         &self,
         py: Python<'_>,
@@ -280,7 +326,26 @@ impl CursorCore {
         Ok(())
     }
 
-    fn save_stream_failure(&self, py: Python<'_>, error: &PyErr) -> PyResult<()> {
+    fn save_stream_failure(
+        &self,
+        py: Python<'_>,
+        error: &PyErr,
+        invalidates_statement: bool,
+    ) -> PyResult<()> {
+        if invalidates_statement {
+            let old = self
+                .statement
+                .lock()
+                .map_err(|_| {
+                    errors::client(
+                        py,
+                        ClientErrorCode::InternalState,
+                        "The prepared handle slot is unavailable",
+                    )
+                })?
+                .take();
+            drop(old);
+        }
         let snapshot = errors::SavedFailure::capture(py, error)
             .ok()
             .map(std::sync::Arc::new);
@@ -375,7 +440,7 @@ impl CursorCore {
             Ok(Some(true))
         })();
         if let Err(error) = &result {
-            self.save_stream_failure(py, error)?;
+            self.save_stream_failure(py, error, stream.statement_invalidated)?;
         }
         result
     }
@@ -408,11 +473,49 @@ impl CursorCore {
         if let Some(stream) = &stream {
             self.results(py)?.batch = stream.batch;
         }
+        let handle = self
+            .statement
+            .lock()
+            .map_err(|_| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "The prepared handle slot is unavailable",
+                )
+            })?
+            .take();
+        let had_handle = handle.is_some();
+        drop(handle);
+        let release: PyResult<()> = (|| {
+            if !had_handle || connection.native.is_closed() {
+                return Ok(());
+            }
+            let mut lease = match connection.native.try_command() {
+                Ok(lease) => lease,
+                Err(sqlaero_core::session::shared::AccessError::Busy) => return Ok(()),
+                Err(sqlaero_core::session::shared::AccessError::Closed) => return Ok(()),
+                Err(error) => return Err(errors::access(py, error)),
+            };
+            let mut local = connection.runtime(py)?.timeouts.operation();
+            let budget = stream
+                .as_mut()
+                .map_or(&mut local, |stream| &mut stream.budget);
+            crate::statement::flush(py, &connection, &mut lease, budget)
+        })();
+        let result = match (result, release) {
+            (Err(primary), Err(cleanup)) => {
+                errors::additional(py, &primary, cleanup, "cursor.statement_close");
+                Err(primary)
+            }
+            (Ok(()), result) | (result, Ok(())) => result,
+        };
         self.reader.retire();
         let old = {
             let mut state = self.results(py)?;
-            state.failure_note = None;
-            std::mem::take(&mut state.pending)
+            (
+                state.failure_note.take(),
+                std::mem::take(&mut state.pending),
+            )
         };
         drop(old);
         drop(stream);
@@ -459,7 +562,7 @@ impl CursorCore {
         })();
         self.results(py)?.batch = stream.batch;
         if let Err(error) = &result {
-            self.save_stream_failure(py, error)?;
+            self.save_stream_failure(py, error, stream.statement_invalidated)?;
         }
         result
     }
@@ -563,7 +666,7 @@ impl CursorCore {
             let event = match stream.advance(py, &connection, remaining) {
                 Ok(event) => event,
                 Err(error) => {
-                    self.save_stream_failure(py, &error)?;
+                    self.save_stream_failure(py, &error, stream.statement_invalidated)?;
                     return Err(error);
                 }
             };
@@ -632,7 +735,7 @@ impl CursorCore {
             let event = match stream.advance(py, &connection, remaining) {
                 Ok(event) => event,
                 Err(error) => {
-                    self.save_stream_failure(py, &error)?;
+                    self.save_stream_failure(py, &error, stream.statement_invalidated)?;
                     return Err(error);
                 }
             };
@@ -665,6 +768,12 @@ impl CursorCore {
     /// already active Reader operation retains and releases its own data.
     pub(crate) fn retire(&self) {
         self.reader.retire();
+        let statement = self
+            .statement
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        drop(statement);
         let old = {
             let mut state = match self.results.lock() {
                 Ok(state) => state,
@@ -688,6 +797,7 @@ impl CursorCore {
         options: Options,
         dictionary: bool,
         streaming: bool,
+        prepared: bool,
     ) -> Self {
         Self {
             connection,
@@ -699,6 +809,8 @@ impl CursorCore {
             counts: Mutex::new(None),
             results: Mutex::new(Results::default()),
             streaming,
+            prepared,
+            statement: Mutex::new(None),
         }
     }
     pub(crate) fn create(
@@ -708,8 +820,9 @@ impl CursorCore {
         options: Options,
         dictionary: bool,
         streaming: bool,
+        prepared: bool,
     ) -> PyResult<CursorHandle> {
-        let core = Self::with_format(connection, types, options, dictionary, streaming);
+        let core = Self::with_format(connection, types, options, dictionary, streaming, prepared);
         match (streaming, dictionary) {
             (false, false) => Py::new(py, Cursor { core }).map(CursorHandle::Tuple),
             (false, true) => Py::new(py, DictCursor { core }).map(CursorHandle::Dictionary),
@@ -820,6 +933,8 @@ impl CursorCore {
                 Ok(response) => response,
                 Err(failure) => {
                     if let Some(native) = failure.native_failure() {
+                        collected.statement_invalidated |=
+                            crate::statement::invalidates(&native.error);
                         collected.chain.fail(native);
                     }
                     collected.total_unknown |= !final_request || first.is_none();
@@ -912,10 +1027,7 @@ impl CursorCore {
         let connection = self.connection.borrow(py);
         let timeouts = connection.runtime(py)?.timeouts;
         let mut budget = timeouts.operation();
-        let mut lease = connection
-            .native
-            .try_command()
-            .map_err(|error| errors::access(py, error))?;
+        let mut lease = connection.acquire(py, &mut budget)?;
         let sql = sql.cast::<PyString>().map_err(|_| {
             crate::errors::builtin_message::<pyo3::exceptions::PyTypeError>(
                 py,
@@ -932,6 +1044,11 @@ impl CursorCore {
             .map_or(Ok(true), |value| config::boolean(value, "itemize"))?;
         let options = self.settings(py)?.options;
         let types = connection.types.borrow(py);
+        let mut statement = if self.prepared {
+            Some(self.hold_statement(py)?)
+        } else {
+            None
+        };
         let mut collected = Collected::default();
         let mut begun = false;
         let mut live: Option<crate::stream::Stream> = None;
@@ -942,7 +1059,11 @@ impl CursorCore {
                 args.0.as_ref(),
                 many,
                 itemize,
-                binding::PlanMode::Text,
+                if self.prepared {
+                    binding::PlanMode::PreparedNative
+                } else {
+                    binding::PlanMode::Text
+                },
                 &types,
                 &budget,
             )?;
@@ -950,9 +1071,37 @@ impl CursorCore {
                 input::check(py, &budget)?;
                 connection.ensure_context(py, &mut lease, &mut budget)?;
                 let (context, ansi, names_codec) = connection.context(py)?;
-                let Some(request) = planner.next(py, &context, ansi, &budget)? else {
+                let Some(mut request) = planner.next(py, &context, ansi, &budget)? else {
                     break;
                 };
+                if let Some(template) = request.prepared.take() {
+                    let slot = &mut statement
+                        .as_mut()
+                        .ok_or_else(|| {
+                            errors::client(
+                                py,
+                                ClientErrorCode::InternalState,
+                                "A native prepared request has no Cursor statement slot",
+                            )
+                        })?
+                        .value;
+                    let id = crate::statement::resolve(
+                        py,
+                        &connection,
+                        &mut lease,
+                        template,
+                        &mut budget,
+                        slot,
+                    )?;
+                    let slot = request.bytes.get_mut(1..5).ok_or_else(|| {
+                        errors::client(
+                            py,
+                            ClientErrorCode::InternalState,
+                            "The prepared request has no native statement-ID field",
+                        )
+                    })?;
+                    slot.copy_from_slice(&id.to_le_bytes());
+                }
                 let job = connection.query_job(py, &mut lease, request.bytes, false)?;
                 input::check(py, &budget)?;
                 let job = if self.streaming && request.final_request {
@@ -998,6 +1147,13 @@ impl CursorCore {
             }
             Ok(())
         })();
+        if collected.statement_invalidated || connection.native.is_closed() {
+            drop(
+                statement
+                    .as_mut()
+                    .and_then(|statement| statement.value.take()),
+            );
+        }
         if !begun {
             return result.map(|()| py.None().into_bound(py));
         }
@@ -1011,6 +1167,17 @@ impl CursorCore {
             }
             Ok(())
         });
+        if live
+            .as_ref()
+            .is_some_and(|stream| stream.statement_invalidated)
+            || connection.native.is_closed()
+        {
+            drop(
+                statement
+                    .as_mut()
+                    .and_then(|statement| statement.value.take()),
+            );
+        }
         let first = collected.chain.take_next();
         let publication = if let Some(set) = first {
             self.publish_set(py, set)
@@ -1103,7 +1270,8 @@ macro_rules! cursor_api {
                     let sql=sql.cast::<PyString>().map_err(|_|errors::builtin_message::<pyo3::exceptions::PyTypeError>(py,"sql must be str; already encoded bytes are not accepted"))?;
                     let budget=IoBudget::new(sqlaero_core::transport::deadline::TimeoutKind::Operation,None,None,None);
                     let types=connection.types.borrow(py);
-                    let mut planner=binding::Planner::new(sql,args.0.as_ref(),many,itemize,binding::PlanMode::Text,&types,&budget)?;
+                    let mode=if self.prepared {binding::PlanMode::PreparedDisplay} else {binding::PlanMode::Text};
+                    let mut planner=binding::Planner::new(sql,args.0.as_ref(),many,itemize,mode,&types,&budget)?;
                     let mut first=None;
                     let mut output:Option<Bound<'py,pyo3::types::PyList>>=None;
                     while let Some(request)=planner.next(py,&reference.binding,reference.ansi_quotes,&budget)? {
@@ -1214,6 +1382,9 @@ macro_rules! cursor_api {
             }
             /// True after this Cursor has been permanently retired locally.
             #[getter] fn closed(&self)->bool {self.reader.is_closed()}
+            /// Fixed native prepared-execution policy selected at creation.
+            /// This is readable after close and does not imply an active handle.
+            #[getter] fn prepared(&self)->bool {self.core.prepared}
             /// Positive default row count for fetchmany(None); initial value 1.
             /// Local assignment sends no SQL, never changes existing decode
             /// policy, and fails after this Cursor is closed. Readable after close.

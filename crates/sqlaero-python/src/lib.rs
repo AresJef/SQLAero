@@ -14,6 +14,7 @@ mod output;
 mod reader;
 mod retry;
 mod stream;
+mod statement;
 mod tls_info;
 mod transaction;
 

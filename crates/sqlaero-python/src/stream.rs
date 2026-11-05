@@ -47,6 +47,7 @@ pub(crate) struct Stream {
     first: Option<CommandConfirmation>,
     pub(crate) batch: Option<u128>,
     pub(crate) failed: bool,
+    pub(crate) statement_invalidated: bool,
 }
 
 impl Stream {
@@ -85,6 +86,7 @@ impl Stream {
             first: None,
             batch: None,
             failed: false,
+            statement_invalidated: false,
         })
     }
 
@@ -179,6 +181,9 @@ impl Stream {
             }
             Err(failure) => {
                 self.failed = true;
+                self.statement_invalidated |= failure
+                    .native_failure()
+                    .is_some_and(|failure| crate::statement::invalidates(&failure.error));
                 let error: PyErr = failure.into();
                 errors::note_format(
                     py,

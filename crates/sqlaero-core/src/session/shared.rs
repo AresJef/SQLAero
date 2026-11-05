@@ -50,6 +50,8 @@ pub struct Connection {
     /// before invoking Python or waiting for network I/O.
     pub facts: Mutex<Facts>,
     reference: Mutex<Option<ExecutionContext>>,
+    statement_releases: Mutex<Vec<u32>>,
+    releases_pending: AtomicBool,
     /// Shared capacity ownership for all live native results and snapshots.
     pub result_pool: std::sync::Arc<crate::memory::Pool>,
 }
@@ -89,7 +91,9 @@ impl Connection {
         };
         let mut facts: Facts = ready.confirmed.into();
         facts.multi_statements = Some(
-            authenticated.capabilities.contains(crate::protocol::CapabilityFlags::CLIENT_MULTI_STATEMENTS),
+            authenticated
+                .capabilities
+                .contains(crate::protocol::CapabilityFlags::CLIENT_MULTI_STATEMENTS),
         );
         let reference = facts.execution_context(wire.max_send).ok();
         (
@@ -99,6 +103,8 @@ impl Connection {
                 metadata: authenticated.metadata,
                 facts: Mutex::new(facts),
                 reference: Mutex::new(reference),
+                statement_releases: Mutex::new(Vec::new()),
+                releases_pending: AtomicBool::new(false),
                 result_pool: crate::memory::Pool::new(total_result_memory_limit),
             },
             budget,
@@ -109,6 +115,58 @@ impl Connection {
     #[must_use]
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::Acquire)
+    }
+
+    /// Register an owned, synchronized statement for its next safe release.
+    /// This never performs I/O or retains a Cursor, SQL or host object. On a
+    /// real allocation/poisoning failure the physical session is retired, so an
+    /// unrecorded server handle cannot survive in a reusable connection.
+    #[must_use]
+    pub fn defer_statement(&self, id: u32) -> bool {
+        if self.is_closed() {
+            return true;
+        }
+        let Ok(mut pending) = self.statement_releases.lock() else {
+            self.retire();
+            return false;
+        };
+        if pending.try_reserve(1).is_err() {
+            self.retire();
+            return false;
+        }
+        pending.push(id);
+        self.releases_pending.store(true, Ordering::Release);
+        true
+    }
+
+    /// Take one recorded handle only under this same physical connection's
+    /// synchronized command boundary. No caller may insert CLOSE into another
+    /// response. The empty path avoids acquiring the resource-list mutex.
+    ///
+    /// # Errors
+    /// Rejects a foreign/unread lease or poisoned release storage.
+    pub fn take_deferred_statement(
+        &self,
+        lease: &CommandLease<'_>,
+    ) -> Result<Option<u32>, AccessError> {
+        if !std::ptr::eq(lease.closed, &self.closed) || lease.has_owned_response() {
+            return Err(AccessError::Busy);
+        }
+        if !self.releases_pending.load(Ordering::Acquire) {
+            return Ok(None);
+        }
+        let mut pending = self.statement_releases.lock().map_err(|_| {
+            self.retire();
+            AccessError::Poisoned
+        })?;
+        let id = pending.pop();
+        if pending.is_empty() {
+            // Release the actual allocation once no IDs remain; GC does not
+            // turn this thin resource list into retained lifetime history.
+            *pending = Vec::new();
+            self.releases_pending.store(false, Ordering::Release);
+        }
+        Ok(id)
     }
 
     /// Copy the last completely confirmed auxiliary reference, even after
@@ -168,7 +226,10 @@ impl Connection {
     ///
     /// # Errors
     /// Rejects a foreign connection lease or an existing response owner.
-    pub fn retain_command(self: &Arc<Self>, lease: &mut CommandLease<'_>) -> Result<OwnedCommand, AccessError> {
+    pub fn retain_command(
+        self: &Arc<Self>,
+        lease: &mut CommandLease<'_>,
+    ) -> Result<OwnedCommand, AccessError> {
         if !std::ptr::eq(lease.closed, &self.closed) {
             return Err(AccessError::Busy);
         }
@@ -200,7 +261,11 @@ impl Connection {
         }
     }
 
-    fn try_lease(&self, owner: Option<&Arc<()>>, closing: bool) -> Result<CommandLease<'_>, AccessError> {
+    fn try_lease(
+        &self,
+        owner: Option<&Arc<()>>,
+        closing: bool,
+    ) -> Result<CommandLease<'_>, AccessError> {
         if self.is_closed() {
             return Err(AccessError::Closed);
         }
@@ -278,7 +343,9 @@ impl CommandLease<'_> {
     /// further reads. Call only while this exclusive close lease is held.
     #[must_use]
     pub fn has_owned_response(&self) -> bool {
-        self.wire.as_ref().is_some_and(|session| session.owner.is_some())
+        self.wire
+            .as_ref()
+            .is_some_and(|session| session.owner.is_some())
     }
     /// Release persistent ownership only after the caller has consumed the
     /// command's complete response, including every result and internal tail.
@@ -471,26 +538,66 @@ mod tests {
     use std::sync::Arc;
 
     #[test]
+    fn deferred_statement_ids_are_local_and_require_a_safe_matching_boundary() {
+        let connection = connection();
+        let other = self::connection();
+        assert!(connection.defer_statement(17));
+        assert!(connection.defer_statement(29));
+        let foreign = other.try_command().unwrap();
+        assert_eq!(
+            connection.take_deferred_statement(&foreign),
+            Err(AccessError::Busy)
+        );
+        let owner = connection.try_owned().unwrap();
+        let owned = owner.resume().unwrap();
+        assert_eq!(
+            connection.take_deferred_statement(&owned),
+            Err(AccessError::Busy)
+        );
+        drop(owned);
+        let mut owned = owner.resume().unwrap();
+        owned.finish_owned(&owner).unwrap();
+        assert_eq!(connection.take_deferred_statement(&owned), Ok(Some(29)));
+        assert_eq!(connection.take_deferred_statement(&owned), Ok(Some(17)));
+        assert_eq!(connection.take_deferred_statement(&owned), Ok(None));
+        assert_eq!(connection.statement_releases.lock().unwrap().capacity(), 0);
+        assert!(!connection.releases_pending.load(Ordering::Acquire));
+        drop(owned);
+        assert!(!connection.is_closed());
+    }
+
+    #[test]
+    fn closed_statement_registration_needs_no_retained_resource_record() {
+        let connection = connection();
+        connection.retire();
+        assert!(connection.defer_statement(9));
+        assert!(connection.statement_releases.lock().unwrap().is_empty());
+    }
+
+    #[test]
     fn idle_unread_close_owns_the_actual_boundary_without_draining() {
-        let connection=connection();
-        let response=connection.try_owned().unwrap();
-        let mut close=connection.try_close_command().unwrap();
+        let connection = connection();
+        let response = connection.try_owned().unwrap();
+        let mut close = connection.try_close_command().unwrap();
         assert!(close.has_owned_response());
         close.invalidate();
         drop(close);
         assert!(connection.is_closed());
-        assert!(matches!(response.resume(),Err(AccessError::Closed)));
+        assert!(matches!(response.resume(), Err(AccessError::Closed)));
     }
 
     #[test]
     fn actual_response_operation_keeps_close_immediately_busy() {
-        let connection=connection();
-        let response=connection.try_owned().unwrap();
-        let mut active=response.resume().unwrap();
-        assert!(matches!(connection.try_close_command(),Err(AccessError::Busy)));
+        let connection = connection();
+        let response = connection.try_owned().unwrap();
+        let mut active = response.resume().unwrap();
+        assert!(matches!(
+            connection.try_close_command(),
+            Err(AccessError::Busy)
+        ));
         active.finish_owned(&response).unwrap();
         drop(active);
-        let close=connection.try_close_command().unwrap();
+        let close = connection.try_close_command().unwrap();
         assert!(!close.has_owned_response());
         drop(close);
         assert!(!connection.is_closed());
@@ -498,12 +605,15 @@ mod tests {
 
     #[test]
     fn persistent_handoff_rejects_a_foreign_connection_lease() {
-        let first=connection();
-        let second=connection();
-        let mut lease=first.try_command().unwrap();
-        assert!(matches!(second.retain_command(&mut lease),Err(AccessError::Busy)));
+        let first = connection();
+        let second = connection();
+        let mut lease = first.try_command().unwrap();
+        assert!(matches!(
+            second.retain_command(&mut lease),
+            Err(AccessError::Busy)
+        ));
         assert!(!lease.has_owned_response());
-        let response=first.retain_command(&mut lease).unwrap();
+        let response = first.retain_command(&mut lease).unwrap();
         lease.finish_owned(&response).unwrap();
     }
 
@@ -530,6 +640,8 @@ mod tests {
                 auth_path: AuthPath::Fast,
             },
             reference: Mutex::new(None),
+            statement_releases: Mutex::new(Vec::new()),
+            releases_pending: AtomicBool::new(false),
             facts: Mutex::new(
                 Confirmed {
                     status: StatusFlags::empty(),
