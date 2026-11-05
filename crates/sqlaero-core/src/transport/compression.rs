@@ -83,6 +83,19 @@ impl Codec {
     /// # Errors
     /// Rejects unconsumed compressed input/output or a previous framing failure.
     pub fn start_command(&mut self) -> Result<(), WireError> {
+        self.finish_response()?;
+        self.sequence = 0;
+        Ok(())
+    }
+
+    /// Validate an actual command terminator without reading another frame or
+    /// resetting either sequence. The read path validates a compressed footer
+    /// before releasing its last expanded byte, so idle input also proves that
+    /// footer was accepted. Unread bytes after a command terminator are invalid.
+    ///
+    /// # Errors
+    /// Rejects unfinished frame contents, output or a previously failed codec.
+    pub fn finish_response(&mut self) -> Result<(), WireError> {
         if self.failed
             || self.ready.is_some()
             || !self.inbound.is_idle()
@@ -90,10 +103,9 @@ impl Codec {
         {
             self.failed = true;
             return Err(WireError::Malformed(
-                "compression has unfinished command bytes",
+                "compressed response has unfinished frame bytes",
             ));
         }
-        self.sequence = 0;
         Ok(())
     }
 
@@ -656,6 +668,67 @@ mod tests {
                 receive(&mut codec, &mut wire, &mut sequence, &scope).unwrap(),
                 vec![b'b'; 3000]
             );
+            codec.start_command().unwrap();
+        }
+    }
+
+    #[test]
+    fn command_end_requires_a_verified_frame_boundary_without_reading_extra_bytes() {
+        let mut state = 0x1234_5678_u32;
+        let extra: Vec<u8> = (0..100_000)
+            .map(|_| {
+                state ^= state << 13;
+                state ^= state >> 17;
+                state ^= state << 5;
+                state as u8
+            })
+            .collect();
+        for algorithm in [Algorithm::Zlib, Algorithm::Zstd] {
+            for corrupt_checksum in [false, true] {
+                if algorithm == Algorithm::Zstd && corrupt_checksum {
+                    continue; // The selected encoder does not emit a checksum.
+                }
+                let scope = scope();
+                let mut plain = Vec::new();
+                let mut sequence = Sequence::default();
+                framing::write_message(&mut plain, &[0, 0, 0, 2, 0, 0, 0], &mut sequence, 4096)
+                    .unwrap();
+                framing::write_message(&mut plain, &extra, &mut sequence, 128 * 1024).unwrap();
+                let mut wire = frame(algorithm, &plain);
+                assert!(wire.len() > 16 * 1024);
+                if corrupt_checksum {
+                    *wire.last_mut().unwrap() ^= 1;
+                }
+                let mut wire = Cursor::new(wire);
+                let mut codec = Codec::new(algorithm, 3).unwrap();
+                let mut sequence = Sequence::default();
+                assert_eq!(
+                    receive(&mut codec, &mut wire, &mut sequence, &scope)
+                        .unwrap()
+                        .as_slice(),
+                    [0, 0, 0, 2, 0, 0, 0]
+                );
+                let before = (wire.position(), sequence.next(), codec.sequence);
+                assert!(codec.finish_response().is_err());
+                assert_eq!(before, (wire.position(), sequence.next(), codec.sequence));
+                assert!(codec.start_command().is_err());
+            }
+            let scope = scope();
+            let mut plain = Vec::new();
+            framing::write_message(&mut plain, b"complete", &mut Sequence::default(), 4096)
+                .unwrap();
+            let mut codec = Codec::new(algorithm, 3).unwrap();
+            let mut sequence = Sequence::default();
+            receive(
+                &mut codec,
+                &mut Cursor::new(frame(algorithm, &plain)),
+                &mut sequence,
+                &scope,
+            )
+            .unwrap();
+            let before = (sequence.next(), codec.sequence);
+            codec.finish_response().unwrap();
+            assert_eq!(before, (sequence.next(), codec.sequence));
             codec.start_command().unwrap();
         }
     }

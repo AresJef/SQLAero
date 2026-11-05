@@ -460,11 +460,25 @@ impl Query {
             processed = processed.saturating_add(data.len());
             let delivery = if let Some(limit) = row_limit {
                 self.collector
-                    .push_stream(&data, limit.get())?
-                    .map(Delivery::Streaming)
+                    .push_stream(&data, limit.get())
+                    .map(|event| event.map(Delivery::Streaming))
             } else {
-                self.collector.push(&data)?.map(Delivery::Buffered)
+                self.collector
+                    .push(&data)
+                    .map(|response| response.map(Delivery::Buffered))
             };
+            // A parsed final OK/ERR is not trusted until its compression frame
+            // has ended. This check also precedes exposing terminal facts on a
+            // subsequent local Completion/diagnostic storage failure. Legal
+            // intermediate MORE/legacy OUT sets and streaming rows have no
+            // whole-command facts and continue under the same framing state.
+            if self.collector.has_terminal_facts()
+                && let Err(error) = channel.finish_response()
+            {
+                self.collector.invalidate_terminal_facts();
+                return Err(error.into());
+            }
+            let delivery = delivery?;
             if let Some(delivery) = delivery {
                 match &delivery {
                     Delivery::Buffered(response) => {

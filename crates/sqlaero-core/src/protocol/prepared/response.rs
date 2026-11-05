@@ -66,6 +66,11 @@ impl PrepareReceiver {
         self.server_err
     }
 
+    pub(crate) fn invalidate_terminal_facts(&mut self) {
+        self.server_err = false;
+        self.statement = None;
+    }
+
     /// Consume one complete classic packet payload, with no guessed tail reads.
     ///
     /// # Errors

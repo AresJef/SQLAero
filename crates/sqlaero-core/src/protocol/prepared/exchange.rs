@@ -152,7 +152,14 @@ impl Prepare {
                 };
             self.incoming = MessageReader::tracked(self.max_receive, &self.scope);
             processed = processed.saturating_add(packet.len());
-            if let Some(statement) = self.receiver.push(&packet)? {
+            let result = self.receiver.push(&packet);
+            if (matches!(&result, Ok(Some(_))) || self.receiver.received_server_err())
+                && let Err(error) = channel.finish_response()
+            {
+                self.receiver.invalidate_terminal_facts();
+                return Err(error.into());
+            }
+            if let Some(statement) = result? {
                 self.finished = true;
                 return Ok(Step::Ready(statement));
             }

@@ -788,6 +788,13 @@ impl Receiver {
     pub fn take_confirmation(&mut self) -> Option<CommandConfirmation> {
         self.confirmation.take()
     }
+    pub(crate) fn has_terminal_facts(&self) -> bool {
+        self.confirmation.is_some() || self.server_err_received
+    }
+    pub(crate) fn invalidate_terminal_facts(&mut self) {
+        self.confirmation = None;
+        self.server_err_received = false;
+    }
     /// A complete validated ERR remains a received response even if retaining
     /// its diagnostic bytes subsequently exceeds the local allocation quota.
     #[must_use]

@@ -147,6 +147,20 @@ impl Channel {
         self.compression.as_ref().map(CompressionCodec::snapshot)
     }
 
+    /// Certify the already received whole-command boundary without reading a
+    /// future frame. Compressed frames must have ended and passed validation
+    /// before their final response may become a confirmed session fact.
+    ///
+    /// # Errors
+    /// Returns a malformed or failed compression-frame boundary. Intermediate
+    /// result sets and streaming row batches must not call this operation.
+    pub fn finish_response(&mut self) -> Result<(), ChannelError> {
+        if let Some(compression) = &mut self.compression {
+            compression.finish_response()?;
+        }
+        Ok(())
+    }
+
     /// Return whether full authentication may use this established channel.
     #[must_use]
     pub fn secure(&self) -> bool {
