@@ -72,3 +72,74 @@ pub(crate) fn _encode_native_rows<'py>(
     }
     Ok(result)
 }
+
+type PlannedRequest = (Py<PyBytes>, usize, usize, bool);
+
+/// Observe the production request planner without changing the older binder
+/// probe's measurement boundary. Context changes emulate confirmed responses;
+/// no command is sent and no mutable session state is read or published.
+#[pyfunction]
+#[pyo3(pass_module, signature = (sql, args=crate::config::Argument::default(), *, many=false, itemize=true, prepared=false, limit=67108864, change_charset=None))]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "private probe exposes planner policy and one context transition"
+)]
+pub(crate) fn _plan_sql<'py>(
+    module: &Bound<'py, PyModule>,
+    sql: &Bound<'py, PyString>,
+    args: crate::config::Argument<'py>,
+    many: bool,
+    itemize: bool,
+    prepared: bool,
+    limit: usize,
+    change_charset: Option<&str>,
+) -> PyResult<Vec<PlannedRequest>> {
+    let py = module.py();
+    let owner = module.getattr(PyString::from_bytes(py, b"_scalar_types")?)?;
+    let types = owner.extract::<PyRef<'_, super::ScalarTypes>>()?;
+    let mut context = Context {
+        codec: Codec::new(
+            sqlaero_core::charset::resolve(None, None)
+                .map_err(|error| {
+                    crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+                })?
+                .charset,
+        ),
+        no_backslash_escapes: false,
+        utc_confirmed: true,
+        limit,
+    };
+    let changed = change_charset
+        .map(|name| {
+            sqlaero_core::charset::resolve(Some(name), None)
+                .map(|encoding| Codec::new(encoding.charset))
+                .map_err(|error| {
+                    crate::errors::builtin_message::<PyValueError>(py, error.to_string())
+                })
+        })
+        .transpose()?;
+    let budget = IoBudget::new(TimeoutKind::Operation, None, None, None);
+    let mode = if prepared {
+        crate::binding::PlanMode::PreparedDisplay
+    } else {
+        crate::binding::PlanMode::Text
+    };
+    let mut planner =
+        crate::binding::Planner::new(sql, args.0.as_ref(), many, itemize, mode, &types, &budget)?;
+    let mut result = Vec::new();
+    while let Some(request) = planner.next(py, &context, false, &budget)? {
+        result
+            .try_reserve(1)
+            .map_err(|_| crate::errors::memory_error(py))?;
+        result.push((
+            PyBytes::new(py, &request.bytes).unbind(),
+            request.source_rows.start,
+            request.source_rows.end,
+            request.final_request,
+        ));
+        if let Some(codec) = changed {
+            context.codec = codec;
+        }
+    }
+    Ok(result)
+}

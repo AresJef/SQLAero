@@ -5,15 +5,271 @@ use crate::input::sequence::Sequence;
 use crate::input::source::{self, CellWriter, PreparedSource, Shape};
 use crate::input::{ScalarTypes, check};
 use pyo3::prelude::*;
+use pyo3::types::PyString;
 use smallvec::{SmallVec, smallvec};
 use sqlaero_core::bind::{
     Context,
-    template::{Template, TemplateError},
+    batch::{Blocks, Layout},
+    template::{Compiler, Template, TemplateError},
     writer,
 };
 use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::deadline::IoBudget;
 use std::ops::Range;
+
+/// Select the request boundary policy. Prepared display is readable SQL,
+/// never the binary payload and never eligible for text VALUES merging.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PlanMode {
+    Text,
+    PreparedDisplay,
+}
+
+/// One complete target request and its actual logical input coverage.
+pub(crate) struct Request {
+    pub(crate) bytes: Vec<u8>,
+    pub(crate) source_rows: Range<usize>,
+    pub(crate) final_request: bool,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct ContextKey {
+    charset: &'static str,
+    no_backslash: bool,
+    ansi: bool,
+    utc: bool,
+    limit: usize,
+}
+impl ContextKey {
+    fn new(context: &Context, ansi: bool) -> Self {
+        Self {
+            charset: context.codec.name(),
+            no_backslash: context.no_backslash_escapes,
+            ansi,
+            utc: context.utc_confirmed,
+            limit: context.limit,
+        }
+    }
+}
+
+struct Prepared {
+    key: ContextKey,
+    template: Template,
+    layout: Option<Layout>,
+    blocks: Option<Blocks>,
+}
+impl Prepared {
+    fn new(
+        sql: &Bound<'_, PyString>,
+        context: &Context,
+        ansi: bool,
+        merge: bool,
+        budget: &IoBudget,
+    ) -> PyResult<Self> {
+        let py = sql.py();
+        let mut encoded = Vec::new();
+        crate::input::text(
+            sql,
+            &mut encoded,
+            &Context {
+                limit: usize::MAX,
+                ..*context
+            },
+            false,
+            Some(budget),
+        )?;
+        let mut compiler = if merge {
+            Compiler::for_batch(encoded, context.codec, context.no_backslash_escapes, ansi)
+        } else {
+            Compiler::new(encoded, context.codec, context.no_backslash_escapes, ansi)
+        };
+        let mut template = loop {
+            let step = py
+                .detach(|| compiler.advance())
+                .map_err(|error| template_error(py, error))?;
+            check(py, budget)?;
+            if let Some(template) = step {
+                break template;
+            }
+        };
+        let layout = template.prepare_merge();
+        let blocks = layout
+            .as_ref()
+            .map(|layout| Blocks::new(&template, layout, context.limit, context.limit))
+            .transpose()
+            .map_err(|error| errors::wire(py, error))?;
+        Ok(Self {
+            key: ContextKey::new(context, ansi),
+            template,
+            layout,
+            blocks,
+        })
+    }
+}
+
+/// Incrementally assemble target requests without owning a command lease or
+/// reading session facts. The caller supplies a confirmed context per request;
+/// auxiliary callers can repeatedly supply one historical reference instead.
+pub(crate) struct Planner<'types, 'py> {
+    sql: Bound<'py, PyString>,
+    rows: Option<Rows<'py>>,
+    types: &'types ScalarTypes,
+    mode: PlanMode,
+    merge: bool,
+    prepared: Option<Prepared>,
+    pending: Option<(usize, Vec<u8>, ContextKey)>,
+    source_end: usize,
+    finished: bool,
+}
+impl<'types, 'py> Planner<'types, 'py> {
+    pub(crate) fn new(
+        sql: &Bound<'py, PyString>,
+        args: Option<&Bound<'py, PyAny>>,
+        many: bool,
+        itemize: bool,
+        mode: PlanMode,
+        types: &'types ScalarTypes,
+        budget: &IoBudget,
+    ) -> PyResult<Self> {
+        check(sql.py(), budget)?;
+        let rows = args
+            .map(|args| Rows::new(args, many, itemize, types, budget))
+            .transpose()?;
+        let merge = mode == PlanMode::Text && itemize && rows.as_ref().is_some_and(Rows::is_batch);
+        Ok(Self {
+            sql: sql.clone(),
+            rows,
+            types,
+            mode,
+            merge,
+            prepared: None,
+            pending: None,
+            source_end: 0,
+            finished: false,
+        })
+    }
+
+    pub(crate) fn next(
+        &mut self,
+        py: Python<'py>,
+        context: &Context,
+        ansi: bool,
+        budget: &IoBudget,
+    ) -> PyResult<Option<Request>> {
+        if self.finished {
+            return Ok(None);
+        }
+        check(py, budget)?;
+        let Some(rows) = self.rows.as_mut() else {
+            let mut bytes = vec![3];
+            crate::input::text(&self.sql, &mut bytes, context, false, Some(budget))?;
+            self.finished = true;
+            return Ok(Some(Request {
+                bytes,
+                source_rows: 0..0,
+                final_request: true,
+            }));
+        };
+        let key = ContextKey::new(context, ansi);
+        if self
+            .prepared
+            .as_ref()
+            .is_none_or(|prepared| prepared.key != key)
+        {
+            self.prepared = Some(Prepared::new(
+                &self.sql,
+                context,
+                ansi,
+                self.merge && self.mode == PlanMode::Text,
+                budget,
+            )?);
+        }
+        let prepared = self.prepared.as_mut().ok_or_else(|| {
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "SQL preparation was not published",
+            )
+        })?;
+        let start = self.source_end;
+        let empty = rows.empty_root();
+        let (bytes, end) =
+            if let (Some(layout), Some(blocks)) = (&prepared.layout, &mut prepared.blocks) {
+                let mut fragment = Vec::new();
+                let mut end = start;
+                loop {
+                    let index;
+                    if let Some((saved, bytes, saved_key)) = self.pending.take() {
+                        index = saved;
+                        fragment = bytes;
+                        if saved_key != key {
+                            rows.at(index, self.types, budget)?.bind_fragment(
+                                &prepared.template,
+                                self.types,
+                                context,
+                                budget,
+                                layout.row.clone(),
+                                &mut fragment,
+                            )?;
+                        }
+                    } else {
+                        index = rows.position();
+                        let Some(row) = rows.next(self.types, budget)? else {
+                            break;
+                        };
+                        row.bind_fragment(
+                            &prepared.template,
+                            self.types,
+                            context,
+                            budget,
+                            layout.row.clone(),
+                            &mut fragment,
+                        )?;
+                    }
+                    if !blocks
+                        .push(&fragment)
+                        .map_err(|error| errors::wire(py, error))?
+                    {
+                        self.pending = Some((index, fragment, key));
+                        break;
+                    }
+                    end = if empty { 0 } else { index + 1 };
+                }
+                let Some(bytes) = blocks.take().map_err(|error| errors::wire(py, error))? else {
+                    self.finished = true;
+                    return Ok(None);
+                };
+                (bytes, end)
+            } else {
+                let index = self
+                    .pending
+                    .as_ref()
+                    .map_or(rows.position(), |pending| pending.0);
+                let row = if self.pending.take().is_some() {
+                    rows.at(index, self.types, budget)?
+                } else {
+                    let Some(row) = rows.next(self.types, budget)? else {
+                        self.finished = true;
+                        return Ok(None);
+                    };
+                    row
+                };
+                (
+                    row.bind(&prepared.template, self.types, context, budget)?,
+                    if empty { 0 } else { index + 1 },
+                )
+            };
+        self.source_end = end;
+        let final_request = self.pending.is_none() && rows.remaining() == 0;
+        self.finished = final_request;
+        check(py, budget)?;
+        Ok(Some(Request {
+            bytes,
+            source_rows: start..end,
+            final_request,
+        }))
+    }
+}
 
 /// Retain an input owner and advance one logical row at a time. Native typed
 /// providers retain their own current chunk; neither path materializes a batch.
