@@ -3,6 +3,7 @@
 pub mod auth;
 pub mod binary;
 pub mod framing;
+pub mod local_infile;
 pub mod packets;
 pub mod prepared;
 /// Shared protocol capability type; this is not a public raw client_flags input.
