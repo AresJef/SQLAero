@@ -409,6 +409,7 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(_parse_size, module)?)?;
     module.add_function(wrap_pyfunction!(_decode_json, module)?)?;
     module.add_function(wrap_pyfunction!(_encode_scalar, module)?)?;
+    module.add_function(wrap_pyfunction!(input::probe::_encode_native_scalar, module)?)?;
     module.add_class::<_EncodedValue>()?;
     module.add_class::<_ValueEncoder>()?;
     module.add_function(wrap_pyfunction!(_encode_value, module)?)?;

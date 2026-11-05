@@ -5,12 +5,14 @@
 //! checks surround that call and bound our own parsing work. Scientific text
 //! is never sent to MySQL: the existing exact native formatter owns SQL output.
 
+use super::sink::{self, Destination, emit};
 use crate::errors;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyInt, PyString, PyTuple, PyType};
+use sqlaero_core::bind::Context;
 use sqlaero_core::bind::scalar::ScalarError;
-use sqlaero_core::bind::{Context, scalar, writer};
+use sqlaero_core::bind::value::{ValueError, ValueRef};
 use sqlaero_core::transport::deadline::IoBudget;
 use std::ffi::CStr;
 
@@ -59,10 +61,10 @@ fn optional_attribute<'py>(
 
 /// Acquire one exact Decimal and write only through the original SQL numeric
 /// formatter. No binary float, normalization or context arithmetic is used.
-pub(super) fn write(
+pub(super) fn write<D: Destination + ?Sized>(
     value: &Bound<'_, PyAny>,
     native: bool,
-    output: &mut Vec<u8>,
+    output: &mut D,
     context: &Context,
     budget: Option<&IoBudget>,
 ) -> PyResult<()> {
@@ -73,39 +75,54 @@ pub(super) fn write(
         super::checkpoint(py, budget)?;
         if let Some(parsed) = parse(py, text.to_str()?.as_bytes(), budget)? {
             return match parsed {
-                Parsed::Null => writer::append(output, b"NULL", context.limit)
-                    .map_err(|error| errors::wire(py, error)),
-                Parsed::Finite(parts) => parts.write(py, output, context.limit),
+                Parsed::Null => emit(output, py, ValueRef::Null, context),
+                Parsed::Finite(parts) => parts.write(py, output, context),
             };
         }
         // An unexpected future native representation does not redefine the
         // public numeric contract. Only grammar mismatch falls back; Python
         // allocation, signal and deadline exceptions above are never caught.
     }
-    original(value, output, context.limit)
+    original(value, output, context)
 }
 
-fn original(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyResult<()> {
+fn original<D: Destination + ?Sized>(
+    value: &Bound<'_, PyAny>,
+    output: &mut D,
+    context: &Context,
+) -> PyResult<()> {
     let py = value.py();
     let parts = value.call_method0(PyString::from_bytes(py, b"as_tuple")?)?;
     let parts = parts.cast::<PyTuple>()?;
     let exponent = parts.get_item(2)?;
     if !exponent.is_exact_instance_of::<PyInt>() {
-        return writer::append(output, b"NULL", limit).map_err(|error| errors::wire(py, error));
+        return emit(output, py, ValueRef::Null, context);
     }
     let negative = parts.get_item(0)?.extract::<u8>()? != 0;
     let digits = parts.get_item(1)?.extract::<Vec<u8>>()?;
     let exponent = exponent.extract::<i64>()?;
-    scalar::decimal(output, negative, &digits, exponent, limit).map_err(|error| {
-        failure(
-            py,
-            error,
-            negative,
-            &digits[..digits.len().min(16)],
-            digits.len(),
-            exponent,
+    output
+        .write(
+            ValueRef::Decimal {
+                negative,
+                digits: &digits,
+                exponent,
+            },
+            context,
         )
-    })
+        .map_err(|error| {
+            let ValueError::Scalar(error) = error else {
+                return sink::failure(py, error);
+            };
+            failure(
+                py,
+                error,
+                negative,
+                &digits[..digits.len().min(16)],
+                digits.len(),
+                exponent,
+            )
+        })
 }
 
 enum Parsed {
@@ -124,28 +141,37 @@ struct Parts {
 }
 
 impl Parts {
-    fn write(self, py: Python<'_>, output: &mut Vec<u8>, limit: usize) -> PyResult<()> {
+    fn write<D: Destination + ?Sized>(
+        self,
+        py: Python<'_>,
+        output: &mut D,
+        context: &Context,
+    ) -> PyResult<()> {
         // Preserve the core's exponent-overflow precedence before its exact
         // width rejection. Zero bypasses exponent expansion in the core.
         let result = match i64::try_from(self.trailing)
             .ok()
             .and_then(|trailing| self.original_exponent.checked_add(trailing))
         {
-            None => Err(ScalarError::Range(
+            None => Err(ValueError::Scalar(ScalarError::Range(
                 "Decimal exponent exceeds the exact SQL range",
+            ))),
+            Some(_) if self.necessary > self.digits.len() => Err(ValueError::Scalar(
+                ScalarError::Range("Decimal exceeds 65 necessary decimal places"),
             )),
-            Some(_) if self.necessary > self.digits.len() => Err(ScalarError::Range(
-                "Decimal exceeds 65 necessary decimal places",
-            )),
-            Some(exponent) => scalar::decimal(
-                output,
-                self.negative,
-                &self.digits[..self.necessary],
-                exponent,
-                limit,
+            Some(exponent) => output.write(
+                ValueRef::Decimal {
+                    negative: self.negative,
+                    digits: &self.digits[..self.necessary],
+                    exponent,
+                },
+                context,
             ),
         };
         result.map_err(|error| {
+            let ValueError::Scalar(error) = error else {
+                return sink::failure(py, error);
+            };
             failure(
                 py,
                 error,

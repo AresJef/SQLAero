@@ -7,7 +7,9 @@ use pyo3::types::{
     PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyFloat, PyInt,
     PyString, PyTime, PyTimeAccess, PyType, PyTzInfoAccess,
 };
+use sink::{Destination, emit};
 use sqlaero_core::bind::scalar::{Clock, Date, ScalarError};
+use sqlaero_core::bind::value::{ValueError, ValueRef, ValueSink};
 use sqlaero_core::bind::{Context, scalar, writer};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
@@ -16,10 +18,12 @@ use sqlaero_core::transport::deadline::IoBudget;
 pub(crate) mod arrow;
 mod decimal;
 mod diagnostic;
+pub(crate) mod sink;
 pub(crate) use diagnostic::binary_diagnostic;
 pub(crate) mod numpy;
 pub(crate) mod pandas;
 pub(crate) mod polars;
+pub(crate) mod probe;
 pub(crate) mod sequence;
 pub(crate) mod source;
 pub(crate) mod standard;
@@ -139,77 +143,98 @@ impl ScalarTypes {
         context: &Context,
         budget: Option<&IoBudget>,
     ) -> PyResult<bool> {
-        let py = value.py();
-        let limit = context.limit;
-        if value.is_none() {
-            return writer::append(output, b"NULL", limit)
-                .map_err(|e| errors::wire(py, e))
-                .map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyBool>() {
-            return writer::append(
-                output,
-                if value.extract::<bool>()? { b"1" } else { b"0" },
-                limit,
-            )
-            .map_err(|e| errors::wire(py, e))
-            .map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyInt>() {
-            return integer(value, output, limit).map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyFloat>() {
-            return scalar::float(output, value.extract::<f64>()?, limit)
-                .map_err(|e| errors::wire(py, e))
-                .map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyString>() {
-            return text(value.cast::<PyString>()?, output, context, true, budget).map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyBytes>() {
-            return binary(
-                py,
-                value.cast::<PyBytes>()?.as_bytes(),
-                output,
-                limit,
-                budget,
-            )
-            .map(|()| true);
-        }
-        self.write_extended(value, output, context, budget)
+        self.try_write_to(value, &mut sink::Text(output), context, budget)
     }
 
-    /// Isolate callback-rich temporal and Decimal work from primitive frames.
-    /// The exact-type checks, conversion order and original errors are unchanged.
-    #[inline(never)]
-    fn write_extended(
+    /// Consume one scalar through the common recognition and protocol boundary.
+    pub(crate) fn write_native<S: ValueSink<Error = ValueError>>(
         &self,
         value: &Bound<'_, PyAny>,
-        output: &mut Vec<u8>,
+        sink: &mut S,
+        context: &Context,
+        budget: Option<&IoBudget>,
+    ) -> PyResult<()> {
+        if self.try_write_to(value, &mut sink::Native(sink), context, budget)? {
+            Ok(())
+        } else {
+            Err(unsupported(value))
+        }
+    }
+
+    fn try_write_to<D: Destination + ?Sized>(
+        &self,
+        value: &Bound<'_, PyAny>,
+        output: &mut D,
         context: &Context,
         budget: Option<&IoBudget>,
     ) -> PyResult<bool> {
         let py = value.py();
-        let limit = context.limit;
+        if value.is_none() {
+            return emit(output, py, ValueRef::Null, context).map(|()| true);
+        }
+        if value.is_exact_instance_of::<PyBool>() {
+            return emit(output, py, ValueRef::Boolean(value.extract()?), context).map(|()| true);
+        }
+        if value.is_exact_instance_of::<PyInt>() {
+            return integer_to(value, output, context).map(|()| true);
+        }
+        if value.is_exact_instance_of::<PyFloat>() {
+            return emit(output, py, ValueRef::Float(value.extract()?), context).map(|()| true);
+        }
+        if value.is_exact_instance_of::<PyString>() {
+            return output
+                .text(value.cast::<PyString>()?, context, budget)
+                .map(|()| true);
+        }
+        if value.is_exact_instance_of::<PyBytes>() {
+            return output
+                .binary(py, value.cast::<PyBytes>()?.as_bytes(), context, budget)
+                .map(|()| true);
+        }
+        self.write_extended(value, output, context, budget)
+    }
+
+    /// Keep callback-rich temporal and Decimal preparation off primitive frames.
+    #[inline(never)]
+    fn write_extended<D: Destination + ?Sized>(
+        &self,
+        value: &Bound<'_, PyAny>,
+        output: &mut D,
+        context: &Context,
+        budget: Option<&IoBudget>,
+    ) -> PyResult<bool> {
+        let py = value.py();
         if value.is_exact_instance_of::<PyDateTime>() {
             return self
-                .write_datetime(value.cast::<PyDateTime>()?, output, context)
+                .write_datetime_to(value.cast::<PyDateTime>()?, output, context)
                 .map(|()| true);
         }
         if value.is_exact_instance_of::<PyDate>() {
-            return scalar::date_time(output, date(value.cast::<PyDate>()?), None, limit)
-                .map_err(|e| errors::wire(py, e))
-                .map(|()| true);
+            return emit(
+                output,
+                py,
+                ValueRef::Date(date(value.cast::<PyDate>()?)),
+                context,
+            )
+            .map(|()| true);
         }
         if value.is_exact_instance_of::<PyTime>() {
-            return scalar::time(output, clock(value.cast::<PyTime>()?), limit)
-                .map_err(|e| errors::wire(py, e))
-                .map(|()| true);
+            return emit(
+                output,
+                py,
+                ValueRef::Time(clock(value.cast::<PyTime>()?)),
+                context,
+            )
+            .map(|()| true);
         }
         if value.is_exact_instance_of::<PyDelta>() {
-            return scalar::duration(output, delta(value.cast::<PyDelta>()?), limit)
-                .map_err(|e| errors::wire(py, e))
-                .map(|()| true);
+            return emit(
+                output,
+                py,
+                ValueRef::Duration(delta(value.cast::<PyDelta>()?)),
+                context,
+            )
+            .map(|()| true);
         }
         if value.get_type().is(self.decimal.bind(py)) {
             return decimal::write(value, self.native_decimal, output, context, budget)
@@ -224,23 +249,21 @@ impl ScalarTypes {
         standard::write(self, value, output, context, budget)
     }
 
-    fn write_datetime(
+    fn write_datetime_to<D: Destination + ?Sized>(
         &self,
         datetime: &Bound<'_, PyDateTime>,
-        output: &mut Vec<u8>,
+        output: &mut D,
         context: &Context,
     ) -> PyResult<()> {
         let py = datetime.py();
-        let limit = context.limit;
         let mut date = date(datetime);
         let mut clock = clock(datetime);
         let offset = match datetime.get_tzinfo() {
             None => None,
             Some(zone) if zone.is(self.utc.bind(py)) => Some(0),
             Some(_) => {
-                // Invoke the cached base descriptor, not an override on a
-                // datetime subclass. It calls the actual tzinfo protocol and
-                // preserves the built-in return-type/range validation.
+                // Invoke the cached base descriptor so datetime subclass
+                // overrides cannot bypass the approved tzinfo protocol.
                 let offset = self.datetime_offset.bind(py).call1((datetime,))?;
                 if offset.is_none() {
                     None
@@ -259,7 +282,7 @@ impl ScalarTypes {
             }
             (date, clock) = scalar::utc(date, clock, offset).map_err(|e| scalar_error(py, e))?;
         }
-        scalar::date_time(output, date, Some(clock), limit).map_err(|e| errors::wire(py, e))
+        emit(output, py, ValueRef::Datetime { date, clock }, context)
     }
 
     /// Discover an already-used optional provider, outside every primitive path.
@@ -309,12 +332,12 @@ impl ScalarTypes {
         Ok(self.polars.get())
     }
 
-    fn write_pandas(
+    fn write_pandas<D: Destination + ?Sized>(
         &self,
         value: &Bound<'_, PyAny>,
-        output: &mut Vec<u8>,
+        output: &mut D,
         context: &Context,
-        budget: Option<&IoBudget>,
+        _budget: Option<&IoBudget>,
     ) -> PyResult<bool> {
         let py = value.py();
         let Some(types) = self.pandas_types(py)? else {
@@ -327,8 +350,7 @@ impl ScalarTypes {
             return Ok(false);
         };
         match scalar {
-            pandas::PandasScalar::Null => writer::append(output, b"NULL", context.limit)
-                .map_err(|error| errors::wire(py, error))?,
+            pandas::PandasScalar::Null => emit(output, py, ValueRef::Null, context)?,
             pandas::PandasScalar::Temporal {
                 ticks,
                 unit,
@@ -343,16 +365,16 @@ impl ScalarTypes {
                         "timezone-aware Pandas input requires a confirmed UTC session",
                     ));
                 }
-                temporal::write(py, ticks, unit, multiplier, kind, output, context, budget)?;
+                temporal_to(output, py, ticks, unit, multiplier, kind, context)?;
             }
         }
         Ok(true)
     }
 
-    fn write_numpy(
+    fn write_numpy<D: Destination + ?Sized>(
         &self,
         value: &Bound<'_, PyAny>,
-        output: &mut Vec<u8>,
+        output: &mut D,
         context: &Context,
         budget: Option<&IoBudget>,
     ) -> PyResult<bool> {
@@ -362,38 +384,59 @@ impl ScalarTypes {
         };
         use numpy::NumpyScalar;
         let result = match types.read(value)? {
-            Some(NumpyScalar::Signed(value)) => scalar::integer(output, value, context.limit)
-                .map_err(|error| errors::wire(py, error)),
-            Some(NumpyScalar::Unsigned(value)) => scalar::integer(output, value, context.limit)
-                .map_err(|error| errors::wire(py, error)),
-            Some(NumpyScalar::Float(value)) => {
-                scalar::float(output, value, context.limit).map_err(|error| errors::wire(py, error))
+            Some(NumpyScalar::Signed(value)) => emit(output, py, ValueRef::Signed(value), context),
+            Some(NumpyScalar::Unsigned(value)) => {
+                emit(output, py, ValueRef::Unsigned(value), context)
             }
-            Some(NumpyScalar::Bool(value)) => {
-                writer::append(output, if value { b"1" } else { b"0" }, context.limit)
-                    .map_err(|error| errors::wire(py, error))
-            }
+            Some(NumpyScalar::Float(value)) => emit(output, py, ValueRef::Float(value), context),
+            Some(NumpyScalar::Bool(value)) => emit(output, py, ValueRef::Boolean(value), context),
             Some(NumpyScalar::Temporal {
                 ticks,
                 unit,
                 multiplier,
                 kind,
-            }) => temporal::write(py, ticks, unit, multiplier, kind, output, context, budget),
-            None if types.is_text(value) => text(value.cast()?, output, context, true, budget),
-            None if types.is_binary(value) => binary(
-                py,
-                value.cast::<PyBytes>()?.as_bytes(),
-                output,
-                context.limit,
-                budget,
-            ),
+            }) => temporal_to(output, py, ticks, unit, multiplier, kind, context),
+            None if types.is_text(value) => output.text(value.cast()?, context, budget),
+            None if types.is_binary(value) => {
+                output.binary(py, value.cast::<PyBytes>()?.as_bytes(), context, budget)
+            }
             None => return Ok(false),
         };
         result.map(|()| true)
     }
 }
 
-/// Consult an existing provider import without freezing a negative result.
+fn temporal_to(
+    output: &mut (impl Destination + ?Sized),
+    py: Python<'_>,
+    ticks: i64,
+    unit: temporal::TimeUnit,
+    multiplier: u64,
+    kind: temporal::TimeKind,
+    context: &Context,
+) -> PyResult<()> {
+    if ticks == i64::MIN {
+        return emit(output, py, ValueRef::Null, context);
+    }
+    if multiplier == 0 {
+        return Err(errors::builtin_message::<PyTypeError>(
+            py,
+            "NumPy datetime unit multiplier must be positive",
+        ));
+    }
+    emit(
+        output,
+        py,
+        ValueRef::Ticks {
+            value: ticks,
+            unit,
+            multiplier,
+            kind,
+        },
+        context,
+    )
+}
+
 fn provider_loaded(py: Python<'_>, name: &[u8]) -> PyResult<bool> {
     // SAFETY: CPython owns sys.modules for this interpreter; acquire an owned
     // reference while attached and use PyO3's owned dictionary lookup API.
@@ -419,7 +462,11 @@ pub(crate) fn unsupported(value: &Bound<'_, PyAny>) -> PyErr {
 // The sampled primitive hot path should not pay an extra reader call.
 // Wide allocation/conversion remains in the separate non-inlined helper.
 #[inline(always)]
-fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyResult<()> {
+fn integer_to(
+    value: &Bound<'_, PyAny>,
+    output: &mut (impl Destination + ?Sized),
+    context: &Context,
+) -> PyResult<()> {
     let py = value.py();
     let mut overflow = 0;
     // SAFETY: exact-int dispatch precedes this call; value remains owned and
@@ -432,9 +479,9 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
         {
             return Err(error);
         }
-        return scalar::integer(output, compact, limit).map_err(|e| errors::wire(py, e));
+        return emit(output, py, ValueRef::Signed(compact), context);
     }
-    integer_wide(value, output, limit, overflow)
+    integer_wide(value, output, context, overflow)
 }
 
 /// Keep owned big-integer storage and error construction off the compact
@@ -442,15 +489,15 @@ fn integer(value: &Bound<'_, PyAny>, output: &mut Vec<u8>, limit: usize) -> PyRe
 #[inline(never)]
 fn integer_wide(
     value: &Bound<'_, PyAny>,
-    output: &mut Vec<u8>,
-    limit: usize,
+    output: &mut (impl Destination + ?Sized),
+    context: &Context,
     overflow: i32,
 ) -> PyResult<()> {
     let py = value.py();
     if overflow > 0 {
         match value.extract::<u64>() {
             Ok(unsigned) => {
-                return scalar::integer(output, unsigned, limit).map_err(|e| errors::wire(py, e));
+                return emit(output, py, ValueRef::Unsigned(unsigned), context);
             }
             Err(error) if error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) => {}
             Err(error) => return Err(error),
@@ -470,7 +517,7 @@ fn integer_wide(
         }
         Err(error) => return Err(error),
     };
-    scalar::large_integer(output, &value, limit).map_err(|e| scalar_error(py, e))
+    emit(output, py, ValueRef::BigInteger(&value), context)
 }
 
 fn scalar_error(py: Python<'_>, error: ScalarError) -> PyErr {
@@ -809,30 +856,7 @@ pub(crate) fn text(
     budget: Option<&IoBudget>,
 ) -> PyResult<()> {
     let py = source.py();
-    let text = source.to_str().map_err(|error| {
-        if error.is_instance_of::<PyUnicodeEncodeError>(py) {
-            let native = error.value(py);
-            let positions = native
-                .getattr("start")
-                .and_then(|start| start.extract::<usize>())
-                .and_then(|start| {
-                    native
-                        .getattr("end")?
-                        .extract::<usize>()
-                        .map(|end| (start, end))
-                });
-            if let Ok((start, end)) = positions {
-                return encode_error(
-                    source,
-                    context.codec.name(),
-                    start,
-                    end,
-                    "surrogates are not valid input characters",
-                );
-            }
-        }
-        error
-    })?;
+    let text = unicode(source, context)?;
     if quoted && text.len() <= WORK_BYTES {
         return context
             .codec
@@ -879,4 +903,32 @@ pub(crate) fn text(
         writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))?;
     }
     Ok(())
+}
+
+fn unicode<'a>(source: &'a Bound<'_, PyString>, context: &Context) -> PyResult<&'a str> {
+    let py = source.py();
+    source.to_str().map_err(|error| {
+        if error.is_instance_of::<PyUnicodeEncodeError>(py) {
+            let native = error.value(py);
+            let positions = native
+                .getattr("start")
+                .and_then(|start| start.extract::<usize>())
+                .and_then(|start| {
+                    native
+                        .getattr("end")?
+                        .extract::<usize>()
+                        .map(|end| (start, end))
+                });
+            if let Ok((start, end)) = positions {
+                return encode_error(
+                    source,
+                    context.codec.name(),
+                    start,
+                    end,
+                    "surrogates are not valid input characters",
+                );
+            }
+        }
+        error
+    })
 }
