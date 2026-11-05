@@ -701,6 +701,23 @@ impl Receiver {
         Ok(())
     }
 
+    /// Keep validating/counting this set without constructing further rows.
+    /// Previously delivered batches remain owned by their external readers.
+    pub(crate) fn discard_current_rows(&mut self) -> Result<(), ResultError> {
+        if !self.streaming
+            || !matches!(self.phase, Phase::Rows)
+            || self.batch_rows != 0
+            || !self.bytes.is_empty()
+            || !self.fields.is_empty()
+        {
+            return Err(
+                WireError::Malformed("discard requires a delivered current row boundary").into(),
+            );
+        }
+        self.discard = true;
+        Ok(())
+    }
+
     pub(crate) fn enable_set_option_ack(&mut self) {
         self.set_option_ack = true;
     }
@@ -749,6 +766,11 @@ impl Receiver {
     }
 
     fn take_rows(&mut self) -> Result<RowBatch, ResultError> {
+        if self.discard {
+            return Err(
+                WireError::Malformed("discarded rows have no publishable storage").into(),
+            );
+        }
         let owner = self.scope.charge(size_of::<RowBatch>())?;
         let columns = self.freeze_columns()?;
         Ok(RowBatch {
@@ -767,7 +789,7 @@ impl Receiver {
     }
 
     pub(crate) fn take_stream_rows(&mut self) -> Result<Option<RowBatch>, ResultError> {
-        if self.streaming && self.batch_rows != 0 {
+        if self.streaming && !self.discard && self.batch_rows != 0 {
             self.take_rows().map(Some)
         } else {
             Ok(None)
@@ -1023,13 +1045,13 @@ impl Receiver {
                     .row_count
                     .checked_add(1)
                     .ok_or(WireError::Malformed("row count overflow"))?;
-                if self.streaming {
+                if self.streaming && !self.discard {
                     self.batch_rows = self
                         .batch_rows
                         .checked_add(1)
                         .ok_or(WireError::Malformed("batch row count overflow"))?;
                 }
-                if self.streaming && self.batch_rows >= rows {
+                if self.streaming && !self.discard && self.batch_rows >= rows {
                     return self
                         .take_rows()
                         .map(|rows| Some(Delivery::Streaming(StreamEvent::Rows(rows))));

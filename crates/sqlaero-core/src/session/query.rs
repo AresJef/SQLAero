@@ -295,6 +295,23 @@ impl Query {
         self.streaming && self.stream_boundary
     }
 
+    /// Stop storing subsequent rows of this current streaming set only.
+    /// Validation, actual counts, channel ownership and budget remain intact;
+    /// a following set gets the original delivery policy and a new Receiver.
+    ///
+    /// # Errors
+    /// Rejects calls outside a delivered Header/Rows boundary, including an
+    /// already ended set. This local rejection does not advance the exchange.
+    pub fn discard_current_rows(&mut self) -> Result<(), QueryError> {
+        if !self.at_stream_boundary() {
+            return Err(
+                WireError::Malformed("discard requires a streaming result boundary").into(),
+            );
+        }
+        self.collector.discard_current_rows()?;
+        Ok(())
+    }
+
     /// Advance only to completed column definitions, a bounded complete-row
     /// batch, or an actual set terminator. A delivered batch has no fabricated
     /// Completion and remains owned for conversion retry before the next call.
