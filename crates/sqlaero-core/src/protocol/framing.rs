@@ -166,31 +166,7 @@ impl MessageReader {
                 if self.header_read < 4 {
                     continue;
                 }
-                if self.header[3] != sequence.0 {
-                    return Err(WireError::Sequence {
-                        expected: sequence.0,
-                        received: self.header[3],
-                    });
-                }
-                sequence.advance();
-                self.frame_length = usize::from(self.header[0])
-                    | (usize::from(self.header[1]) << 8)
-                    | (usize::from(self.header[2]) << 16);
-                let total =
-                    self.payload
-                        .len()
-                        .checked_add(self.frame_length)
-                        .ok_or(WireError::Limit {
-                            required: usize::MAX,
-                            limit: self.limit,
-                        })?;
-                if total > self.limit {
-                    return Err(WireError::Limit {
-                        required: total,
-                        limit: self.limit,
-                    });
-                }
-                self.frame_remaining = self.frame_length;
+                self.begin_frame(sequence)?;
             }
             if self.frame_remaining > 0 {
                 let length = self
@@ -232,6 +208,58 @@ impl MessageReader {
             }
             self.header_read = 0;
         }
+    }
+
+    #[inline]
+    fn begin_frame(&mut self, sequence: &mut Sequence) -> Result<(), WireError> {
+        if self.header[3] != sequence.0 {
+            return Err(WireError::Sequence {
+                expected: sequence.0,
+                received: self.header[3],
+            });
+        }
+        sequence.advance();
+        self.frame_length = usize::from(self.header[0])
+            | (usize::from(self.header[1]) << 8)
+            | (usize::from(self.header[2]) << 16);
+        let total = self
+            .payload
+            .len()
+            .checked_add(self.frame_length)
+            .ok_or(WireError::Limit {
+                required: usize::MAX,
+                limit: self.limit,
+            })?;
+        if total > self.limit {
+            return Err(WireError::Limit {
+                required: total,
+                limit: self.limit,
+            });
+        }
+        self.frame_remaining = self.frame_length;
+        Ok(())
+    }
+
+    // The compression codec calls this only immediately after a strict
+    // sequence error whose received ID equals its independently validated
+    // compressed frame ID. MySQL net_flush can legally rebase that inner ID.
+    // Keep and parse the same complete header; never read or discard it twice.
+    pub(crate) fn accept_compressed_sequence(
+        &mut self,
+        sequence: &mut Sequence,
+        received: u8,
+    ) -> Result<(), WireError> {
+        if self.complete
+            || self.header_read != 4
+            || self.header[3] != received
+            || self.frame_remaining != 0
+        {
+            return Err(WireError::Malformed(
+                "no complete compressed sequence header to accept",
+            ));
+        }
+        *sequence = Sequence::new(received);
+        self.begin_frame(sequence)
     }
 }
 

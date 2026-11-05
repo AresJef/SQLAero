@@ -130,22 +130,35 @@ impl Codec {
     ) -> Result<Progress<Buffer<u8>>, WireError> {
         let mut work = 0;
         if self.ready.is_none() {
-            let mut adapter = Reader {
-                state: &mut self.inbound,
-                source,
-                sequence: &mut self.sequence,
-                scope,
-                work: &mut work,
-                error: None,
-            };
-            let result = message.step(&mut adapter, ordinary);
-            if let Some(error) = adapter.error {
-                return Err(error);
-            }
-            match result? {
-                Progress::Ready(bytes) => self.ready = Some(bytes),
-                Progress::Pending => return Ok(Progress::Pending),
-                Progress::Yield => return Ok(Progress::Yield),
+            loop {
+                let mut adapter = Reader {
+                    state: &mut self.inbound,
+                    source,
+                    sequence: &mut self.sequence,
+                    scope,
+                    work: &mut work,
+                    error: None,
+                };
+                let result = message.step(&mut adapter, ordinary);
+                if let Some(error) = adapter.error {
+                    return Err(error);
+                }
+                match result {
+                    Err(WireError::Sequence { received, .. })
+                        if received == self.sequence.wrapping_sub(1) =>
+                    {
+                        // Match mysql_common's bounded net_flush exception;
+                        // the outer compressed ID was already checked strictly.
+                        message.accept_compressed_sequence(ordinary, received)?;
+                    }
+                    Err(error) => return Err(error),
+                    Ok(Progress::Ready(bytes)) => {
+                        self.ready = Some(bytes);
+                        break;
+                    }
+                    Ok(Progress::Pending) => return Ok(Progress::Pending),
+                    Ok(Progress::Yield) => return Ok(Progress::Yield),
+                }
             }
         }
         if self.inbound.needs_footer() {
@@ -218,6 +231,9 @@ impl Codec {
         match self.outbound.flush(target, &mut self.sequence, &mut work)? {
             Progress::Ready(()) => {
                 self.outbound.release();
+                // MySQL net_flush and mysql_common's encoder synchronize the
+                // next ordinary packet ID after flushing compressed output.
+                *ordinary = Sequence::new(self.sequence);
                 Ok(Progress::Ready(()))
             }
             Progress::Pending => Ok(Progress::Pending),
@@ -605,7 +621,7 @@ mod tests {
                 baseline,
                 "outbound work buffers must release at send completion"
             );
-            assert_eq!(ordinary.next(), 1);
+            assert_eq!(ordinary.next(), sender.sequence);
             assert!(sender.sequence > 1);
             let mut receiver = Codec::new(algorithm, 3).unwrap();
             let mut ordinary = Sequence::default();
@@ -654,7 +670,7 @@ mod tests {
         for input in [b"one", b"two", b"end"] {
             send(&mut sender, input, &mut wire, &mut sequence, &scope);
         }
-        assert_eq!((sender.sequence, sequence.next()), (2, 1));
+        assert_eq!((sender.sequence, sequence.next()), (2, 2));
         let mut receiver = Codec::new(Algorithm::Zlib, 3).unwrap();
         receiver.sequence = 255;
         let mut sequence = Sequence::new(254);
@@ -667,7 +683,7 @@ mod tests {
                 expected
             );
         }
-        assert_eq!((receiver.sequence, sequence.next()), (2, 1));
+        assert_eq!((receiver.sequence, sequence.next()), (2, 2));
     }
 
     #[test]
@@ -936,6 +952,90 @@ mod tests {
                 }
             }
             codec.start_command().unwrap();
+        }
+    }
+
+    #[test]
+    fn completed_compression_can_be_polled_again_while_tls_records_flush() {
+        for algorithm in [Algorithm::Zlib, Algorithm::Zstd] {
+            let scope = scope();
+            let input = vec![b'a'; 100_000];
+            let mut message = MessageWriter::new(input.len(), input.len()).unwrap();
+            let mut codec = Codec::new(algorithm, 3).unwrap();
+            let mut wire = Vec::new();
+            let mut sequence = Sequence::default();
+            loop {
+                if matches!(
+                    codec
+                        .write_message_step(&mut message, &input, &mut wire, &mut sequence, &scope)
+                        .unwrap(),
+                    Progress::Ready(())
+                ) {
+                    break;
+                }
+            }
+            let original = wire.clone();
+            let finished_sequence = (sequence.next(), codec.sequence);
+            for _ in 0..3 {
+                assert!(matches!(
+                    codec
+                        .write_message_step(&mut message, &input, &mut wire, &mut sequence, &scope)
+                        .unwrap(),
+                    Progress::Ready(())
+                ));
+                assert_eq!(wire, original);
+                assert_eq!((sequence.next(), codec.sequence), finished_sequence);
+            }
+        }
+    }
+
+    #[test]
+    fn server_flush_rebases_only_to_the_verified_compressed_frame_id() {
+        for valid in [false, true] {
+            let scope = scope();
+            let mut first = Vec::new();
+            let mut sequence = Sequence::default();
+            framing::write_message(&mut first, b"first", &mut sequence, 4096).unwrap();
+            framing::write_message(&mut first, b"second", &mut sequence, 4096).unwrap();
+            let mut second = Vec::new();
+            framing::write_message(
+                &mut second,
+                b"after flush",
+                &mut Sequence::new(if valid { 1 } else { 7 }),
+                4096,
+            )
+            .unwrap();
+            let mut wire = frame(Algorithm::Zlib, &first);
+            let mut next = frame(Algorithm::Zlib, &second);
+            next[3] = 1;
+            wire.extend_from_slice(&next);
+            let mut wire = Cursor::new(wire);
+            let mut codec = Codec::new(Algorithm::Zlib, 3).unwrap();
+            let mut sequence = Sequence::default();
+            assert_eq!(
+                receive(&mut codec, &mut wire, &mut sequence, &scope)
+                    .unwrap()
+                    .as_slice(),
+                b"first"
+            );
+            assert_eq!(
+                receive(&mut codec, &mut wire, &mut sequence, &scope)
+                    .unwrap()
+                    .as_slice(),
+                b"second"
+            );
+            let received = receive(&mut codec, &mut wire, &mut sequence, &scope);
+            if valid {
+                assert_eq!(received.unwrap().as_slice(), b"after flush");
+            } else {
+                assert!(matches!(
+                    received,
+                    Err(WireError::Sequence {
+                        expected: 2,
+                        received: 7
+                    })
+                ));
+            }
         }
     }
 }

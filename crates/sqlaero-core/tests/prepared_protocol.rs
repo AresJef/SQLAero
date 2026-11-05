@@ -9,11 +9,14 @@ use sqlaero_core::protocol::prepared::{Close, Parameters, Prepare, Statement};
 use sqlaero_core::protocol::{CapabilityFlags, StatusFlags, binary};
 use sqlaero_core::result::text::{Response, ResultError};
 use sqlaero_core::result::value::{FieldValue, RowEncoding};
-use sqlaero_core::session::connect::{Authenticated, ConnectParams, Endpoint, Establish};
+use sqlaero_core::session::connect::{
+    Authenticated, ConnectParams, ConnectTls, Endpoint, Establish,
+};
 use sqlaero_core::session::initialize::{Initialize, Options};
 use sqlaero_core::session::query::{Query, QueryError};
 use sqlaero_core::transport::channel::Step;
 use sqlaero_core::transport::deadline::{IoBudget, TimeoutKind};
+use sqlaero_core::transport::{compression, tls};
 use std::path::PathBuf;
 use std::time::Duration;
 use zeroize::Zeroizing;
@@ -21,6 +24,10 @@ use zeroize::Zeroizing;
 const LIMIT: usize = 16 * 1024 * 1024;
 
 fn connect(label: &str) -> Authenticated {
+    connect_mode(label, compression::Options::default(), false)
+}
+
+fn connect_mode(label: &str, compression: compression::Options, secure: bool) -> Authenticated {
     let root = PathBuf::from(
         std::env::var_os("SQLAERO_TEST_MYSQL_ROOT").expect("set the task-owned fixture path"),
     );
@@ -29,13 +36,30 @@ fn connect(label: &str) -> Authenticated {
     )
     .unwrap();
     let parameters = ConnectParams {
-        endpoint: Endpoint::Unix(root.join(format!("{label}.sock"))),
+        endpoint: if secure {
+            Endpoint::Tcp {
+                host: "127.0.0.1".to_owned(),
+                port: state["port"].as_str().unwrap().parse().unwrap(),
+            }
+        } else {
+            Endpoint::Unix(root.join(format!("{label}.sock")))
+        },
         user: "sqlaero".to_owned(),
         password: Zeroizing::new(state["test_password"].as_str().unwrap().as_bytes().to_vec()),
         database: Some("sqlaero_test".to_owned()),
-        tls: None,
+        tls: secure.then(|| ConnectTls {
+            config: tls::client_config(
+                tls::Mode::VerifyIdentity,
+                tls::MinimumVersion::Tls12,
+                Some(tls::certificates(&std::fs::read(root.join("tls/ca.pem")).unwrap()).unwrap()),
+                None,
+            )
+            .unwrap()
+            .unwrap(),
+            name: "127.0.0.1".to_owned().try_into().unwrap(),
+        }),
         server_public_key: None,
-        compression: Default::default(),
+        compression,
         multi_statements: false,
         connect_timeout: Some(Duration::from_secs(5)),
         read_timeout: Some(Duration::from_secs(3)),
@@ -364,95 +388,221 @@ fn real_binary_select_uses_native_fields_and_server_current_metadata() {
 #[ignore = "requires C's two isolated MySQL fixtures; run with one test thread"]
 fn real_prepared_call_preserves_business_sets_out_marker_and_final_status() {
     for label in ["84", "97"] {
-        let mut connection = connect(label);
-        assert!(
-            connection
-                .capabilities
-                .contains(CapabilityFlags::CLIENT_PS_MULTI_RESULTS)
-        );
-        sql(
-            &mut connection,
-            "DROP PROCEDURE IF EXISTS c_prepared_protocol_call",
-        )
-        .unwrap();
-        sql(&mut connection, "CREATE PROCEDURE c_prepared_protocol_call(IN n INT, OUT v BIGINT, INOUT counter INT) BEGIN SELECT n AS r1; SELECT n+1 AS r2; SET v=-9223372036854775808; SET counter=counter+1; END").unwrap();
-        let statement = prepare(&mut connection, "CALL c_prepared_protocol_call(?,?,?)").unwrap();
-        let mut parameters = Parameters::new(statement.id, statement.parameters, LIMIT).unwrap();
-        for value in [ValueRef::Signed(5), ValueRef::Null, ValueRef::Signed(10)] {
-            parameters.write(value, &context()).unwrap();
-        }
-        let mut query = Query::new(
-            parameters.finish().unwrap(),
-            connection.capabilities,
-            LIMIT,
-            LIMIT,
-            LIMIT,
-        )
-        .unwrap();
-        let mut budget = budget();
-        let mut sets = Vec::new();
-        loop {
-            match query.advance(&mut connection.channel, &mut budget).unwrap() {
-                Step::Ready(response) => {
-                    sets.push(response);
-                    if query.is_finished() {
-                        break;
-                    }
-                }
-                Step::Control => (),
-                Step::Wait(_) => panic!("query drives concrete waits"),
-            }
-        }
-        assert_eq!(sets.len(), 4);
-        for (index, expected) in [5, 6].into_iter().enumerate() {
-            let Response::Rows(rows) = &sets[index] else {
-                panic!("expected business row");
-            };
-            assert_eq!(rows.encoding, RowEncoding::Binary);
+        for (algorithm, secure) in [
+            ("uncompressed", false),
+            ("zlib", false),
+            ("zstd", false),
+            ("zstd", true),
+        ] {
+            let options =
+                compression::Options::new(compression::Algorithms::from_csv(algorithm).unwrap(), 3)
+                    .unwrap();
+            let mut connection = connect_mode(label, options, secure);
             assert!(
-                !rows
-                    .completion
+                connection
+                    .capabilities
+                    .contains(CapabilityFlags::CLIENT_PS_MULTI_RESULTS)
+            );
+            sql(
+                &mut connection,
+                "DROP PROCEDURE IF EXISTS c_prepared_protocol_call",
+            )
+            .unwrap();
+            sql(&mut connection, "CREATE PROCEDURE c_prepared_protocol_call(IN n INT, OUT v BIGINT, INOUT counter INT) BEGIN SELECT n AS r1; SELECT n+1 AS r2; SET v=-9223372036854775808; SET counter=counter+1; END").unwrap();
+            let statement =
+                prepare(&mut connection, "CALL c_prepared_protocol_call(?,?,?)").unwrap();
+            let mut parameters =
+                Parameters::new(statement.id, statement.parameters, LIMIT).unwrap();
+            for value in [ValueRef::Signed(5), ValueRef::Null, ValueRef::Signed(10)] {
+                parameters.write(value, &context()).unwrap();
+            }
+            let mut query = Query::new(
+                parameters.finish().unwrap(),
+                connection.capabilities,
+                LIMIT,
+                LIMIT,
+                LIMIT,
+            )
+            .unwrap();
+            let mut budget = budget();
+            let mut sets = Vec::new();
+            loop {
+                match query.advance(&mut connection.channel, &mut budget).unwrap() {
+                    Step::Ready(response) => {
+                        sets.push(response);
+                        if query.is_finished() {
+                            break;
+                        }
+                    }
+                    Step::Control => (),
+                    Step::Wait(_) => panic!("query drives concrete waits"),
+                }
+            }
+            assert_eq!(sets.len(), 4);
+            for (index, expected) in [5, 6].into_iter().enumerate() {
+                let Response::Rows(rows) = &sets[index] else {
+                    panic!("expected business row");
+                };
+                assert_eq!(rows.encoding, RowEncoding::Binary);
+                assert!(
+                    !rows
+                        .completion
+                        .status_flags()
+                        .contains(StatusFlags::SERVER_PS_OUT_PARAMS)
+                );
+                assert_eq!(
+                    binary::value(
+                        &rows.columns[0],
+                        rows.row(0).unwrap()[0].get(&rows.bytes).unwrap().unwrap()
+                    )
+                    .unwrap(),
+                    FieldValue::Signed(expected)
+                );
+            }
+            let Response::Rows(rows) = &sets[2] else {
+                panic!("expected native output row");
+            };
+            assert!(
+                rows.completion
                     .status_flags()
                     .contains(StatusFlags::SERVER_PS_OUT_PARAMS)
             );
+            let values: Vec<_> = rows
+                .columns
+                .iter()
+                .zip(rows.row(0).unwrap())
+                .map(|(column, field)| {
+                    binary::value(column, field.get(&rows.bytes).unwrap().unwrap()).unwrap()
+                })
+                .collect();
             assert_eq!(
-                binary::value(
-                    &rows.columns[0],
-                    rows.row(0).unwrap()[0].get(&rows.bytes).unwrap().unwrap()
-                )
-                .unwrap(),
-                FieldValue::Signed(expected)
+                values,
+                [FieldValue::Signed(i64::MIN), FieldValue::Signed(11)]
             );
+            assert!(matches!(sets[3], Response::Command(_)));
+            assert!(
+                !sets[3]
+                    .completion()
+                    .status_flags()
+                    .contains(StatusFlags::SERVER_MORE_RESULTS_EXISTS)
+            );
+            close(&mut connection, statement);
+            sql(&mut connection, "DROP PROCEDURE c_prepared_protocol_call").unwrap();
+            sql(&mut connection, "DO 1").unwrap();
         }
-        let Response::Rows(rows) = &sets[2] else {
-            panic!("expected native output row");
-        };
-        assert!(
-            rows.completion
-                .status_flags()
-                .contains(StatusFlags::SERVER_PS_OUT_PARAMS)
-        );
-        let values: Vec<_> = rows
-            .columns
-            .iter()
-            .zip(rows.row(0).unwrap())
-            .map(|(column, field)| {
-                binary::value(column, field.get(&rows.bytes).unwrap().unwrap()).unwrap()
-            })
-            .collect();
-        assert_eq!(
-            values,
-            [FieldValue::Signed(i64::MIN), FieldValue::Signed(11)]
-        );
-        assert!(matches!(sets[3], Response::Command(_)));
-        assert!(
-            !sets[3]
-                .completion()
-                .status_flags()
-                .contains(StatusFlags::SERVER_MORE_RESULTS_EXISTS)
-        );
-        close(&mut connection, statement);
-        sql(&mut connection, "DROP PROCEDURE c_prepared_protocol_call").unwrap();
-        sql(&mut connection, "DO 1").unwrap();
+    }
+}
+
+#[test]
+#[ignore = "requires C's two isolated MySQL fixtures; run with one test thread"]
+fn real_compression_preserves_text_prepared_tls_and_actual_negotiated_status() {
+    for label in ["84", "97"] {
+        for secure in [false, true] {
+            for (allowed, level, expected) in [
+                ("zlib", 3, "zlib"),
+                ("zstd", 3, "zstd"),
+                ("zstd", 10, "zstd"),
+                ("zstd,zlib", 10, "zlib"),
+            ] {
+                let options = compression::Options::new(
+                    compression::Algorithms::from_csv(allowed).unwrap(),
+                    level,
+                )
+                .unwrap();
+                let mut connection = connect_mode(label, options, secure);
+                assert!(connection.channel.is_compressed());
+                let actual = connection.channel.compression_options().unwrap();
+                assert_eq!(actual.algorithms().names().collect::<Vec<_>>(), [expected]);
+                assert_eq!(
+                    options.algorithms().names().count(),
+                    if allowed == "zstd,zlib" { 2 } else { 1 }
+                );
+                assert_eq!(connection.channel.tls_version().is_some(), secure);
+                let Response::Rows(status) = sql(
+                    &mut connection,
+                    "SHOW SESSION STATUS LIKE 'Compression_algorithm'",
+                )
+                .unwrap() else {
+                    panic!("expected actual compression status");
+                };
+                assert_eq!(
+                    status.row(0).unwrap()[1]
+                        .get(&status.bytes)
+                        .unwrap()
+                        .unwrap(),
+                    expected.as_bytes()
+                );
+                if expected == "zstd" {
+                    let Response::Rows(status) = sql(
+                        &mut connection,
+                        "SHOW SESSION STATUS LIKE 'Compression_level'",
+                    )
+                    .unwrap() else {
+                        panic!("expected actual compression level");
+                    };
+                    assert_eq!(
+                        status.row(0).unwrap()[1]
+                            .get(&status.bytes)
+                            .unwrap()
+                            .unwrap(),
+                        level.to_string().as_bytes()
+                    );
+                }
+                let Response::Rows(rows) =
+                    sql(&mut connection, "SELECT REPEAT('abc',400000)").unwrap()
+                else {
+                    panic!("expected large compressed row");
+                };
+                let raw = rows.row(0).unwrap()[0].get(&rows.bytes).unwrap().unwrap();
+                assert_eq!(raw.len(), 1_200_000);
+                assert!(raw.as_chunks::<3>().0.iter().all(|part| part == b"abc"));
+                let statement = prepare(&mut connection, "SELECT ?,CAST(? AS UNSIGNED),?").unwrap();
+                let text = "中🙂".repeat(40_000);
+                let bytes: Vec<_> = (0..300_000_u64)
+                    .map(|index| ((index.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 32) & 255) as u8)
+                    .collect();
+                let mut parameters =
+                    Parameters::new(statement.id, statement.parameters, LIMIT).unwrap();
+                parameters.text_start(text.len(), &context()).unwrap();
+                for fragment in text.as_bytes().chunks(7 * 8192) {
+                    parameters
+                        .text_fragment(std::str::from_utf8(fragment).unwrap(), &context())
+                        .unwrap();
+                }
+                parameters.text_end(&context()).unwrap();
+                parameters
+                    .write(ValueRef::Unsigned(u64::MAX), &context())
+                    .unwrap();
+                parameters.bytes_start(bytes.len(), &context()).unwrap();
+                for fragment in bytes.chunks(64 * 1024) {
+                    parameters.bytes_fragment(fragment, &context()).unwrap();
+                }
+                parameters.bytes_end(&context()).unwrap();
+                let Response::Rows(rows) =
+                    query(&mut connection, parameters.finish().unwrap()).unwrap()
+                else {
+                    panic!("expected compressed prepared row");
+                };
+                assert_eq!(rows.encoding, RowEncoding::Binary);
+                let values: Vec<_> = rows
+                    .columns
+                    .iter()
+                    .zip(rows.row(0).unwrap())
+                    .map(|(column, field)| {
+                        binary::value(column, field.get(&rows.bytes).unwrap().unwrap()).unwrap()
+                    })
+                    .collect();
+                assert_eq!(
+                    values,
+                    [
+                        FieldValue::Bytes(text.as_bytes()),
+                        FieldValue::Unsigned(u64::MAX),
+                        FieldValue::Bytes(&bytes)
+                    ]
+                );
+                close(&mut connection, statement);
+                sql(&mut connection, "DO 1").unwrap();
+            }
+        }
     }
 }
