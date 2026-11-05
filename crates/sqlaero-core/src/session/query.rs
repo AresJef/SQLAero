@@ -270,7 +270,7 @@ impl Query {
         }
         let mut processed = 0usize;
         if !self.started {
-            channel.new_command();
+            channel.new_command()?;
             self.started = true;
         }
         loop {

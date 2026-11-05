@@ -101,8 +101,13 @@ impl Channel {
 
     /// Begin a new command's packet sequence after the preceding exchange has
     /// been fully consumed. This never creates a new operation timeout budget.
-    pub fn new_command(&mut self) {
+    ///
+    /// # Errors
+    /// Returns a framing failure if a negotiated transport cannot begin a new
+    /// exchange while preceding frame work is still incomplete.
+    pub fn new_command(&mut self) -> Result<(), ChannelError> {
         self.sequence = Sequence::default();
+        Ok(())
     }
 
     /// Return whether full authentication may use this established channel.

@@ -311,19 +311,16 @@ impl<'a> Close<'a> {
     /// retirement still takes place on every preparation failure.
     pub fn new(mut lease: CommandLease<'a>) -> Result<Self, CloseError> {
         lease.begin_close();
-        let prepared = lease.session().map(|session| {
-            session.channel.new_command();
-            MessageWriter::new(1, session.max_send)
-        });
+        let prepared = (|| -> Result<MessageWriter, CloseError> {
+            let session = lease.session()?;
+            session.channel.new_command()?;
+            Ok(MessageWriter::new(1, session.max_send)?)
+        })();
         let sender = match prepared {
-            Ok(Ok(sender)) => sender,
-            Ok(Err(error)) => {
-                lease.invalidate();
-                return Err(error.into());
-            }
+            Ok(sender) => sender,
             Err(error) => {
                 lease.invalidate();
-                return Err(error.into());
+                return Err(error);
             }
         };
         Ok(Self {

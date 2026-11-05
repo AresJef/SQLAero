@@ -704,7 +704,7 @@ macro_rules! connection_api {
                 lease.begin_close();
                 let result=(|| {
                     let session=lease.session().map_err(|error|errors::access(py,error))?;
-                    session.channel.new_command();
+                    session.channel.new_command().map_err(|error|errors::channel(py,error))?;
                     let mut sender=MessageWriter::new(1,session.max_send).map_err(|error|errors::wire(py,error))?;
                     loop {
                         let step=py.detach(|| {

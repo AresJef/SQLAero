@@ -414,7 +414,8 @@ impl Establish {
                         | CapabilityFlags::CLIENT_TRANSACTIONS
                         | CapabilityFlags::CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA
                         | CapabilityFlags::CLIENT_DEPRECATE_EOF
-                        | CapabilityFlags::CLIENT_MULTI_RESULTS)
+                        | CapabilityFlags::CLIENT_MULTI_RESULTS
+                        | CapabilityFlags::CLIENT_PS_MULTI_RESULTS)
                         & greeting.capabilities());
                 if self.params.database.is_some() {
                     self.capabilities
