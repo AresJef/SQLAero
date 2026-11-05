@@ -37,6 +37,7 @@ struct Results {
     failed: bool,
     started: bool,
     failure_note: Option<std::sync::Arc<errors::SavedFailure>>,
+    stream: Option<crate::stream::Stream>,
 }
 #[derive(Default)]
 struct Collected {
@@ -45,6 +46,47 @@ struct Collected {
     total: u128,
     total_unknown: bool,
     final_first_known: bool,
+}
+
+/// Restore the native stream at every ordinary exit. Unwinding retires its
+/// Cursor and lets the unfinished native token disable the wire without I/O.
+struct HeldStream<'a> {
+    cursor: &'a CursorCore,
+    value: Option<crate::stream::Stream>,
+}
+impl HeldStream<'_> {
+    fn get(&mut self, py: Python<'_>) -> PyResult<&mut crate::stream::Stream> {
+        self.value.as_mut().ok_or_else(|| {
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "stream owner was already released",
+            )
+        })
+    }
+}
+impl Drop for HeldStream<'_> {
+    fn drop(&mut self) {
+        if std::thread::panicking() {
+            self.cursor.reader.retire();
+        }
+        let Some(mut value) = self.value.take() else {
+            return;
+        };
+        value.returned();
+        if self.cursor.reader.is_closed() {
+            return;
+        }
+        let old = {
+            let mut state = self
+                .cursor
+                .results
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            state.stream.replace(value)
+        };
+        drop(old);
+    }
 }
 
 struct Settings {
@@ -65,6 +107,7 @@ pub(crate) struct CursorCore {
     settings: Mutex<Settings>,
     counts: Mutex<Option<Counts>>,
     results: Mutex<Results>,
+    streaming: bool,
 }
 /// Buffered tuple rows over the common native result implementation.
 #[pyclass(frozen, module = "sqlaero")]
@@ -75,6 +118,28 @@ pub(crate) struct Cursor {
 #[pyclass(frozen, module = "sqlaero")]
 pub(crate) struct DictCursor {
     core: CursorCore,
+}
+/// Tuple rows received incrementally from the original native response.
+#[pyclass(frozen, module = "sqlaero")]
+pub(crate) struct SSCursor {
+    core: CursorCore,
+}
+/// Dictionary rows received incrementally through the same native response.
+#[pyclass(frozen, module = "sqlaero")]
+pub(crate) struct SSDictCursor {
+    core: CursorCore,
+}
+impl std::ops::Deref for SSCursor {
+    type Target = CursorCore;
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
+}
+impl std::ops::Deref for SSDictCursor {
+    type Target = CursorCore;
+    fn deref(&self) -> &Self::Target {
+        &self.core
+    }
 }
 impl std::ops::Deref for Cursor {
     type Target = CursorCore;
@@ -94,34 +159,443 @@ impl std::ops::Deref for DictCursor {
 pub(crate) enum CursorHandle {
     Tuple(Py<Cursor>),
     Dictionary(Py<DictCursor>),
+    StreamingTuple(Py<SSCursor>),
+    StreamingDictionary(Py<SSDictCursor>),
 }
 impl CursorHandle {
     pub(crate) fn clone_ref(&self, py: Python<'_>) -> Self {
         match self {
             Self::Tuple(value) => Self::Tuple(value.clone_ref(py)),
             Self::Dictionary(value) => Self::Dictionary(value.clone_ref(py)),
+            Self::StreamingTuple(value) => Self::StreamingTuple(value.clone_ref(py)),
+            Self::StreamingDictionary(value) => Self::StreamingDictionary(value.clone_ref(py)),
         }
     }
     pub(crate) fn object(&self, py: Python<'_>) -> Py<PyAny> {
         match self {
             Self::Tuple(value) => value.clone_ref(py).into_any(),
             Self::Dictionary(value) => value.clone_ref(py).into_any(),
+            Self::StreamingTuple(value) => value.clone_ref(py).into_any(),
+            Self::StreamingDictionary(value) => value.clone_ref(py).into_any(),
         }
     }
     pub(crate) fn close(&self, py: Python<'_>) -> PyResult<()> {
         match self {
             Self::Tuple(value) => value.borrow(py).close(py),
             Self::Dictionary(value) => value.borrow(py).close(py),
+            Self::StreamingTuple(value) => value.borrow(py).close(py),
+            Self::StreamingDictionary(value) => value.borrow(py).close(py),
         }
     }
     pub(crate) fn retire(&self, py: Python<'_>) {
         match self {
             Self::Tuple(value) => value.borrow(py).retire(),
             Self::Dictionary(value) => value.borrow(py).retire(),
+            Self::StreamingTuple(value) => value.borrow(py).retire(),
+            Self::StreamingDictionary(value) => value.borrow(py).retire(),
         }
     }
 }
 impl CursorCore {
+    fn hold_stream(&self, py: Python<'_>) -> PyResult<Option<HeldStream<'_>>> {
+        let value = self.results(py)?.stream.take();
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        let mut held = HeldStream {
+            cursor: self,
+            value: Some(value),
+        };
+        held.get(py)?.enter(py)?;
+        Ok(Some(held))
+    }
+
+    fn stream_event(
+        &self,
+        py: Python<'_>,
+        stream: &mut crate::stream::Stream,
+        event: crate::stream::Event,
+    ) -> PyResult<()> {
+        use sqlaero_core::result::text::StreamEvent;
+        match event.value {
+            StreamEvent::Header(header) => {
+                let codec=event.codec.ok_or_else(||errors::client(py,ClientErrorCode::UnsupportedCharset,"The current streaming result's metadata encoding is unknown or unsupported; no older encoding was substituted"))?;
+                stream.rows = Some(
+                    self.reader
+                        .stream_header(py, header, stream.options, codec)?,
+                );
+                *self.counters(py)? = None;
+            }
+            StreamEvent::Rows(batch) => {
+                let rows = stream.rows.as_mut().ok_or_else(|| {
+                    errors::client(
+                        py,
+                        ClientErrorCode::InternalState,
+                        "stream rows have no current header",
+                    )
+                })?;
+                rows.push(batch)
+                    .map_err(|error| output::memory(py, error))?;
+            }
+            StreamEvent::End {
+                tail,
+                completion,
+                total_rows,
+                ..
+            } => {
+                if let Some(rows) = &mut stream.rows {
+                    if let Some(tail) = tail {
+                        rows.push(tail).map_err(|error| output::memory(py, error))?;
+                    }
+                    rows.finish(total_rows.ok_or_else(|| {
+                        errors::client(
+                            py,
+                            ClientErrorCode::InternalState,
+                            "row stream ended as a command result",
+                        )
+                    })?);
+                } else {
+                    self.reader.clear_result(py)?;
+                }
+                let count = total_rows.map_or_else(
+                    || u128::from(completion.affected_rows()),
+                    |count| count as u128,
+                );
+                *self.counters(py)? = Some(Counts {
+                    rows: count,
+                    last_id: completion.last_insert_id(),
+                    warnings: u128::from(completion.warnings()),
+                });
+                self.results(py)?.batch = stream.batch;
+            }
+        }
+        Ok(())
+    }
+
+    fn save_stream_failure(&self, py: Python<'_>, error: &PyErr) -> PyResult<()> {
+        let snapshot = errors::SavedFailure::capture(py, error)
+            .ok()
+            .map(std::sync::Arc::new);
+        let mut state = self.results(py)?;
+        state.failed = true;
+        state.failure_note = snapshot;
+        Ok(())
+    }
+
+    fn drain_current(
+        &self,
+        py: Python<'_>,
+        connection: &Connection,
+        stream: &mut crate::stream::Stream,
+    ) -> PyResult<()> {
+        if stream.failed {
+            return Ok(());
+        }
+        let Some(rows) = &mut stream.rows else {
+            return Ok(());
+        };
+        rows.discard();
+        if rows.is_complete() {
+            return Ok(());
+        }
+        stream.discard_current(py)?;
+        let event = stream.advance(py, connection, usize::MAX)?;
+        match event.value {
+            sqlaero_core::result::text::StreamEvent::End {
+                tail,
+                completion,
+                total_rows,
+                metadata_status,
+            } => {
+                drop(tail);
+                self.stream_event(
+                    py,
+                    stream,
+                    crate::stream::Event {
+                        value: sqlaero_core::result::text::StreamEvent::End {
+                            tail: None,
+                            completion,
+                            total_rows,
+                            metadata_status,
+                        },
+                        codec: None,
+                    },
+                )?;
+                Ok(())
+            }
+            _ => Err(errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "discarding the current row result produced a nonterminal delivery",
+            )),
+        }
+    }
+
+    fn next_stream(&self, py: Python<'_>) -> PyResult<Option<bool>> {
+        let Some(mut held) = self.hold_stream(py)? else {
+            return Ok(None);
+        };
+        let stream = held.get(py)?;
+        let connection = self.connection.borrow(py);
+        let result = (|| {
+            self.drain_current(py, &connection, stream)?;
+            stream.rows = None;
+            if stream.pending.is_none() && stream.finished() {
+                return Ok(None);
+            }
+            let event = stream.advance(py, &connection, 1)?;
+            if matches!(
+                event.value,
+                sqlaero_core::result::text::StreamEvent::Rows(_)
+            ) {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "next result has rows without a column header",
+                ));
+            }
+            self.stream_event(py, stream, event)?;
+            Ok(Some(true))
+        })();
+        if let Err(error) = &result {
+            self.save_stream_failure(py, error)?;
+        }
+        result
+    }
+
+    fn close_cursor(&self, py: Python<'_>) -> PyResult<()> {
+        let _operation = self.reader.operation(py)?;
+        let mut stream = self.results(py)?.stream.take();
+        let connection = self.connection.borrow(py);
+        let result = (|| {
+            if let Some(stream) = &mut stream {
+                stream.enter(py)?;
+                if !connection.native.is_closed() {
+                    self.drain_current(py, &connection, stream)?;
+                    stream.rows = None;
+                    while stream.pending.is_some() || !stream.finished() {
+                        let event = stream.advance(py, &connection, usize::MAX)?;
+                        if matches!(
+                            event.value,
+                            sqlaero_core::result::text::StreamEvent::Header(_)
+                        ) {
+                            stream.discard_current(py)?;
+                        }
+                        // Unselected later results never replace current
+                        // metadata/counters and never materialize Python rows.
+                    }
+                }
+            }
+            Ok(())
+        })();
+        self.reader.retire();
+        let old = {
+            let mut state = self.results(py)?;
+            state.failure_note = None;
+            std::mem::take(&mut state.pending)
+        };
+        drop(old);
+        drop(stream);
+        result
+    }
+
+    fn stream_scroll(&self, py: Python<'_>, value: &Bound<'_, PyAny>, mode: &str) -> PyResult<()> {
+        let _operation = self.reader.operation(py)?;
+        self.reader.open(py)?;
+        let absolute = match mode {
+            "relative" => false,
+            "absolute" => true,
+            _ => {
+                return Err(errors::builtin_message::<pyo3::exceptions::PyValueError>(
+                    py,
+                    "scroll mode must be 'relative' or 'absolute'",
+                ));
+            }
+        };
+        if value.is_instance_of::<pyo3::types::PyBool>() {
+            return Err(errors::builtin_message::<pyo3::exceptions::PyTypeError>(
+                py,
+                "scroll value must support __index__; bool is not accepted",
+            ));
+        }
+        // SAFETY: the attached public index protocol returns an owned exact int
+        // or its original exception. No state lock or native view crosses it.
+        let index = unsafe {
+            Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Index(value.as_ptr()))?
+        };
+        let offset=index.extract::<i128>().map_err(|error| {
+            if error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {errors::builtin_message::<pyo3::exceptions::PyIndexError>(py,"scroll target exceeds the representable native row range; the position is unchanged")} else {error}
+        })?;
+        let mut held = self.hold_stream(py)?;
+        let current = if let Some(held) = &mut held {
+            held.get(py)?
+                .rows
+                .as_ref()
+                .map_or(self.reader.position(py)?, |rows| rows.position())
+        } else {
+            self.reader.position(py)?
+        };
+        let target = if absolute {
+            Some(offset)
+        } else {
+            (current as i128).checked_add(offset)
+        };
+        let target = target
+            .filter(|target| *target >= 0)
+            .and_then(|target| usize::try_from(target).ok())
+            .ok_or_else(|| {
+                errors::builtin_message::<pyo3::exceptions::PyIndexError>(
+                    py,
+                    "scroll target is outside the native row range; the position is unchanged",
+                )
+            })?;
+        if target < current {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::UnsupportedCapability,
+                "Streaming cursors support forward navigation only; no rows were replayed",
+            ));
+        }
+        let Some(held) = &mut held else {
+            return self.reader.forward_to(py, target);
+        };
+        let stream = held.get(py)?;
+        if stream.rows.is_none() {
+            return self.reader.forward_to(py, target);
+        }
+        let connection = self.connection.borrow(py);
+        loop {
+            let rows = stream.rows.as_mut().ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "stream row owner is unavailable",
+                )
+            })?;
+            if !rows.is_complete() && connection.native.is_closed() {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::SessionState,
+                    "Cannot scroll an unfinished streaming result after its Connection closed",
+                ));
+            }
+            let remaining = target.saturating_sub(rows.position());
+            rows.skip(remaining);
+            if rows.position() == target {
+                return Ok(());
+            }
+            if rows.is_complete() {
+                return Err(errors::builtin_message::<pyo3::exceptions::PyIndexError>(
+                    py,
+                    format!(
+                        "scroll target {target} is beyond EOF; the streaming cursor actually skipped to position {}",
+                        rows.position()
+                    ),
+                ));
+            }
+            let remaining = target.saturating_sub(rows.position());
+            stream.reserve(py)?;
+            let event = match stream.advance(py, &connection, remaining) {
+                Ok(event) => event,
+                Err(error) => {
+                    self.save_stream_failure(py, &error)?;
+                    return Err(error);
+                }
+            };
+            self.stream_event(py, stream, event)?;
+        }
+    }
+
+    fn stream_fetch<'py>(
+        &self,
+        py: Python<'py>,
+        count: Option<usize>,
+        one: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let _operation = self.reader.operation(py)?;
+        self.reader.open(py)?;
+        let Some(mut held) = self.hold_stream(py)? else {
+            return self.reader.read_owned(py, count, one);
+        };
+        let stream = held.get(py)?;
+        if stream.rows.is_none() {
+            let output = self.reader.read_owned(py, count, one)?;
+            self.reader.release_consumed();
+            return Ok(output);
+        }
+        if stream.rows.as_ref().is_some_and(|rows| !rows.is_complete()) {
+            let (failed, snapshot) = {
+                let state = self.results(py)?;
+                (
+                    state.failed,
+                    state.failure_note.as_ref().map(std::sync::Arc::clone),
+                )
+            };
+            if let Some(snapshot) = snapshot {
+                return Err(snapshot.restore(py));
+            }
+            if failed {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::SessionState,
+                    "The original stream failure could not be saved for reconstruction; this is a retained diagnostic limitation, not a new database failure",
+                ));
+            }
+        }
+        let connection = self.connection.borrow(py);
+        loop {
+            let rows = stream.rows.as_ref().ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "stream row owner is unavailable",
+                )
+            })?;
+            if !rows.is_complete() && connection.native.is_closed() {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::SessionState,
+                    "Cannot fetch an unfinished streaming result because its Connection is closed; cached partial rows are not a complete local result",
+                ));
+            }
+            if rows.is_complete() || count.is_some_and(|count| rows.available() >= count) {
+                break;
+            }
+            let remaining =
+                count.map_or(usize::MAX, |count| count.saturating_sub(rows.available()));
+            stream.reserve(py)?;
+            let event = match stream.advance(py, &connection, remaining) {
+                Ok(event) => event,
+                Err(error) => {
+                    self.save_stream_failure(py, &error)?;
+                    return Err(error);
+                }
+            };
+            self.stream_event(py, stream, event)?;
+        }
+        let rows = stream.rows.as_mut().ok_or_else(|| {
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "stream rows were released before output",
+            )
+        })?;
+        let incomplete = !rows.is_complete();
+        let local = IoBudget::new(
+            sqlaero_core::transport::deadline::TimeoutKind::Operation,
+            None,
+            None,
+            None,
+        );
+        let budget = if incomplete { &stream.budget } else { &local };
+        let result=self.reader.stream_read(py,rows,count,one,budget,|| {
+            if incomplete && connection.native.is_closed() {Err(errors::client(py,ClientErrorCode::SessionState,"The Connection closed during conversion of an unfinished streaming result; the fetch position was not advanced"))} else {Ok(())}
+        });
+        if result.is_err() && incomplete && stream.budget.check().is_err() {
+            stream.abort(&connection);
+        }
+        result
+    }
     /// Stop future operations after mandatory transaction cleanup failed. Any
     /// already active Reader operation retains and releases its own data.
     pub(crate) fn retire(&self) {
@@ -141,6 +615,7 @@ impl CursorCore {
         types: Py<ScalarTypes>,
         options: Options,
         dictionary: bool,
+        streaming: bool,
     ) -> Self {
         Self {
             connection,
@@ -151,6 +626,7 @@ impl CursorCore {
             }),
             counts: Mutex::new(None),
             results: Mutex::new(Results::default()),
+            streaming,
         }
     }
     pub(crate) fn create(
@@ -159,12 +635,16 @@ impl CursorCore {
         types: Py<ScalarTypes>,
         options: Options,
         dictionary: bool,
+        streaming: bool,
     ) -> PyResult<CursorHandle> {
-        let core = Self::with_format(connection, types, options, dictionary);
-        if dictionary {
-            Py::new(py, DictCursor { core }).map(CursorHandle::Dictionary)
-        } else {
-            Py::new(py, Cursor { core }).map(CursorHandle::Tuple)
+        let core = Self::with_format(connection, types, options, dictionary, streaming);
+        match (streaming, dictionary) {
+            (false, false) => Py::new(py, Cursor { core }).map(CursorHandle::Tuple),
+            (false, true) => Py::new(py, DictCursor { core }).map(CursorHandle::Dictionary),
+            (true, false) => Py::new(py, SSCursor { core }).map(CursorHandle::StreamingTuple),
+            (true, true) => {
+                Py::new(py, SSDictCursor { core }).map(CursorHandle::StreamingDictionary)
+            }
         }
     }
     fn settings(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, Settings>> {
@@ -382,6 +862,7 @@ impl CursorCore {
         let types = connection.types.borrow(py);
         let mut collected = Collected::default();
         let mut begun = false;
+        let mut live: Option<crate::stream::Stream> = None;
         let result = (|| {
             connection.ensure_context(py, &mut lease, &mut budget)?;
             let mut planner = binding::Planner::new(
@@ -402,7 +883,34 @@ impl CursorCore {
                 };
                 let job = connection.query_job(py, &mut lease, request.bytes, false)?;
                 input::check(py, &budget)?;
+                let job = if self.streaming && request.final_request {
+                    job.with_streaming()
+                        .map_err(|error| errors::query(py, error))?
+                } else {
+                    job
+                };
                 self.handoff(py, &mut begun)?;
+                if self.streaming && request.final_request {
+                    let prefix = ConfirmedPrefix {
+                        commands: collected.prefix.commands,
+                        source_rows: collected.prefix.source_rows,
+                        row_count: collected.prefix.row_count,
+                        warnings: collected.prefix.warnings,
+                        last_insert_id: collected.prefix.last_insert_id,
+                    };
+                    live = Some(crate::stream::Stream::start(
+                        py,
+                        &connection,
+                        &mut lease,
+                        job,
+                        budget,
+                        options,
+                        request.source_rows,
+                        prefix,
+                        collected.total,
+                    )?);
+                    break;
+                }
                 self.receive_request(
                     py,
                     &connection,
@@ -421,24 +929,58 @@ impl CursorCore {
         if !begun {
             return result.map(|()| py.None().into_bound(py));
         }
-        // Network confirmation has already been committed by the driver. Host
-        // publication must not hold a wire guard, and its failure belongs to
-        // this operation's retained boundary just like a later native failure.
+        // Release the actual wire guard before returning a persistent owner or
+        // constructing final host values. Only the native token crosses calls.
         drop(lease);
-        let result = result.and_then(|()| output::count(py, collected.total));
+        let mut result = result.and_then(|()| {
+            if let Some(stream) = &mut live {
+                let event = stream.advance(py, &connection, 1)?;
+                stream.pending = Some(event);
+            }
+            Ok(())
+        });
+        let first = collected.chain.take_next();
+        let publication = if let Some(set) = first {
+            self.publish_set(py, set)
+        } else if result.is_ok()
+            && let Some(stream) = &mut live
+        {
+            match stream.advance(py, &connection, 1) {
+                Ok(event) => self.stream_event(py, stream, event),
+                Err(error) => Err(error),
+            }
+        } else {
+            Ok(())
+        };
+        if let Err(error) = publication {
+            if let Some(stream) = &mut live {
+                stream.abort(&connection);
+            }
+            match &result {
+                Err(primary) => errors::additional(py, primary, error, "cursor.publish_prefix"),
+                Ok(()) => result = Err(error),
+            }
+        }
+        let batch = if let Some(stream) = &live {
+            stream.batch
+        } else {
+            (!collected.total_unknown && collected.final_first_known).then_some(collected.total)
+        };
+        let result = result.and_then(|()| {
+            if self.streaming {
+                output::optional_count(py, batch)
+            } else {
+                output::count(py, collected.total)
+            }
+        });
         if let Err(error) = &result {
             errors::note(py, error, collected.prefix.diagnostic());
         }
-        let failed = result.is_err();
         let failure_note = result.as_ref().err().and_then(|error| {
             errors::SavedFailure::capture(py, error)
                 .ok()
                 .map(std::sync::Arc::new)
         });
-        let batch =
-            (!collected.total_unknown && collected.final_first_known).then_some(collected.total);
-        let first = collected.chain.take_next();
-        let publication = first.map_or(Ok(()), |set| self.publish_set(py, set));
         *self.results(py)? = Results {
             pending: if self.reader.is_closed() {
                 Chain::default()
@@ -446,27 +988,29 @@ impl CursorCore {
                 collected.chain
             },
             batch,
-            failed,
+            failed: result.is_err(),
             started: true,
             failure_note,
+            stream: if self.reader.is_closed() {
+                None
+            } else {
+                live.map(|mut value| {
+                    value.returned();
+                    value
+                })
+            },
         };
-        match (result, publication) {
-            (Err(error), Err(secondary)) => {
-                errors::additional(py, &error, secondary, "cursor.publish_prefix");
-                Err(error)
-            }
-            (Err(error), Ok(())) => Err(error),
-            (Ok(_), Err(error)) => Err(error),
-            (Ok(value), Ok(())) => Ok(value),
-        }
+        result
     }
 }
 macro_rules! cursor_api {
     ($(($name:ident,$set:ident,$doc:literal)),* $(,)?) => {
-        cursor_api!(@impl Cursor; $(($name,$set,$doc)),*);
-        cursor_api!(@impl DictCursor; $(($name,$set,$doc)),*);
+        cursor_api!(@impl Cursor,false; $(($name,$set,$doc)),*);
+        cursor_api!(@impl DictCursor,false; $(($name,$set,$doc)),*);
+        cursor_api!(@impl SSCursor,true; $(($name,$set,$doc)),*);
+        cursor_api!(@impl SSDictCursor,true; $(($name,$set,$doc)),*);
     };
-    (@impl $class:ident; $(($name:ident,$set:ident,$doc:literal)),* $(,)?) => {
+    (@impl $class:ident,$streaming:literal; $(($name:ident,$set:ident,$doc:literal)),* $(,)?) => {
         #[pymethods]
         impl $class {
             /// Preview every actual text request without sending SQL, advancing
@@ -553,18 +1097,16 @@ macro_rules! cursor_api {
                 let next=self.results(py)?.pending.take_next();
                 if let Some(set)=next { self.publish_set(py,set)?; return Ok(Some(true)); }
                 self.reader.end_set(py)?;
+                let (failed,snapshot)={let state=self.results(py)?;(state.failed,state.failure_note.as_ref().map(std::sync::Arc::clone))};
+                if let Some(snapshot)=snapshot {return Err(errors::at(py,snapshot.restore(py),"cursor.nextset"));}
+                if failed {return Err(errors::client(py,ClientErrorCode::SessionState,
+                    "The immediate original failure was preserved, but its retained diagnostic could not be saved. This is a local diagnostic limitation, not a new database failure."));}
                 let native=self.results(py)?.pending.failure().map(|failure|
                     (std::sync::Arc::clone(&failure.error),failure.codec));
                 if let Some((error,codec))=native {
                     return Err(errors::at(py,errors::query_with_codec(py,error.as_ref(),codec),"cursor.nextset"));
                 }
-                let (failed, snapshot) = {
-                    let state=self.results(py)?;
-                    (state.failed,state.failure_note.as_ref().map(std::sync::Arc::clone))
-                };
-                if let Some(snapshot)=snapshot {return Err(errors::at(py,snapshot.restore(py),"cursor.nextset"));}
-                if failed {return Err(errors::client(py,ClientErrorCode::SessionState,
-                    "The previous operation failed before a trustworthy diagnostic snapshot could be retained"));}
+                if $streaming {return self.next_stream(py).map_err(|error|errors::at(py,error,"cursor.nextset"));}
                 Ok(None)
             }
             /// Sum only the first result count of each actual request. None
@@ -573,24 +1115,30 @@ macro_rules! cursor_api {
             /// Move within the current result. Buffered results allow both
             /// directions, including EOF. Invalid positions raise IndexError.
             #[pyo3(signature=(value,mode="relative"))]
-            fn scroll(&self,py:Python<'_>,value:&Bound<'_,PyAny>,mode:&str)->PyResult<()> {self.reader.scroll(py,value,mode)}
+            fn scroll(&self,py:Python<'_>,value:&Bound<'_,PyAny>,mode:&str)->PyResult<()> {
+                if $streaming {self.stream_scroll(py,value,mode).map_err(|error|errors::at(py,error,"cursor.scroll"))} else {self.reader.scroll(py,value,mode)}
+            }
             /// Return the next row in this Cursor format, or None when a valid result is exhausted.
             /// Buffered fetching remains valid after its Connection is closed,
             /// as long as this Cursor stays open. This sends no network request.
-            fn fetchone<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {self.reader.fetchone(py)}
+            fn fetchone<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {
+                if $streaming {self.stream_fetch(py,Some(1),true).map_err(|error|errors::at(py,error,"cursor.fetchone"))} else {self.reader.fetchone(py)}
+            }
             /// Return at most size rows in this Cursor format atomically; None uses arraysize.
             /// Zero preserves the position but still requires a current result.
             /// Failed conversion leaves the complete original position unchanged.
             #[pyo3(signature=(size=None))]
-            fn fetchmany<'py>(&self,py:Python<'py>,size:Option<&Bound<'py,PyAny>>)->PyResult<Bound<'py,PyAny>> {self.reader.fetchmany(py,size)}
+            fn fetchmany<'py>(&self,py:Python<'py>,size:Option<&Bound<'py,PyAny>>)->PyResult<Bound<'py,PyAny>> {
+                if $streaming {let count=self.reader.fetch_size(py,size)?;self.stream_fetch(py,Some(count),false).map_err(|error|errors::at(py,error,"cursor.fetchmany"))} else {self.reader.fetchmany(py,size)}
+            }
             /// Return all remaining tuple rows atomically, without re-querying.
-            fn fetchall<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {self.reader.fetchall(py)}
+            fn fetchall<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {
+                if $streaming {self.stream_fetch(py,None,false).map_err(|error|errors::at(py,error,"cursor.fetchall"))} else {self.reader.fetchall(py)}
+            }
             /// Close only this Cursor, retaining readable local metadata,
             /// counters and configuration. Its Connection remains usable.
             pub(crate) fn close(&self,py:Python<'_>)->PyResult<()> {
-                self.reader.close(py).map_err(|error|errors::at(py,error,"cursor.close"))?;
-                let old={let mut state=self.results(py)?;state.failure_note=None;std::mem::take(&mut state.pending)};
-                drop(old);Ok(())
+                self.close_cursor(py).map_err(|error|errors::at(py,error,"cursor.close"))
             }
             /// True after this Cursor has been permanently retired locally.
             #[getter] fn closed(&self)->bool {self.reader.is_closed()}
@@ -627,9 +1175,19 @@ macro_rules! cursor_api {
             #[getter] fn columns(&self,py:Python<'_>)->PyResult<Py<metadata::Columns>>{self.reader.columns(py)}
             /// Seven-field PEP 249 metadata, or None without a row result.
             #[getter] fn description<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>>{self.reader.description(py)}
+            fn __traverse__(&self,visit:pyo3::class::PyVisit<'_>)->Result<(),pyo3::class::PyTraverseError>{
+                visit.call(&self.connection)?;
+                let state=self.results.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                if let Some(snapshot)=&state.failure_note {snapshot.traverse(&visit)?;}
+                Ok(())
+            }
+            fn __clear__(&self){
+                let snapshot={self.results.lock().unwrap_or_else(std::sync::PoisonError::into_inner).failure_note.take()};
+                drop(snapshot);
+            }
             fn __iter__(slf:PyRef<'_,Self>)->PyRef<'_,Self>{slf}
             fn __next__<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {
-                let row=self.reader.fetchone(py)?; if row.is_none(){Err(PyStopIteration::new_err(()))}else{Ok(row)}
+                let row=self.fetchone(py)?; if row.is_none(){Err(PyStopIteration::new_err(()))}else{Ok(row)}
             }
             fn __enter__<'py>(slf:PyRef<'py,Self>,py:Python<'py>)->PyResult<PyRef<'py,Self>>{slf.reader.open(py)?;Ok(slf)}
             fn __exit__(&self,py:Python<'_>,_typ:&Bound<'_,PyAny>,value:&Bound<'_,PyAny>,_traceback:&Bound<'_,PyAny>)->PyResult<bool>{

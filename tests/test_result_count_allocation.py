@@ -14,6 +14,7 @@ def test_count_allocation_failure_is_not_a_panic_or_connection_poison(kind: str)
     source = r'''
 import _testcapi
 from functools import partial
+import gc
 import json
 import os
 from pathlib import Path
@@ -34,6 +35,10 @@ with sqlaero.connect(host='127.0.0.1', port=int(state['port']), user='sqlaero',
         else:
             assert cursor.execute(sql) == 300
             operation = partial(getattr, cursor, kind)
+        # CPython may satisfy a small integer from a thread-local free list.
+        # Clear preparation leftovers before the one exact allocation fault;
+        # the actual library call and its failures remain fully observed.
+        gc.collect()
         failure = None
         try:
             enable(0, 1)

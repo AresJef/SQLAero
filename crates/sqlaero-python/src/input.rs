@@ -554,11 +554,21 @@ fn encode_error(
     end: usize,
     reason: &str,
 ) -> PyErr {
-    match source
-        .py()
-        .get_type::<PyUnicodeEncodeError>()
-        .call1((encoding, source, start, end, reason))
-    {
+    let py = source.py();
+    let make = || -> PyResult<Bound<'_, PyAny>> {
+        let arguments = crate::output::tuple_from_ready(
+            py,
+            [
+                PyString::from_bytes(py, encoding.as_bytes())?.into_any(),
+                source.as_any().clone(),
+                python_index(py, start)?,
+                python_index(py, end)?,
+                PyString::from_bytes(py, reason.as_bytes())?.into_any(),
+            ],
+        )?;
+        py.get_type::<PyUnicodeEncodeError>().call1(arguments)
+    };
+    match make() {
         Ok(value) => PyErr::from_value(value),
         Err(error) => error,
     }

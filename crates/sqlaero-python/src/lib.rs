@@ -13,6 +13,7 @@ mod metadata;
 mod output;
 mod reader;
 mod retry;
+mod stream;
 mod tls_info;
 mod transaction;
 
@@ -448,6 +449,8 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<connection::Connection>()?;
     module.add_class::<cursor::Cursor>()?;
     module.add_class::<cursor::DictCursor>()?;
+    module.add_class::<cursor::SSCursor>()?;
+    module.add_class::<cursor::SSDictCursor>()?;
     module.add_class::<transaction::Transaction>()?;
     module.add_class::<retry::RetryRule>()?;
     module.add_class::<retry::Retry>()?;

@@ -8,14 +8,18 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyInt, PyTuple};
 use sqlaero_core::charset::output::OutputCodec;
 use sqlaero_core::error::ClientErrorCode;
-use sqlaero_core::memory::{Buffer, Reservation};
+use sqlaero_core::memory::{Buffer, MemoryError, Reservation};
 use sqlaero_core::result::{
     decode::{Options, Plan},
     lifecycle::Lifecycle,
-    text::{Buffered, Cell},
+    text::{Buffered, Cell, Header, RowBatch},
 };
+use sqlaero_core::transport::deadline::IoBudget;
 use std::mem::size_of;
 use std::sync::{Arc, Mutex, MutexGuard};
+
+#[cfg(test)]
+mod stream_tests;
 
 /// Bound aggregate field work without restarting a signal check at every row.
 /// Row checkpoints and long-value decoder checkpoints remain independent.
@@ -48,6 +52,137 @@ pub(crate) struct PreparedResult {
     metadata: Arc<metadata::Snapshot>,
     data: Option<Arc<ReadData>>,
     total: usize,
+}
+/// One immutable layout and received native batches, without transport or a
+/// manufactured completion. Full consumed batches release their actual storage;
+/// a partially consumed batch keeps only its necessary bounded owner alive.
+pub(crate) struct StreamRows {
+    columns: Arc<sqlaero_core::result::text::Columns>,
+    encoding: sqlaero_core::result::value::RowEncoding,
+    plans: Buffer<Plan>,
+    batches: Buffer<Option<RowBatch>>,
+    head: usize,
+    front: usize,
+    available: usize,
+    position: usize,
+    total: Option<usize>,
+    _owner: Reservation,
+}
+impl StreamRows {
+    fn new(header: Header, options: Options) -> Result<Self, MemoryError> {
+        let scope = header.columns.scope();
+        let owner = scope.charge(size_of::<Self>())?;
+        let mut plans = Buffer::tracked(scope);
+        plans.reserve(header.columns.len())?;
+        for column in header.columns.iter() {
+            plans.push(
+                Plan::new(
+                    column.type_code,
+                    column.flags,
+                    column.collation_id,
+                    column.column_length,
+                    options,
+                )
+                .with_decimals(column.decimals),
+            )?;
+        }
+        Ok(Self {
+            batches: Buffer::tracked(scope),
+            plans,
+            columns: header.columns,
+            encoding: header.encoding,
+            head: 0,
+            front: 0,
+            available: 0,
+            position: 0,
+            total: None,
+            _owner: owner,
+        })
+    }
+    /// Reserve before advancing the network parser. Compaction moves existing
+    /// owners in place, so a subsequent push needs no allocation.
+    pub(crate) fn reserve_batch(&mut self) -> Result<(), MemoryError> {
+        if self.batches.len() == self.batches.capacity() && self.head != 0 {
+            let retained = self.batches.len() - self.head;
+            self.batches.as_mut_slice().rotate_left(self.head);
+            self.batches.truncate(retained);
+            self.head = 0;
+        }
+        self.batches.reserve(1)
+    }
+    pub(crate) fn push(&mut self, rows: RowBatch) -> Result<(), MemoryError> {
+        let available = self
+            .available
+            .checked_add(rows.row_count)
+            .filter(|count| self.position.checked_add(*count).is_some())
+            .ok_or(MemoryError::Result {
+                required: usize::MAX,
+                limit: usize::MAX,
+            })?;
+        if rows.row_count != 0 {
+            self.batches.push(Some(rows))?;
+            self.available = available;
+        }
+        Ok(())
+    }
+    pub(crate) fn available(&self) -> usize {
+        self.available
+    }
+    pub(crate) fn position(&self) -> usize {
+        self.position
+    }
+    /// The outer protocol owner passes only an actually confirmed row total.
+    pub(crate) fn finish(&mut self, total: usize) {
+        self.total = Some(total);
+        if self.available == 0 {
+            self.release_queue();
+        }
+    }
+    pub(crate) fn is_complete(&self) -> bool {
+        self.total.is_some()
+    }
+    /// Discard only actually received rows; it never fabricates an EOF.
+    pub(crate) fn discard(&mut self) {
+        self.skip(self.available);
+    }
+    pub(crate) fn skip(&mut self, count: usize) -> usize {
+        let skipped = count.min(self.available);
+        let mut remaining = skipped;
+        while remaining != 0 {
+            let Some(rows) = self.batches[self.head].as_ref() else {
+                self.head += 1;
+                continue;
+            };
+            let take = remaining.min(rows.row_count - self.front);
+            self.front += take;
+            remaining -= take;
+            if self.front == rows.row_count {
+                drop(self.batches.as_mut_slice()[self.head].take());
+                self.head += 1;
+                self.front = 0;
+            }
+        }
+        self.available -= skipped;
+        self.position += skipped;
+        if self.available == 0 {
+            self.release_queue();
+        }
+        skipped
+    }
+    fn release_queue(&mut self) {
+        self.batches = Buffer::tracked(self.columns.scope());
+        self.head = 0;
+        self.front = 0;
+    }
+}
+
+/// A borrowed view lets buffered and streaming sources share exactly one field
+/// decoder. Buffered callers provide constant base zero and keep their existing
+/// DIRECT/DICT/BINARY specialization and ownership graph.
+struct RowSource<'a> {
+    rows: &'a RowBatch,
+    plans: &'a [Plan],
+    base: usize,
 }
 struct State {
     data: Option<Arc<ReadData>>,
@@ -82,6 +217,40 @@ pub(crate) struct Reader {
     dictionary: bool,
 }
 impl Reader {
+    /// Share the existing exact built-in fetch count boundary with SS callers.
+    pub(crate) fn fetch_size(
+        &self,
+        py: Python<'_>,
+        size: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<usize> {
+        let size = match size {
+            None => self.lock(py)?.arraysize,
+            Some(size) if size.is_none() => self.lock(py)?.arraysize,
+            Some(size)
+                if size.is_exact_instance_of::<PyInt>() && !size.is_instance_of::<PyBool>() =>
+            {
+                if size.lt(0)? {
+                    return Err(crate::errors::builtin_message::<PyValueError>(
+                        py,
+                        "fetchmany size must not be negative",
+                    ));
+                }
+                match size.extract::<usize>() {
+                    Ok(value) => value,
+                    Err(error) if error.is_instance_of::<PyOverflowError>(py) => usize::MAX,
+                    Err(error) => return Err(error),
+                }
+            }
+            Some(_) => {
+                return Err(crate::errors::builtin_message::<PyTypeError>(
+                    py,
+                    "fetchmany size must be an int or None; bool is not accepted",
+                ));
+            }
+        };
+        Ok(size)
+    }
+
     pub(crate) fn is_closed(&self) -> bool {
         self.lifecycle.is_retired()
     }
@@ -236,6 +405,170 @@ impl Reader {
         drop(old);
         Ok(())
     }
+    /// Prepare a stream's layout once and publish only fully prepared metadata.
+    /// The caller owns Reader.operation; this method never acquires it again.
+    pub(crate) fn stream_header(
+        &self,
+        py: Python<'_>,
+        header: Header,
+        options: Options,
+        codec: OutputCodec,
+    ) -> PyResult<StreamRows> {
+        let metadata = metadata::Snapshot::new(
+            py,
+            Some(Arc::clone(&header.columns)),
+            codec,
+            options.decode_text_strict,
+        )?;
+        let rows = StreamRows::new(header, options).map_err(|error| output::memory(py, error))?;
+        self.publish(
+            py,
+            PreparedResult {
+                metadata,
+                data: None,
+                total: 0,
+            },
+        )?;
+        Ok(rows)
+    }
+
+    fn stream_materialize<'py, const DIRECT: bool, const DICT: bool, const BINARY: bool>(
+        &self,
+        py: Python<'py>,
+        cache: &StreamRows,
+        count: usize,
+        one: bool,
+        types: &ScalarTypes,
+        keys: Option<&Bound<'py, PyTuple>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let start = cache.position;
+        let mut progress = FetchProgress::default();
+        let mut index = start;
+        let mut sources = cache
+            .batches
+            .iter()
+            .skip(cache.head)
+            .filter_map(Option::as_ref);
+        let mut front = cache.front;
+        let mut source = sources.next().map(|rows| RowSource {
+            rows,
+            plans: &cache.plans,
+            base: start - front,
+        });
+        let mut next = || -> PyResult<Bound<'py, PyAny>> {
+            let Some(current) = &source else {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "stream row owner is unavailable",
+                ));
+            };
+            let row = self.row_tuple::<DIRECT, DICT, BINARY>(
+                py,
+                current,
+                types,
+                index,
+                start,
+                &mut progress,
+                keys,
+            )?;
+            index += 1;
+            front += 1;
+            if front == current.rows.row_count {
+                front = 0;
+                source = sources.next().map(|rows| RowSource {
+                    rows,
+                    plans: &cache.plans,
+                    base: index,
+                });
+            }
+            Ok(row)
+        };
+        if one {
+            next()
+        } else {
+            output::tuple_from_values(py, (0..count).map(|_| next())).map(Bound::into_any)
+        }
+    }
+
+    /// Consume only cached rows. The outer owner receives enough rows first and
+    /// supplies the original budget or a local budget for an already complete set.
+    /// Output, final checks and native ownership publication form one commit.
+    pub(crate) fn stream_read<'py>(
+        &self,
+        py: Python<'py>,
+        rows: &mut StreamRows,
+        count: Option<usize>,
+        one: bool,
+        budget: &IoBudget,
+        validate: impl FnOnce() -> PyResult<()>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.open(py)?;
+        input::check(py, budget)?;
+        let count = count.unwrap_or(rows.available).min(rows.available);
+        let count = if one { count.min(1) } else { count };
+        let output = if count == 0 {
+            if one {
+                py.None().into_bound(py)
+            } else {
+                PyTuple::empty(py).into_any()
+            }
+        } else {
+            let types = self.types.borrow(py);
+            let keys = if self.dictionary {
+                let metadata = self.lock(py)?.metadata.clone().ok_or_else(|| {
+                    errors::client(
+                        py,
+                        ClientErrorCode::InternalState,
+                        "stream dictionary metadata is unavailable",
+                    )
+                })?;
+                Some(metadata.key_tuple(py)?)
+            } else {
+                None
+            };
+            match (rows.encoding, self.dictionary, rows.plans.len() <= 4) {
+                (sqlaero_core::result::value::RowEncoding::Text, true, _) => self
+                    .stream_materialize::<true, true, false>(
+                        py,
+                        rows,
+                        count,
+                        one,
+                        &types,
+                        keys.as_ref(),
+                    )?,
+                (sqlaero_core::result::value::RowEncoding::Binary, true, _) => self
+                    .stream_materialize::<true, true, true>(
+                        py,
+                        rows,
+                        count,
+                        one,
+                        &types,
+                        keys.as_ref(),
+                    )?,
+                (sqlaero_core::result::value::RowEncoding::Text, false, true) => self
+                    .stream_materialize::<true, false, false>(py, rows, count, one, &types, None)?,
+                (sqlaero_core::result::value::RowEncoding::Binary, false, true) => self
+                    .stream_materialize::<true, false, true>(py, rows, count, one, &types, None)?,
+                (sqlaero_core::result::value::RowEncoding::Text, false, false) => self
+                    .stream_materialize::<false, false, false>(
+                        py, rows, count, one, &types, None,
+                    )?,
+                (sqlaero_core::result::value::RowEncoding::Binary, false, false) => self
+                    .stream_materialize::<false, false, true>(py, rows, count, one, &types, None)?,
+            }
+        };
+        input::check(py, budget)?;
+        validate()?;
+        let mut state = self.lock(py)?;
+        rows.skip(count);
+        state.position = rows.position;
+        if let Some(total) = rows.total {
+            state.total = total;
+        }
+        Ok(output)
+    }
+
     /// The real send handoff clears only this Cursor's current result. Calling
     /// this during local validation would incorrectly destroy a valid old row.
     pub(crate) fn clear_result(&self, py: Python<'_>) -> PyResult<()> {
@@ -350,20 +683,23 @@ impl Reader {
     fn row_tuple<'py, const DIRECT: bool, const DICT: bool, const BINARY: bool>(
         &self,
         py: Python<'py>,
-        data: &ReadData,
+        data: &RowSource<'_>,
         types: &ScalarTypes,
         row_index: usize,
         start: usize,
         progress: &mut FetchProgress,
         keys: Option<&Bound<'py, PyTuple>>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let fields = data.rows.row(row_index).ok_or_else(|| {
-            errors::client(
-                py,
-                ClientErrorCode::InternalState,
-                "native row location is unavailable",
-            )
-        })?;
+        let fields = row_index
+            .checked_sub(data.base)
+            .and_then(|index| data.rows.row(index))
+            .ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "native row location is unavailable",
+                )
+            })?;
         let mut decode = |column_index: usize,
                           cell: &Cell,
                           plan: Plan|
@@ -377,12 +713,17 @@ impl Reader {
                 Some(value) => {
                     let decoded = if BINARY {
                         let column = data.rows.columns.get(column_index).ok_or_else(|| {
-                            errors::client(py, ClientErrorCode::InternalState,
-                                           "binary result column is unavailable")
+                            errors::client(
+                                py,
+                                ClientErrorCode::InternalState,
+                                "binary result column is unavailable",
+                            )
                         })?;
                         sqlaero_core::protocol::binary::value(column, value)
                             .map_err(|error| errors::wire(py, error))
-                            .and_then(|value| output::value(py, value, plan, types, Some(data.rows.scope())))
+                            .and_then(|value| {
+                                output::value(py, value, plan, types, Some(data.rows.scope()))
+                            })
                     } else {
                         output::field(py, value, plan, types, Some(data.rows.scope()))
                     };
@@ -493,10 +834,23 @@ impl Reader {
         keys: Option<&Bound<'py, PyTuple>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let start = range.start;
+        let data = &RowSource {
+            rows: &data.rows,
+            plans: &data.plans,
+            base: 0,
+        };
         let mut progress = FetchProgress::default();
         if DIRECT {
             if one {
-                self.row_tuple::<true, DICT, BINARY>(py, data, types, start, start, &mut progress, keys)
+                self.row_tuple::<true, DICT, BINARY>(
+                    py,
+                    data,
+                    types,
+                    start,
+                    start,
+                    &mut progress,
+                    keys,
+                )
             } else if range.len() == 1 {
                 let row = self.row_tuple::<true, DICT, BINARY>(
                     py,
@@ -596,6 +950,68 @@ impl Reader {
         one: bool,
     ) -> PyResult<Bound<'py, PyAny>> {
         let _operation = self.operation(py)?;
+        self.read_owned(py, count, one)
+    }
+
+    /// The caller already holds this Reader's operation for state selection and
+    /// the complete read. No connection check is added to local buffered rows.
+    /// Streaming consumers release a completely delivered buffered prefix at
+    /// EOF; ordinary buffered cursors retain it for their approved navigation.
+    pub(crate) fn release_consumed(&self) {
+        let released = match self.state.lock() {
+            Ok(mut state) if state.position == state.total => state.data.take(),
+            Ok(_) => None,
+            Err(error) => error.into_inner().data.take(),
+        };
+        drop(released);
+    }
+    /// Skip a known buffered prefix for an SS cursor without creating values.
+    /// The outer Cursor holds its operation; an out-of-range forward target
+    /// keeps the actual consumed EOF rather than inventing a rollback.
+    pub(crate) fn forward_to(&self, py: Python<'_>, target: usize) -> PyResult<()> {
+        let mut state = self.lock(py)?;
+        if state.metadata.is_none() || state.abandoned {
+            drop(state);
+            return Err(errors::client(
+                py,
+                ClientErrorCode::SessionState,
+                "Cursor has no current row result to scroll",
+            ));
+        }
+        if target < state.position {
+            drop(state);
+            return Err(errors::client(
+                py,
+                ClientErrorCode::UnsupportedCapability,
+                "Streaming cursors support forward navigation only",
+            ));
+        }
+        state.position = target.min(state.total);
+        let actual = state.position;
+        let released = if actual == state.total {
+            state.data.take()
+        } else {
+            None
+        };
+        drop(state);
+        drop(released);
+        if actual != target {
+            return Err(errors::builtin_message::<pyo3::exceptions::PyIndexError>(
+                py,
+                format!(
+                    "scroll target {target} is beyond EOF; the streaming cursor actually skipped to position {actual}"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) fn read_owned<'py>(
+        &self,
+        py: Python<'py>,
+        count: Option<usize>,
+        one: bool,
+    ) -> PyResult<Bound<'py, PyAny>> {
         self.open(py)?;
         py.check_signals()?;
         let current = {
@@ -631,10 +1047,12 @@ impl Reader {
         // Choose the wire representation once per fetch, leaving the existing
         // text specialization free of a per-field binary dispatch branch.
         let output = match data.rows.encoding {
-            sqlaero_core::result::value::RowEncoding::Text =>
-                self.materialize_format::<false>(py, &data, start..end, one)?,
-            sqlaero_core::result::value::RowEncoding::Binary =>
-                self.materialize_format::<true>(py, &data, start..end, one)?,
+            sqlaero_core::result::value::RowEncoding::Text => {
+                self.materialize_format::<false>(py, &data, start..end, one)?
+            }
+            sqlaero_core::result::value::RowEncoding::Binary => {
+                self.materialize_format::<true>(py, &data, start..end, one)?
+            }
         };
         py.check_signals()?;
         // Buffered navigation retains this current set's native rows at EOF.
@@ -659,31 +1077,7 @@ impl Reader {
         py: Python<'py>,
         size: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
-        let size = match size {
-            None => self.lock(py)?.arraysize,
-            Some(size) if size.is_none() => self.lock(py)?.arraysize,
-            Some(size)
-                if size.is_exact_instance_of::<PyInt>() && !size.is_instance_of::<PyBool>() =>
-            {
-                if size.lt(0)? {
-                    return Err(crate::errors::builtin_message::<PyValueError>(
-                        py,
-                        "fetchmany size must not be negative",
-                    ));
-                }
-                match size.extract::<usize>() {
-                    Ok(value) => value,
-                    Err(error) if error.is_instance_of::<PyOverflowError>(py) => usize::MAX,
-                    Err(error) => return Err(error),
-                }
-            }
-            Some(_) => {
-                return Err(crate::errors::builtin_message::<PyTypeError>(
-                    py,
-                    "fetchmany size must be an int or None; bool is not accepted",
-                ));
-            }
-        };
+        let size = self.fetch_size(py, size)?;
         self.read(py, Some(size), false)
             .map_err(|error| errors::at(py, error, "cursor.fetchmany"))
     }
@@ -706,7 +1100,7 @@ impl Reader {
     }
     /// Internal verification position, not an additional public Cursor API.
     #[getter]
-    fn position(&self, py: Python<'_>) -> PyResult<usize> {
+    pub(crate) fn position(&self, py: Python<'_>) -> PyResult<usize> {
         Ok(self.lock(py)?.position)
     }
     /// Actual cached column labels, without preparing unique lookup keys.

@@ -59,6 +59,42 @@ pub(crate) enum CommandRole {
     UserSql,
     InternalControl,
 }
+/// The two real receiver deliveries share exactly one host-error, state and
+/// acknowledgement path. A header or row batch carries no completion claim.
+trait Received {
+    fn completion(&self) -> Option<&sqlaero_core::protocol::OkPacket<'static>>;
+    fn confirmation(&self) -> Option<CommandConfirmation>;
+}
+impl Received for Response {
+    fn completion(&self) -> Option<&sqlaero_core::protocol::OkPacket<'static>> {
+        Some(Response::completion(self))
+    }
+    fn confirmation(&self) -> Option<CommandConfirmation> {
+        Some(CommandConfirmation::from_response(self))
+    }
+}
+impl Received for sqlaero_core::result::text::StreamEvent {
+    fn completion(&self) -> Option<&sqlaero_core::protocol::OkPacket<'static>> {
+        match self {
+            Self::End { completion, .. } => Some(completion),
+            _ => None,
+        }
+    }
+    fn confirmation(&self) -> Option<CommandConfirmation> {
+        match self {
+            Self::End {
+                completion,
+                total_rows,
+                ..
+            } => Some(CommandConfirmation::from_completion(
+                completion,
+                *total_rows,
+            )),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum FailureOutcome {
     NotSent,
@@ -103,6 +139,14 @@ enum FailureFacts {
     Native(Arc<QueryError>),
 }
 impl DriveFailure {
+    /// A complete ERR/ACK or a request which never entered sending needs no
+    /// unread-response retirement merely because a host call returned error.
+    pub(crate) fn synchronized(&self) -> bool {
+        matches!(
+            self.outcome,
+            FailureOutcome::NotSent | FailureOutcome::ServerErr | FailureOutcome::Confirmed
+        )
+    }
     fn new(
         py: Python<'_>,
         error: PyErr,
@@ -484,6 +528,35 @@ impl Connection {
         budget: &mut IoBudget,
         role: CommandRole,
     ) -> Result<Response, DriveFailure> {
+        self.drive_next(py, lease, job, budget, role, Query::advance)
+    }
+    pub(crate) fn drive_stream(
+        &self,
+        py: Python<'_>,
+        lease: &mut CommandLease<'_>,
+        job: &mut Query,
+        budget: &mut IoBudget,
+        role: CommandRole,
+        row_limit: std::num::NonZeroUsize,
+    ) -> Result<sqlaero_core::result::text::StreamEvent, DriveFailure> {
+        self.drive_next(py, lease, job, budget, role, move |job, channel, budget| {
+            job.advance_stream(channel, budget, row_limit)
+        })
+    }
+    fn drive_next<T: Received + Send>(
+        &self,
+        py: Python<'_>,
+        lease: &mut CommandLease<'_>,
+        job: &mut Query,
+        budget: &mut IoBudget,
+        role: CommandRole,
+        mut advance: impl FnMut(
+            &mut Query,
+            &mut sqlaero_core::transport::channel::Channel,
+            &mut IoBudget,
+        ) -> Result<Step<T>, QueryError>
+        + Send,
+    ) -> Result<T, DriveFailure> {
         // A user command can change result encoding and then return ERR without
         // SESSION_TRACK. Its entry codec cannot certify these diagnostic bytes.
         // Fixed internal controls cannot perform such an unreported change.
@@ -512,10 +585,12 @@ impl Connection {
                     ));
                 }
             };
-            let step = py.detach(|| job.advance(&mut session.channel, budget));
+            let step = py.detach(|| advance(job, &mut session.channel, budget));
             match step {
                 Ok(Step::Ready(response)) => {
-                    if let Err(error) = self.publish(py, lease, response.completion()) {
+                    if let Some(completion) = response.completion()
+                        && let Err(error) = self.publish(py, lease, completion)
+                    {
                         if !job.is_finished() {
                             return Err(self.query_failure(py, lease, job, error, false, false));
                         }
@@ -524,7 +599,7 @@ impl Connection {
                             error,
                             FailureOutcome::Confirmed,
                             false,
-                            Some(CommandConfirmation::from_response(&response)),
+                            response.confirmation(),
                         ));
                     }
                     return Ok(response);
@@ -703,24 +778,39 @@ impl Connection {
         })()
         .map_err(|error| errors::at(py, error, stage))
     }
-    pub(crate) fn selector(py: Python<'_>, selector: Option<&Bound<'_, PyAny>>) -> PyResult<bool> {
-        let dictionary = selector.is_some_and(|value| {
-            value.is(py.get_type::<crate::cursor::DictCursor>())
-                || value.is(py.get_type::<pyo3::types::PyDict>())
-        });
-        if !dictionary
-            && selector.is_some_and(|value| {
-                !value.is_none()
-                    && !value.is(py.get_type::<Cursor>())
-                    && !value.is(py.get_type::<PyTuple>())
-            })
-        {
-            return Err(crate::errors::builtin_message::<PyTypeError>(
-                py,
-                "cursor must be None, SQLAero Cursor/DictCursor, tuple, or dict; arbitrary cursor classes and formats are not supported",
-            ));
-        }
-        Ok(dictionary)
+    pub(crate) fn selector(
+        py: Python<'_>,
+        selector: Option<&Bound<'_, PyAny>>,
+        streaming: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<(bool, bool)> {
+        let (dictionary, selected_stream) = match selector.filter(|value| !value.is_none()) {
+            None => (false, false),
+            Some(value)
+                if value.is(py.get_type::<Cursor>()) || value.is(py.get_type::<PyTuple>()) =>
+            {
+                (false, false)
+            }
+            Some(value)
+                if value.is(py.get_type::<crate::cursor::DictCursor>())
+                    || value.is(py.get_type::<pyo3::types::PyDict>()) =>
+            {
+                (true, false)
+            }
+            Some(value) if value.is(py.get_type::<crate::cursor::SSCursor>()) => (false, true),
+            Some(value) if value.is(py.get_type::<crate::cursor::SSDictCursor>()) => (true, true),
+            _ => {
+                return Err(errors::builtin_message::<PyTypeError>(
+                    py,
+                    "cursor must be None, a SQLAero Cursor class, tuple, or dict; arbitrary cursor classes and formats are not supported",
+                ));
+            }
+        };
+        let streaming = streaming
+            .filter(|value| !value.is_none())
+            .map_or(Ok(selected_stream), |value| {
+                config::boolean(value, "streaming")
+            })?;
+        Ok((dictionary, streaming))
     }
     fn savepoint(
         &self,
@@ -903,35 +993,38 @@ macro_rules! connection_api {
             })*
             /// Create an independent buffered Cursor. Its decode defaults are
             /// copied now; later Connection property assignments do not change it.
-            #[pyo3(signature=(cursor=None))]
-            fn cursor(slf:PyRef<'_,Self>, py:Python<'_>, cursor:Option<&Bound<'_,PyAny>>) -> PyResult<Py<PyAny>> {
-                slf.open(py)?; let dictionary=Self::selector(py,cursor)?;
+            #[pyo3(signature=(cursor=None,*,streaming=None))]
+            fn cursor(slf:PyRef<'_,Self>, py:Python<'_>, cursor:Option<&Bound<'_,PyAny>>,streaming:Option<&Bound<'_,PyAny>>) -> PyResult<Py<PyAny>> {
+                slf.open(py)?; let (dictionary,streaming)=Self::selector(py,cursor,streaming)?;
                 let options=slf.runtime(py)?.options;
                 let types=slf.types.clone_ref(py);
-                crate::cursor::CursorCore::create(py,slf.into(),types,options,dictionary).map(|value|value.object(py))
+                crate::cursor::CursorCore::create(py,slf.into(),types,options,dictionary,streaming).map(|value|value.object(py))
             }
             /// Enter a managed transaction using a new Cursor of the selected
             /// built-in format. Existing server transactions or managed scopes
             /// are rejected locally. Manual transaction boundaries inside the
             /// body remain allowed; only the current transaction is ended on exit.
-            #[pyo3(signature=(cursor=None))]
-            fn transaction(slf:PyRef<'_,Self>,py:Python<'_>,cursor:Option<&Bound<'_,PyAny>>)->PyResult<crate::transaction::Transaction> {
-                slf.open(py)?;let dictionary=Self::selector(py,cursor)?;
+            #[pyo3(signature=(cursor=None,*,streaming=None))]
+            fn transaction(slf:PyRef<'_,Self>,py:Python<'_>,cursor:Option<&Bound<'_,PyAny>>,streaming:Option<&Bound<'_,PyAny>>)->PyResult<crate::transaction::Transaction> {
+                slf.open(py)?;let (dictionary,streaming)=Self::selector(py,cursor,streaming)?;
                 let scope=Arc::clone(&slf.transaction_scope);
-                Ok(crate::transaction::Transaction::new(slf.into(),scope,dictionary))
+                Ok(crate::transaction::Transaction::new(slf.into(),scope,dictionary,streaming))
             }
-            /// Permanently retire this connection. COM_QUIT is sent without a response.
+            /// Permanently retire this connection. An idle unread stream is
+            /// retired locally without draining or sending a new command. On
+            /// a synchronized idle channel, COM_QUIT is sent without a response.
             /// Only write_timeout and operation_timeout apply; read_timeout is not used.
             /// If both applicable limits are None, there is no library-imposed deadline.
             /// Sending failure still performs local transport cleanup and keeps the connection retired.
             /// Timeout or interruption grants no fresh network budget or cleanup grace.
             /// Repeated completed close returns None; overlapping operations raise InterfaceBusyError.
             fn close(&self, py:Python<'_>) -> PyResult<()> {
-                let lease=match self.native.try_command() {
+                let mut lease=match self.native.try_close_command() {
                     Ok(lease)=>lease,
                     Err(sqlaero_core::session::shared::AccessError::Closed)=>return Ok(()),
                     Err(error)=>return Err(errors::at(py,errors::access(py,error),"connection.close")),
                 };
+                if lease.has_owned_response() {lease.invalidate();return Ok(());}
                 let snapshot=self.runtime(py)?.timeouts;
                 let mut budget=IoBudget::new(TimeoutKind::Operation,snapshot.operation,None,snapshot.write);
                 let result=(|| {

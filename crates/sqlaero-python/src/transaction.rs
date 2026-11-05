@@ -27,6 +27,7 @@ pub(crate) struct Transaction {
     active: AtomicBool,
     cursor: Mutex<Option<CursorHandle>>,
     dictionary: bool,
+    streaming: bool,
 }
 struct Operation<'a>(&'a AtomicBool);
 impl Drop for Operation<'_> {
@@ -39,6 +40,7 @@ impl Transaction {
         connection: Py<Connection>,
         scope: Arc<AtomicBool>,
         dictionary: bool,
+        streaming: bool,
     ) -> Self {
         Self {
             connection,
@@ -49,6 +51,7 @@ impl Transaction {
             active: AtomicBool::new(false),
             cursor: Mutex::new(None),
             dictionary,
+            streaming,
         }
     }
     fn operation(&self, py: Python<'_>) -> PyResult<Operation<'_>> {
@@ -216,6 +219,7 @@ impl Transaction {
                     connection.types.clone_ref(py),
                     options,
                     self.dictionary,
+                    self.streaming,
                 )?;
                 input::check(py, &budget)?;
                 *self.cursor.lock().map_err(|_| {
