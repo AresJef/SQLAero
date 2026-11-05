@@ -1,7 +1,8 @@
 """Private native extension declarations."""
 
+from collections.abc import Mapping
 from datetime import datetime
-from typing import Any, Iterator, Literal, Never, Self, final, overload
+from typing import Any, Generic, Iterator, Literal, Never, Self, SupportsIndex, TypeAlias, TypeVar, final, overload
 from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as MySQLErrorCode
 
 @final
@@ -534,14 +535,115 @@ class Compression:
     def __str__(self) -> str: ...
     def __repr__(self) -> str: ...
 
+_RowT = TypeVar("_RowT", covariant=True)
+_ExecutionCountT = TypeVar("_ExecutionCountT", bound=int | None, covariant=True)
+_CursorT = TypeVar("_CursorT", bound="_CursorCore[Any, Any]", covariant=True)
+_TupleFactory: TypeAlias = type[Cursor] | type[SSCursor] | type[tuple[Any, ...]] | None
+_TupleBufferedFactory: TypeAlias = type[Cursor] | type[tuple[Any, ...]] | None
+_DictFactory: TypeAlias = type[DictCursor] | type[SSDictCursor] | type[dict[Any, Any]]
+_DictBufferedFactory: TypeAlias = type[DictCursor] | type[dict[Any, Any]]
+
 @final
 class Connection:
     """Fully initialized native sync connection, created by connect()."""
     def __new__(cls, _factory_only: Never, /) -> Self: ...
-    def cursor(self, cursor: type[Cursor] | type[tuple[Any, ...]] | None = None) -> Cursor: ...
-    def transaction(self, cursor: type[Cursor] | type[tuple[Any, ...]] | None = None) -> _Transaction: ...
+    @overload
+    def cursor(self, cursor: _TupleFactory = None, *, streaming: Literal[True],
+                   prepared: bool = False) -> SSCursor:
+        """Choose row family and reading mode; exact bool/None streaming only.
+
+        None preserves a class choice; explicit True/False selects SS/buffered
+        within that tuple/dict family. Only the four native classes and exact
+        tuple/dict markers are accepted at runtime. prepared is exact bool and
+        fixes this Cursor protocol at creation. Creating a Cursor sends no SQL.
+        """
+        ...
+    @overload
+    def cursor(self, cursor: _TupleFactory = None, *, streaming: Literal[False],
+                   prepared: bool = False) -> Cursor:
+        ...
+    @overload
+    def cursor(self, cursor: _TupleBufferedFactory = None, *, streaming: None = None,
+                   prepared: bool = False) -> Cursor:
+        ...
+    @overload
+    def cursor(self, cursor: type[SSCursor], *, streaming: None = None,
+                   prepared: bool = False) -> SSCursor:
+        ...
+    @overload
+    def cursor(self, cursor: _TupleFactory = None, *, streaming: bool | None = None,
+                   prepared: bool = False) -> Cursor | SSCursor:
+        ...
+    @overload
+    def cursor(self, cursor: _DictFactory, *, streaming: Literal[True],
+                   prepared: bool = False) -> SSDictCursor:
+        ...
+    @overload
+    def cursor(self, cursor: _DictFactory, *, streaming: Literal[False],
+                   prepared: bool = False) -> DictCursor:
+        ...
+    @overload
+    def cursor(self, cursor: _DictBufferedFactory, *, streaming: None = None,
+                   prepared: bool = False) -> DictCursor:
+        ...
+    @overload
+    def cursor(self, cursor: type[SSDictCursor], *, streaming: None = None,
+                   prepared: bool = False) -> SSDictCursor:
+        ...
+    @overload
+    def cursor(self, cursor: _DictFactory, *, streaming: bool | None = None,
+                   prepared: bool = False) -> DictCursor | SSDictCursor:
+        ...
+    @overload
+    def transaction(self, cursor: _TupleFactory = None, *, streaming: Literal[True],
+                   prepared: bool = False) -> _Transaction[SSCursor]:
+        """Enter one managed transaction with the same Cursor selection rules.
+
+        Entry starts the transaction. Exit finishes this Cursor response before
+        committing on success or rolling back on failure, then closes it under
+        the existing shared cleanup deadline. There is no nested-savepoint scope.
+        """
+        ...
+    @overload
+    def transaction(self, cursor: _TupleFactory = None, *, streaming: Literal[False],
+                   prepared: bool = False) -> _Transaction[Cursor]:
+        ...
+    @overload
+    def transaction(self, cursor: _TupleBufferedFactory = None, *, streaming: None = None,
+                   prepared: bool = False) -> _Transaction[Cursor]:
+        ...
+    @overload
+    def transaction(self, cursor: type[SSCursor], *, streaming: None = None,
+                   prepared: bool = False) -> _Transaction[SSCursor]:
+        ...
+    @overload
+    def transaction(self, cursor: _TupleFactory = None, *, streaming: bool | None = None,
+                   prepared: bool = False) -> _Transaction[Cursor | SSCursor]:
+        ...
+    @overload
+    def transaction(self, cursor: _DictFactory, *, streaming: Literal[True],
+                   prepared: bool = False) -> _Transaction[SSDictCursor]:
+        ...
+    @overload
+    def transaction(self, cursor: _DictFactory, *, streaming: Literal[False],
+                   prepared: bool = False) -> _Transaction[DictCursor]:
+        ...
+    @overload
+    def transaction(self, cursor: _DictBufferedFactory, *, streaming: None = None,
+                   prepared: bool = False) -> _Transaction[DictCursor]:
+        ...
+    @overload
+    def transaction(self, cursor: type[SSDictCursor], *, streaming: None = None,
+                   prepared: bool = False) -> _Transaction[SSDictCursor]:
+        ...
+    @overload
+    def transaction(self, cursor: _DictFactory, *, streaming: bool | None = None,
+                   prepared: bool = False) -> _Transaction[DictCursor | SSDictCursor]:
+        ...
     def close(self) -> None:
-        """Permanently retire this connection. COM_QUIT is sent without a response.
+        """Permanently retire this connection. An unread SS response is abandoned
+        by local transport retirement, without draining or sending a new command.
+        When already synchronized, COM_QUIT is sent without a response.
         Only write_timeout and operation_timeout apply; read_timeout is not
         used. If both applicable limits are None, there is no library-imposed
         deadline. Sending failure still performs local transport cleanup and
@@ -745,6 +847,7 @@ class Connection:
         Default None disables; exact positive int/float seconds or None. Bad type/value
         raises TypeError/ValueError. Actual progress restarts this interval; readiness
         does not. Local assignment sends no SQL and affects subsequent operations.
+        An existing SS response retains its execute-time timeout snapshot.
         Not a total-response timer. Readable after close; modification then fails.
         Expiry does not establish SQL cancellation or confirmed rollback."""
         ...
@@ -758,6 +861,7 @@ class Connection:
         raises TypeError/ValueError. Actual progress restarts this interval, not the
         total upload/operation deadline. Local assignment affects subsequent commands
         and sends no SQL. Saved value is readable after close; modification fails.
+        An existing SS response retains its execute-time timeout snapshot.
         Expiry does not establish SQL cancellation or confirmed rollback."""
         ...
     @write_timeout.setter
@@ -895,12 +999,11 @@ class Connection:
     @decode_date_strict.setter
     def decode_date_strict(self, value: bool) -> None: ...
 
-@final
-class Cursor:
-    """Independent buffered results, created by Connection.cursor()."""
+class _CursorCore(Generic[_RowT, _ExecutionCountT]):
+    """Private static common surface for four independent native Cursor classes."""
     def __new__(cls, _factory_only: Never, /) -> Self: ...
     def execute(self, sql: str, args: EscapeInput = ..., *, many: bool = False,
-                itemize: bool = True) -> int:
+                itemize: bool = True, local_file: PathInput | None = None) -> _ExecutionCountT:
         """Execute SQL using the native value encoder and positional binding.
 
         Escape validates supported built-in values, real approved subclasses,
@@ -917,9 +1020,38 @@ class Cursor:
         Keep args and all nested mutable values unchanged until this call
         returns. Each constructed Rust request owns stable bytes; batch
         construction does not provide an atomic snapshot of all inputs.
+
+        many/itemize are exact bool. Omitted args leaves raw template text
+        unchanged; explicit None is one SQL NULL. Binding uses only positional
+        %s. Ordinary text SQL may contain multiple statements when enabled;
+        approved single VALUES shapes merge automatically within this call.
+        This includes fixed literal/DEFAULT fields, multiple original groups,
+        proven complete-row fragments, PARTITION/approved ROW forms, and fixed
+        AS/ON DUPLICATE tails without active tail parameters. Other expressions
+        or active-tail parameters retain ordinary per-source-row execution.
+        Complete requests and all their result sets remain in server order.
+        On batch success all planned requests have been sent. SS buffers earlier
+        responses natively and only streams the last request, without delaying
+        later SQL until nextset(). A whole template is repeated for each source;
+        unsafe in-request binding-context changes fail before that request sends.
+        No merge switch or execute-time adaptive measurement is provided.
+
+        Buffered classes return the reliable sum of each actual request's first
+        result count. SS returns None while a required contribution is unknown;
+        None is neither zero rows nor execution failure. Current-set counts and
+        batch_row_count are separate. SS fetches do not reset its operation
+        budget; user time between calls is excluded from accumulated library time.
+
+        A prepared Cursor sends native scalar parameters at active %s positions,
+        does not expand structural fragments or auto-merge VALUES, and does not
+        enable public raw ? markers or split multiple SQL into prepared calls.
+        Local-file upload requires ordinary text, one LOAD DATA LOCAL statement,
+        local_infile capability and this call's local_file path. The server's
+        INFILE name never selects an arbitrary client file. No automatic retry
+        or replay occurs after execution may have begun.
         """
         ...
-    def executemany(self, sql: str, args: EscapeInput) -> int:
+    def executemany(self, sql: str, args: EscapeInput) -> _ExecutionCountT:
         """Execute a batch using execute's input and datetime.time rules.
 
         Keep args and all nested mutable values unchanged until this call
@@ -927,31 +1059,165 @@ class Cursor:
         construction does not provide an atomic snapshot of all inputs.
         """
         ...
-    def fetchone(self) -> tuple[object, ...] | None: ...
-    def fetchmany(self, size: int | None = None) -> tuple[tuple[object, ...], ...]: ...
-    def fetchall(self) -> tuple[tuple[object, ...], ...]: ...
-    def close(self) -> None: ...
-    def __iter__(self) -> Cursor: ...
-    def __next__(self) -> tuple[object, ...]: ...
-    def __enter__(self) -> Cursor: ...
+    def mogrify(self, sql: str, args: EscapeInput = ..., *, many: bool = False,
+                itemize: bool = True) -> str | list[str]:
+        """Preview every complete planned request without executing target SQL.
+
+        One actual request returns str; multiple requests return an ordered
+        list[str], including automatic VALUES chunks or repeated full templates.
+        many alone does not determine the shape. Prepared previews share native
+        parameter validation and wire limits; displayed SQL is not the native
+        payload length. Output is not truncated or concatenated into extra SQL.
+        The latest complete confirmed Connection reference is captured once.
+        Busy, unread-stream, close and unknown current facts do not alone block
+        this independent local helper. It does not occupy execution/fetch state,
+        inherit SQL deadlines or use database result quotas. Actual later sends
+        may differ after facts change; the preview is not execution confirmation.
+        """
+        ...
+    def callproc(self, proc_name: str, args: object = (), *, database: str | None = None,
+                 parameter_modes: list[str] | tuple[str, ...] | None = None) -> int | None:
+        """Call one stored procedure and return its first public result count.
+
+        proc_name/database are separately quoted raw identifiers; a dot in
+        proc_name is not a database separator. Empty/NUL names fail locally.
+        Omitted args=() means zero positions; explicit None is one NULL. Values
+        use the shared Escape single-row contract; a multirow source is rejected.
+        The input is unchanged and the procedure signature is not queried.
+
+        parameter_modes is None (all IN), or a list/tuple of case-insensitive
+        IN/OUT/INOUT strings, exactly one per argument. OUT requires a None
+        placeholder. INOUT accepts an initial value including None. A NULL value
+        never infers a direction. Mismatches/invalid OUT placeholders fail before
+        CALL; MySQL remains authoritative for the actual procedure definition.
+
+        Pure IN example: cur.callproc('report', (2026, 11)). For a procedure
+        adjust(IN n, OUT result, INOUT counter), use
+        cur.callproc('adjust', (5, None, 10), parameter_modes=('IN','OUT','INOUT')).
+        parameter_modes=('IN',) mismatches this three-position row;
+        (5, 7, 10) with OUT at position 1 is invalid because OUT must be None.
+
+        Buffered results complete before return, so confirmed output is ready.
+        SS keeps its early-return behavior and does not buffer rows merely to
+        obtain OUT values. Finish every CALL set, including its final status,
+        before reading output: while processing sets, iterate rows only when
+        description is not None, then call nextset() until it returns None.
+        Explicit close/context/transaction exit can also perform bounded finish.
+        call_output_params then maps original OUT/INOUT positions to decoded
+        values; None means unready and an empty mapping means confirmed no OUT.
+        A None mapping value is a real SQL NULL. The property itself sends no SQL.
+
+        Buffered usage (after a successful call, outputs are already confirmed):
+            cur.callproc('adjust', (5, None, 10),
+                         parameter_modes=('IN', 'OUT', 'INOUT'))
+            outputs = cur.call_output_params  # keys 1 and 2, not the IN position
+
+        SS usage, without forcing all rows into a Python collection:
+            ss = conn.cursor(SSCursor)
+            ss.callproc('adjust', (5, None, 10),
+                        parameter_modes=('IN', 'OUT', 'INOUT'))
+            while True:
+                if ss.description is not None:
+                    for row in ss:
+                        consume(row)
+                if ss.nextset() is None:
+                    break
+            outputs = ss.call_output_params
+
+        Output uses actual server-field decode policy. Text output management
+        may add internal communication; prepared CALL uses native output metadata.
+        Internal cleanup shares the remaining deadline, preserves the primary
+        failure/real transaction facts and never silently replays the call.
+        """
+        ...
+    def nextset(self) -> Literal[True] | None:
+        """Discard unread current-set rows and switch in order; True or terminal None.
+
+        An independent no-row OK is still a set. A trustworthy failure boundary
+        raises its original error, never terminal None. Earlier complete sets
+        remain readable according to the result/lifecycle rules.
+        """
+        ...
+    def scroll(self, value: SupportsIndex, mode: Literal["relative", "absolute"] = "relative") -> None:
+        """Move within the current set; success is None, invalid range is IndexError.
+
+        value uses the integer index protocol, excluding bool at runtime. Valid
+        positions include exact EOF and position zero for a zero-row SELECT.
+        Buffered classes can move backward/forward, including after EOF. SS only
+        moves forward; if its target exceeds EOF, actual skipped progress remains.
+        Failed buffered range checks leave the position unchanged. No SQL replay,
+        implicit nextset, extra cursor mode flag or silent clipping is performed.
+        """
+        ...
+    def fetchone(self) -> _RowT | None:
+        """Return one independently owned row, or None at current-set exhaustion."""
+        ...
+    def fetchmany(self, size: int | None = None) -> tuple[_RowT, ...]:
+        """Return up to size rows; None uses arraysize, zero returns ().
+
+        A supplied size is an exact built-in nonnegative int; bool, subclasses
+        and index-only objects raise TypeError. Failed output does not publish
+        a partial batch or advance the successful-delivery position.
+        """
+        ...
+    def fetchall(self) -> tuple[_RowT, ...]:
+        """Materialize every remaining row of this set; exhaustion returns ()."""
+        ...
+    def close(self) -> None:
+        """Retire this Cursor; SS safely drains its unread response when permitted.
+
+        Drain retains the original flow budget and does not grant fresh grace.
+        Unrecoverable synchronization failure retires the connection. Known
+        metadata/counts and confirmed call outputs remain locally readable.
+        """
+        ...
+    def __iter__(self) -> Self: ...
+    def __next__(self) -> _RowT: ...
+    def __enter__(self) -> Self: ...
     def __exit__(self, typ: object, value: object, traceback: object) -> bool: ...
+    @property
+    def prepared(self) -> bool:
+        """Creation-time protocol choice; read-only and readable after close."""
+        ...
+    @property
+    def batch_row_count(self) -> int | None:
+        """Reliable sum of the first result count of each actual user request.
+
+        Applies to ordinary and batch calls. Unknown required contributions give
+        None; confirmed prefix contributions survive a later failure. Additional
+        sets/internal commands do not contribute. Fetch/nextset never count twice.
+        This is separate from the current-set row_count and remains readable
+        after close; starting a new execution replaces it at the real handoff.
+        """
+        ...
+    @property
+    def call_output_params(self) -> Mapping[int, Any] | None:
+        """Confirmed OUT/INOUT values by original callproc argument position; no I/O.
+
+        None means not ready; a confirmed pure-IN call gives an empty read-only
+        mapping. A contained None is SQL NULL. Direct execute CALL does not infer
+        managed outputs. Decode errors retain actual policy failures; valid native
+        outputs can first materialize after close. Old returned mappings remain
+        independent after later calls, and reading this property never drains SS.
+        """
+        ...
     @property
     def closed(self) -> bool:
         """Whether this Cursor itself has been permanently retired."""
         ...
     @property
     def arraysize(self) -> int:
-        """Positive local default fetchmany count; initial value 1."""
+        """Exact built-in positive int local fetchmany default, initially 1."""
         ...
     @arraysize.setter
     def arraysize(self, value: int) -> None: ...
     @property
     def rowcount(self) -> int:
-        """Actual row count, or PEP 249's -1 when unknown; readable after close."""
+        """Current-set row count, or PEP 249's -1 when unknown; readable after close."""
         ...
     @property
     def row_count(self) -> int | None:
-        """Actual row count, or None when unknown; readable after close."""
+        """Current-set row count, or None when unknown; readable after close."""
         ...
     @property
     def affected_rows(self) -> int | None:
@@ -959,7 +1225,7 @@ class Cursor:
         ...
     @property
     def lastrowid(self) -> int | None:
-        """Actual final insert ID, or None; readable after close."""
+        """Current-set actual insert ID, or None; readable after close."""
         ...
     @property
     def last_row_id(self) -> int | None:
@@ -967,7 +1233,7 @@ class Cursor:
         ...
     @property
     def warning_count(self) -> int | None:
-        """Sum of actual completed-command warnings, or None when unknown."""
+        """Current-set actual warning count, or None before reliable completion."""
         ...
     @property
     def columns(self) -> Columns:
@@ -1088,6 +1354,42 @@ class Cursor:
     @decode_date_strict.setter
     def decode_date_strict(self, value: bool) -> None: ...
 
+@final
+class Cursor(_CursorCore[tuple[object, ...], int]):
+    """Independent buffered tuple rows; default Connection.cursor() result.
+
+    Complete owned results remain locally fetchable after Connection close;
+    this Cursor's own close forbids further fetch. Current-set rows remain
+    available for backward scroll after EOF until abandoned or replaced.
+    """
+
+@final
+class DictCursor(_CursorCore[dict[str, object], int]):
+    """Buffered rows are independent mutable dicts using unique Columns.keys.
+
+    Batch fetch outer containers remain tuple. Immutable key strings can be
+    shared by result, and editing one row never changes another. The buffered
+    lifetime/scroll rules are identical to the tuple row family.
+    """
+
+@final
+class SSCursor(_CursorCore[tuple[object, ...], int | None]):
+    """Forward-only tuple rows; a streaming request returns at complete metadata.
+
+    No row is prefetched to learn its count. Unread response ownership prevents
+    another command without blocking. Explicit close can drain safely; abandoning
+    its last reader retires the connection. Connection close does not drain it.
+    """
+
+@final
+class SSDictCursor(_CursorCore[dict[str, object], int | None]):
+    """Forward-only independent dict rows; shares the SS lifetime/count contract.
+
+    Per-row keys follow Columns.keys, batch fetch outer containers are tuple,
+    and fetchall still materializes every remaining Python row.
+    """
+
+
 def connect(*, user: str, host: str = '127.0.0.1', port: int = 3306,
             unix_socket: PathInput | None = None, password: str | None = None,
             database: str | None = None, charset: str | None = None,
@@ -1134,6 +1436,10 @@ def connect(*, user: str, host: str = '127.0.0.1', port: int = 3306,
     fallback. A shorthand zstd connection uses level 3. Actual negotiated facts
     are reported by Connection.compression, independently of input configuration.
 
+    Explicit utf8mb3 is BMP-only UTF-8, including strict input/output boundaries.
+    The historical utf8 and utf-8 aliases continue to select utf8mb4. Binary
+    parameter and result roles do not become text because of charset selection.
+
     init_sql is None, one nonempty SQL str or a finite list/tuple of nonempty str.
     After normal initialization, every step and all its results complete under
     the original connect deadline and are discarded; strings are not split at
@@ -1151,9 +1457,9 @@ def connect(*, user: str, host: str = '127.0.0.1', port: int = 3306,
     """
     ...
 
-class _Transaction:
-    """Private managed scope returned by Connection.transaction()."""
-    def __enter__(self) -> Cursor: ...
+class _Transaction(Generic[_CursorT]):
+    """Private managed scope preserving its selected native Cursor type."""
+    def __enter__(self) -> _CursorT: ...
     def __exit__(self, typ: object, value: object, traceback: object) -> bool: ...
 
 

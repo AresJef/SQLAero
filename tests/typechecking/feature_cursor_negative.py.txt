@@ -1,0 +1,55 @@
+"""Four distinct native classes expose only their specified public interface."""
+
+from sqlaero import Connection, Cursor, DictCursor, SSCursor, SSDictCursor
+
+
+class Foreign:
+    pass
+
+
+def rejected(connection: Connection, cursor: Cursor, mapping: DictCursor, stream: SSCursor) -> None:
+    connection.cursor("Cursor")  # error: class/marker only
+    connection.cursor(())  # error: instances are not class markers
+    connection.cursor({})  # error: instances are not class markers
+    connection.cursor(Foreign)  # error: unsupported external class
+    connection.cursor(cursor)  # error: cursor instances not accepted
+    connection.cursor(streaming=1)  # error: bool or None
+    connection.cursor(prepared=None)  # error: strict bool
+    connection.transaction(dict, True)  # error: streaming keyword only
+    cursor = mapping  # error: distinct runtime classes, not Python inheritance
+    cursor = stream  # error: distinct runtime classes, not Python inheritance
+    cursor.execute("SELECT 1", local_file=b"filename")  # error: bare bytes not a path
+    cursor.executemany("SELECT %s", [1], itemize=False)  # error: no extra executemany switch
+    cursor.mogrify("SELECT 1", local_file="data.csv")  # error: local_file only on execute
+    cursor.mogrify("SELECT 1", timeout=1)  # error: no helper timeout
+    cursor.callproc("report", many=True)  # error: one call only
+    cursor.callproc("report", parameter_modes="IN")  # error: finite sequence of mode strings
+    cursor.scroll(1.5)  # error: index protocol only
+    cursor.scroll(1, mode="forward")  # error: relative/absolute only
+    cursor.scrollable  # error: no additional navigation flag
+    cursor.batch_warning_count  # error: explicitly not added
+    cursor.batch_row_count = 2  # error: read only
+    cursor.prepared = True  # error: creation-time protocol only
+    cursor.call_output_params = {}  # error: read only
+    cursor.nextset(True)  # error: no extra skip switch
+    cursor.fetchmany(1.5)  # error: count is int or None
+    Cursor()  # error: factory only
+    DictCursor()  # error: factory only
+    SSCursor()  # error: factory only
+    SSDictCursor()  # error: factory only
+
+
+class InvalidBuffered(Cursor):  # error: final native class
+    pass
+
+
+class InvalidMapping(DictCursor):  # error: final native class
+    pass
+
+
+class InvalidStream(SSCursor):  # error: final native class
+    pass
+
+
+class InvalidMappedStream(SSDictCursor):  # error: final native class
+    pass
