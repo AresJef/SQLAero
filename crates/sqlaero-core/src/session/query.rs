@@ -291,7 +291,7 @@ impl Query {
                     Step::Control => return Ok(Step::Control),
                 }
             }
-            let data = match channel.receive_step(&mut self.incoming, budget)? {
+            let data = match channel.receive_step(&mut self.incoming, budget, Some(&self.scope))? {
                 Step::Ready(data) => data,
                 Step::Wait(direction) => {
                     if channel.wait(direction, budget)? == WaitStatus::Control {

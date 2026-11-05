@@ -354,7 +354,7 @@ impl Establish {
             if !matches!(self.phase, Phase::Greeting | Phase::Authentication) {
                 return Err(ConnectError::Configuration("establishment already ended"));
             }
-            let data = match channel.receive_step(&mut self.incoming, budget)? {
+            let data = match channel.receive_step(&mut self.incoming, budget, None)? {
                 Step::Ready(data) => data,
                 Step::Wait(direction) => {
                     if channel.wait(direction, budget)? == WaitStatus::Control {

@@ -238,6 +238,7 @@ impl Channel {
         &mut self,
         message: &mut MessageReader,
         budget: &mut IoBudget,
+        _scope: Option<&Arc<Scope>>,
     ) -> Result<Step<crate::memory::Buffer<u8>>, ChannelError> {
         budget.check()?;
         if self.tls.is_none() {
