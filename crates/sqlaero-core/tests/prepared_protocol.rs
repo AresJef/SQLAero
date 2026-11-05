@@ -6,7 +6,9 @@ use sqlaero_core::bind::value::{ValueRef, ValueSink};
 use sqlaero_core::charset::{self, codec::Codec};
 use sqlaero_core::memory::Pool;
 use sqlaero_core::protocol::prepared::{Close, Parameters, Prepare, Statement};
+use sqlaero_core::protocol::{CapabilityFlags, StatusFlags, binary};
 use sqlaero_core::result::text::{Response, ResultError};
+use sqlaero_core::result::value::{FieldValue, RowEncoding};
 use sqlaero_core::session::connect::{Authenticated, ConnectParams, Endpoint, Establish};
 use sqlaero_core::session::initialize::{Initialize, Options};
 use sqlaero_core::session::query::{Query, QueryError};
@@ -270,6 +272,180 @@ fn real_prepared_parameters_preserve_native_values_long_chunks_and_reusable_hand
         assert!(
             matches!(prepare(&mut connection, "SELECT FROM"), Err(QueryError::Result(ResultError::Server(error))) if error.error_code() == 1064)
         );
+        sql(&mut connection, "DO 1").unwrap();
+    }
+}
+
+#[test]
+#[ignore = "requires C's two isolated MySQL fixtures; run with one test thread"]
+fn real_binary_select_uses_native_fields_and_server_current_metadata() {
+    for label in ["84", "97"] {
+        let mut connection = connect(label);
+        let statement = prepare(&mut connection, "SELECT ?,?,?,?,?,?,?,NULL").unwrap();
+        for text in ["中'\\\0🙂", ""] {
+            let mut parameters =
+                Parameters::new(statement.id, statement.parameters, LIMIT).unwrap();
+            for value in [
+                ValueRef::Signed(i64::MIN),
+                ValueRef::Unsigned(u64::MAX),
+                ValueRef::Decimal {
+                    negative: false,
+                    digits: &[1, 2, 3, 4, 5],
+                    exponent: -3,
+                },
+                ValueRef::Datetime {
+                    date: Date {
+                        year: 2026,
+                        month: 11,
+                        day: 5,
+                    },
+                    clock: Clock {
+                        hour: 1,
+                        minute: 2,
+                        second: 3,
+                        microsecond: 123_456,
+                    },
+                },
+                ValueRef::Duration(-183_845_123_456),
+                ValueRef::Text(text),
+                ValueRef::Bytes(b"\0\xffraw"),
+            ] {
+                parameters.write(value, &context()).unwrap();
+            }
+            let Response::Rows(rows) =
+                query(&mut connection, parameters.finish().unwrap()).unwrap()
+            else {
+                panic!("expected binary row");
+            };
+            assert_eq!(rows.encoding, RowEncoding::Binary);
+            let values: Vec<_> = rows
+                .columns
+                .iter()
+                .zip(rows.row(0).unwrap())
+                .map(|(column, field)| match field.get(&rows.bytes).unwrap() {
+                    Some(raw) => binary::value(column, raw).unwrap(),
+                    None => FieldValue::Null,
+                })
+                .collect();
+            assert_eq!(
+                values,
+                [
+                    FieldValue::Signed(i64::MIN),
+                    FieldValue::Unsigned(u64::MAX),
+                    FieldValue::Bytes(b"12.345"),
+                    FieldValue::Datetime {
+                        year: 2026,
+                        month: 11,
+                        day: 5,
+                        hour: 1,
+                        minute: 2,
+                        second: 3,
+                        microsecond: 123_456
+                    },
+                    FieldValue::Duration(-183_845_123_456),
+                    FieldValue::Bytes(text.as_bytes()),
+                    FieldValue::Bytes(b"\0\xffraw"),
+                    FieldValue::Null
+                ]
+            );
+        }
+        close(&mut connection, statement);
+    }
+}
+
+#[test]
+#[ignore = "requires C's two isolated MySQL fixtures; run with one test thread"]
+fn real_prepared_call_preserves_business_sets_out_marker_and_final_status() {
+    for label in ["84", "97"] {
+        let mut connection = connect(label);
+        assert!(
+            connection
+                .capabilities
+                .contains(CapabilityFlags::CLIENT_PS_MULTI_RESULTS)
+        );
+        sql(
+            &mut connection,
+            "DROP PROCEDURE IF EXISTS c_prepared_protocol_call",
+        )
+        .unwrap();
+        sql(&mut connection, "CREATE PROCEDURE c_prepared_protocol_call(IN n INT, OUT v BIGINT, INOUT counter INT) BEGIN SELECT n AS r1; SELECT n+1 AS r2; SET v=-9223372036854775808; SET counter=counter+1; END").unwrap();
+        let statement = prepare(&mut connection, "CALL c_prepared_protocol_call(?,?,?)").unwrap();
+        let mut parameters = Parameters::new(statement.id, statement.parameters, LIMIT).unwrap();
+        for value in [ValueRef::Signed(5), ValueRef::Null, ValueRef::Signed(10)] {
+            parameters.write(value, &context()).unwrap();
+        }
+        let mut query = Query::new(
+            parameters.finish().unwrap(),
+            connection.capabilities,
+            LIMIT,
+            LIMIT,
+            LIMIT,
+        )
+        .unwrap();
+        let mut budget = budget();
+        let mut sets = Vec::new();
+        loop {
+            match query.advance(&mut connection.channel, &mut budget).unwrap() {
+                Step::Ready(response) => {
+                    sets.push(response);
+                    if query.is_finished() {
+                        break;
+                    }
+                }
+                Step::Control => (),
+                Step::Wait(_) => panic!("query drives concrete waits"),
+            }
+        }
+        assert_eq!(sets.len(), 4);
+        for (index, expected) in [5, 6].into_iter().enumerate() {
+            let Response::Rows(rows) = &sets[index] else {
+                panic!("expected business row");
+            };
+            assert_eq!(rows.encoding, RowEncoding::Binary);
+            assert!(
+                !rows
+                    .completion
+                    .status_flags()
+                    .contains(StatusFlags::SERVER_PS_OUT_PARAMS)
+            );
+            assert_eq!(
+                binary::value(
+                    &rows.columns[0],
+                    rows.row(0).unwrap()[0].get(&rows.bytes).unwrap().unwrap()
+                )
+                .unwrap(),
+                FieldValue::Signed(expected)
+            );
+        }
+        let Response::Rows(rows) = &sets[2] else {
+            panic!("expected native output row");
+        };
+        assert!(
+            rows.completion
+                .status_flags()
+                .contains(StatusFlags::SERVER_PS_OUT_PARAMS)
+        );
+        let values: Vec<_> = rows
+            .columns
+            .iter()
+            .zip(rows.row(0).unwrap())
+            .map(|(column, field)| {
+                binary::value(column, field.get(&rows.bytes).unwrap().unwrap()).unwrap()
+            })
+            .collect();
+        assert_eq!(
+            values,
+            [FieldValue::Signed(i64::MIN), FieldValue::Signed(11)]
+        );
+        assert!(matches!(sets[3], Response::Command(_)));
+        assert!(
+            !sets[3]
+                .completion()
+                .status_flags()
+                .contains(StatusFlags::SERVER_MORE_RESULTS_EXISTS)
+        );
+        close(&mut connection, statement);
+        sql(&mut connection, "DROP PROCEDURE c_prepared_protocol_call").unwrap();
         sql(&mut connection, "DO 1").unwrap();
     }
 }
