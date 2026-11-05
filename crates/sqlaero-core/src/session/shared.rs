@@ -65,7 +65,19 @@ impl Connection {
     /// Keep one aggregate result limit for the connection's entire lifetime.
     #[must_use]
     pub fn with_result_limit(ready: Ready, total_result_memory_limit: usize) -> Self {
+        Self::with_retained_budget(ready, total_result_memory_limit).0
+    }
+
+    /// Move the ready transport into its native owner while retaining the
+    /// original establishment deadline for approved user initialization SQL.
+    /// No timeout is restarted; all earlier establishment work remains charged.
+    #[must_use]
+    pub fn with_retained_budget(
+        ready: Ready,
+        total_result_memory_limit: usize,
+    ) -> (Self, crate::transport::deadline::IoBudget) {
         let authenticated = ready.transport;
+        let budget = authenticated.budget;
         let wire = WireSession {
             channel: authenticated.channel,
             capabilities: authenticated.capabilities,
@@ -77,14 +89,17 @@ impl Connection {
         };
         let facts: Facts = ready.confirmed.into();
         let reference = facts.execution_context(wire.max_send).ok();
-        Self {
-            wire: Mutex::new(Some(wire)),
-            closed: AtomicBool::new(false),
-            metadata: authenticated.metadata,
-            facts: Mutex::new(facts),
-            reference: Mutex::new(reference),
-            result_pool: crate::memory::Pool::new(total_result_memory_limit),
-        }
+        (
+            Self {
+                wire: Mutex::new(Some(wire)),
+                closed: AtomicBool::new(false),
+                metadata: authenticated.metadata,
+                facts: Mutex::new(facts),
+                reference: Mutex::new(reference),
+                result_pool: crate::memory::Pool::new(total_result_memory_limit),
+            },
+            budget,
+        )
     }
 
     /// Return the authoritative local lifecycle flag without network traffic.

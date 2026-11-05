@@ -720,11 +720,161 @@ impl Connection {
         }
         Ok(dictionary)
     }
+    fn savepoint(
+        &self,
+        py: Python<'_>,
+        name: &Bound<'_, PyAny>,
+        action: input::control::SavepointAction,
+    ) -> PyResult<()> {
+        let mut budget = self.runtime(py)?.timeouts.operation();
+        let mut lease = self
+            .native
+            .try_command()
+            .map_err(|error| errors::access(py, error))?;
+        self.ensure_context(py, &mut lease, &mut budget)?;
+        let context = self.context(py)?.0;
+        let request = input::control::savepoint(name, action, &context, &budget)?;
+        let job = self.query_job(py, &mut lease, request, true)?;
+        self.drive(
+            py,
+            &mut lease,
+            job,
+            &mut budget,
+            CommandRole::InternalControl,
+        )?;
+        input::check(py, &budget)
+    }
+    fn confirm_initialization_state(
+        &self,
+        py: Python<'_>,
+        lease: &mut CommandLease<'_>,
+        budget: &mut IoBudget,
+    ) -> PyResult<bool> {
+        // Arbitrary initialization may change the tracker itself. Confirm each
+        // complete SQL unit before encoding the next, using actual field codecs.
+        // The ordinary no-init connection path never sends this query.
+        let mut request = Vec::new();
+        writer::append(&mut request,b"\x03SELECT @@SESSION.character_set_client,@@SESSION.character_set_connection,@@SESSION.character_set_results,@@SESSION.collation_connection,@@SESSION.sql_mode,@@SESSION.time_zone,@@SESSION.net_read_timeout,@@SESSION.net_write_timeout,@@SESSION.wait_timeout,@@SESSION.innodb_lock_wait_timeout,@@SESSION.session_track_system_variables,@@SESSION.session_track_schema,CAST(CONVERT(DATABASE() USING utf8mb4) AS BINARY)",self.max_send).map_err(|error|errors::wire(py,error))?;
+        let job = self.query_job(py, lease, request, false)?;
+        let response = self.drive(py, lease, job, budget, CommandRole::UserSql)?;
+        let Response::Rows(rows) = response else {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::SessionState,
+                "init_sql state confirmation returned no row result",
+            ));
+        };
+        let result = {
+            let mut facts = self.native.facts.lock().map_err(|_| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "initialization facts are unavailable",
+                )
+            })?;
+            facts.confirm_initialization(&rows)
+        };
+        let tracking_ready = result.map_err(|error| errors::wire(py, error))?;
+        self.native
+            .remember_context(self.execution_context(py)?)
+            .map_err(|error| errors::access(py, error))?;
+        input::check(py, budget)?;
+        Ok(tracking_ready)
+    }
+    fn initialize_sql(
+        &self,
+        py: Python<'_>,
+        units: &[String],
+        budget: &mut IoBudget,
+    ) -> PyResult<()> {
+        let mut lease = self
+            .native
+            .try_command()
+            .map_err(|error| errors::access(py, error))?;
+        let mut tracking_ready = true;
+        for (index, sql) in units.iter().enumerate() {
+            let mut executed = false;
+            let result = (|| {
+                self.ensure_context(py, &mut lease, budget)?;
+                let context = self.context(py)?.0;
+                let mut request = Vec::new();
+                writer::append(&mut request, b"\x03", context.limit)
+                    .map_err(|error| errors::wire(py, error))?;
+                input::sql_utf8(py, sql, &mut request, &context, budget)?;
+                let job = self.query_job(py, &mut lease, request, true)?;
+                self.drive(py, &mut lease, job, budget, CommandRole::UserSql)?;
+                executed = true;
+                tracking_ready = self.confirm_initialization_state(py, &mut lease, budget)?;
+                input::check(py, budget)
+            })();
+            if let Err(primary) = result {
+                errors::note_format(
+                    py,
+                    &primary,
+                    format_args!(
+                        "while processing init_sql[{index}]; {index} earlier SQL units completed; current SQL unit execution confirmed={executed}. Later initialization units were not sent. Closing the failed connection does not confirm rollback or undo committed effects."
+                    ),
+                );
+                return Err(primary);
+            }
+        }
+        if !tracking_ready {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::SessionState,
+                "init_sql left required session tracking disabled or incomplete (session_track_system_variables / session_track_schema); the Connection was not returned and the configuration was not changed back",
+            ));
+        }
+        self.ensure_context(py, &mut lease, budget)?;
+        if !self.context(py)?.0.utc_confirmed {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::SessionState,
+                "init_sql did not leave a reliably confirmed UTC time_zone '+00:00'; the Connection was not returned and the setting was not changed back",
+            ));
+        }
+        input::check(py, budget)
+    }
 }
 macro_rules! connection_api {
     ($(($name:ident,$set:ident,$doc:literal)),* $(,)?) => {
         #[pymethods]
         impl Connection {
+            /// Read the current MySQL warning area explicitly as ordered
+            /// (Level: str, Code: int, Message: str) tuples. This sends exactly
+            /// SHOW WARNINGS, preserves existing Cursor results and never tries
+            /// to reconstruct historical warnings. A busy connection is refused.
+            /// Only messages still retained by MySQL can be returned.
+            fn show_warnings<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyTuple>> {
+                (|| {
+                    let snapshot=self.runtime(py)?;
+                    let mut budget=snapshot.timeouts.operation();
+                    let options=snapshot.options;
+                    drop(snapshot);
+                    let mut lease=self.native.try_command().map_err(|error|errors::access(py,error))?;
+                    input::check(py,&budget)?;
+                    let mut request=Vec::new();
+                    writer::append(&mut request,b"\x03SHOW WARNINGS",self.max_send).map_err(|error|errors::wire(py,error))?;
+                    let job=self.query_job(py,&mut lease,request,false)?;
+                    let response=self.drive(py,&mut lease,job,&mut budget,CommandRole::InternalControl)?;
+                    let Response::Rows(rows)=response else {return Err(errors::wire(py,sqlaero_core::protocol::framing::WireError::Malformed("SHOW WARNINGS returned no row result")));};
+                    crate::diagnostics::warnings(py,rows,&self.types.borrow(py),options,&budget)
+                })().map_err(|error|errors::at(py,error,"connection.show_warnings"))
+            }
+            /// Create or replace one backtick-quoted MySQL savepoint. No local
+            /// savepoint registry or automatic transaction boundary is added.
+            fn create_savepoint(&self,py:Python<'_>,name:&Bound<'_,PyAny>)->PyResult<()> {
+                self.savepoint(py,name,input::control::SavepointAction::Create).map_err(|error|errors::at(py,error,"connection.create_savepoint"))
+            }
+            /// Roll back the current transaction to one quoted savepoint.
+            /// MySQL decides whether the name exists; its error is preserved.
+            fn rollback_to_savepoint(&self,py:Python<'_>,name:&Bound<'_,PyAny>)->PyResult<()> {
+                self.savepoint(py,name,input::control::SavepointAction::Rollback).map_err(|error|errors::at(py,error,"connection.rollback_to_savepoint"))
+            }
+            /// Release one quoted savepoint without committing the transaction.
+            fn release_savepoint(&self,py:Python<'_>,name:&Bound<'_,PyAny>)->PyResult<()> {
+                self.savepoint(py,name,input::control::SavepointAction::Release).map_err(|error|errors::at(py,error,"connection.release_savepoint"))
+            }
             /// Encode supported values locally as SQL str fragments, parameter
             /// tuples or row lists. many and itemize are exact bool. This uses
             /// the last confirmed encoding reference, including while busy or
@@ -1029,9 +1179,9 @@ fn configured_size(
 /// version-specific upper limit or normalization. Later remote changes use
 /// explicit set_* methods; three local runtime timeouts use property assignment.
 #[pyfunction]
-#[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,server_public_key=None,autocommit=Argument::default(),sql_mode=None,multi_statements=Argument::default(),connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
+#[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,server_public_key=None,autocommit=Argument::default(),sql_mode=None,init_sql=None,multi_statements=Argument::default(),connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
 #[pyo3(
-    text_signature = "(*, user, host='127.0.0.1', port=3306, unix_socket=None, password=None, database=None, charset=None, collation=None, ssl=None, server_public_key=None, autocommit=True, sql_mode=None, multi_statements=True, connect_timeout=10, read_timeout=None, write_timeout=None, operation_timeout=None, net_read_timeout=None, net_write_timeout=None, wait_timeout=None, innodb_lock_wait_timeout=None, max_allowed_packet='64MB', max_received_packet='64MB', result_memory_limit='256MB', total_result_memory_limit='512MB', decode_json=False, decode_set=False, decode_bit=False, use_decimal=True, use_timedelta=True, decode_text_strict=True, decode_date_strict=True)"
+    text_signature = "(*, user, host='127.0.0.1', port=3306, unix_socket=None, password=None, database=None, charset=None, collation=None, ssl=None, server_public_key=None, autocommit=True, sql_mode=None, init_sql=None, multi_statements=True, connect_timeout=10, read_timeout=None, write_timeout=None, operation_timeout=None, net_read_timeout=None, net_write_timeout=None, wait_timeout=None, innodb_lock_wait_timeout=None, max_allowed_packet='64MB', max_received_packet='64MB', result_memory_limit='256MB', total_result_memory_limit='512MB', decode_json=False, decode_set=False, decode_bit=False, use_decimal=True, use_timedelta=True, decode_text_strict=True, decode_date_strict=True)"
 )]
 #[expect(
     clippy::too_many_arguments,
@@ -1051,6 +1201,7 @@ pub(crate) fn connect(
     server_public_key: Option<&Bound<'_, PyAny>>,
     autocommit: Argument<'_>,
     sql_mode: Option<&Bound<'_, PyAny>>,
+    init_sql: Option<&Bound<'_, PyAny>>,
     multi_statements: Argument<'_>,
     connect_timeout: Argument<'_>,
     read_timeout: Option<&Bound<'_, PyAny>>,
@@ -1090,6 +1241,8 @@ pub(crate) fn connect(
         timeout_config.read,
         timeout_config.write,
     );
+    let user_initialization = input::control::init_sql(init_sql, &budget)
+        .map_err(|error| errors::at(py, error, "connect"))?;
     let user = config::text(user, "user", false)?;
     let host_provided = host.0.is_some();
     let port_provided = port.0.is_some();
@@ -1294,8 +1447,9 @@ pub(crate) fn connect(
         .getattr("_scalar_types")?
         .cast_into::<ScalarTypes>()?
         .unbind();
-    Ok(Connection {
-        native: Arc::new(NativeConnection::with_result_limit(ready, total_limit)),
+    let (native, mut budget) = NativeConnection::with_retained_budget(ready, total_limit);
+    let connection = Connection {
+        native: Arc::new(native),
         runtime: Mutex::new(Runtime {
             timeouts: timeout_config,
             options,
@@ -1308,5 +1462,12 @@ pub(crate) fn connect(
         tls_snapshot,
         tls_info_value: OnceLock::new(),
         transaction_scope: Arc::new(AtomicBool::new(false)),
-    })
+    };
+    if !user_initialization.is_empty()
+        && let Err(primary) = connection.initialize_sql(py, &user_initialization, &mut budget)
+    {
+        connection.native.retire();
+        return Err(errors::at(py, primary, "connect"));
+    }
+    Ok(connection)
 }

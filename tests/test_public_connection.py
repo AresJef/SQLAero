@@ -214,7 +214,7 @@ def test_public_signatures_and_input_preflight() -> None:
     with pytest.raises(TypeError):
         connect('root')  # type: ignore[call-arg]
     for option in ({'host': None}, {'port': None}, {'port': True}, {'decode_json': 1},
-                   {'max_allowed_packet': None}, {'read_timeout': 0.1}, {'password': ''}):
+                   {'max_allowed_packet': None}, {'read_timeout': 1e-10}, {'password': ''}):
         with pytest.raises((TypeError, ValueError)):
             connect(user='x', **option)  # type: ignore[arg-type]
     with pytest.raises(ValueError, match='conflicts'):

@@ -263,37 +263,13 @@ impl Facts {
                 "execution context confirmation must contain one row of six fields",
             ));
         }
-        let fields = rows
-            .row(0)
-            .ok_or(WireError::Malformed("missing context confirmation row"))?;
-        let field = |index: usize| -> Result<Option<String>, WireError> {
-            let Some(data) = fields[index].get(&rows.bytes)? else {
-                return Ok(None);
-            };
-            let column = rows
-                .columns
-                .get(index)
-                .ok_or(WireError::Malformed("missing context confirmation column"))?;
-            let codec = OutputCodec::for_collation(column.collation_id);
-            let mut value = String::new();
-            value
-                .try_reserve(data.len())
-                .map_err(WireError::Allocation)?;
-            let mut position = 0;
-            while position < data.len() {
-                let (point, end) = codec.point(data, position).map_err(|_| {
-                    WireError::Malformed(
-                        "context confirmation uses an unsupported or invalid text encoding",
-                    )
-                })?;
-                if !point.is_ascii() {
-                    return Err(WireError::Malformed("context system identity is not ASCII"));
-                }
-                value.push(point);
-                position = end;
-            }
-            Ok(Some(value))
-        };
+        self.confirm_context_row(rows)
+    }
+    fn confirm_context_row(
+        &mut self,
+        rows: &crate::result::text::Buffered,
+    ) -> Result<(), WireError> {
+        let field = |index| confirmation_ascii(rows, index);
         let client =
             field(0)?.ok_or(WireError::Malformed("client charset confirmation is NULL"))?;
         let connection = field(1)?.ok_or(WireError::Malformed(
@@ -313,6 +289,70 @@ impl Facts {
         self.time_zone = Some(zone);
         Ok(())
     }
+    /// Confirm arbitrary user initialization from actual values, including
+    /// changes made while tracking was temporarily disabled. The caller runs
+    /// this bounded confirmation between SQL units and checks tracking at exit.
+    ///
+    /// # Errors
+    /// Rejects malformed native rows without publishing a partial context.
+    pub fn confirm_initialization(
+        &mut self,
+        rows: &crate::result::text::Buffered,
+    ) -> Result<bool, WireError> {
+        use crate::result::decode::{Integer, integer};
+        if rows.row_count != 1 || rows.columns.len() != 13 {
+            return Err(WireError::Malformed(
+                "user initialization confirmation must contain one row of thirteen fields",
+            ));
+        }
+        let raw = |index: usize| {
+            rows.row(0)
+                .and_then(|fields| fields.get(index))
+                .ok_or(WireError::Malformed(
+                    "missing initialization confirmation field",
+                ))?
+                .get(&rows.bytes)
+        };
+        let number = |index: usize| -> Result<u64, WireError> {
+            let data = raw(index)?.ok_or(WireError::Malformed("NULL initialization number"))?;
+            match integer(data, true, 64)
+                .map_err(|_| WireError::Malformed("invalid initialization number"))?
+            {
+                Integer::Unsigned(value) => Ok(value),
+                _ => Err(WireError::Malformed("signed initialization number")),
+            }
+        };
+        let timeouts = [number(6)?, number(7)?, number(8)?, number(9)?];
+        let tracked = confirmation_ascii(rows, 10)?
+            .ok_or(WireError::Malformed("NULL session tracking configuration"))?;
+        let schema = number(11)?;
+        let tracking_ready = schema == 1
+            && (tracked.trim() == "*"
+                || super::initialize::TRACKED
+                    .split(',')
+                    .filter(|name| *name != "autocommit")
+                    .all(|required| {
+                        tracked
+                            .split(',')
+                            .any(|name| name.trim().eq_ignore_ascii_case(required))
+                    }));
+        let database = raw(12)?
+            .map(|bytes| -> Result<Vec<u8>, WireError> {
+                std::str::from_utf8(bytes)
+                    .map_err(|_| WireError::Malformed("invalid UTF-8 database confirmation"))?;
+                let mut owned = Vec::new();
+                owned
+                    .try_reserve_exact(bytes.len())
+                    .map_err(WireError::Allocation)?;
+                owned.extend_from_slice(bytes);
+                Ok(owned)
+            })
+            .transpose()?;
+        self.confirm_context_row(rows)?;
+        self.server_timeouts = timeouts.map(Some);
+        self.database = Some(database);
+        Ok(tracking_ready)
+    }
     /// Whether a future user command lacks a fact required by its native
     /// input/metadata preparation. Known NULL results are not missing facts.
     #[must_use]
@@ -324,4 +364,41 @@ impl Facts {
             || self.sql_mode.is_none()
             || self.time_zone.is_none()
     }
+}
+
+fn confirmation_ascii(
+    rows: &crate::result::text::Buffered,
+    index: usize,
+) -> Result<Option<String>, WireError> {
+    let Some(data) = rows
+        .row(0)
+        .and_then(|fields| fields.get(index))
+        .ok_or(WireError::Malformed("missing confirmation field"))?
+        .get(&rows.bytes)?
+    else {
+        return Ok(None);
+    };
+    let column = rows
+        .columns
+        .get(index)
+        .ok_or(WireError::Malformed("missing context confirmation column"))?;
+    let codec = OutputCodec::for_collation(column.collation_id);
+    let mut value = String::new();
+    value
+        .try_reserve(data.len())
+        .map_err(WireError::Allocation)?;
+    let mut position = 0;
+    while position < data.len() {
+        let (point, end) = codec.point(data, position).map_err(|_| {
+            WireError::Malformed(
+                "context confirmation uses an unsupported or invalid text encoding",
+            )
+        })?;
+        if !point.is_ascii() {
+            return Err(WireError::Malformed("context system identity is not ASCII"));
+        }
+        value.push(point);
+        position = end;
+    }
+    Ok(Some(value))
 }

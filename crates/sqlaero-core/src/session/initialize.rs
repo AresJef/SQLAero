@@ -10,7 +10,7 @@ use crate::transport::channel::Step;
 use mysql_common::constants::StatusFlags;
 use num_bigint::BigUint;
 
-const TRACKED: &str = "autocommit,time_zone,sql_mode,character_set_client,character_set_connection,character_set_results,collation_connection,net_read_timeout,net_write_timeout,wait_timeout,innodb_lock_wait_timeout";
+pub(crate) const TRACKED: &str = "autocommit,time_zone,sql_mode,character_set_client,character_set_connection,character_set_results,collation_connection,net_read_timeout,net_write_timeout,wait_timeout,innodb_lock_wait_timeout";
 const TIMEOUT_NAMES: [&str; 4] = [
     "net_read_timeout",
     "net_write_timeout",
