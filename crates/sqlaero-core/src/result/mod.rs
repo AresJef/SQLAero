@@ -4,3 +4,4 @@ pub mod decode;
 pub mod keys;
 pub mod lifecycle;
 pub mod text;
+pub mod value;

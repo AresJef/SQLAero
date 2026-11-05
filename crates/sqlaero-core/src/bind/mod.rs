@@ -4,6 +4,7 @@ pub mod batch;
 pub mod scalar;
 pub mod template;
 pub mod temporal;
+pub mod value;
 pub mod writer;
 
 /// One immutable request-time view of confirmed encoding and value policy.

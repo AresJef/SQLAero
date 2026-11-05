@@ -16,6 +16,27 @@ pub struct Cell {
     end: usize,
 }
 impl Cell {
+    /// A protocol NULL without a borrow or sentinel data byte in row storage.
+    #[must_use]
+    pub const fn null() -> Self {
+        Self {
+            start: usize::MAX,
+            end: 0,
+        }
+    }
+
+    /// Construct a field span relative to its owned raw row storage.
+    ///
+    /// # Errors
+    /// Rejects an inverted range or the reserved NULL offset. `get` additionally
+    /// validates the range against the actual owner before every borrow.
+    pub fn range(start: usize, end: usize) -> Result<Self, WireError> {
+        if start == usize::MAX || end < start {
+            return Err(WireError::Malformed("invalid owned field range"));
+        }
+        Ok(Self { start, end })
+    }
+
     /// Borrow a checked field; protocol NULL remains distinct from empty bytes.
     ///
     /// # Errors
@@ -291,6 +312,8 @@ impl Deref for Completion {
 /// Native buffered rows. Keeping a Columns snapshot never keeps these fields
 /// or bytes alive. Python materialization is intentionally outside this type.
 pub struct Buffered {
+    /// Actual protocol representation, selected once for this result.
+    pub encoding: super::value::RowEncoding,
     /// Immutable metadata with its own shared lifetime and capacity charge.
     pub columns: Arc<Columns>,
     /// Owned row payload storage; capacity remains charged after fetch.
@@ -683,6 +706,7 @@ impl Receiver {
                             _owner: metadata_owner,
                         });
                         Response::Rows(Buffered {
+                            encoding: super::value::RowEncoding::Text,
                             columns,
                             bytes: std::mem::take(&mut self.bytes),
                             fields: std::mem::take(&mut self.fields),
