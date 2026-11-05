@@ -6,7 +6,7 @@ use crate::protocol::packets::{self, OkKind};
 use mysql_common::constants::{CapabilityFlags, StatusFlags};
 use mysql_common::packets::{OkPacket, ServerError, SqlState};
 use std::mem::size_of;
-use std::ops::Deref;
+use std::ops::{Deref, DerefMut};
 use std::sync::Arc;
 
 /// NULL or an absolute range in an owned native buffer.
@@ -309,9 +309,10 @@ impl Deref for Completion {
     }
 }
 
-/// Native buffered rows. Keeping a Columns snapshot never keeps these fields
-/// or bytes alive. Python materialization is intentionally outside this type.
-pub struct Buffered {
+/// Complete native rows without an invented result terminator. A streaming
+/// owner may retain this batch across local conversion failures and retry it
+/// before reading any further network message.
+pub struct RowBatch {
     /// Actual protocol representation, selected once for this result.
     pub encoding: super::value::RowEncoding,
     /// Immutable metadata with its own shared lifetime and capacity charge.
@@ -322,11 +323,9 @@ pub struct Buffered {
     pub fields: Buffer<Cell>,
     /// Actual complete row count.
     pub row_count: usize,
-    /// Final received OK/EOF facts.
-    pub completion: Completion,
     _owner: Reservation,
 }
-impl Buffered {
+impl RowBatch {
     /// Share only the allocation scope while preparing this result's native
     /// output strategies. It does not expose or lock the connection transport.
     #[must_use]
@@ -351,6 +350,54 @@ impl Buffered {
         self.fields
             .get(start..start.checked_add(self.columns.len())?)
     }
+}
+
+/// Native buffered rows and their actual received result terminator. The
+/// dereference keeps existing borrowed row access on the same native owner.
+pub struct Buffered {
+    /// Complete row storage; metadata can outlive this storage separately.
+    pub rows: RowBatch,
+    /// Final received OK/EOF facts.
+    pub completion: Completion,
+}
+impl Deref for Buffered {
+    type Target = RowBatch;
+    fn deref(&self) -> &Self::Target {
+        &self.rows
+    }
+}
+impl DerefMut for Buffered {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.rows
+    }
+}
+
+/// Actual completed column definitions, before the first row is consumed.
+pub struct Header {
+    /// Actual row encoding of the current command.
+    pub encoding: super::value::RowEncoding,
+    /// The same immutable metadata used to scan subsequent rows.
+    pub columns: Arc<Columns>,
+    /// Status from a real legacy metadata EOF. Deprecated-EOF mode has no
+    /// such packet and reports None; it never guesses output-parameter flags.
+    pub metadata_status: Option<StatusFlags>,
+}
+
+/// A streaming boundary produced by the existing result parser.
+pub enum StreamEvent {
+    /// Column definitions ended; no first row has been read.
+    Header(Header),
+    /// One or more complete rows, without a completion claim.
+    Rows(RowBatch),
+    /// A real terminal OK/EOF for this set, including any short final batch.
+    End {
+        /// Complete remaining rows received before this actual terminator.
+        tail: Option<RowBatch>,
+        /// The actual validated server completion.
+        completion: Completion,
+        /// Some for a row set, None for a non-row command.
+        total_rows: Option<usize>,
+    },
 }
 
 /// A fully consumed response. A counted intermediate result deliberately
@@ -730,22 +777,22 @@ impl Receiver {
                         let metadata_owner = self
                             .scope
                             .charge(size_of::<Columns>() + 2 * size_of::<usize>())?;
-                        let row_owner = self
-                            .scope
-                            .charge(size_of::<Buffered>() - size_of::<Completion>())?;
+                        let row_owner = self.scope.charge(size_of::<RowBatch>())?;
                         let columns = Arc::new(Columns {
                             items: std::mem::take(&mut self.columns),
                             bytes: std::mem::take(&mut self.metadata),
                             _owner: metadata_owner,
                         });
                         Response::Rows(Buffered {
-                            encoding: self.encoding,
-                            columns,
-                            bytes: std::mem::take(&mut self.bytes),
-                            fields: std::mem::take(&mut self.fields),
-                            row_count: self.row_count,
+                            rows: RowBatch {
+                                encoding: self.encoding,
+                                columns,
+                                bytes: std::mem::take(&mut self.bytes),
+                                fields: std::mem::take(&mut self.fields),
+                                row_count: self.row_count,
+                                _owner: row_owner,
+                            },
                             completion,
-                            _owner: row_owner,
                         })
                     };
                     self.phase = Phase::Finished;
