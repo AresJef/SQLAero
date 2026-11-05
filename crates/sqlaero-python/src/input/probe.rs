@@ -143,3 +143,29 @@ pub(crate) fn _plan_sql<'py>(
     }
     Ok(result)
 }
+
+/// Observe the same final projection as Connection.escape, independently of
+/// connection establishment, wire/fetch leases or database result quotas.
+#[pyfunction]
+#[pyo3(pass_module, signature = (data, *, many=false, itemize=true, charset=None, no_backslash=false))]
+pub(crate) fn _escape_projection<'py>(
+    module: &Bound<'py, PyModule>,
+    data: &Bound<'py, PyAny>,
+    many: bool,
+    itemize: bool,
+    charset: Option<&str>,
+    no_backslash: bool,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = module.py();
+    let owner = module.getattr(PyString::from_bytes(py, b"_scalar_types")?)?;
+    let types = owner.extract::<PyRef<'_, super::ScalarTypes>>()?;
+    let encoding = sqlaero_core::charset::resolve(charset, None)
+        .map_err(|error| crate::errors::builtin_message::<PyValueError>(py, error.to_string()))?;
+    let context = Context {
+        codec: Codec::new(encoding.charset),
+        no_backslash_escapes: no_backslash,
+        utc_confirmed: true,
+        limit: 1,
+    };
+    crate::binding::escape(data, many, itemize, &types, &context)
+}

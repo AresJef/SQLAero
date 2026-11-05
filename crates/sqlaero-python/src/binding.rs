@@ -298,6 +298,117 @@ impl<'types, 'py> Planner<'types, 'py> {
     }
 }
 
+/// Materialize final SQL text using the writer's connection codec, never
+/// result metadata or a Python codec callback. UTF-8 has no native transcode.
+pub(crate) fn display<'py>(
+    py: Python<'py>,
+    bytes: &[u8],
+    codec: sqlaero_core::charset::codec::Codec,
+) -> PyResult<Bound<'py, PyString>> {
+    use sqlaero_core::charset::output::OutputCodec;
+    // These strict routes are self-inverse over their complete valid domains:
+    // UTF-8 encodes exactly its decoded scalar bytes, ASCII exactly its bytes.
+    let route = match codec.name() {
+        "utf8mb4" => return crate::output::text(py, bytes, OutputCodec::Utf8(codec), true, None),
+        "ascii" => return crate::output::text(py, bytes, OutputCodec::Ascii(codec), true, None),
+        "binary" => OutputCodec::ByteValues(codec),
+        _ => OutputCodec::Mysql(codec),
+    };
+    let points = crate::output::points(py, bytes, route, true, None)?;
+    const CHUNK: usize = 256 * 1024;
+    let mut text = String::new();
+    text.try_reserve_exact(points.len().saturating_mul(4).min(CHUNK + 4))
+        .map_err(|_| errors::memory_error(py))?;
+    let mut encoded = Vec::new();
+    let mut consumed = 0;
+    let mut verify = |text: &str| -> PyResult<()> {
+        encoded.clear();
+        codec
+            .encode(text, &mut encoded, usize::MAX)
+            .map_err(|error| match error {
+                sqlaero_core::charset::codec::CodecError::Wire(error) => errors::wire(py, error),
+                _ => display_error(py, codec.name()),
+            })?;
+        if !bytes
+            .get(consumed..)
+            .is_some_and(|remaining| remaining.starts_with(&encoded))
+        {
+            return Err(display_error(py, codec.name()));
+        }
+        consumed += encoded.len();
+        py.check_signals()
+    };
+    for point in points.iter() {
+        let point = char::from_u32(*point).ok_or_else(|| {
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "strict text decoder produced a non-scalar value",
+            )
+        })?;
+        text.push(point);
+        if text.len() >= CHUNK {
+            verify(&text)?;
+            text.clear();
+        }
+    }
+    if !text.is_empty() {
+        verify(&text)?;
+    }
+    if consumed != bytes.len() {
+        return Err(display_error(py, codec.name()));
+    }
+    crate::output::codepoints(py, &points)
+}
+
+fn display_error(py: Python<'_>, charset: &str) -> PyErr {
+    errors::builtin_message::<pyo3::exceptions::PyValueError>(
+        py,
+        format!(
+            "auxiliary SQL text for charset {charset} cannot be represented losslessly as str: decoding and re-encoding changes bytes; no SQL was executed"
+        ),
+    )
+}
+
+/// Project the existing native input roles only at the public auxiliary
+/// boundary. All final fragments are strings; no result-pool quota or SQL
+/// timeout is inherited, and no output feeds back into execution.
+pub(crate) fn escape<'py>(
+    data: &Bound<'py, PyAny>,
+    many: bool,
+    itemize: bool,
+    types: &ScalarTypes,
+    context: &Context,
+) -> PyResult<Bound<'py, PyAny>> {
+    use sqlaero_core::transport::deadline::TimeoutKind;
+    let py = data.py();
+    let context = Context {
+        limit: usize::MAX,
+        ..*context
+    };
+    let budget = IoBudget::new(TimeoutKind::Operation, None, None, None);
+    let mut rows = Rows::new(data, many, itemize, types, &budget)?;
+    if rows.public_batch() {
+        let output = pyo3::types::PyList::new(py, std::iter::empty::<Bound<'py, PyAny>>())?;
+        while let Some(row) = rows.next(types, &budget)? {
+            output.append(row.project(py, types, &context, &budget)?)?;
+        }
+        check(py, &budget)?;
+        Ok(output.into_any())
+    } else {
+        let row = rows.next(types, &budget)?.ok_or_else(|| {
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "root projection did not produce its logical row",
+            )
+        })?;
+        let value = row.project(py, types, &context, &budget)?;
+        check(py, &budget)?;
+        Ok(value)
+    }
+}
+
 /// Retain an input owner and advance one logical row at a time. Native typed
 /// providers retain their own current chunk; neither path materializes a batch.
 pub(crate) struct Rows<'py> {
@@ -312,6 +423,17 @@ pub(crate) struct Rows<'py> {
     empty: bool,
 }
 impl<'py> Rows<'py> {
+    fn public_batch(&self) -> bool {
+        self.outer.is_some()
+            || self
+                .native
+                .as_ref()
+                .is_some_and(|source| match source.shape() {
+                    Shape::Table { .. } => true,
+                    Shape::Vector { .. } => self.many,
+                    Shape::Record { .. } => false,
+                })
+    }
     pub(crate) fn remaining(&self) -> usize {
         self.count.saturating_sub(self.position)
     }
@@ -541,6 +663,65 @@ pub(crate) struct Row<'r, 'py> {
     zero_positions: bool,
 }
 impl Row<'_, '_> {
+    fn public_row(&self) -> bool {
+        self.zero_positions
+            || (self.itemize
+                && match &self.input {
+                    RowInput::Sequence(_) => true,
+                    RowInput::Native(native) => matches!(
+                        (native.source.shape(), native.row),
+                        (Shape::Vector { .. }, None)
+                            | (Shape::Record { .. }, _)
+                            | (Shape::Table { .. }, Some(_))
+                    ),
+                    RowInput::Scalar => false,
+                })
+    }
+
+    fn project<'py>(
+        self,
+        py: Python<'py>,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &IoBudget,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let row = self.public_row();
+        let mut values = Vec::new();
+        let mut encoded = Vec::new();
+        self.walk::<false>(
+            types,
+            context,
+            budget,
+            &mut encoded,
+            |_, output| {
+                output.clear();
+                Ok(())
+            },
+            |_, output, _| {
+                let value = display(py, output, context.codec)?.into_any().unbind();
+                values
+                    .try_reserve(1)
+                    .map_err(|_| errors::memory_error(py))?;
+                values.push(value);
+                Ok(())
+            },
+        )?;
+        if row {
+            crate::output::tuple_from_ready_vec(py, values).map(Bound::into_any)
+        } else {
+            values
+                .pop()
+                .map(|value| value.into_bound(py))
+                .ok_or_else(|| {
+                    errors::client(
+                        py,
+                        ClientErrorCode::InternalState,
+                        "scalar projection did not produce a value",
+                    )
+                })
+        }
+    }
+
     pub(crate) fn width(&self) -> usize {
         if self.zero_positions {
             return 0;
@@ -720,7 +901,7 @@ impl Row<'_, '_> {
     }
 
     fn fill<const TRACK_ROLE: bool>(
-        mut self,
+        self,
         template: &Template,
         types: &ScalarTypes,
         context: &Context,
@@ -742,6 +923,57 @@ impl Row<'_, '_> {
                 ),
             ));
         }
+        let mut cursor = 0;
+        let role = self.walk::<TRACK_ROLE>(
+            types,
+            context,
+            budget,
+            output,
+            |_, output| {
+                if template
+                    .append_range_until_slot(&range, &mut cursor, output, context.limit)
+                    .map_err(|error| errors::wire(py, error))?
+                    .is_none()
+                {
+                    return Err(errors::client(
+                        py,
+                        ClientErrorCode::ParameterCount,
+                        "binding position is unavailable",
+                    ));
+                }
+                Ok(())
+            },
+            |_, _, _| Ok(()),
+        )?;
+        if template
+            .append_range_until_slot(&range, &mut cursor, output, context.limit)
+            .map_err(|error| errors::wire(py, error))?
+            .is_some()
+        {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::ParameterCount,
+                "unconsumed binding position",
+            ));
+        }
+        check(py, budget)?;
+        Ok(role)
+    }
+
+    /// Traverse each existing positional role exactly once. Binder framing and
+    /// final public projection are static consumers around the same writes.
+    fn walk<const TRACK_ROLE: bool>(
+        mut self,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &IoBudget,
+        output: &mut Vec<u8>,
+        mut before: impl FnMut(usize, &mut Vec<u8>) -> PyResult<()>,
+        mut after: impl FnMut(usize, &mut Vec<u8>, FragmentRole) -> PyResult<()>,
+    ) -> PyResult<FragmentRole> {
+        let py = self.value.py();
+        check(py, budget)?;
+        let width = self.width();
         let mut visit = Visit {
             types,
             context,
@@ -787,7 +1019,6 @@ impl Row<'_, '_> {
                 visit.enter_native(py)?;
             }
         }
-        let mut cursor = 0;
         let mut role = FragmentRole::Scalar;
         for index in 0..width {
             let source = if let Some(row) = row {
@@ -804,17 +1035,7 @@ impl Row<'_, '_> {
             } else {
                 self.value.clone()
             };
-            if template
-                .append_range_until_slot(&range, &mut cursor, output, context.limit)
-                .map_err(|error| errors::wire(py, error))?
-                .is_none()
-            {
-                return Err(errors::client(
-                    py,
-                    ClientErrorCode::ParameterCount,
-                    "binding position is unavailable",
-                ));
-            }
+            before(index, output)?;
             let result = if let Some(native) = native.as_deref_mut() {
                 let shape = native.source.shape();
                 let source_row = native.row;
@@ -878,7 +1099,10 @@ impl Row<'_, '_> {
                 }
             };
             role = match result {
-                Ok(role) => role,
+                Ok(role) => {
+                    after(index, output, role)?;
+                    role
+                }
                 Err(error) => {
                     errors::note_format(
                         py,
@@ -891,17 +1115,6 @@ impl Row<'_, '_> {
                     return Err(error);
                 }
             };
-        }
-        if template
-            .append_range_until_slot(&range, &mut cursor, output, context.limit)
-            .map_err(|error| errors::wire(py, error))?
-            .is_some()
-        {
-            return Err(errors::client(
-                py,
-                ClientErrorCode::ParameterCount,
-                "unconsumed binding position",
-            ));
         }
         check(py, budget)?;
         Ok(role)
