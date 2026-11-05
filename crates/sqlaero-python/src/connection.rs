@@ -14,7 +14,7 @@ use sqlaero_core::{
     bind::{Context, writer},
     charset::{self, output::OutputCodec},
     error::ClientErrorCode,
-    protocol::framing::{MAX_MESSAGE_PAYLOAD, MessageWriter},
+    protocol::framing::{MAX_MESSAGE_PAYLOAD},
     result::{
         decode::Options,
         text::{Response, ResultError},
@@ -23,7 +23,7 @@ use sqlaero_core::{
         connect::{ConnectParams, Endpoint, Establish},
         initialize::{Initialize, Options as InitOptions},
         query::{CommandConfirmation, Query, QueryError, RequestProgress},
-        shared::{CommandLease, Connection as NativeConnection},
+        shared::{Close as NativeClose, CloseError, CommandLease, Connection as NativeConnection},
     },
     transport::{
         channel::Step,
@@ -36,6 +36,14 @@ use std::{
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
+
+fn close_error(py: Python<'_>, error: CloseError) -> PyErr {
+    match error {
+        CloseError::Access(error) => errors::access(py, error),
+        CloseError::Wire(error) => errors::wire(py, error),
+        CloseError::Channel(error) => errors::channel(py, error),
+    }
+}
 
 pub(crate) struct Runtime {
     pub(crate) timeouts: Timeouts,
@@ -694,34 +702,24 @@ macro_rules! connection_api {
             /// Timeout or interruption grants no fresh network budget or cleanup grace.
             /// Repeated completed close returns None; overlapping operations raise InterfaceBusyError.
             fn close(&self, py:Python<'_>) -> PyResult<()> {
-                let mut lease=match self.native.try_command() {
+                let lease=match self.native.try_command() {
                     Ok(lease)=>lease,
                     Err(sqlaero_core::session::shared::AccessError::Closed)=>return Ok(()),
                     Err(error)=>return Err(errors::at(py,errors::access(py,error),"connection.close")),
                 };
                 let snapshot=self.runtime(py)?.timeouts;
                 let mut budget=IoBudget::new(TimeoutKind::Operation,snapshot.operation,None,snapshot.write);
-                lease.begin_close();
                 let result=(|| {
-                    let session=lease.session().map_err(|error|errors::access(py,error))?;
-                    session.channel.new_command().map_err(|error|errors::channel(py,error))?;
-                    let mut sender=MessageWriter::new(1,session.max_send).map_err(|error|errors::wire(py,error))?;
+                    let mut job=NativeClose::new(lease).map_err(|error|close_error(py,error))?;
                     loop {
-                        let step=py.detach(|| {
-                            match session.channel.send_step(&mut sender,&[1],&mut budget)? {
-                                Step::Wait(direction)=> match session.channel.wait(direction,&mut budget)? {
-                                    WaitStatus::Control=>Ok(Step::Control),WaitStatus::Ready=>Ok(Step::Control),
-                                },
-                                other=>Ok(other),
-                            }
-                        }).map_err(|error|errors::channel(py,error))?;
+                        let step=py.detach(||job.advance(&mut budget)).map_err(|error|close_error(py,error))?;
                         match step {
                             Step::Ready(())=>return Ok(()),
                             _=>input::check(py,&budget)?,
                         }
                     }
                 })();
-                lease.invalidate(); result.map_err(|error|errors::at(py,error,"connection.close"))
+                result.map_err(|error|errors::at(py,error,"connection.close"))
             }
             /// True after irreversible local retirement begins. This does not
             /// confirm server transaction completion or finished cleanup.

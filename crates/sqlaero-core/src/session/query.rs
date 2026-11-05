@@ -275,7 +275,12 @@ impl Query {
         }
         loop {
             if !self.sent {
-                match channel.send_step(&mut self.sender, &self.request, budget)? {
+                match channel.send_step(
+                    &mut self.sender,
+                    &self.request,
+                    budget,
+                    Some(&self.scope),
+                )? {
                     Step::Ready(()) => self.sent = true,
                     Step::Wait(direction) => {
                         if channel.wait(direction, budget)? == WaitStatus::Control {

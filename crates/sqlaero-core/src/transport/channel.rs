@@ -2,6 +2,7 @@
 
 use super::deadline::{Direction, IoBudget, TimeoutKind};
 use super::socket::{Transport, TransportError, WaitStatus};
+use crate::memory::Scope;
 use crate::protocol::framing::{MessageReader, MessageWriter, Progress, Sequence, WireError};
 use rustls::{ClientConfig, ClientConnection};
 use rustls_pki_types::ServerName;
@@ -110,6 +111,12 @@ impl Channel {
         Ok(())
     }
 
+    /// Whether the authenticated channel uses an additional compression layer.
+    #[must_use]
+    pub const fn is_compressed(&self) -> bool {
+        false
+    }
+
     /// Return whether full authentication may use this established channel.
     #[must_use]
     pub fn secure(&self) -> bool {
@@ -189,6 +196,7 @@ impl Channel {
         message: &mut MessageWriter,
         bytes: &[u8],
         budget: &mut IoBudget,
+        _scope: Option<&Arc<Scope>>,
     ) -> Result<Step<()>, ChannelError> {
         budget.check()?;
         if self.tls.is_none() {

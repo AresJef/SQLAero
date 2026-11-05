@@ -328,7 +328,7 @@ impl Establish {
                 let outgoing = self.outgoing.as_mut().ok_or(ConnectError::Configuration(
                     "missing authentication response",
                 ))?;
-                match channel.send_step(&mut outgoing.framing, &outgoing.bytes, budget)? {
+                match channel.send_step(&mut outgoing.framing, &outgoing.bytes, budget, None)? {
                     Step::Ready(()) => {
                         self.outgoing = None;
                         if self.phase == Phase::SslRequest {

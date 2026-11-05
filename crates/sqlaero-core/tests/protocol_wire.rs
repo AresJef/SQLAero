@@ -155,7 +155,7 @@ fn no_progress_write_expires_against_real_socket_backpressure() {
     let payload = vec![b'x'; 8 * 1024 * 1024];
     let mut writer = framing::MessageWriter::new(payload.len(), payload.len()).unwrap();
     let outcome = loop {
-        match channel.send_step(&mut writer, &payload, &mut budget) {
+        match channel.send_step(&mut writer, &payload, &mut budget, None) {
             Ok(Step::Wait(direction)) => {
                 if let Err(error) = channel.wait(direction, &mut budget) {
                     break error;

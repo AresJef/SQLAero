@@ -3,6 +3,7 @@
 use super::connect::ServerMetadata;
 use super::initialize::Ready;
 use super::state::{ExecutionContext, Facts};
+use crate::memory::{Pool, Scope};
 use crate::protocol::framing::{MessageWriter, WireError};
 use crate::transport::channel::{Channel, ChannelError, Step};
 use crate::transport::deadline::IoBudget;
@@ -185,6 +186,7 @@ impl Connection {
         Ok(CommandLease {
             wire,
             closed: &self.closed,
+            pool: &self.result_pool,
         })
     }
 }
@@ -224,6 +226,7 @@ impl Drop for OwnedCommand {
 pub struct CommandLease<'a> {
     wire: MutexGuard<'a, Option<WireSession>>,
     closed: &'a AtomicBool,
+    pool: &'a Arc<Pool>,
 }
 
 impl CommandLease<'_> {
@@ -300,6 +303,7 @@ pub enum CloseError {
 pub struct Close<'a> {
     lease: CommandLease<'a>,
     sender: MessageWriter,
+    scope: Option<Arc<Scope>>,
     finished: bool,
 }
 
@@ -311,13 +315,19 @@ impl<'a> Close<'a> {
     /// retirement still takes place on every preparation failure.
     pub fn new(mut lease: CommandLease<'a>) -> Result<Self, CloseError> {
         lease.begin_close();
-        let prepared = (|| -> Result<MessageWriter, CloseError> {
+        let pool = lease.pool;
+        let prepared = (|| -> Result<_, CloseError> {
             let session = lease.session()?;
             session.channel.new_command()?;
-            Ok(MessageWriter::new(1, session.max_send)?)
+            let scope = if session.channel.is_compressed() {
+                Some(Scope::new(Arc::clone(pool), usize::MAX).map_err(WireError::from)?)
+            } else {
+                None
+            };
+            Ok((MessageWriter::new(1, session.max_send)?, scope))
         })();
-        let sender = match prepared {
-            Ok(sender) => sender,
+        let (sender, scope) = match prepared {
+            Ok(prepared) => prepared,
             Err(error) => {
                 lease.invalidate();
                 return Err(error);
@@ -326,6 +336,7 @@ impl<'a> Close<'a> {
         Ok(Self {
             lease,
             sender,
+            scope,
             finished: false,
         })
     }
@@ -351,7 +362,10 @@ impl<'a> Close<'a> {
         }
         loop {
             let session = self.lease.session()?;
-            match session.channel.send_step(&mut self.sender, &[1], budget)? {
+            match session
+                .channel
+                .send_step(&mut self.sender, &[1], budget, self.scope.as_ref())?
+            {
                 Step::Wait(direction) => {
                     if session.channel.wait(direction, budget)? == WaitStatus::Control {
                         return Ok(Step::Control);
