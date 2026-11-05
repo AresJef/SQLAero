@@ -317,6 +317,9 @@ pub struct RowBatch {
     pub encoding: super::value::RowEncoding,
     /// Immutable metadata with its own shared lifetime and capacity charge.
     pub columns: Arc<Columns>,
+    /// Status from the actual legacy metadata EOF, when present. This is
+    /// separate from the actual row terminator and never replaces its flags.
+    pub metadata_status: Option<StatusFlags>,
     /// Owned row payload storage; capacity remains charged after fetch.
     pub bytes: Buffer<u8>,
     /// Row-major field locations; no generic value tree.
@@ -397,6 +400,8 @@ pub enum StreamEvent {
         completion: Completion,
         /// Some for a row set, None for a non-row command.
         total_rows: Option<usize>,
+        /// Original per-set legacy metadata status, without guessed flags.
+        metadata_status: Option<StatusFlags>,
     },
 }
 
@@ -595,6 +600,7 @@ pub struct Receiver {
     streaming: bool,
     frozen_columns: Option<Arc<Columns>>,
     batch_rows: usize,
+    metadata_status: Option<StatusFlags>,
     scope: Arc<Scope>,
     _owner: Reservation,
 }
@@ -644,6 +650,7 @@ impl Receiver {
             streaming: false,
             frozen_columns: None,
             batch_rows: 0,
+            metadata_status: None,
             scope,
             _owner: owner,
         })
@@ -734,6 +741,7 @@ impl Receiver {
         Ok(RowBatch {
             encoding: self.encoding,
             columns,
+            metadata_status: self.metadata_status,
             bytes: std::mem::replace(&mut self.bytes, Buffer::tracked(&self.scope)),
             fields: std::mem::replace(&mut self.fields, Buffer::tracked(&self.scope)),
             row_count: if self.streaming {
@@ -760,6 +768,15 @@ impl Receiver {
             metadata_status,
         })))
     }
+
+    pub(crate) fn legacy_out_has_tail(&self) -> bool {
+        self.encoding == super::value::RowEncoding::Binary
+            && self.metadata_status.is_some_and(|status| {
+                status.contains(
+                    StatusFlags::SERVER_PS_OUT_PARAMS | StatusFlags::SERVER_MORE_RESULTS_EXISTS,
+                )
+            })
+    }
     /// Take facts recorded after a validated final OK/EOF but before fallible
     /// ownership. No row buffer or reference to the incoming packet is retained.
     pub fn take_confirmation(&mut self) -> Option<CommandConfirmation> {
@@ -772,9 +789,10 @@ impl Receiver {
         self.server_err_received
     }
     fn confirm(&mut self, packet: &OkPacket<'_>, rows: Option<usize>) {
-        if !packet
-            .status_flags()
-            .contains(StatusFlags::SERVER_MORE_RESULTS_EXISTS)
+        if !self.legacy_out_has_tail()
+            && !packet
+                .status_flags()
+                .contains(StatusFlags::SERVER_MORE_RESULTS_EXISTS)
         {
             self.confirmation = Some(CommandConfirmation {
                 count: rows.map_or_else(|| u128::from(packet.affected_rows()), |rows| rows as u128),
@@ -805,6 +823,7 @@ impl Receiver {
                             tail: None,
                             completion,
                             total_rows: None,
+                            metadata_status: None,
                         })
                     } else {
                         Delivery::Buffered(Response::Command(completion))
@@ -849,6 +868,7 @@ impl Receiver {
             }
             Phase::MetadataEnd => {
                 let metadata = packets::ok(data, self.capabilities, OkKind::LegacyEnd)?;
+                self.metadata_status = Some(metadata.status_flags());
                 self.phase = Phase::Rows;
                 if self.streaming {
                     return self.header(Some(metadata.status_flags())).map(Some);
@@ -883,6 +903,7 @@ impl Receiver {
                             tail: self.take_stream_rows()?,
                             completion,
                             total_rows: Some(self.row_count),
+                            metadata_status: self.metadata_status,
                         })
                     } else if self.discard {
                         Delivery::Buffered(Response::Counted {

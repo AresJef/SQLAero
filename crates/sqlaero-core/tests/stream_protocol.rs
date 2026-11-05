@@ -162,12 +162,14 @@ fn header_and_row_boundaries_allow_controlled_smaller_fetch_without_read_ahead()
                 tail,
                 completion,
                 total_rows,
+                metadata_status,
             } = next(&mut query, &mut channel, &mut budget).unwrap()
             else {
                 panic!("actual terminal packet");
             };
             assert!(tail.is_none());
             assert_eq!(total_rows, Some(2));
+            assert_eq!(metadata_status, header.metadata_status);
             assert_eq!(
                 completion.status_flags(),
                 StatusFlags::SERVER_STATUS_AUTOCOMMIT
@@ -177,5 +179,146 @@ fn header_and_row_boundaries_allow_controlled_smaller_fetch_without_read_ahead()
             check(&second, 8, binary);
             server.join().unwrap();
         }
+    }
+}
+
+#[test]
+fn legacy_out_metadata_keeps_the_real_tail_pending_without_rewriting_end_flags() {
+    for streaming in [false, true] {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let address = listener.local_addr().unwrap();
+        let (release, wait) = mpsc::channel();
+        let metadata_status = StatusFlags::SERVER_STATUS_AUTOCOMMIT
+            | StatusFlags::SERVER_MORE_RESULTS_EXISTS
+            | StatusFlags::SERVER_PS_OUT_PARAMS;
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(Duration::from_secs(3)))
+                .unwrap();
+            let mut sequence = Sequence::default();
+            assert_eq!(
+                framing::read_message(&mut socket, &mut sequence, 4096).unwrap(),
+                request(true)
+            );
+            let mut column = Vec::new();
+            mysql_common::packets::Column::new(ColumnType::MYSQL_TYPE_LONGLONG)
+                .with_name(b"out_value")
+                .serialize(&mut column);
+            let flags = metadata_status.bits().to_le_bytes();
+            for payload in [
+                vec![1],
+                column,
+                vec![0xfe, 0, 0, flags[0], flags[1]],
+                row(true, 9),
+                vec![0xfe, 0, 0, 2, 0],
+            ] {
+                framing::write_message(&mut socket, &payload, &mut sequence, 4096).unwrap();
+            }
+            wait.recv_timeout(Duration::from_secs(3)).unwrap();
+            framing::write_message(&mut socket, &[0, 0, 0, 2, 0, 0, 0], &mut sequence, 4096)
+                .unwrap();
+        });
+        let mut channel = Channel::new(Transport::tcp(address).unwrap(), false);
+        let mut budget = IoBudget::new(
+            TimeoutKind::Operation,
+            Some(Duration::from_secs(2)),
+            None,
+            None,
+        );
+        while !channel.connected().unwrap() {
+            channel.wait(Direction::Write, &mut budget).unwrap();
+        }
+        let query = Query::new(
+            request(true),
+            CapabilityFlags::CLIENT_PROTOCOL_41 | CapabilityFlags::CLIENT_PS_MULTI_RESULTS,
+            4096,
+            4096,
+            1_000_000,
+        )
+        .unwrap();
+        let mut query = if streaming {
+            query.with_streaming().unwrap()
+        } else {
+            query
+        };
+        if streaming {
+            let StreamEvent::Header(header) = next(&mut query, &mut channel, &mut budget).unwrap()
+            else {
+                panic!("OUT header");
+            };
+            assert_eq!(header.metadata_status, Some(metadata_status));
+            let StreamEvent::Rows(rows) = next(&mut query, &mut channel, &mut budget).unwrap()
+            else {
+                panic!("OUT row");
+            };
+            check(&rows, 9, true);
+            let StreamEvent::End {
+                completion,
+                metadata_status: actual_metadata,
+                ..
+            } = next(&mut query, &mut channel, &mut budget).unwrap()
+            else {
+                panic!("actual OUT EOF");
+            };
+            assert_eq!(actual_metadata, Some(metadata_status));
+            assert_eq!(
+                completion.status_flags(),
+                StatusFlags::SERVER_STATUS_AUTOCOMMIT
+            );
+        } else {
+            let response = loop {
+                if let Step::Ready(response) = query.advance(&mut channel, &mut budget).unwrap() {
+                    break response;
+                }
+            };
+            assert_eq!(
+                response.completion().status_flags(),
+                StatusFlags::SERVER_STATUS_AUTOCOMMIT
+            );
+            let sqlaero_core::result::text::Response::Rows(rows) = response else {
+                panic!("buffered OUT row");
+            };
+            assert_eq!(rows.metadata_status, Some(metadata_status));
+        }
+        assert!(
+            !query.is_finished(),
+            "real metadata declared the independent CALL tail despite cleared row EOF flags"
+        );
+        assert!(
+            query.take_confirmation().is_none(),
+            "closing OUT EOF cannot certify the full command"
+        );
+        release.send(()).unwrap();
+        if streaming {
+            let StreamEvent::End {
+                tail,
+                total_rows,
+                completion,
+                ..
+            } = next(&mut query, &mut channel, &mut budget).unwrap()
+            else {
+                panic!("actual command tail");
+            };
+            assert!(tail.is_none());
+            assert_eq!(total_rows, None);
+            assert_eq!(
+                completion.status_flags(),
+                StatusFlags::SERVER_STATUS_AUTOCOMMIT
+            );
+        } else {
+            loop {
+                if let Step::Ready(response) = query.advance(&mut channel, &mut budget).unwrap() {
+                    assert!(matches!(
+                        response,
+                        sqlaero_core::result::text::Response::Command(_)
+                    ));
+                    break;
+                }
+            }
+        }
+        assert!(query.is_finished());
+        assert!(query.take_confirmation().is_some());
+        server.join().unwrap();
     }
 }

@@ -457,13 +457,15 @@ impl Query {
             if let Some(delivery) = delivery {
                 match &delivery {
                     Delivery::Buffered(response) => {
-                        self.next_set = text::has_more(response);
+                        self.next_set =
+                            text::has_more(response) || self.collector.legacy_out_has_tail();
                         self.finished = !self.next_set;
                     }
                     Delivery::Streaming(StreamEvent::End { completion, .. }) => {
-                        self.next_set = completion.status_flags().contains(
-                            mysql_common::constants::StatusFlags::SERVER_MORE_RESULTS_EXISTS,
-                        );
+                        self.next_set = self.collector.legacy_out_has_tail()
+                            || completion.status_flags().contains(
+                                mysql_common::constants::StatusFlags::SERVER_MORE_RESULTS_EXISTS,
+                            );
                         self.finished = !self.next_set;
                     }
                     Delivery::Streaming(_) => (),
