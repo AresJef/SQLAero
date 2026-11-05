@@ -6,6 +6,34 @@ use crate::protocol::framing::WireError;
 use mysql_common::constants::{SessionStateType, StatusFlags};
 use mysql_common::packets::{OkPacket, session_state_change::SessionStateChange};
 
+/// A completely confirmed native input/metadata context. Commands use current
+/// facts; auxiliary calls may independently copy the latest complete reference.
+#[derive(Debug, Clone, Copy)]
+pub struct ExecutionContext {
+    /// Direct input writing policy and actual logical-send bound.
+    pub binding: crate::bind::Context,
+    /// Actual ANSI_QUOTES lexical mode.
+    pub ansi_quotes: bool,
+    /// Actual result-label encoding.
+    pub metadata: OutputCodec,
+}
+
+/// Which required fact prevents using the current execution context.
+#[derive(Debug, Clone, Copy, thiserror::Error)]
+pub enum ContextError {
+    /// The actual sending charset is unknown or unsupported.
+    #[error(
+        "The actual client charset is unknown or unsupported; it is not reinterpreted as utf8mb4"
+    )]
+    ClientCharset,
+    /// The lexical SQL mode is not confirmed.
+    #[error("SQL mode is not confirmed; safe binding requires a confirmed session context")]
+    SqlMode,
+    /// The current result metadata encoding is not known or supported.
+    #[error("actual result metadata encoding is unknown or unsupported")]
+    MetadataCharset,
+}
+
 /// One actual, independently known session role. None means unconfirmed;
 /// a known NULL character_set_results is represented by Some(None).
 #[derive(Debug)]
@@ -49,6 +77,27 @@ impl From<Confirmed> for Facts {
     }
 }
 impl Facts {
+    /// Prepare the same authoritative context for all input/output consumers.
+    /// No unknown fact is repaired from an older auxiliary reference.
+    ///
+    /// # Errors
+    /// Identifies the exact required fact that is unavailable.
+    pub fn execution_context(&self, send_limit: usize) -> Result<ExecutionContext, ContextError> {
+        let codec = self.client_codec().ok_or(ContextError::ClientCharset)?;
+        let mode = self.sql_mode.as_ref().ok_or(ContextError::SqlMode)?;
+        let contains = |token| mode.split(',').any(|part| part == token);
+        Ok(ExecutionContext {
+            binding: crate::bind::Context {
+                codec,
+                no_backslash_escapes: contains("NO_BACKSLASH_ESCAPES"),
+                utc_confirmed: self.utc_confirmed(),
+                limit: send_limit.min(self.server_packet_limit),
+            },
+            ansi_quotes: contains("ANSI_QUOTES"),
+            metadata: self.metadata_codec().ok_or(ContextError::MetadataCharset)?,
+        })
+    }
+
     /// Apply only a fully received OK/terminator. Unmentioned facts retain their
     /// independently confirmed values; a general change hint invents no value.
     ///

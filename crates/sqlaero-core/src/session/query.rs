@@ -2,12 +2,11 @@
 
 use crate::memory::{Pool, Scope};
 use crate::protocol::framing::{MessageReader, MessageWriter, WireError};
-use crate::result::text::{self, Completion, Receiver, Response, ResultError};
+use crate::result::text::{self, Receiver, Response, ResultError};
 use crate::transport::channel::{Channel, ChannelError, Step};
 use crate::transport::deadline::IoBudget;
 use crate::transport::socket::WaitStatus;
 use mysql_common::constants::CapabilityFlags;
-use mysql_common::packets::OkPacket;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -23,13 +22,6 @@ pub enum QueryError {
     /// Native request or message storage was invalid.
     #[error(transparent)]
     Wire(#[from] WireError),
-    /// All unexpected result sets were consumed; the channel is synchronized
-    /// and its actual final confirmation is available for session updates.
-    #[error("multiple results were fully consumed but are not supported by this client")]
-    MultipleResults {
-        /// Actual final OK/EOF metadata.
-        completion: OkPacket<'static>,
-    },
 }
 
 pub use crate::result::text::CommandConfirmation;
@@ -122,12 +114,21 @@ pub struct Query {
     scope: Arc<Scope>,
     sent: bool,
     started: bool,
-    unsupported_multiple: bool,
+    next_set: bool,
+    discard: bool,
+    memory_limit: usize,
+    pool: Arc<Pool>,
     finished: bool,
-    pending_completion: Option<Completion>,
 }
 
 impl Query {
+    /// Whether the complete command ended, rather than just one result set.
+    /// A validated server ERR also ends this exchange without inventing success.
+    #[must_use]
+    pub const fn is_finished(&self) -> bool {
+        self.finished
+    }
+
     /// Read existing framing facts only when needed for failure handling.
     #[must_use]
     pub fn progress(&self) -> RequestProgress {
@@ -187,7 +188,7 @@ impl Query {
             return Err(WireError::Malformed("request has no command byte").into());
         }
         let sender = MessageWriter::new(request.len(), max_send)?;
-        let scope = Scope::new(pool, memory_limit).map_err(ResultError::from)?;
+        let scope = Scope::new(Arc::clone(&pool), memory_limit).map_err(ResultError::from)?;
         let collector = Receiver::new(capabilities, Arc::clone(&scope), discard)?;
         Ok(Self {
             request,
@@ -199,14 +200,18 @@ impl Query {
             scope,
             sent: false,
             started: false,
-            unsupported_multiple: false,
+            next_set: false,
+            discard,
+            memory_limit,
+            pool,
             finished: false,
-            pending_completion: None,
         })
     }
 
-    /// Advance the same command, retaining all framing state across waits and
-    /// host checks. Unexpected additional results are consumed before rejection.
+    /// Receive the next complete result of this command, retaining framing
+    /// across waits, host checks and set boundaries. `Ready` publishes one set;
+    /// consult `is_finished` before releasing command ownership. The caller
+    /// applies every terminator's session facts before advancing again.
     ///
     /// # Errors
     /// Returns real server, resource, protocol or transport failures. Callers
@@ -224,19 +229,9 @@ impl Query {
     }
 
     /// Take validated full-command facts after a local completion-storage failure.
-    /// Incomplete or unexpected multiple results never yield guessed totals.
+    /// An intermediate set never masquerades as full-command confirmation.
     pub fn take_confirmation(&mut self) -> Option<CommandConfirmation> {
-        if self.unsupported_multiple {
-            None
-        } else {
-            self.collector.take_confirmation()
-        }
-    }
-    /// Consume a confirmed intermediate terminator after a Control return.
-    /// Apply its session facts before resuming this same command. Intermediate
-    /// rows are never published as a successful public result.
-    pub fn take_completion(&mut self) -> Option<Completion> {
-        self.pending_completion.take()
+        self.collector.take_confirmation()
     }
 
     fn advance_inner(
@@ -246,6 +241,18 @@ impl Query {
     ) -> Result<Step<Response>, QueryError> {
         if self.finished {
             return Err(WireError::Malformed("command exchange already ended").into());
+        }
+        if self.next_set {
+            // Every set retains its own per-result quota; earlier owners stay
+            // charged to the same connection pool. Prepare the next collector
+            // only after the previous complete set was returned to its owner.
+            let scope =
+                Scope::new(Arc::clone(&self.pool), self.memory_limit).map_err(ResultError::from)?;
+            let collector = Receiver::new(self.capabilities, Arc::clone(&scope), self.discard)?;
+            self.incoming = MessageReader::tracked(self.max_receive, &scope);
+            self.collector = collector;
+            self.scope = scope;
+            self.next_set = false;
         }
         let mut processed = 0usize;
         if !self.started {
@@ -278,21 +285,9 @@ impl Query {
             self.incoming = MessageReader::tracked(self.max_receive, &self.scope);
             processed = processed.saturating_add(data.len());
             if let Some(response) = self.collector.push(&data)? {
-                if text::has_more(&response) {
-                    self.unsupported_multiple = true;
-                    self.pending_completion = Some(response.into_owned_completion());
-                    self.collector =
-                        Receiver::new(self.capabilities, Arc::clone(&self.scope), true)?;
-                    return Ok(Step::Control);
-                } else {
-                    self.finished = true;
-                    if self.unsupported_multiple {
-                        return Err(QueryError::MultipleResults {
-                            completion: response.into_completion(),
-                        });
-                    }
-                    return Ok(Step::Ready(response));
-                }
+                self.next_set = text::has_more(&response);
+                self.finished = !self.next_set;
+                return Ok(Step::Ready(response));
             }
             if processed >= 256 * 1024 {
                 return Ok(Step::Control);

@@ -59,7 +59,6 @@ enum FailureOutcome {
     AwaitingResponse,
     ServerErr,
     Confirmed,
-    Consumed,
 }
 impl FailureOutcome {
     fn unknown(self) -> bool {
@@ -79,9 +78,6 @@ impl FailureOutcome {
             }
             Self::Confirmed => {
                 "The final server response was fully confirmed before the later local failure; execution is not unknown. Command confirmation alone does not imply transaction commit."
-            }
-            Self::Consumed => {
-                "All unsupported multiple results were fully consumed; their final session state was confirmed, but no public result was published."
             }
         }
     }
@@ -269,41 +265,36 @@ impl Connection {
             })?
             .confirm_context(&rows);
         confirmed.map_err(|error| errors::wire(py, error))?;
+        self.native
+            .remember_context(self.execution_context(py)?)
+            .map_err(|error| errors::access(py, error))?;
         input::check(py, budget)
     }
+    fn execution_context(
+        &self,
+        py: Python<'_>,
+    ) -> PyResult<sqlaero_core::session::state::ExecutionContext> {
+        use sqlaero_core::session::state::ContextError;
+        let facts = self.native.facts.lock().map_err(|_| {
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "confirmed session facts are unavailable",
+            )
+        })?;
+        facts.execution_context(self.max_send).map_err(|error| {
+            let code = match error {
+                ContextError::SqlMode => ClientErrorCode::SessionState,
+                ContextError::ClientCharset | ContextError::MetadataCharset => {
+                    ClientErrorCode::UnsupportedCharset
+                }
+            };
+            errors::client(py, code, error.to_string())
+        })
+    }
     pub(crate) fn context(&self, py: Python<'_>) -> PyResult<(Context, bool, OutputCodec)> {
-        let context: Result<_, (ClientErrorCode, &'static str)> = {
-            let facts = self.native.facts.lock().map_err(|error| {
-                drop(error.into_inner());
-                errors::client(
-                    py,
-                    ClientErrorCode::InternalState,
-                    "confirmed session facts are unavailable",
-                )
-            })?;
-            (|| {
-                let codec = facts.client_codec().ok_or((ClientErrorCode::UnsupportedCharset, "The actual client charset is unknown or unsupported; it is not reinterpreted as utf8mb4"))?;
-                let mode = facts.sql_mode.as_ref().ok_or((
-                    ClientErrorCode::SessionState,
-                    "SQL mode is not confirmed; safe binding requires a confirmed session context",
-                ))?;
-                let has_mode = |token: &str| mode.split(',').any(|part| part == token);
-                Ok((
-                    Context {
-                        codec,
-                        no_backslash_escapes: has_mode("NO_BACKSLASH_ESCAPES"),
-                        utc_confirmed: facts.utc_confirmed(),
-                        limit: self.max_send.min(facts.server_packet_limit),
-                    },
-                    has_mode("ANSI_QUOTES"),
-                    facts.metadata_codec().ok_or((
-                        ClientErrorCode::UnsupportedCharset,
-                        "actual result metadata encoding is unknown or unsupported",
-                    ))?,
-                ))
-            })()
-        };
-        context.map_err(|(code, message)| errors::client(py, code, message))
+        let value = self.execution_context(py)?;
+        Ok((value.binding, value.ansi_quotes, value.metadata))
     }
     pub(crate) fn query_job(
         &self,
@@ -339,7 +330,16 @@ impl Connection {
                     facts.invalidate_settings();
                     facts.database = None;
                 }
-                result
+                // Ordinary responses do not change input/metadata policy.
+                // Rebuild the historical reference only for tracked changes;
+                // explicit context confirmation also publishes its own result.
+                result.map(|()| {
+                    completion
+                        .status_flags()
+                        .contains(sqlaero_core::protocol::StatusFlags::SERVER_SESSION_STATE_CHANGED)
+                        .then(|| facts.execution_context(self.max_send).ok())
+                        .flatten()
+                })
             }
             Err(_) => {
                 lease.invalidate();
@@ -350,9 +350,15 @@ impl Connection {
                 ));
             }
         };
-        if let Err(error) = applied {
+        let reference = applied.map_err(|error| {
             lease.invalidate();
-            return Err(errors::wire(py, error));
+            errors::wire(py, error)
+        })?;
+        if let Some(reference) = reference {
+            self.native.remember_context(reference).map_err(|error| {
+                lease.invalidate();
+                errors::access(py, error)
+            })?;
         }
         Ok(())
     }
@@ -397,11 +403,30 @@ impl Connection {
         }
         DriveFailure::new(py, error, outcome, unavailable, confirmed)
     }
+    /// Consume a fixed internal exchange completely, keeping its last result.
+    /// Public result-chain execution uses drive_set and owns every earlier set.
     pub(crate) fn drive(
         &self,
         py: Python<'_>,
         lease: &mut CommandLease<'_>,
         mut job: Query,
+        budget: &mut IoBudget,
+        role: CommandRole,
+    ) -> Result<Response, DriveFailure> {
+        loop {
+            let response = self.drive_set(py, lease, &mut job, budget, role)?;
+            if job.is_finished() {
+                return Ok(response);
+            }
+            input::check(py, budget)
+                .map_err(|error| self.query_failure(py, lease, &mut job, error, false, false))?;
+        }
+    }
+    pub(crate) fn drive_set(
+        &self,
+        py: Python<'_>,
+        lease: &mut CommandLease<'_>,
+        job: &mut Query,
         budget: &mut IoBudget,
         role: CommandRole,
     ) -> Result<Response, DriveFailure> {
@@ -426,7 +451,7 @@ impl Connection {
                     return Err(self.query_failure(
                         py,
                         lease,
-                        &mut job,
+                        job,
                         errors::access(py, error),
                         false,
                         false,
@@ -437,6 +462,9 @@ impl Connection {
             match step {
                 Ok(Step::Ready(response)) => {
                     if let Err(error) = self.publish(py, lease, response.completion()) {
+                        if !job.is_finished() {
+                            return Err(self.query_failure(py, lease, job, error, false, false));
+                        }
                         return Err(DriveFailure::new(
                             py,
                             error,
@@ -448,13 +476,8 @@ impl Connection {
                     return Ok(response);
                 }
                 Ok(Step::Control) => {
-                    if let Some(completion) = job.take_completion()
-                        && let Err(error) = self.publish(py, lease, &completion)
-                    {
-                        return Err(self.query_failure(py, lease, &mut job, error, false, false));
-                    }
                     if let Err(error) = input::check(py, budget) {
-                        return Err(self.query_failure(py, lease, &mut job, error, false, true));
+                        return Err(self.query_failure(py, lease, job, error, false, true));
                     }
                 }
                 Ok(Step::Wait(_)) => {
@@ -463,45 +486,28 @@ impl Connection {
                         ClientErrorCode::InternalState,
                         "native query returned an undriven I/O wait",
                     );
-                    return Err(self.query_failure(py, lease, &mut job, error, false, false));
+                    return Err(self.query_failure(py, lease, job, error, false, false));
                 }
                 Err(error) => {
-                    match &error {
-                        QueryError::Result(ResultError::Server(_)) => {
-                            if let Ok(mut facts) = self.native.facts.lock() {
-                                facts.invalidate_status();
-                                if role == CommandRole::UserSql {
-                                    // ERR carries no tracked variable changes.
-                                    // Arbitrary SQL/triggers may already have
-                                    // applied settings before this error.
-                                    facts.invalidate_settings();
-                                    facts.database = None;
-                                }
+                    if let QueryError::Result(ResultError::Server(_)) = &error {
+                        if let Ok(mut facts) = self.native.facts.lock() {
+                            facts.invalidate_status();
+                            if role == CommandRole::UserSql {
+                                // ERR carries no tracked variable changes.
+                                // Arbitrary SQL/triggers may already have
+                                // applied settings before this error.
+                                facts.invalidate_settings();
+                                facts.database = None;
                             }
-                            let mapped = errors::query_with_codec(py, error, error_codec);
-                            return Err(DriveFailure::new(
-                                py,
-                                mapped,
-                                FailureOutcome::ServerErr,
-                                false,
-                                None,
-                            ));
                         }
-                        QueryError::MultipleResults { completion } => {
-                            if let Err(error) = self.publish(py, lease, completion) {
-                                return Err(
-                                    self.query_failure(py, lease, &mut job, error, false, false)
-                                );
-                            }
-                            return Err(DriveFailure::new(
-                                py,
-                                errors::query_with_codec(py, error, error_codec),
-                                FailureOutcome::Consumed,
-                                false,
-                                None,
-                            ));
-                        }
-                        _ => (),
+                        let mapped = errors::query_with_codec(py, error, error_codec);
+                        return Err(DriveFailure::new(
+                            py,
+                            mapped,
+                            FailureOutcome::ServerErr,
+                            false,
+                            None,
+                        ));
                     }
                     let unavailable = unavailable(&error);
                     let keep_unsent = matches!(
@@ -516,7 +522,7 @@ impl Connection {
                     return Err(self.query_failure(
                         py,
                         lease,
-                        &mut job,
+                        job,
                         errors::query_with_codec(py, error, error_codec),
                         unavailable,
                         keep_unsent,

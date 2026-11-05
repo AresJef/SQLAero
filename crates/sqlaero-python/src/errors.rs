@@ -880,8 +880,7 @@ pub(crate) fn query_with_codec(
             error.message_ref(),
             codec,
         ),
-        error @ (QueryError::MultipleResults { .. }
-        | QueryError::Result(ResultError::Unsupported(_))) => client(
+        error @ QueryError::Result(ResultError::Unsupported(_)) => client(
             py,
             ClientErrorCode::UnsupportedCapability,
             error.to_string(),

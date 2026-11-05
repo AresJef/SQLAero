@@ -105,6 +105,26 @@ impl IoBudget {
         Ok(())
     }
 
+    /// Exclude one measured host-idle interval between streaming API calls.
+    /// This shifts all existing clocks equally: already consumed library work
+    /// and no-progress waiting are retained, never given a fresh allowance.
+    /// Ordinary commands do not call this and keep their fixed wall deadline.
+    ///
+    /// # Errors
+    /// Returns the original total-timeout category if a clock cannot represent
+    /// the shift, leaving every clock unchanged. Never exclude I/O, host checks,
+    /// input/output conversion or other work performed within a library call.
+    pub fn exclude_idle(&mut self, elapsed: Duration) -> Result<(), TimeoutKind> {
+        let shifted = |value: Instant| value.checked_add(elapsed).ok_or(self.total_kind);
+        let started = shifted(self.started)?;
+        let read_wait = self.read_wait.map(shifted).transpose()?;
+        let write_wait = self.write_wait.map(shifted).transpose()?;
+        self.started = started;
+        self.read_wait = read_wait;
+        self.write_wait = write_wait;
+        Ok(())
+    }
+
     fn total_remaining(&self, now: Instant) -> Result<Option<Duration>, TimeoutKind> {
         self.total
             .map(|total| {
@@ -158,6 +178,39 @@ impl IoBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn excluding_user_idle_retains_consumed_total_and_no_progress_time() {
+        let mut budget = IoBudget::new(
+            TimeoutKind::Operation,
+            Some(Duration::from_secs(1)),
+            Some(Duration::from_millis(100)),
+            None,
+        );
+        let start = budget.started;
+        budget.wait_at(Direction::Read, start).unwrap();
+        budget.exclude_idle(Duration::from_secs(10)).unwrap();
+        assert_eq!(
+            budget
+                .wait_at(Direction::Read, start + Duration::from_millis(10_050))
+                .unwrap(),
+            Duration::from_millis(50)
+        );
+        assert_eq!(
+            budget.wait_at(Direction::Read, start + Duration::from_millis(10_100)),
+            Err(TimeoutKind::Read)
+        );
+        assert_eq!(
+            budget
+                .total_remaining(start + Duration::from_millis(10_900))
+                .unwrap(),
+            Some(Duration::from_millis(100))
+        );
+        assert_eq!(
+            budget.total_remaining(start + Duration::from_secs(11)),
+            Err(TimeoutKind::Operation)
+        );
+    }
 
     #[test]
     fn readiness_or_interruption_does_not_reset_the_wait() {

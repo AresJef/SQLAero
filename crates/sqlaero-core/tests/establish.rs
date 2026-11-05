@@ -354,6 +354,90 @@ fn query_with_memory(
 }
 
 #[test]
+#[ignore = "requires the project's two isolated MySQL fixtures"]
+fn native_call_preserves_all_sets_and_the_terminal_ok_on_the_same_channel() {
+    use sqlaero_core::result::text::Response;
+    use sqlaero_core::session::query::Query;
+    use sqlaero_core::transport::deadline::{IoBudget, TimeoutKind};
+
+    let root = root();
+    for label in ["84", "97"] {
+        root_sql(
+            &root,
+            label,
+            "DROP PROCEDURE IF EXISTS sqlaero_test.sqlaero_parallel_sets;\nDELIMITER $$\nCREATE PROCEDURE sqlaero_test.sqlaero_parallel_sets() BEGIN SELECT 42 AS `first_number`; SELECT 'second' AS `label`; END$$\nDELIMITER ;\n",
+        );
+        let mut connection =
+            establish(configuration(&root, label, true, None, "localhost")).unwrap();
+        let mut job = Query::new(
+            b"\x03CALL sqlaero_test.sqlaero_parallel_sets()".to_vec(),
+            connection.capabilities,
+            connection.max_send,
+            connection.max_receive,
+            1024 * 1024,
+        )
+        .unwrap();
+        let mut budget = IoBudget::new(
+            TimeoutKind::Operation,
+            Some(Duration::from_secs(5)),
+            None,
+            None,
+        );
+        let mut sets = Vec::new();
+        loop {
+            match job.advance(&mut connection.channel, &mut budget).unwrap() {
+                Step::Ready(response) => {
+                    sets.push(response);
+                    if job.is_finished() {
+                        break;
+                    }
+                }
+                Step::Control => (),
+                Step::Wait(_) => panic!("query drives its concrete wait"),
+            }
+        }
+        assert_eq!(
+            sets.len(),
+            3,
+            "two SELECT sets and the independent CALL terminal OK"
+        );
+        let Response::Rows(first) = &sets[0] else {
+            panic!("first SELECT metadata and rows")
+        };
+        assert_eq!(first.row_count, 1);
+        assert_eq!(
+            first.row(0).unwrap()[0].get(&first.bytes).unwrap(),
+            Some(b"42".as_slice())
+        );
+        let Response::Rows(second) = &sets[1] else {
+            panic!("second SELECT metadata and rows")
+        };
+        assert_eq!(
+            second.row(0).unwrap()[0].get(&second.bytes).unwrap(),
+            Some(b"second".as_slice())
+        );
+        assert!(matches!(sets[2], Response::Command(_)));
+        let Response::Rows(next) = query(&mut connection, "SELECT 99").unwrap() else {
+            panic!("next command")
+        };
+        assert_eq!(
+            next.row(0).unwrap()[0].get(&next.bytes).unwrap(),
+            Some(b"99".as_slice())
+        );
+        assert_eq!(
+            first.row(0).unwrap()[0].get(&first.bytes).unwrap(),
+            Some(b"42".as_slice()),
+            "new requests do not mutate old native owners"
+        );
+        root_sql(
+            &root,
+            label,
+            "DROP PROCEDURE sqlaero_test.sqlaero_parallel_sets;\n",
+        );
+    }
+}
+
+#[test]
 #[ignore = "requires both isolated MySQL servers; run this binary with one test thread"]
 fn pooled_results_release_rows_without_invalidating_metadata_and_discard_boundedly() {
     use sqlaero_core::memory::Pool;

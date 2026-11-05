@@ -114,6 +114,14 @@ impl Channel {
         }
     }
 
+    /// Borrow completed TLS engine facts only while the native wire owner is
+    /// protected. Diagnostic adapters must copy their snapshot before returning
+    /// it to a host; they must never retain this live session reference.
+    #[must_use]
+    pub fn tls_session(&self) -> Option<&ClientConnection> {
+        self.tls.as_ref().filter(|tls| !tls.is_handshaking())
+    }
+
     /// Install TLS only after the complete SSLRequest has been sent.
     ///
     /// # Errors

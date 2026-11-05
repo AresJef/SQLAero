@@ -2,14 +2,14 @@
 
 use super::connect::ServerMetadata;
 use super::initialize::Ready;
-use super::state::Facts;
+use super::state::{ExecutionContext, Facts};
 use crate::protocol::framing::{MessageWriter, WireError};
 use crate::transport::channel::{Channel, ChannelError, Step};
 use crate::transport::deadline::IoBudget;
 use crate::transport::socket::WaitStatus;
 use mysql_common::constants::CapabilityFlags;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Mutex, MutexGuard, TryLockError};
+use std::sync::{Arc, Mutex, MutexGuard, TryLockError};
 
 /// The live protocol owner, accessible only under the connection command lease.
 pub struct WireSession {
@@ -21,6 +21,7 @@ pub struct WireSession {
     pub max_send: usize,
     /// Client logical-receive limit.
     pub max_receive: usize,
+    owner: Option<Arc<()>>,
 }
 
 /// A local ownership/lifecycle failure, mapped to the declared Interface family.
@@ -47,6 +48,7 @@ pub struct Connection {
     /// One authoritative set of confirmed facts. Borrow briefly and release
     /// before invoking Python or waiting for network I/O.
     pub facts: Mutex<Facts>,
+    reference: Mutex<Option<ExecutionContext>>,
     /// Shared capacity ownership for all live native results and snapshots.
     pub result_pool: std::sync::Arc<crate::memory::Pool>,
 }
@@ -70,12 +72,16 @@ impl Connection {
                 .max_send
                 .min(ready.confirmed.server_packet_limit),
             max_receive: authenticated.max_receive,
+            owner: None,
         };
+        let facts: Facts = ready.confirmed.into();
+        let reference = facts.execution_context(wire.max_send).ok();
         Self {
             wire: Mutex::new(Some(wire)),
             closed: AtomicBool::new(false),
             metadata: authenticated.metadata,
-            facts: Mutex::new(ready.confirmed.into()),
+            facts: Mutex::new(facts),
+            reference: Mutex::new(reference),
             result_pool: crate::memory::Pool::new(total_result_memory_limit),
         }
     }
@@ -86,12 +92,74 @@ impl Connection {
         self.closed.load(Ordering::Acquire)
     }
 
+    /// Copy the last completely confirmed auxiliary reference, even after
+    /// close or current-fact invalidation. It grants no command authority.
+    ///
+    /// # Errors
+    /// Returns a native diagnostic-cache poisoning failure.
+    pub fn auxiliary_reference(&self) -> Result<Option<ExecutionContext>, AccessError> {
+        self.reference
+            .lock()
+            .map(|reference| *reference)
+            .map_err(|_| AccessError::Poisoned)
+    }
+
+    /// Save a complete context derived from confirmed facts under command
+    /// ownership. Missing current facts must not call this with a guessed value.
+    ///
+    /// # Errors
+    /// Returns a real protected-state poisoning failure; no guessed context is
+    /// published. Callers must never use this reference to repair live facts.
+    pub fn remember_context(&self, context: ExecutionContext) -> Result<(), AccessError> {
+        *self.reference.lock().map_err(|_| AccessError::Poisoned)? = Some(context);
+        Ok(())
+    }
+
     /// Acquire the server-command owner immediately; never queue or wait.
     ///
     /// # Errors
     /// Returns Busy for a true overlapping command, Closed after invalidation,
     /// or Poisoned after disabling native state following an unexpected panic.
     pub fn try_command(&self) -> Result<CommandLease<'_>, AccessError> {
+        self.try_lease(None)
+    }
+
+    /// Reserve one command across host calls without retaining a mutex guard.
+    /// Only this owner can resume the wire until its response is synchronized.
+    ///
+    /// # Errors
+    /// Returns the same immediate availability errors as `try_command`.
+    pub fn try_owned(self: &Arc<Self>) -> Result<OwnedCommand, AccessError> {
+        let mut lease = self.try_command()?;
+        let key = Arc::new(());
+        lease.session()?.owner = Some(Arc::clone(&key));
+        Ok(OwnedCommand {
+            connection: Arc::clone(self),
+            key,
+            active: AtomicBool::new(true),
+        })
+    }
+
+    /// Irreversibly retire without waiting or performing network cleanup.
+    /// An in-flight lease releases its transport at its next safe exit.
+    pub fn retire(&self) {
+        self.closed.store(true, Ordering::Release);
+        match self.wire.try_lock() {
+            Ok(mut wire) => {
+                wire.take();
+            }
+            Err(TryLockError::Poisoned(error)) => {
+                error.into_inner().take();
+                self.wire.clear_poison();
+            }
+            Err(TryLockError::WouldBlock) => (),
+        }
+    }
+
+    fn try_lease(&self, owner: Option<&Arc<()>>) -> Result<CommandLease<'_>, AccessError> {
+        if self.is_closed() {
+            return Err(AccessError::Closed);
+        }
         let wire = match self.wire.try_lock() {
             Ok(wire) => wire,
             Err(TryLockError::WouldBlock) => return Err(AccessError::Busy),
@@ -105,10 +173,50 @@ impl Connection {
         if self.is_closed() || wire.is_none() {
             return Err(AccessError::Closed);
         }
+        let actual = wire.as_ref().and_then(|session| session.owner.as_ref());
+        let matches = match (owner, actual) {
+            (None, None) => true,
+            (Some(expected), Some(actual)) => Arc::ptr_eq(expected, actual),
+            _ => false,
+        };
+        if !matches {
+            return Err(AccessError::Busy);
+        }
         Ok(CommandLease {
             wire,
             closed: &self.closed,
         })
+    }
+}
+
+/// Native identity for an unfinished command. It owns no Python reference and
+/// no lock guard, so a later host call may safely resume it on another thread.
+/// Dropping an unfinished owner retires the connection locally, without I/O.
+pub struct OwnedCommand {
+    connection: Arc<Connection>,
+    key: Arc<()>,
+    active: AtomicBool,
+}
+
+impl OwnedCommand {
+    /// Obtain temporary exclusive protection for this exact response owner.
+    ///
+    /// # Errors
+    /// Returns Busy during a concurrent operation, or Closed after completion
+    /// or connection retirement. No operation waits for another host call.
+    pub fn resume(&self) -> Result<CommandLease<'_>, AccessError> {
+        if !self.active.load(Ordering::Acquire) {
+            return Err(AccessError::Closed);
+        }
+        self.connection.try_lease(Some(&self.key))
+    }
+}
+
+impl Drop for OwnedCommand {
+    fn drop(&mut self) {
+        if self.active.load(Ordering::Acquire) {
+            self.connection.retire();
+        }
     }
 }
 
@@ -119,6 +227,29 @@ pub struct CommandLease<'a> {
 }
 
 impl CommandLease<'_> {
+    /// Release persistent ownership only after the caller has consumed the
+    /// command's complete response, including every result and internal tail.
+    ///
+    /// # Errors
+    /// Returns Closed after retirement, or Busy for a different command owner.
+    /// This does not infer synchronization from the presence of buffered rows.
+    pub fn finish_owned(&mut self, owner: &OwnedCommand) -> Result<(), AccessError> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(AccessError::Closed);
+        }
+        let session = self.session()?;
+        if !session
+            .owner
+            .as_ref()
+            .is_some_and(|key| Arc::ptr_eq(key, &owner.key))
+        {
+            return Err(AccessError::Busy);
+        }
+        session.owner = None;
+        owner.active.store(false, Ordering::Release);
+        Ok(())
+    }
+
     /// Borrow the live native protocol state under this exclusive lease.
     ///
     /// # Errors
@@ -138,6 +269,14 @@ impl CommandLease<'_> {
     pub fn invalidate(&mut self) {
         self.begin_close();
         self.wire.take();
+    }
+}
+
+impl Drop for CommandLease<'_> {
+    fn drop(&mut self) {
+        if self.closed.load(Ordering::Acquire) {
+            self.wire.take();
+        }
     }
 }
 
@@ -230,5 +369,138 @@ impl<'a> Close<'a> {
 impl Drop for Close<'_> {
     fn drop(&mut self) {
         self.lease.invalidate();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::auth::AuthPath;
+    use crate::session::initialize::Confirmed;
+    use crate::transport::socket::Transport;
+    use mysql_common::constants::StatusFlags;
+    use std::net::TcpListener;
+    use std::sync::Arc;
+
+    fn connection() -> Arc<Connection> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let channel = Channel::new(
+            Transport::tcp(listener.local_addr().unwrap()).unwrap(),
+            false,
+        );
+        Arc::new(Connection {
+            wire: Mutex::new(Some(WireSession {
+                channel,
+                capabilities: CapabilityFlags::empty(),
+                max_send: 1024,
+                max_receive: 1024,
+                owner: None,
+            })),
+            closed: AtomicBool::new(false),
+            metadata: ServerMetadata {
+                version: "8.4.0".into(),
+                version_tuple: (8, 4, 0),
+                connection_id: 1,
+                status: StatusFlags::empty(),
+                auth_path: AuthPath::Fast,
+            },
+            reference: Mutex::new(None),
+            facts: Mutex::new(
+                Confirmed {
+                    status: StatusFlags::empty(),
+                    database: None,
+                    time_zone: "+00:00".into(),
+                    sql_mode: String::new(),
+                    encoding: crate::charset::resolve(None, None).unwrap(),
+                    server_timeouts: [1; 4],
+                    server_packet_limit: 1024,
+                }
+                .into(),
+            ),
+            result_pool: crate::memory::Pool::new(4096),
+        })
+    }
+
+    #[test]
+    fn persistent_owner_blocks_commands_between_calls_and_moves_across_threads() {
+        let connection = connection();
+        let owner = connection.try_owned().unwrap();
+        assert!(matches!(connection.try_command(), Err(AccessError::Busy)));
+        {
+            let _lease = owner.resume().unwrap();
+            assert!(matches!(owner.resume(), Err(AccessError::Busy)));
+        }
+        assert!(matches!(connection.try_command(), Err(AccessError::Busy)));
+        std::thread::scope(|threads| {
+            threads
+                .spawn(|| {
+                    assert_eq!(
+                        connection.facts.lock().unwrap().time_zone.as_deref(),
+                        Some("+00:00")
+                    );
+                    let mut lease = owner.resume().unwrap();
+                    lease.finish_owned(&owner).unwrap();
+                })
+                .join()
+                .unwrap();
+        });
+        assert!(matches!(owner.resume(), Err(AccessError::Closed)));
+        assert!(connection.try_command().is_ok());
+        drop(owner);
+        assert!(
+            !connection.is_closed(),
+            "a completed owner must not retire the wire"
+        );
+    }
+
+    #[test]
+    fn lost_reader_retires_without_network_and_inflight_lease_releases_wire() {
+        let connection = connection();
+        let owner = connection.try_owned().unwrap();
+        drop(owner);
+        assert!(connection.is_closed());
+        assert!(connection.wire.lock().unwrap().is_none());
+
+        let connection = self::connection();
+        let owner = connection.try_owned().unwrap();
+        let lease = owner.resume().unwrap();
+        // A concurrent Connection.close cannot wait for the live operation or
+        // send another command over its incomplete response.
+        connection.retire();
+        assert!(connection.is_closed());
+        drop(lease);
+        assert!(connection.wire.lock().unwrap().is_none());
+        drop(owner);
+    }
+
+    #[test]
+    fn auxiliary_reference_is_independent_of_invalid_live_facts_and_close() {
+        let connection = connection();
+        let original = connection
+            .facts
+            .lock()
+            .unwrap()
+            .execution_context(1024)
+            .unwrap();
+        connection.remember_context(original).unwrap();
+        assert!(original.binding.utc_confirmed);
+        connection.facts.lock().unwrap().invalidate_unconfirmed();
+        assert!(
+            connection
+                .facts
+                .lock()
+                .unwrap()
+                .execution_context(1024)
+                .is_err()
+        );
+        connection.retire();
+        let saved = connection.auxiliary_reference().unwrap().unwrap();
+        assert_eq!(saved.binding.codec.name(), original.binding.codec.name());
+        assert_eq!(saved.binding.limit, 1024);
+        assert!(saved.binding.utc_confirmed);
+        assert!(
+            connection.facts.lock().unwrap().needs_context(),
+            "reading the reference must not restore authority"
+        );
     }
 }

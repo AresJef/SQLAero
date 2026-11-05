@@ -171,6 +171,11 @@ impl Initialize {
                 Step::Control => return Ok(Step::Control),
                 Step::Wait(_) => return Err(InitializeError::Confirmation("query continuation")),
             };
+            if !query.is_finished() {
+                return Err(InitializeError::Confirmation(
+                    "one result for an internal initialization command",
+                ));
+            }
             self.query = None;
             match self.phase {
                 Phase::Probe => {
