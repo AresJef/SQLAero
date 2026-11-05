@@ -80,7 +80,7 @@ fn prepare_anchors(
     }
 }
 
-fn system_ca_policy() -> Result<Policy, ConfigError> {
+fn system_ca_policy(_ca_mode: CaMode) -> Result<Policy, ConfigError> {
     #[cfg(any(target_vendor = "apple", windows))]
     {
         Ok(Policy::SystemCa)
@@ -95,9 +95,10 @@ fn system_ca_policy() -> Result<Policy, ConfigError> {
         roots.roots.try_reserve_exact(loaded.certs.len())?;
         roots.add_parsable_certificates(loaded.certs);
         if roots.is_empty() {
-            return Err(ConfigError::Invalid(
-                "the system trust store contains no usable trust anchors",
-            ));
+            return Err(ConfigError::SystemTrustUnavailable {
+                ca_mode: _ca_mode,
+                cause: loaded.errors.into_iter().next(),
+            });
         }
         Ok(Policy::Explicit {
             roots,
@@ -351,6 +352,18 @@ pub enum ConfigError {
     /// Native configuration storage could not be reserved.
     #[error("cannot allocate TLS configuration storage: {0}")]
     Allocation(#[from] TryReserveError),
+    /// The native root loader returned no usable system trust anchors.
+    #[cfg(not(any(target_vendor = "apple", windows)))]
+    #[error(
+        "system trust source unavailable for ca_mode {ca_mode:?}: no usable trust anchors; native loader diagnostics: {cause:?}"
+    )]
+    SystemTrustUnavailable {
+        /// The selected root-source composition policy.
+        ca_mode: CaMode,
+        /// The actual first native loader failure, if it reported one.
+        #[source]
+        cause: Option<rustls_native_certs::Error>,
+    },
     /// A declared configuration combination or textual token was invalid.
     #[error("{0}")]
     Invalid(&'static str),
@@ -452,7 +465,7 @@ pub fn client_config(
         }),
         (Mode::VerifyCa, None) => Arc::new(PolicyVerifier {
             provider: Arc::clone(&provider),
-            policy: system_ca_policy()?,
+            policy: system_ca_policy(ca_mode)?,
         }),
         (_, Some(certificates)) => Arc::new(PolicyVerifier {
             provider: Arc::clone(&provider),
@@ -489,9 +502,10 @@ fn explicit_policy(
         system.roots.try_reserve_exact(loaded.certs.len())?;
         system.add_parsable_certificates(loaded.certs);
         if system.is_empty() {
-            return Err(ConfigError::Invalid(
-                "ca_mode append requires usable system trust anchors; the system trust source is unavailable",
-            ));
+            return Err(ConfigError::SystemTrustUnavailable {
+                ca_mode,
+                cause: loaded.errors.into_iter().next(),
+            });
         }
         let mut roots = roots;
         roots.roots.try_reserve(system.roots.len())?;
@@ -839,6 +853,58 @@ mod tests {
                 .verify_server_cert(&chain[0], &[], &name, &[], now)
                 .is_err()
         );
+    }
+
+    #[test]
+    #[ignore = "requires the owned fixture certificates and native system trust"]
+    fn appended_roots_preserve_native_name_usage_time_and_unknown_root_rejections() {
+        use rustls::client::danger::ServerCertVerifier;
+        let root = std::path::PathBuf::from(std::env::var_os("SQLAERO_TEST_MYSQL_ROOT").unwrap());
+        let chain = certificates(&std::fs::read(root.join("tls/server.pem")).unwrap()).unwrap();
+        let ca = certificates(&std::fs::read(root.join("tls/ca.pem")).unwrap()).unwrap();
+        let client = certificates(&std::fs::read(root.join("tls/client.pem")).unwrap()).unwrap();
+        let now = rustls_pki_types::UnixTime::now();
+        let future = rustls_pki_types::UnixTime::since_unix_epoch(std::time::Duration::from_secs(
+            now.as_secs() + 30 * 86400,
+        ));
+        let name = rustls_pki_types::ServerName::try_from("localhost").unwrap();
+        let wrong = rustls_pki_types::ServerName::try_from("unrelated.invalid").unwrap();
+        for check_name in [false, true] {
+            let verifier = PolicyVerifier {
+                provider: provider(),
+                policy: explicit_policy(ca.clone(), check_name, CaMode::Append).unwrap(),
+            };
+            assert!(
+                verifier
+                    .verify_server_cert(&chain[0], &[], &name, &[], now)
+                    .is_ok()
+            );
+            assert_eq!(
+                verifier
+                    .verify_server_cert(&chain[0], &[], &wrong, &[], now)
+                    .is_ok(),
+                !check_name
+            );
+            assert!(
+                verifier
+                    .verify_server_cert(&client[0], &[], &name, &[], now)
+                    .is_err()
+            );
+            assert!(
+                verifier
+                    .verify_server_cert(&chain[0], &[], &name, &[], future)
+                    .is_err()
+            );
+            let wrong_root = PolicyVerifier {
+                provider: provider(),
+                policy: explicit_policy(client.clone(), check_name, CaMode::Append).unwrap(),
+            };
+            assert!(
+                wrong_root
+                    .verify_server_cert(&chain[0], &[], &name, &[], now)
+                    .is_err()
+            );
+        }
     }
 
     #[test]
