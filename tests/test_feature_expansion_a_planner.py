@@ -166,3 +166,72 @@ def test_old_measurement_probe_does_not_guess_new_whole_row_roles() -> None:
     assert getattr(_sqlaero, "_bind_sql")("INSERT t VALUES %s", ["(1)", "(2)"], many=True) == [
         b"\x03INSERT t VALUES '(1)'", b"\x03INSERT t VALUES '(2)'",
     ]
+
+
+@pytest.mark.parametrize("itemize", [False, True])
+def test_prepared_display_uses_native_single_value_role_validation(itemize: bool) -> None:
+    from sqlaero.errors import NotSupportedError
+    assert plan("SELECT %s", 42, prepared=True, itemize=itemize) == [(b"\x03SELECT 42", 0, 1, True)]
+    value: object = ((1, 2),) if itemize else (1, 2)
+    with pytest.raises(NotSupportedError):
+        plan("SELECT %s", value, prepared=True, itemize=itemize)
+
+
+def test_prepared_display_rejects_active_raw_question_without_rejecting_literals() -> None:
+    with pytest.raises(ProgrammingError, match="SQL character 12"):
+        plan("SELECT '中', ?", (), prepared=True)
+    assert plan("SELECT '?%s%%', %s /* ? %s */", 7, prepared=True) == [
+        ("\x03SELECT '?%s%%', 7 /* ? %s */".encode(), 0, 1, True),
+    ]
+
+
+def test_prepared_display_native_structures_and_empty_roles_match_parameter_sink() -> None:
+    import numpy as np
+    import pyarrow as pa
+    from sqlaero.errors import NotSupportedError
+
+    assert plan("SELECT 1", np.empty(0), itemize=False, prepared=True) == [(b"\x03SELECT 1", 0, 0, True)]
+    assert plan("SELECT %s", np.array([[1], [2]]), prepared=True) == [
+        (b"\x03SELECT 1", 0, 1, False), (b"\x03SELECT 2", 1, 2, True),
+    ]
+    for value in (pa.array([[1, 2]]), np.empty(1, dtype=[])[0]):
+        with pytest.raises(NotSupportedError):
+            plan("SELECT %s", value, itemize=False, prepared=True)
+
+
+def test_prepared_display_checks_native_packet_size_without_capping_readable_sql() -> None:
+    from sqlaero.errors import OperationalError
+    value = b"x" * 100
+    readable = b"\x03SELECT CAST(X'" + b"78" * 100 + b"' AS BINARY)"
+    # Native EXECUTE: 10-byte header + bitmap/new-types flag/type pair (4),
+    # one length byte + 100 data bytes. The displayed SQL is deliberately larger.
+    assert len(readable) > 115
+    assert plan("SELECT %s", value, prepared=True, limit=115) == [(readable, 0, 1, True)]
+    with pytest.raises(OperationalError):
+        plan("SELECT %s", value, prepared=True, limit=114)
+    with pytest.raises(OperationalError):
+        plan("SELECT %s", 1, prepared=True, limit=21)
+    assert plan("SELECT %s", 1, prepared=True, limit=22) == [(b"\x03SELECT 1", 0, 1, True)]
+
+
+def test_prepared_display_invokes_the_value_protocol_once_for_both_destinations() -> None:
+    class Number(int):
+        calls = 0
+        def __int__(self) -> int:
+            self.calls += 1
+            return 7
+    source = Number(1)
+    assert plan("SELECT %s", source, prepared=True) == [(b"\x03SELECT 7", 0, 1, True)]
+    assert source.calls == 1
+    zone = CountingZone()
+    source_time = datetime(2024, 1, 2, 3, 4, 5, tzinfo=zone)
+    assert plan("SELECT %s", source_time, prepared=True) == [(b"\x03SELECT '2024-01-02 02:04:05'", 0, 1, True)]
+    assert zone.calls == 1
+
+
+def test_prepared_display_omitted_arguments_keep_unbound_text_but_guard_raw_questions() -> None:
+    sql = "SELECT %(name)s, 10%%3 /*+ %s */"
+    assert plan(sql, prepared=True) == [(b"\x03" + sql.encode(), 0, 0, True)]
+    with pytest.raises(ProgrammingError, match="raw '\\?'"):
+        plan("SELECT ?", prepared=True)
+    assert plan("SELECT %s", None, prepared=True) == [(b"\x03SELECT NULL", 0, 1, True)]

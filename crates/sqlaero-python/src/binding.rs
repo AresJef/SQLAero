@@ -17,6 +17,8 @@ use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::transport::deadline::IoBudget;
 use std::ops::Range;
 
+mod prepared_display;
+
 /// Select the request boundary policy. Prepared display is readable SQL,
 /// never the binary payload and never eligible for text VALUES merging.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -64,6 +66,7 @@ impl Prepared {
         context: &Context,
         ansi: bool,
         merge: bool,
+        mode: PlanMode,
         budget: &IoBudget,
     ) -> PyResult<Self> {
         let py = sql.py();
@@ -78,7 +81,9 @@ impl Prepared {
             false,
             Some(budget),
         )?;
-        let mut compiler = if merge {
+        let mut compiler = if mode == PlanMode::PreparedDisplay {
+            Compiler::for_prepared(encoded, context.codec, context.no_backslash_escapes, ansi)
+        } else if merge {
             Compiler::for_batch(encoded, context.codec, context.no_backslash_escapes, ansi)
         } else {
             Compiler::new(encoded, context.codec, context.no_backslash_escapes, ansi)
@@ -92,6 +97,9 @@ impl Prepared {
                 break template;
             }
         };
+        if mode == PlanMode::PreparedDisplay {
+            validate_prepared_template(py, &template, context.limit, false, budget)?;
+        }
         let layout = template.prepare_merge();
         let blocks = layout
             .as_ref()
@@ -161,8 +169,48 @@ impl<'types, 'py> Planner<'types, 'py> {
         }
         check(py, budget)?;
         let Some(rows) = self.rows.as_mut() else {
-            let mut bytes = vec![3];
-            crate::input::text(&self.sql, &mut bytes, context, false, Some(budget))?;
+            let bytes = if self.mode == PlanMode::PreparedDisplay {
+                let mut encoded = Vec::new();
+                crate::input::text(
+                    &self.sql,
+                    &mut encoded,
+                    &Context {
+                        limit: usize::MAX,
+                        ..*context
+                    },
+                    false,
+                    Some(budget),
+                )?;
+                let mut compiler = Compiler::for_unbound_prepared(
+                    encoded,
+                    context.codec,
+                    context.no_backslash_escapes,
+                    ansi,
+                );
+                let template = loop {
+                    let step = py
+                        .detach(|| compiler.advance())
+                        .map_err(|error| template_error(py, error))?;
+                    check(py, budget)?;
+                    if let Some(template) = step {
+                        break template;
+                    }
+                };
+                use sqlaero_core::protocol::prepared::Parameters;
+                drop(
+                    Parameters::new(0, 0, context.limit)
+                        .and_then(Parameters::finish)
+                        .map_err(|error| crate::input::sink::failure(py, error))?,
+                );
+                let mut bytes =
+                    validate_prepared_template(py, &template, context.limit, true, budget)?;
+                bytes[0] = 3;
+                bytes
+            } else {
+                let mut bytes = vec![3];
+                crate::input::text(&self.sql, &mut bytes, context, false, Some(budget))?;
+                bytes
+            };
             self.finished = true;
             return Ok(Some(Request {
                 bytes,
@@ -181,6 +229,7 @@ impl<'types, 'py> Planner<'types, 'py> {
                 context,
                 ansi,
                 self.merge && self.mode == PlanMode::Text,
+                self.mode,
                 budget,
             )?);
         }
@@ -281,10 +330,12 @@ impl<'types, 'py> Planner<'types, 'py> {
                     };
                     row
                 };
-                (
-                    row.bind(&prepared.template, self.types, context, budget)?,
-                    if empty { 0 } else { index + 1 },
-                )
+                let bytes = if self.mode == PlanMode::PreparedDisplay {
+                    row.display_parameters(&prepared.template, self.types, context, budget)?
+                } else {
+                    row.bind(&prepared.template, self.types, context, budget)?
+                };
+                (bytes, if empty { 0 } else { index + 1 })
             };
         self.source_end = end;
         let final_request = self.pending.is_none() && rows.remaining() == 0;
@@ -295,6 +346,30 @@ impl<'types, 'py> Planner<'types, 'py> {
             source_rows: start..end,
             final_request,
         }))
+    }
+}
+
+fn validate_prepared_template(
+    py: Python<'_>,
+    template: &Template,
+    limit: usize,
+    unbound: bool,
+    budget: &IoBudget,
+) -> PyResult<Vec<u8>> {
+    let mut writer = if unbound {
+        template.prepare_unbound_request(limit)
+    } else {
+        template.prepare_request(limit)
+    }
+    .map_err(|error| errors::wire(py, error))?;
+    loop {
+        let step = py
+            .detach(|| writer.advance())
+            .map_err(|error| errors::wire(py, error))?;
+        check(py, budget)?;
+        if let Some(request) = step {
+            return Ok(request);
+        }
     }
 }
 
@@ -850,6 +925,48 @@ impl Row<'_, '_> {
         }
         check(py, budget)
     }
+    fn display_parameters(
+        self,
+        template: &Template,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &IoBudget,
+    ) -> PyResult<Vec<u8>> {
+        let py = self.value.py();
+        let width = self.width();
+        if width != template.slots() {
+            return Err(errors::client_format(
+                py,
+                ClientErrorCode::ParameterCount,
+                format_args!(
+                    "SQL expects {} positions but {} provides {width}; current request was not sent",
+                    template.slots(),
+                    path_text(&self.path)
+                ),
+            ));
+        }
+        let expected = u16::try_from(template.slots()).map_err(|_| {
+            errors::client(
+                py,
+                ClientErrorCode::ParameterCount,
+                "prepared parameters exceed the native u16 position count",
+            )
+        })?;
+        let mut sink = prepared_display::DisplaySink::new(template, expected, context.limit)
+            .map_err(|error| crate::input::sink::failure(py, error))?;
+        self.write_parameters(
+            types,
+            &Context {
+                limit: usize::MAX,
+                ..*context
+            },
+            budget,
+            &mut sink,
+        )?;
+        sink.finish()
+            .map_err(|error| crate::input::sink::failure(py, error))
+    }
+
     pub(crate) fn bind(
         self,
         template: &Template,
