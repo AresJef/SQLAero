@@ -190,13 +190,16 @@ impl Reader {
                 .map_err(|error| output::memory(py, error))?;
             for column in rows.columns.iter() {
                 plans
-                    .push(Plan::new(
-                        column.type_code,
-                        column.flags,
-                        column.collation_id,
-                        column.column_length,
-                        options,
-                    ))
+                    .push(
+                        Plan::new(
+                            column.type_code,
+                            column.flags,
+                            column.collation_id,
+                            column.column_length,
+                            options,
+                        )
+                        .with_decimals(column.decimals),
+                    )
                     .map_err(|error| output::memory(py, error))?;
             }
             Some(Arc::new(ReadData {

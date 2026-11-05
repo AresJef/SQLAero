@@ -65,6 +65,9 @@ pub struct Plan {
     pub text: OutputCodec,
     /// Applicable text recovery, never a JSON repair option.
     pub strict_text: bool,
+    /// Actual temporal field precision when confirmed in the range 0..=6.
+    /// None is unavailable metadata, never an inferred zero precision.
+    pub fractional_seconds_precision: Option<u8>,
 }
 impl Plan {
     /// Prepare once per result column. Unknown semantic types remain bytes;
@@ -154,7 +157,17 @@ impl Plan {
             kind,
             text,
             strict_text: options.decode_text_strict,
+            fractional_seconds_precision: None,
         }
+    }
+    /// Retain real column decimals for native temporal rendering, without
+    /// inventing a precision from the received microsecond value.
+    #[must_use]
+    pub const fn with_decimals(mut self, decimals: u8) -> Self {
+        if matches!(self.kind, Kind::Datetime { .. } | Kind::Time { .. }) && decimals <= 6 {
+            self.fractional_seconds_precision = Some(decimals);
+        }
+        self
     }
 }
 
