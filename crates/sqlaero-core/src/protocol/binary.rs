@@ -359,6 +359,45 @@ mod tests {
             value(&column(11, false), &time).unwrap(),
             FieldValue::Duration(-183_845_123_456)
         );
+        // The official grouped temporal wire contract permits all four
+        // widths. DATE/NEWDATE still expose date components by column type;
+        // do not infer a narrower grammar from usual server serialization.
+        for kind in [10, 14] {
+            let columns = [column(kind, false)];
+            for length in [0, 4, 7, 11] {
+                let mut raw = vec![length];
+                if length >= 4 {
+                    raw.extend_from_slice(&[0xea, 7, 11, 5]);
+                }
+                if length >= 7 {
+                    raw.extend_from_slice(&[3, 4, 5]);
+                }
+                if length == 11 {
+                    raw.extend_from_slice(&123_456_u32.to_le_bytes());
+                }
+                let mut row = vec![0, 0];
+                row.extend_from_slice(&raw);
+                let mut fields = Buffer::new();
+                scan_row(&row, &columns, 0, Some(&mut fields)).unwrap();
+                scan_row(&row, &columns, 0, None).unwrap();
+                assert_eq!(
+                    value(&columns[0], fields[0].get(&row).unwrap().unwrap()).unwrap(),
+                    if length == 0 {
+                        FieldValue::Date {
+                            year: 0,
+                            month: 0,
+                            day: 0,
+                        }
+                    } else {
+                        FieldValue::Date {
+                            year: 2026,
+                            month: 11,
+                            day: 5,
+                        }
+                    }
+                );
+            }
+        }
     }
 
     #[test]
