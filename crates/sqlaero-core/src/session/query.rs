@@ -187,6 +187,8 @@ impl Query {
     ///
     /// # Errors
     /// Returns actual request, native-owner or configured capacity failures.
+    /// COM_SET_OPTION must be exactly its opcode and supported little-endian
+    /// u16 operation (0 enables multi-statements, 1 disables them).
     pub fn with_pool(
         request: Vec<u8>,
         capabilities: CapabilityFlags,
@@ -199,6 +201,12 @@ impl Query {
         if request.is_empty() {
             return Err(WireError::Malformed("request has no command byte").into());
         }
+        let set_option = request[0] == Command::COM_SET_OPTION as u8;
+        if set_option && !matches!(request.as_slice(), [0x1b, 0 | 1, 0]) {
+            return Err(
+                WireError::Malformed("COM_SET_OPTION requires one supported u16 option").into(),
+            );
+        }
         let sender = MessageWriter::new(request.len(), max_send)?;
         let scope = Scope::new(Arc::clone(&pool), memory_limit).map_err(ResultError::from)?;
         let encoding = if request[0] == Command::COM_STMT_EXECUTE as u8 {
@@ -206,8 +214,11 @@ impl Query {
         } else {
             RowEncoding::Text
         };
-        let collector =
+        let mut collector =
             Receiver::with_encoding(capabilities, Arc::clone(&scope), discard, encoding)?;
+        if set_option {
+            collector.enable_set_option_ack();
+        }
         Ok(Self {
             request,
             sender,

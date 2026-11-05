@@ -418,3 +418,116 @@ fn real_stream_prepared_call_reports_only_actual_out_parameter_markers() {
         sql(&mut connection, "DO 1").unwrap();
     }
 }
+
+#[test]
+#[ignore = "requires C's two owned MySQL fixtures; run with one test thread"]
+fn real_set_option_changes_multi_sql_without_affecting_calls_or_transaction_status() {
+    for label in ["84", "97"] {
+        for (algorithm, secure) in [("uncompressed", false), ("zstd", true)] {
+            let options =
+                compression::Options::new(compression::Algorithms::from_csv(algorithm).unwrap(), 3)
+                    .unwrap();
+            let mut connection = connect_mode(label, options, secure);
+            assert!(
+                !connection
+                    .capabilities
+                    .contains(CapabilityFlags::CLIENT_MULTI_STATEMENTS)
+            );
+            assert!(
+                connection
+                    .capabilities
+                    .contains(CapabilityFlags::CLIENT_PS_MULTI_RESULTS)
+            );
+            let Err(QueryError::Result(sqlaero_core::result::text::ResultError::Server(error))) =
+                sql(&mut connection, "SELECT 1; SELECT 2")
+            else {
+                panic!("initial multi SQL must be disabled");
+            };
+            assert_eq!(error.error_code(), 1064);
+            sql(
+                &mut connection,
+                "CREATE TEMPORARY TABLE c_option_tx(n INT) ENGINE=InnoDB",
+            )
+            .unwrap();
+            sql(&mut connection, "INSERT INTO c_option_tx VALUES(1)").unwrap();
+            sql(&mut connection, "START TRANSACTION").unwrap();
+            let before = sql(&mut connection, "SELECT n FROM c_option_tx").unwrap();
+            assert!(
+                before
+                    .completion()
+                    .status_flags()
+                    .contains(StatusFlags::SERVER_STATUS_IN_TRANS)
+            );
+            let on = query(&mut connection, vec![0x1b, 0, 0]).unwrap();
+            assert!(matches!(on, Response::Command(_)));
+            assert!(
+                on.completion()
+                    .status_flags()
+                    .contains(StatusFlags::SERVER_STATUS_IN_TRANS)
+            );
+            let (_, ends) = stream(
+                &mut connection,
+                b"\x03SELECT 1; SELECT 2".to_vec(),
+                &[1, 1],
+                &[&[1], &[2]],
+            );
+            assert_eq!(ends.len(), 2);
+            assert!(
+                ends.iter()
+                    .all(|(_, status)| status.contains(StatusFlags::SERVER_STATUS_IN_TRANS))
+            );
+            let off = query(&mut connection, vec![0x1b, 1, 0]).unwrap();
+            assert!(
+                off.completion()
+                    .status_flags()
+                    .contains(StatusFlags::SERVER_STATUS_IN_TRANS)
+            );
+            let Err(QueryError::Result(sqlaero_core::result::text::ResultError::Server(error))) =
+                sql(&mut connection, "SELECT 1; SELECT 2")
+            else {
+                panic!("multi SQL must be disabled again");
+            };
+            assert_eq!(error.error_code(), 1064);
+            let after = sql(&mut connection, "SELECT n FROM c_option_tx").unwrap();
+            assert!(
+                after
+                    .completion()
+                    .status_flags()
+                    .contains(StatusFlags::SERVER_STATUS_IN_TRANS)
+            );
+            let rolled_back = sql(&mut connection, "ROLLBACK").unwrap();
+            assert!(
+                !rolled_back
+                    .completion()
+                    .status_flags()
+                    .contains(StatusFlags::SERVER_STATUS_IN_TRANS)
+            );
+            sql(&mut connection, "DROP PROCEDURE IF EXISTS c_option_calls").unwrap();
+            sql(
+                &mut connection,
+                "CREATE PROCEDURE c_option_calls() BEGIN SELECT 41 AS n; SELECT 42 AS n; END",
+            )
+            .unwrap();
+            let (_, text_ends) = stream(
+                &mut connection,
+                b"\x03CALL c_option_calls()".to_vec(),
+                &[1, 1],
+                &[&[41], &[42]],
+            );
+            assert_eq!(text_ends.len(), 3);
+            let statement = prepare(&mut connection, "CALL c_option_calls()").unwrap();
+            let request = Parameters::new(statement.id, 0, LIMIT)
+                .unwrap()
+                .finish()
+                .unwrap();
+            let (_, binary_ends) = stream(&mut connection, request, &[1, 1], &[&[41], &[42]]);
+            assert_eq!(binary_ends.len(), 3);
+            close(&mut connection, statement);
+            sql(&mut connection, "DROP PROCEDURE c_option_calls").unwrap();
+            eprintln!(
+                "MySQL {} {algorithm} tls={secure}: actual set-option ON/OFF ack preserved transaction status; next multi SQL toggled and text/prepared CALL stayed enabled",
+                connection.metadata.version
+            );
+        }
+    }
+}

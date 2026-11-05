@@ -598,6 +598,7 @@ pub struct Receiver {
     server_err_received: bool,
     discard: bool,
     streaming: bool,
+    set_option_ack: bool,
     frozen_columns: Option<Arc<Columns>>,
     batch_rows: usize,
     metadata_status: Option<StatusFlags>,
@@ -648,6 +649,7 @@ impl Receiver {
             server_err_received: false,
             discard,
             streaming: false,
+            set_option_ack: false,
             frozen_columns: None,
             batch_rows: 0,
             metadata_status: None,
@@ -690,6 +692,10 @@ impl Receiver {
         }
         self.streaming = true;
         Ok(())
+    }
+
+    pub(crate) fn enable_set_option_ack(&mut self) {
+        self.set_option_ack = true;
     }
 
     pub(crate) fn push_stream(
@@ -813,8 +819,29 @@ impl Receiver {
         }
         match self.phase {
             Phase::First => {
-                if data.first() == Some(&0) {
-                    let packet = packets::ok(data, self.capabilities, OkKind::Command)?;
+                let acknowledgement = if data.first() == Some(&0) {
+                    Some(OkKind::Command)
+                } else if self.set_option_ack && data.first() == Some(&0xfe) {
+                    Some(if data.len() < 7 {
+                        OkKind::LegacyEnd
+                    } else {
+                        OkKind::ResultEnd
+                    })
+                } else {
+                    None
+                };
+                if let Some(kind) = acknowledgement {
+                    let packet = packets::ok(data, self.capabilities, kind)?;
+                    if self.set_option_ack
+                        && packet
+                            .status_flags()
+                            .contains(StatusFlags::SERVER_MORE_RESULTS_EXISTS)
+                    {
+                        return Err(WireError::Malformed(
+                            "COM_SET_OPTION acknowledgement declares extra results",
+                        )
+                        .into());
+                    }
                     self.confirm(&packet, None);
                     let completion = Completion::new(packet, &self.scope)?;
                     self.phase = Phase::Finished;
@@ -828,6 +855,12 @@ impl Receiver {
                     } else {
                         Delivery::Buffered(Response::Command(completion))
                     }));
+                }
+                if self.set_option_ack {
+                    return Err(WireError::Malformed(
+                        "expected COM_SET_OPTION EOF/OK acknowledgement",
+                    )
+                    .into());
                 }
                 if data.first() == Some(&0xfb) {
                     return Err(ResultError::Unsupported("LOCAL INFILE is disabled"));
@@ -1061,6 +1094,30 @@ mod tests {
         assert_eq!(confirmed.status(), StatusFlags::SERVER_STATUS_AUTOCOMMIT);
         assert!(collector.take_confirmation().is_none());
         drop(collector);
+        drop(scope);
+        assert_eq!(pool.used(), 0);
+        let scope = Scope::new(Arc::clone(&pool), limit).unwrap();
+        let mut control = Receiver::new(
+            CapabilityFlags::CLIENT_PROTOCOL_41,
+            Arc::clone(&scope),
+            false,
+        )
+        .unwrap();
+        control.enable_set_option_ack();
+        assert!(matches!(
+            control.push(&[0xfe, 3, 0, 3, 0]),
+            Err(ResultError::Memory(_))
+        ));
+        let control_ack = control
+            .take_confirmation()
+            .expect("validated control EOF before local storage failure");
+        assert_eq!(control_ack.count, 0);
+        assert_eq!(control_ack.warnings, 3);
+        assert_eq!(
+            control_ack.status(),
+            StatusFlags::SERVER_STATUS_IN_TRANS | StatusFlags::SERVER_STATUS_AUTOCOMMIT
+        );
+        drop(control);
         drop(scope);
         assert_eq!(pool.used(), 0);
         let mut prefix = ConfirmedPrefix::default();
