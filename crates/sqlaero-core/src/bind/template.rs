@@ -49,8 +49,8 @@ pub struct Template {
 }
 
 impl Template {
-    /// Scan only the explicit-args path. No-args execution bypasses this module
-    /// and sends the correctly encoded original SQL, including literal %%.
+    /// Scan the explicit-args path. Text no-args execution bypasses this
+    /// module; native no-args preparation uses its raw-marker guard mode.
     ///
     /// # Errors
     /// Returns unsupported active binding syntax or actual native allocation.
@@ -98,7 +98,20 @@ impl Template {
             output,
             limit,
             finished: false,
+            bound: true,
         })
+    }
+
+    /// Preserve the original SQL source for an omitted-arguments PREPARE.
+    /// This uses the same bounded writer, without percent edits or parameter
+    /// consumption. The caller still applies the prepared raw-marker guard.
+    ///
+    /// # Errors
+    /// Returns command-byte capacity or native allocation failure.
+    pub fn prepare_unbound_request(&self, limit: usize) -> Result<PrepareWriter<'_>, WireError> {
+        let mut writer = self.prepare_request(limit)?;
+        writer.bound = false;
+        Ok(writer)
     }
 
     /// Encoded source length used by range-based request assembly.
@@ -167,6 +180,7 @@ pub struct PrepareWriter<'template> {
     output: Vec<u8>,
     limit: usize,
     finished: bool,
+    bound: bool,
 }
 impl PrepareWriter<'_> {
     /// Copy at most 256 KiB of final bytes without exposing a partial request.
@@ -188,7 +202,13 @@ impl PrepareWriter<'_> {
     fn advance_inner(&mut self) -> Result<Option<Vec<u8>>, WireError> {
         let mut work = 0;
         while work < 256 * 1024 {
-            let Some(piece) = self.template.pieces.get(self.piece) else {
+            let original = Piece::Bytes(0..self.template.source.len());
+            let next = if self.bound {
+                self.template.pieces.get(self.piece)
+            } else {
+                (self.piece == 0).then_some(&original)
+            };
+            let Some(piece) = next else {
                 self.finished = true;
                 return Ok(Some(std::mem::take(&mut self.output)));
             };
@@ -216,7 +236,12 @@ impl PrepareWriter<'_> {
                 }
             }
         }
-        if self.piece == self.template.pieces.len() {
+        let pieces = if self.bound {
+            self.template.pieces.len()
+        } else {
+            1
+        };
+        if self.piece == pieces {
             self.finished = true;
             Ok(Some(std::mem::take(&mut self.output)))
         } else {
@@ -242,6 +267,7 @@ pub struct Compiler {
     tokens: Option<Vec<super::batch::Token>>,
     merge_safe: bool,
     native_markers: bool,
+    binding: bool,
 }
 #[derive(Clone, Copy)]
 enum Lex {
@@ -279,6 +305,7 @@ impl Compiler {
             tokens: None,
             merge_safe: true,
             native_markers: false,
+            binding: true,
         }
     }
 
@@ -301,6 +328,21 @@ impl Compiler {
     ) -> Self {
         let mut compiler = Self::new(source, codec, no_backslash, ansi_quotes);
         compiler.native_markers = true;
+        compiler
+    }
+
+    /// Guard native markers without activating the public binding language.
+    /// Omitted arguments preserve all source bytes, including percent forms;
+    /// only actual raw question marks outside protected text are rejected.
+    #[must_use]
+    pub fn for_unbound_prepared(
+        source: Vec<u8>,
+        codec: Codec,
+        no_backslash: bool,
+        ansi_quotes: bool,
+    ) -> Self {
+        let mut compiler = Self::for_prepared(source, codec, no_backslash, ansi_quotes);
+        compiler.binding = false;
         compiler
     }
 
@@ -464,6 +506,10 @@ impl Compiler {
                             });
                         }
                         b'%' => {
+                            if !self.binding {
+                                self.position += 1;
+                                continue;
+                            }
                             if self.source.get(position + 1) == Some(&b's') {
                                 if self.special {
                                     return Err(TemplateError::CommentBinding {

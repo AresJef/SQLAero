@@ -285,3 +285,68 @@ fn identifier_quotes_are_distinct_from_values_and_preserve_multibyte_trail_bytes
         Err(CodecError::Encode { offset: 3, .. })
     ));
 }
+
+#[test]
+fn unbound_prepared_request_keeps_original_percent_text_in_the_same_writer() {
+    let sql = "SELECT '中?%s%%', 10%%3, %s";
+    let template = native_template(sql, false, false).unwrap();
+    let mut writer = template.prepare_unbound_request(sql.len() + 1).unwrap();
+    let request = loop {
+        if let Some(request) = writer.advance().unwrap() {
+            break request;
+        }
+    };
+    let mut expected = vec![0x16];
+    expected.extend_from_slice(sql.as_bytes());
+    assert_eq!(request, expected);
+    assert!(writer.advance().is_err());
+    let sql = format!("SELECT '{}'", "中".repeat(200_000));
+    let template = native_template(&sql, false, false).unwrap();
+    let mut writer = template.prepare_unbound_request(sql.len() + 1).unwrap();
+    let mut yields = 0;
+    loop {
+        if writer.advance().unwrap().is_some() {
+            break;
+        }
+        yields += 1;
+    }
+    assert!(yields >= 2);
+}
+
+#[test]
+fn omitted_native_arguments_guard_question_marks_without_activating_percent_binding() {
+    use sqlaero_core::bind::template::TemplateError;
+    let codec = Codec::new(resolve(None, None).unwrap().charset);
+    for sql in [
+        "SELECT %(name)s,10%%3,%s",
+        "SELECT 1 /*+ %s %(name)s */",
+        "SELECT /*! %s */ 1",
+        "SELECT '?%s' /* ? %s */",
+    ] {
+        let mut compiler =
+            Compiler::for_unbound_prepared(sql.as_bytes().to_vec(), codec, false, false);
+        let template = loop {
+            if let Some(template) = compiler.advance().unwrap() {
+                break template;
+            }
+        };
+        assert_eq!(template.slots(), 0);
+        let mut writer = template.prepare_unbound_request(4096).unwrap();
+        let request = loop {
+            if let Some(request) = writer.advance().unwrap() {
+                break request;
+            }
+        };
+        let mut expected = vec![0x16];
+        expected.extend_from_slice(sql.as_bytes());
+        assert_eq!(request, expected);
+    }
+    for sql in ["SELECT '中', ?", "SELECT %s, ?"] {
+        let mut compiler =
+            Compiler::for_unbound_prepared(sql.as_bytes().to_vec(), codec, false, false);
+        assert!(matches!(
+            compiler.advance(),
+            Err(TemplateError::RawQuestion { .. })
+        ));
+    }
+}
