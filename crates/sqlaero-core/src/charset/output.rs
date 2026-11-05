@@ -39,6 +39,7 @@ impl OutputCodec {
         };
         match charset.route {
             CodecRoute::Utf8 => return Self::Utf8(Codec::new(charset)),
+            CodecRoute::Utf8mb3 => return Self::Utf8mb3,
             CodecRoute::Ascii => return Self::Ascii(Codec::new(charset)),
             CodecRoute::Binary => return Self::ByteValues(Codec::new(charset)),
             CodecRoute::Unavailable => (),

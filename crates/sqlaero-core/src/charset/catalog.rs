@@ -243,7 +243,7 @@ pub(super) static CHARSETS: &[Charset] = &[
         name: "utf8mb3",
         default_collation: "utf8mb3_general_ci",
         max_width: 3,
-        route: CodecRoute::Unavailable,
+        route: CodecRoute::Utf8mb3,
     },
     Charset {
         name: "utf8mb4",

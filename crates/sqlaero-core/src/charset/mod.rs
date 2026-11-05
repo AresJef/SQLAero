@@ -37,6 +37,8 @@ pub enum Multibyte {
 pub enum CodecRoute {
     /// Native UTF-8.
     Utf8,
+    /// MySQL's explicit three-byte UTF-8 repertoire, restricted to the BMP.
+    Utf8mb3,
     /// Strict native ASCII.
     Ascii,
     /// MySQL's byte-valued pseudo charset.
@@ -199,7 +201,9 @@ mod tests {
             resolve(Some("latin1"), None).unwrap().collation.name,
             "latin1_swedish_ci"
         );
-        assert!(resolve(Some("utf8mb3"), None).is_err());
+        let mb3 = resolve(Some("utf8mb3"), None).unwrap();
+        assert_eq!(mb3.collation.name, "utf8mb3_general_ci");
+        assert_eq!(mb3.collation.id, 33);
         assert!(resolve(Some("utf8mb4"), Some("latin1_bin")).is_err());
         assert_eq!(by_id(278).unwrap().0.name, "utf8mb4_0900_as_cs");
     }
@@ -209,7 +213,7 @@ mod tests {
             .iter()
             .filter(|charset| charset.route != CodecRoute::Unavailable)
             .collect();
-        assert_eq!(selected.len(), 36);
+        assert_eq!(selected.len(), 37);
         for charset in selected {
             assert_eq!(
                 resolve(Some(charset.name), None).unwrap().charset.name,

@@ -59,7 +59,7 @@ impl Codec {
     pub fn encoded_width(&self, input: &[u8]) -> usize {
         match self.charset.route {
             CodecRoute::Multibyte(kind) => multibyte::width(kind, input),
-            CodecRoute::Utf8 => input.first().map_or(0, |byte| {
+            CodecRoute::Utf8 | CodecRoute::Utf8mb3 => input.first().map_or(0, |byte| {
                 if *byte < 128 {
                     1
                 } else {
@@ -78,7 +78,7 @@ impl Codec {
         let masks: &[u64; 4] = match self.charset.route {
             CodecRoute::SingleByte(index) => &super::lexer_space::SINGLE[usize::from(index)],
             CodecRoute::Multibyte(kind) => &super::lexer_space::MULTI[kind as usize],
-            CodecRoute::Utf8 => &super::lexer_space::BASIC[0],
+            CodecRoute::Utf8 | CodecRoute::Utf8mb3 => &super::lexer_space::BASIC[0],
             CodecRoute::Ascii => &super::lexer_space::BASIC[1],
             CodecRoute::Binary => &super::lexer_space::BASIC[2],
             CodecRoute::Unavailable => return false,
@@ -168,6 +168,9 @@ impl Codec {
         if matches!(self.charset.route, CodecRoute::Utf8) {
             return escaped::<MODE>(text.as_bytes(), output, limit).map_err(Into::into);
         }
+        if matches!(self.charset.route, CodecRoute::Utf8mb3) {
+            return bmp_escaped::<MODE>(text, output, limit);
+        }
         if let CodecRoute::Multibyte(kind) = self.charset.route {
             for (offset, point) in text.char_indices() {
                 let encoded = multibyte::encode(kind, point).ok_or(CodecError::Encode {
@@ -224,6 +227,25 @@ impl Codec {
     /// # Errors
     /// Returns a precise invalid byte range or actual native allocation failure.
     pub fn decode<'a>(&self, bytes: &'a [u8]) -> Result<Cow<'a, str>, CodecError> {
+        if matches!(self.charset.route, CodecRoute::Utf8mb3) {
+            let text = std::str::from_utf8(bytes).map_err(|error| CodecError::Decode {
+                start: error.valid_up_to(),
+                end: error.valid_up_to()
+                    + error
+                        .error_len()
+                        .unwrap_or(bytes.len() - error.valid_up_to()),
+            })?;
+            if let Some((start, point)) = text
+                .char_indices()
+                .find(|(_, point)| u32::from(*point) > 0xffff)
+            {
+                return Err(CodecError::Decode {
+                    start,
+                    end: start + point.len_utf8(),
+                });
+            }
+            return Ok(Cow::Borrowed(text));
+        }
         if matches!(self.charset.route, CodecRoute::Utf8) {
             return std::str::from_utf8(bytes)
                 .map(Cow::Borrowed)
@@ -269,7 +291,7 @@ impl Codec {
                 .ok_or(CodecError::Decode { start, end })?;
             return Ok((point, end));
         }
-        if let CodecRoute::Utf8 = self.charset.route {
+        if matches!(self.charset.route, CodecRoute::Utf8 | CodecRoute::Utf8mb3) {
             let width = if byte < 128 {
                 1
             } else {
@@ -290,6 +312,9 @@ impl Codec {
                 .chars()
                 .next()
                 .ok_or(CodecError::Decode { start, end })?;
+            if matches!(self.charset.route, CodecRoute::Utf8mb3) && u32::from(point) > 0xffff {
+                return Err(CodecError::Decode { start, end });
+            }
             return Ok((point, end));
         }
         let point = match self.charset.route {
@@ -309,6 +334,35 @@ impl Codec {
         })?;
         Ok((point, start + 1))
     }
+}
+
+fn bmp_escaped<const MODE: u8>(
+    text: &str,
+    output: &mut Vec<u8>,
+    limit: usize,
+) -> Result<(), CodecError> {
+    let bytes = text.as_bytes();
+    let mut start = 0;
+    for (offset, byte) in bytes.iter().copied().enumerate() {
+        // A four-byte UTF-8 leader is the only byte class above 0xEF in a
+        // validated str. Check it in the same pass as SQL metacharacters.
+        if byte >= 0xf0 {
+            let point = text[offset..].chars().next().ok_or(CodecError::Decode {
+                start: offset,
+                end: offset,
+            })?;
+            return Err(CodecError::Encode {
+                offset,
+                point: u32::from(point),
+            });
+        }
+        if let Some(encoded) = escape::<MODE>(byte) {
+            append(output, &bytes[start..offset], limit)?;
+            append(output, encoded, limit)?;
+            start = offset + 1;
+        }
+    }
+    append(output, &bytes[start..], limit).map_err(Into::into)
 }
 
 fn escape<const MODE: u8>(byte: u8) -> Option<&'static [u8]> {
