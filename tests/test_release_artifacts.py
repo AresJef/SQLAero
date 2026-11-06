@@ -420,3 +420,59 @@ def test_new_polars_case_is_na_only_for_the_declared_free_threaded_gap(tmp_path:
     report, capabilities = feature_report(tmp_path, 'macos-arm64', False, [case])
     with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
         release_artifacts.test_totals(report, 'macos-arm64', capabilities)
+
+
+@pytest.mark.parametrize('free', [False, True])
+@pytest.mark.parametrize('target', ['macos-arm64', 'windows-arm64', 'linux-glibc-x86_64'])
+def test_resource_nogil_cases_are_na_only_for_a_confirmed_ordinary_abi(
+    tmp_path: Path, target: str, free: bool,
+) -> None:
+    cases = [('tests.test_streaming_resource_combinations',
+              f'test_nogil_paused_prepared_rows_keep_atomic_ownership_during_concurrent_gc[{label}]',
+              'requires a verified GIL-disabled package') for label in ('84', '97')]
+    report, capabilities = feature_report(tmp_path, target, free, cases)
+    if free:
+        with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+            release_artifacts.test_totals(report, target, capabilities)
+    else:
+        baseline = len(PARALLEL_NAMES) if target.startswith('windows-') else 1
+        assert release_artifacts.test_totals(report, target, capabilities)['skipped'] == baseline + 2
+
+
+@pytest.mark.parametrize(('module', 'name', 'reason'), [
+    ('tests.test_streaming_resource_combinations',
+     'test_nogil_paused_prepared_rows_keep_atomic_ownership_during_concurrent_gc[84]',
+     'requires a verified GIL-disabled package changed'),
+    ('tests.test_streaming_resource_combinations',
+     'test_nogil_paused_prepared_rows_keep_atomic_ownership_during_concurrent_gc[97]',
+     'requires explicitly selected owned MySQL fixtures'),
+    ('tests.test_streaming_resource_combinations',
+     'test_nogil_paused_prepared_rows_keep_atomic_ownership_during_concurrent_gc[98]',
+     'requires a verified GIL-disabled package'),
+    ('tests.test_streaming_nogil',
+     'test_nogil_paused_prepared_rows_keep_atomic_ownership_during_concurrent_gc[84]',
+     'requires a verified GIL-disabled package'),
+    ('tests.test_streaming_resource_combinations', 'test_unknown_resource_skip',
+     'requires a verified GIL-disabled package'),
+])
+def test_resource_nogil_na_rejects_wrong_reason_module_or_unknown_case(
+    tmp_path: Path, module: str, name: str, reason: str,
+) -> None:
+    report, capabilities = feature_report(tmp_path, 'macos-arm64', False, [(module, name, reason)])
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, 'macos-arm64', capabilities)
+
+
+@pytest.mark.parametrize('invalid_free', [0, 1, None, 'False'])
+def test_resource_nogil_na_requires_an_exact_boolean_abi_declaration(
+    tmp_path: Path, invalid_free: object,
+) -> None:
+    case = ('tests.test_streaming_resource_combinations',
+            'test_nogil_paused_prepared_rows_keep_atomic_ownership_during_concurrent_gc[84]',
+            'requires a verified GIL-disabled package')
+    report, capabilities = feature_report(tmp_path, 'macos-arm64', False, [case])
+    payload = json.loads(capabilities.read_text())
+    payload['free_threaded'] = invalid_free
+    capabilities.write_text(json.dumps(payload))
+    with pytest.raises(AssertionError):
+        release_artifacts.test_totals(report, 'macos-arm64', capabilities)

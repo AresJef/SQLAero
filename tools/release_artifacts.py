@@ -76,6 +76,11 @@ NOGIL_ONLY_NA = frozenset({
     *(f'test_nogil_cross_batch_dict_keys_release_native_cache_and_keep_delivered_owners[{label}]'
       for label in ('84', '97')),
 })
+RESOURCE_NOGIL_ONLY_NA = frozenset({
+    ('tests.test_streaming_resource_combinations',
+     f'test_nogil_paused_prepared_rows_keep_atomic_ownership_during_concurrent_gc[{label}]')
+    for label in ('84', '97')
+})
 WINDOWS_TLS_UNIX_NA = frozenset({
     *(f'test_unix_tls_diagnostic_identity_follows_explicit_name_only[{mode}]'
       for mode in ('REQUIRED', 'VERIFY_CA', 'VERIFY_IDENTITY')),
@@ -313,8 +318,9 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
                                  'test_c_array_consumption_owns_both_releases_on_every_exit[cached-dictionary-encoding-failure]',
                              }
                              and skipped.get('message') == 'C Array release observation needs both optional providers')
-            nogil_only = (free is False and identity[0] == 'tests.test_streaming_nogil'
-                          and identity[1] in NOGIL_ONLY_NA
+            nogil_only = (free is False
+                          and ((identity[0] == 'tests.test_streaming_nogil' and identity[1] in NOGIL_ONLY_NA)
+                               or identity in RESOURCE_NOGIL_ONLY_NA)
                           and skipped.get('message') == 'requires a verified GIL-disabled package')
             tls_unix = (free is not None and windows and identity[0] == 'tests.test_tls_expansion'
                         and identity[1] in WINDOWS_TLS_UNIX_NA
