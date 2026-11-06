@@ -83,7 +83,11 @@ impl IoBudget {
     /// # Errors
     /// Returns the original connection/operation timeout on expiry.
     pub fn check(&self) -> Result<(), TimeoutKind> {
-        self.total_remaining(Instant::now()).map(|_| ())
+        if self.total.is_some() {
+            self.total_remaining(Instant::now()).map(|_| ())
+        } else {
+            Ok(())
+        }
     }
 
     /// Check an existing directional wait without starting or resetting one.
@@ -202,6 +206,22 @@ impl IoBudget {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn absent_total_does_not_check_or_reset_directional_waits() {
+        let now = Instant::now();
+        let mut budget = IoBudget::starting_at(
+            now - Duration::from_secs(2),
+            TimeoutKind::Operation,
+            None,
+            Some(Duration::from_millis(1)),
+            None,
+        );
+        budget.read_wait = Some(now - Duration::from_secs(1));
+        assert_eq!(budget.check(), Ok(()));
+        assert_eq!(budget.check_io(Direction::Read), Err(TimeoutKind::Read));
+        assert_eq!(budget.read_wait, Some(now - Duration::from_secs(1)));
+    }
 
     #[test]
     fn enclosing_total_caps_without_refreshing_spent_or_directional_time() {
