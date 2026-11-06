@@ -364,25 +364,48 @@ def test_managed_prepared_atomic_getter_allocation_retry(routines: Routines, kin
 
 
 @pytest.mark.parametrize('kind', [sqlaero.SSCursor, sqlaero.SSDictCursor])
-def test_managed_prepared_stream_uses_one_remaining_deadline(routines: Routines, kind: CursorType) -> None:
+def test_managed_prepared_stream_uses_one_remaining_deadline(
+    routines: Routines, kind: CursorType, record_property: Callable[[str, object], None],
+) -> None:
+    import time as clock_time
+
     name = PREFIX + '_deadline_' + uuid4().hex[:8]
     qualified = quote(routines.database) + '.' + quote(name)
     with live(routines.label) as setup, setup.cursor() as create:
         create.execute(f'CREATE PROCEDURE {qualified}(IN n INT, OUT result INT) '
                        'BEGIN SELECT 1 AS value UNION ALL SELECT 2 UNION ALL SELECT 3; '
-                       'DO SLEEP(0.15); SELECT 4 AS later; DO SLEEP(0.15); SET result=n*2; END')
+                       'DO SLEEP(1.2); SELECT 4 AS later; DO SLEEP(1.2); SET result=n*2; END')
         try:
-            connection = live(routines.label, operation_timeout=0.25)
+            # Each server wait fits, but their sum exceeds the one command
+            # budget. Preserve that distinction without a 100ms setup margin.
+            connection = live(routines.label, operation_timeout=2.0)
+            phases: dict[str, float] = {}
+            phase = 'callproc'
+            phase_started = clock_time.monotonic()
             try:
                 cur = connection.cursor(kind, prepared=True)
                 cur.callproc(name, (5, None), parameter_modes=('IN', 'OUT'))
+                phases[phase] = clock_time.monotonic() - phase_started
+                phase, phase_started = 'first_fetch', clock_time.monotonic()
                 assert cur.fetchall() == formatted(kind, 'value', 1, 2, 3)
+                phases[phase] = clock_time.monotonic() - phase_started
+                phase, phase_started = 'second_header', clock_time.monotonic()
                 assert cur.nextset() is True
+                phases[phase] = clock_time.monotonic() - phase_started
+                phase, phase_started = 'second_fetch', clock_time.monotonic()
                 assert cur.fetchall() == formatted(kind, 'later', 4)
+                phases[phase] = clock_time.monotonic() - phase_started
+                phase, phase_started = 'final_nextset', clock_time.monotonic()
                 with pytest.raises(OperationalTimeoutError):
                     cur.nextset()
+                phases[phase] = clock_time.monotonic() - phase_started
                 assert cur.call_output_params is None
             finally:
+                # Diagnostic stage wall times are not a new timing assertion
+                # or a substitute for the driver's idle-exclusion accounting.
+                phases.setdefault(phase, clock_time.monotonic() - phase_started)
+                record_property('call_stage_seconds', phases)
+                record_property('call_last_stage', phase)
                 connection.close()
         finally:
             create.execute(f'DROP PROCEDURE IF EXISTS {qualified}')

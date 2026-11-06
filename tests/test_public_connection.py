@@ -1,6 +1,6 @@
 """Public connection/cursor composition against the owned MySQL fixtures."""
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 import inspect
@@ -1515,9 +1515,11 @@ def test_busy_exit_does_not_infer_active_transaction_during_implicit_commit(conn
 @pytest.mark.parametrize('handler_mode', ['raise', 'custom', 'keyboard', 'memory', 'return', 'reenter'])
 def test_large_json_signal_preserves_real_fetch_state(
     connection: Connection, method: str, handler_mode: str,
+    record_property: Callable[[str, object], None],
 ) -> None:
     """Check real native progress, reentry and all shared fetch commit boundaries."""
     import gc
+    import time as clock_time
     from types import FrameType
     from sqlaero.errors import InterfaceBusyError
 
@@ -1526,9 +1528,22 @@ def test_large_json_signal_preserves_real_fetch_state(
     marker = next(_JSON_SIGNAL_IDS)
     # Give real asynchronous console delivery a substantial escaped-value window.
     size = 4 * 1024 * 1024
-    cursor.execute('SELECT JSON_ARRAY(%s+n, CASE WHEN n=0 THEN \'short\' ELSE '
-                   'REPEAT(CONVERT(CHAR(1) USING utf8mb4), %s) END) AS payload '
-                   'FROM (SELECT 0 AS n UNION ALL SELECT 1) AS input_rows ORDER BY n', (marker, size))
+    # Preparing the buffered escaped JSON is not the signal/fetch assertion.
+    # Give only this setup a finite window, then restore the fixture policy
+    # before any alarm or target fetch; the 4MiB interruption input is unchanged.
+    original_timeout = connection.operation_timeout
+    connection.operation_timeout = 30
+    prepare_started = clock_time.monotonic()
+    try:
+        cursor.execute('SELECT JSON_ARRAY(%s+n, CASE WHEN n=0 THEN \'short\' ELSE '
+                       'REPEAT(CONVERT(CHAR(1) USING utf8mb4), %s) END) AS payload '
+                       'FROM (SELECT 0 AS n UNION ALL SELECT 1) AS input_rows ORDER BY n', (marker, size))
+    finally:
+        record_property('json_prepare_seconds', clock_time.monotonic() - prepare_started)
+        if not connection.closed:
+            connection.operation_timeout = original_timeout
+    assert connection.operation_timeout == original_timeout
+    record_property('json_restored_operation_timeout', original_timeout)
     saved = cursor.columns
     first = None
     if method in ('fetchone', 'iterator'):
@@ -1568,6 +1583,7 @@ def test_large_json_signal_preserves_real_fetch_state(
 
     alarm = NativeAlarm(handler)
     result: object = None
+    fetch_started = clock_time.monotonic()
     try:
         try:
             alarm.start(0.0001, 0.0001, wait_ready=True)
@@ -1581,6 +1597,7 @@ def test_large_json_signal_preserves_real_fetch_state(
             assert handler_mode in ('return', 'reenter')
     finally:
         alarm.close()
+        record_property('json_signal_fetch_seconds', clock_time.monotonic() - fetch_started)
     assert observed == [1]
     assert cursor.rowcount == 2 and saved.names == ('payload',)
     if handler_mode in ('raise', 'custom', 'keyboard', 'memory'):
