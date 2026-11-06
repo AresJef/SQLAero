@@ -103,6 +103,9 @@ def _deny_ca_read(member: Path) -> Generator[None, None, None]:
             subprocess.run(['icacls.exe', *arguments, '/q'], cwd=member.parent,
                            capture_output=True, timeout=8, check=True)
 
+        # Prepare only this newly created owned file's baseline. Protection
+        # prevents restore from adding inherited ACEs from the parent directory.
+        acl(member.name, '/inheritancelevel:d')
         acl(member.name, '/save', saved.name)
         original_acl = saved.read_bytes()
         try:
@@ -197,19 +200,25 @@ def _reloaded_peer(label: str, pem: bytes, *, server_ca_extra: bytes = b'') -> G
     ca = ROOT / 'tls/ca.pem'
     original = server.read_bytes()
     original_ca = ca.read_bytes()
+    reload_command = mysql_command(label)
+    if os.name == 'nt':
+        # This owned test intentionally serves SANs without the admin IP. Keep
+        # the pinned CA/chain check for reload and restoration; product and
+        # ordinary administration retain their identity-verification policy.
+        reload_command += ['--ssl-mode=VERIFY_CA', f'--ssl-ca={ca}']
     try:
         if server_ca_extra:
             # MySQL verifies its own leaf against ssl_ca during reload; the
             # chain file alone is not its untrusted issuer input for this check.
             ca.write_bytes(original_ca + server_ca_extra)
         server.write_bytes(pem)
-        run(mysql_command(label), data='ALTER INSTANCE RELOAD TLS;')
+        run(reload_command, data='ALTER INSTANCE RELOAD TLS;')
         yield
     finally:
         server.write_bytes(original)
         if server_ca_extra:
             ca.write_bytes(original_ca)
-        run(mysql_command(label), data='ALTER INSTANCE RELOAD TLS;')
+        run(reload_command, data='ALTER INSTANCE RELOAD TLS;')
     assert server.read_bytes() == original
     assert ca.read_bytes() == original_ca
     with live(label):

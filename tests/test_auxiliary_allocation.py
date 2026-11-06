@@ -128,8 +128,10 @@ def test_python_output_allocation_faults_remain_retryable_and_preserve_unread_wi
     environment = os.environ.copy()
     environment["PYTHONPATH"] = os.pathsep.join((str(Path(sqlaero.__file__).resolve().parent.parent),
                                                 str(Path(__file__).resolve().parent)))
+    environment["PYTHONIOENCODING"] = "utf-8"
     result = subprocess.run([sys.executable, "-", kind, native_hash], input=CHILD, text=True,
-                            capture_output=True, timeout=45, check=False, env=environment)
+                            encoding="utf-8", capture_output=True, timeout=45, check=False,
+                            env=environment)
     assert result.returncode == 0, result.stdout + result.stderr
     record: dict[str, Any] = json.loads(result.stdout.splitlines()[-1])
     assert record["kind"] == kind and record["failed_offsets"]

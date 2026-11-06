@@ -1,7 +1,6 @@
 """Check the installed final interface with real Pyright, without editor tests."""
 
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -24,7 +23,7 @@ def test_installed_final_types_match_the_contract(
     expected = {index for index, line in enumerate(negative.read_text().splitlines()) if "# error:" in line}
     configuration = tmp_path / "pyrightconfig.json"
     configuration.write_text(json.dumps({
-        "include": [os.path.relpath(positive, tmp_path), os.path.relpath(negative, tmp_path)],
+        "include": [str(positive.resolve()), str(negative.resolve())],
         "extraPaths": [str(Path(sqlaero.__file__).parent.parent)],
         "typeCheckingMode": "strict", "pythonVersion": "3.12",
     }))

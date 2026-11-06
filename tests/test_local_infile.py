@@ -268,8 +268,8 @@ def test_upload_work_storage_is_independent_of_result_memory_limits(
     small.write_bytes(b'0\tcontrol\n')
     large = tmp_path / 'large.tsv'
     rows = 2_000
-    large.write_text(''.join(f'{index}\tbounded-{48 * "x"}\n'
-                             for index in range(1, rows + 1)), encoding='ascii')
+    large.write_bytes(''.join(f'{index}\tbounded-{48 * "x"}\n'
+                              for index in range(1, rows + 1)).encode('ascii'))
     assert 64 * 1024 < large.stat().st_size < 128 * 1024
     with live(local_server, local_infile=True, compression=compression,
               max_allowed_packet=128 * 1024, result_memory_limit=32 * 1024,
@@ -298,7 +298,8 @@ def test_large_file_is_chunked_beyond_message_and_result_limits(
     local_server: str, tmp_path: Path,
 ) -> None:
     source = tmp_path / 'large.tsv'
-    source.write_text(''.join(f'{index}\trow-{index}-中文🙂\n' for index in range(1, 20_001)), encoding='utf-8')
+    source.write_bytes(''.join(f'{index}\trow-{index}-中文🙂\n'
+                               for index in range(1, 20_001)).encode('utf-8'))
     assert source.stat().st_size > 256 * 1024
     with live(local_server, local_infile=True, max_allowed_packet=1024,
               result_memory_limit=64 * 1024, total_result_memory_limit=256 * 1024) as connection:
