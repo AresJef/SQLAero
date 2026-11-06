@@ -134,3 +134,27 @@ fn a_non_load_first_keyword_returns_before_scanning_a_long_sql_tail() {
         assert_eq!(request.as_ptr(), pointer);
     }
 }
+
+#[test]
+fn incomplete_raw_load_sql_remains_a_server_grammar_decision() {
+    for no_backslash in [false, true] {
+        for ansi in [false, true] {
+            for sql in [
+                "LOAD DATA INFILE 'unterminated %(name)s ? %%",
+                "LOAD DATA INFILE 'label' /* unterminated %s ;",
+                "LOAD DATA LOCAL INFILE 'unterminated %(name)s ? %%",
+                "LOAD DATA LOCAL INFILE 'label' /* unterminated %s ;",
+                "LOAD DATA LOCAL INFILE `unterminated",
+                "LOAD DATA LOCAL INFILE \"unterminated",
+            ] {
+                let request = [b"\x03".as_slice(), sql.as_bytes()].concat();
+                let expected = request.clone();
+                let pointer = request.as_ptr();
+                let (request, local) = classify(request, "utf8mb4", no_backslash, ansi);
+                assert!(!local, "{sql}");
+                assert_eq!(request, expected);
+                assert_eq!(request.as_ptr(), pointer);
+            }
+        }
+    }
+}
