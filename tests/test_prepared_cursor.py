@@ -17,7 +17,7 @@ import pytest
 import sqlaero
 from sqlaero import Connection, Cursor
 from sqlaero.errors import DataError, IntegrityError, InterfaceError, NotSupportedError, ProgrammingError
-from test_public_connection import connection, requires_mysql
+from test_public_connection import connection as connection, requires_mysql
 
 if TYPE_CHECKING:
     from sqlaero import DictCursor
@@ -34,18 +34,20 @@ def row(dictionary: bool, **values: object) -> tuple[object, ...] | dict[str, ob
 
 
 def statement_counts(connection: Connection) -> dict[str, int]:
-    """Read per-session native command counters without disturbing a Cursor."""
+    """Keep raw server counts and distinguish client PREPARE from reprepare."""
+    counts: dict[str, int] = {}
     with connection.cursor() as observer:
         assert observer.execute(
             "SHOW SESSION STATUS WHERE Variable_name IN "
-            "('Com_stmt_prepare','Com_stmt_execute','Com_stmt_close')"
-        ) == 3
-        result = observer.fetchall()
-    counts: dict[str, int] = {}
-    for name, value in result:
-        assert isinstance(name, str) and isinstance(value, str)
-        counts[name] = int(value)
-    assert counts.keys() == {'Com_stmt_prepare', 'Com_stmt_execute', 'Com_stmt_close'}
+            "('Com_stmt_prepare','Com_stmt_reprepare','Com_stmt_execute','Com_stmt_close')"
+        ) == 4
+        for name, value in observer.fetchall():
+            assert isinstance(name, str) and isinstance(value, str)
+            counts[name] = int(value)
+    assert counts.keys() == {'Com_stmt_prepare', 'Com_stmt_reprepare', 'Com_stmt_execute', 'Com_stmt_close'}
+    # MySQL increments both raw counters for one internal reprepare. These
+    # sessions never issue SQL PREPARE, so their difference counts client work.
+    counts['Client_stmt_prepare'] = counts['Com_stmt_prepare'] - counts['Com_stmt_reprepare']
     return counts
 
 
@@ -197,7 +199,12 @@ def test_prepared_scalar_parameters_reach_real_mysql_values(
     connection: Connection, dictionary: bool, value: object, expected: object,
 ) -> None:
     with buffered(connection, dictionary) as current:
-        assert current.execute('SELECT %s AS value', (value,)) == 1
+        # A direct SELECT marker derives VARCHAR/collation_connection. Use an
+        # explicit binary expression when asserting a bytes result; input BLOB
+        # alone does not override the server's result metadata.
+        sql = ('SELECT CAST(%s AS BINARY) AS value' if isinstance(expected, bytes)
+               else 'SELECT %s AS value')
+        assert current.execute(sql, (value,)) == 1
         assert current.row_count == current.rowcount == current.affected_rows == 1
         assert current.batch_row_count == 1
         actual = current.fetchone()
@@ -208,7 +215,44 @@ def test_prepared_scalar_parameters_reach_real_mysql_values(
             assert isinstance(result_value, Decimal)
         elif isinstance(expected, bytes):
             assert isinstance(result_value, bytes)
+            assert current.columns[0].collation_id == 63
+            assert current.columns[0].is_binary_string is True
         assert current.fetchone() is None
+
+
+@requires_mysql
+@pytest.mark.parametrize('dictionary', [False, True], ids=['tuple', 'dict'])
+def test_prepared_bytes_input_does_not_override_derived_text_result_metadata(
+    connection: Connection, dictionary: bool,
+) -> None:
+    with buffered(connection, dictionary) as current:
+        for value, expected in ((b'abc', 'abc'), (b'', '')):
+            assert current.execute('SELECT %s AS value', (value,)) == 1
+            assert current.columns[0].type_code == 253
+            assert current.columns[0].charset_name == 'utf8mb4'
+            assert current.columns[0].is_binary_string is False
+            assert current.fetchone() == row(dictionary, value=expected)
+
+        # BLOB input retains its original bytes. The independently derived
+        # VARCHAR result remains subject to the actual text Decode policy.
+        value = b'\0\xff?%s\\\''
+        assert current.execute('SELECT %s AS value', (value,)) == 1
+        columns = current.columns
+        assert columns[0].collation_id == 255
+        for _ in range(2):
+            with pytest.raises(UnicodeDecodeError) as caught:
+                current.fetchone()
+            assert caught.value.object == value
+            assert caught.value.start == 1
+        assert current.batch_row_count == 1
+        assert current.execute('SELECT HEX(%s) AS value', (value,)) == 1
+        assert current.fetchone() == row(dictionary, value='00FF3F25735C27')
+
+        current.decode_text_strict = False
+        assert current.execute('SELECT %s AS value', (value,)) == 1
+        assert current.fetchone() == row(dictionary, value=value.decode('utf8', 'surrogateescape'))
+        assert current.columns[0].is_binary_string is False
+        assert columns[0].collation_id == 255
 
 
 @requires_mysql
@@ -235,13 +279,32 @@ def test_same_prepared_template_updates_types_null_bitmap_and_current_metadata(
         current.execute('SELECT %s AS value', (7,))
         old_columns = current.columns
         old_type = old_columns[0].type_code
-        for value in (None, 2**64 - 1, b'\0\xff', 'changed', Decimal('1.25'), -7):
+        # String input does not force server reprepare. After unsigned integer
+        # inference it is converted to that type; DECIMAL later accepts integer
+        # input without changing its result metadata back to LONGLONG.
+        cases: tuple[tuple[object, object, int, bool], ...] = (
+            (None, None, 8, False),
+            (2**64 - 1, 2**64 - 1, 8, True),
+            (b'12', 12, 8, True),
+            ('13', 13, 8, True),
+            (Decimal('1.25'), Decimal('1.25'), 246, False),
+            (-7, Decimal('-7'), 246, False),
+        )
+        for value, expected, type_code, unsigned in cases:
             assert current.execute('SELECT %s AS value', (value,)) == 1
-            assert current.fetchone() == row(dictionary, value=value)
+            actual = current.fetchone()
+            assert actual == row(dictionary, value=expected)
+            assert actual is not None
+            result_value = actual['value'] if isinstance(actual, dict) else actual[0]
+            if isinstance(expected, Decimal):
+                assert isinstance(result_value, Decimal)
+            assert current.columns[0].type_code == type_code
+            assert current.columns[0].is_unsigned is unsigned
             assert current.columns.names == ('value',)
             assert old_columns[0].type_code == old_type
+            assert old_columns[0].is_unsigned is False
         counts = statement_counts(connection)
-        assert counts['Com_stmt_prepare'] - before['Com_stmt_prepare'] == 1
+        assert counts['Client_stmt_prepare'] - before['Client_stmt_prepare'] == 1
         assert counts['Com_stmt_execute'] - before['Com_stmt_execute'] == 7
         sql = 'SELECT ' + ','.join(f'%s AS c{index}' for index in range(16))
         for values in [tuple(None if index % 2 == 0 else index for index in range(16)),
@@ -259,7 +322,8 @@ def test_long_prepared_values_cross_native_fragment_boundaries_without_escaping(
     text = "中'\\\0?%s" * 60_000
     binary = bytes(range(256)) * 1500
     with buffered(connection, dictionary) as current:
-        assert current.execute('SELECT %s AS text_value,%s AS binary_value', (text, binary)) == 1
+        assert current.execute('SELECT %s AS text_value,CAST(%s AS BINARY) AS binary_value',
+                               (text, binary)) == 1
         assert current.fetchone() == row(dictionary, text_value=text, binary_value=binary)
 
 
@@ -278,12 +342,12 @@ def test_prepared_handle_slot_reuses_switches_and_closes_on_the_same_connection(
     assert current.execute('SELECT %s AS first', (11,)) == 1
     assert current.fetchone() == row(dictionary, first=11)
     same = statement_counts(connection)
-    assert same['Com_stmt_prepare'] == before['Com_stmt_prepare'] + 1
+    assert same['Client_stmt_prepare'] == before['Client_stmt_prepare'] + 1
     assert same['Com_stmt_execute'] == before['Com_stmt_execute'] + 2
     assert current.execute('SELECT %s AS second', (20,)) == 1
     assert current.fetchone() == row(dictionary, second=20)
     switched = statement_counts(connection)
-    assert switched['Com_stmt_prepare'] == same['Com_stmt_prepare'] + 1
+    assert switched['Client_stmt_prepare'] == same['Client_stmt_prepare'] + 1
     assert switched['Com_stmt_close'] == same['Com_stmt_close'] + 1
     assert columns.names == ('first',)
     assert current.close() is None
@@ -296,7 +360,7 @@ def test_prepared_handle_slot_reuses_switches_and_closes_on_the_same_connection(
     with buffered(connection, dictionary) as replacement:
         assert replacement.execute('SELECT %s AS replacement', (30,)) == 1
         assert replacement.fetchone() == row(dictionary, replacement=30)
-    assert statement_counts(connection)['Com_stmt_prepare'] == closed['Com_stmt_prepare'] + 1
+    assert statement_counts(connection)['Client_stmt_prepare'] == closed['Client_stmt_prepare'] + 1
 
 
 @requires_mysql
@@ -315,18 +379,18 @@ def test_prepared_reuse_compares_complete_sql_contents_and_confirmed_sql_mode(
             assert current.execute(source) == 1
             assert current.fetchone() == row(dictionary, value='a\n')
         repeated = statement_counts(connection)
-        assert repeated['Com_stmt_prepare'] == before['Com_stmt_prepare'] + 1
+        assert repeated['Client_stmt_prepare'] == before['Client_stmt_prepare'] + 1
         with connection.cursor() as setup:
             setup.execute("SET SESSION sql_mode='NO_BACKSLASH_ESCAPES'")
         assert current.execute(sql) == 1
         assert current.fetchone() == row(dictionary, value='a\\n')
         changed_context = statement_counts(connection)
-        assert changed_context['Com_stmt_prepare'] == repeated['Com_stmt_prepare'] + 1
+        assert changed_context['Client_stmt_prepare'] == repeated['Client_stmt_prepare'] + 1
         assert changed_context['Com_stmt_close'] == repeated['Com_stmt_close'] + 1
         assert current.execute(sql + ' ') == 1
         assert current.fetchone() == row(dictionary, value='a\\n')
         changed_sql = statement_counts(connection)
-        assert changed_sql['Com_stmt_prepare'] == changed_context['Com_stmt_prepare'] + 1
+        assert changed_sql['Client_stmt_prepare'] == changed_context['Client_stmt_prepare'] + 1
         assert changed_sql['Com_stmt_close'] == changed_context['Com_stmt_close'] + 1
 
 
@@ -344,7 +408,7 @@ def test_prepared_many_keeps_every_result_and_separates_current_and_batch_counts
                   else current.executemany(sql, values))
         assert result == 2
         counts = statement_counts(connection)
-        assert counts['Com_stmt_prepare'] - before['Com_stmt_prepare'] == 1
+        assert counts['Client_stmt_prepare'] - before['Client_stmt_prepare'] == 1
         assert counts['Com_stmt_execute'] - before['Com_stmt_execute'] == 3
         expected = [(row(dictionary, value=10),), (), (row(dictionary, value=30),)]
         for index, rows in enumerate(expected):
@@ -390,12 +454,17 @@ def test_prepared_many_insert_is_per_row_and_later_error_keeps_the_real_prefix(
             current.executemany('INSERT INTO prepared_prefix VALUES (%s)', [(1,), (2,), (1,), (3,)])
         assert caught.value.code == 1062 and caught.value.is_server_error is True
         counts = statement_counts(connection)
-        assert counts['Com_stmt_prepare'] - before['Com_stmt_prepare'] == 1
+        assert counts['Client_stmt_prepare'] - before['Client_stmt_prepare'] == 1
         assert counts['Com_stmt_execute'] - before['Com_stmt_execute'] == 3
-        assert current.batch_row_count == 2
+        # The failed third and unattempted fourth contributions prevent a
+        # complete batch count; the two real successes remain diagnostic facts.
+        assert current.batch_row_count is None
+        assert any('confirmed 2 commands' in note for note in caught.value.__notes__)
         for index in range(2):
             assert current.row_count == 1
-            assert current.fetchall() == ()
+            assert current.description is None
+            with pytest.raises(InterfaceError):
+                current.fetchall()
             if index == 0:
                 assert current.nextset() is True
         with pytest.raises(IntegrityError) as boundary:
@@ -408,7 +477,7 @@ def test_prepared_many_insert_is_per_row_and_later_error_keeps_the_real_prefix(
         # the earlier failed batch must not have sent its fourth source row.
         assert current.execute('INSERT INTO prepared_prefix VALUES (%s)', (3,)) == 1
         reused = statement_counts(connection)
-        assert reused['Com_stmt_prepare'] == counts['Com_stmt_prepare']
+        assert reused['Client_stmt_prepare'] == counts['Client_stmt_prepare']
         assert reused['Com_stmt_execute'] == counts['Com_stmt_execute'] + 1
         with connection.cursor() as check:
             assert check.execute('SELECT id FROM prepared_prefix ORDER BY id') == 3
@@ -431,7 +500,12 @@ def test_prepared_batch_call_counts_only_first_sets_but_exposes_every_native_set
             for index, rows in enumerate(expected):
                 assert current.row_count == len(rows)
                 assert current.batch_row_count == 2
-                assert current.fetchall() == rows
+                if current.description is None:
+                    assert rows == ()
+                    with pytest.raises(InterfaceError):
+                        current.fetchall()
+                else:
+                    assert current.fetchall() == rows
                 if not rows:
                     assert current.description is None
                 assert current.nextset() is (True if index < 5 else None)
