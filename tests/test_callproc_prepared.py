@@ -313,6 +313,21 @@ def test_managed_prepared_saved_mapping_survives_later_server_failure(routines: 
         with pytest.raises(SQLAeroError) as caught:
             cur.execute(f'SELECT * FROM {quote(routines.database)}.{quote(PREFIX + "_never_created")}')
         assert caught.value.code == 1146 and caught.value.is_server_error
+        # PREPARE failed before a complete target EXECUTE entered sending.
+        # It cannot replace the previous operation's confirmed output snapshot.
+        assert cur.call_output_params is saved
+        target = f'CALL {routines.qualified("failure")}(%s,%s)'
+        if streaming(kind):
+            cur.execute(target, (23, None))
+            assert cur.call_output_params is None
+            assert cur.fetchall() == formatted(kind, 'value', 23)
+            with pytest.raises(SQLAeroError) as executed:
+                cur.nextset()
+        else:
+            with pytest.raises(SQLAeroError) as executed:
+                cur.execute(target, (23, None))
+            assert cur.fetchall() == formatted(kind, 'value', 23)
+        assert executed.value.code == 1644 and executed.value.is_server_error
         assert cur.call_output_params is None
         connection.close()
         assert dict(saved) == {1: 10, 2: 11}
