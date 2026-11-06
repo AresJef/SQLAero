@@ -360,6 +360,7 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
     record_property('allocation_tracing_was_active', was_tracing)
     try:
         captured: KeyboardInterrupt | None = None
+        completed_names: tuple[str, ...] | None = None
         try:
             if not was_tracing:
                 # Standard allocation tracing broadens the same real output work;
@@ -371,10 +372,29 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
             alarm.start(0.00005, 0.00005, wait_ready=True)
             try:
                 _ = read_names()
+                completed_names = _
             except KeyboardInterrupt as error:
                 captured = error
         finally:
             alarm.close()
+        # Sample before diagnostic properties or identity sets allocate. This
+        # global net difference includes return/alarm cleanup, not an item count.
+        normal_completion_delta = (
+            sys.getallocatedblocks() - baseline if completed_names is not None else None
+        )
+        record_property('signal_diagnostic_reads', sorted(reads))
+        record_property('signal_diagnostic_samples', samples)
+        record_property('signal_diagnostic_returned', returned)
+        record_property('signal_diagnostic_normal_completion_net_blocks_after_return_and_alarm_cleanup',
+                        normal_completion_delta)
+        if captured is None and completed_names is not None:
+            record_property('signal_diagnostic_completed_length', len(completed_names))
+            record_property('signal_diagnostic_completed_unique_object_ids',
+                            len({id(name) for name in completed_names}))
+            record_property('signal_diagnostic_completed_aa_same_value_is',
+                            completed_names[0] is completed_names[2] if len(completed_names) > 2 else None)
+            record_property('signal_diagnostic_completed_ab_same_value_is',
+                            completed_names[1] is completed_names[3] if len(completed_names) > 3 else None)
         assert captured is original, f'no original interruption during conversion; progress samples={samples}'
         assert not returned, 'the diagnostic value was delivered before interruption'
         assert len(observed) == 1, 'no in-progress diagnostic signal was observed'
@@ -391,6 +411,10 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
         assert certificate.dns_names is names
         assert certificate.to_der() is original_der
         assert certificate.fingerprint_sha256 == hashlib.sha256(original_der).hexdigest()
+        record_property('signal_diagnostic_retry_length', len(names))
+        record_property('signal_diagnostic_retry_unique_object_ids', len({id(name) for name in names}))
+        record_property('signal_diagnostic_retry_aa_same_value_is', names[0] is names[2])
+        record_property('signal_diagnostic_retry_ab_same_value_is', names[1] is names[3])
     finally:
         if not was_tracing:
             tracemalloc.stop()
