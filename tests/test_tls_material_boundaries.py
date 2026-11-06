@@ -36,12 +36,13 @@ def _policy(source: Source, member: Path) -> SSL:
 
 
 @requires_mysql
-@pytest.mark.skipif(os.name != 'posix', reason='requires POSIX FIFO and Unix socket file objects')
 @pytest.mark.parametrize('source', ['file', 'dir'])
 @pytest.mark.parametrize('kind', ['fifo', 'socket'])
 def test_special_ca_object_is_rejected_without_waiting_for_stream_contents(
     source: Source, kind: str,
 ) -> None:
+    if sys.platform == 'win32':
+        pytest.skip('requires POSIX FIFO and Unix socket file objects')
     # A short owned directory also stays within native Unix socket path limits.
     with TemporaryDirectory(prefix='sqlaero-ca-', dir='/tmp') as directory:
         parent = Path(directory)
@@ -79,29 +80,98 @@ print('special CA object rejected before stream reading')
             assert result.stdout.strip() == 'special CA object rejected before stream reading'
 
 
+@contextmanager
+def _deny_ca_read(member: Path) -> Generator[None, None, None]:
+    if os.name == 'nt':
+        # Preserve this one owned file's exact DACL. Deny only read-data to the
+        # current SID, retaining the owner's ability to restore its permissions.
+        # https://learn.microsoft.com/windows-server/administration/windows-commands/icacls
+        identity = subprocess.run(['whoami.exe', '/user', '/fo', 'csv', '/nh'],
+                                  capture_output=True, timeout=8, check=True)
+        sid = identity.stdout.split(b',')[-1].strip().strip(b'"').decode('ascii')
+        assert sid.startswith('S-1-') and all(part.isdecimal() for part in sid.split('-')[1:])
+        saved = member.with_suffix('.acl')
+        restored = member.with_suffix('.restored-acl')
+
+        def acl(*arguments: str) -> None:
+            subprocess.run(['icacls.exe', *arguments, '/q'], cwd=member.parent,
+                           capture_output=True, timeout=8, check=True)
+
+        acl(member.name, '/save', saved.name)
+        original_acl = saved.read_bytes()
+        try:
+            acl(member.name, '/deny', f'*{sid}:(RD)')
+            yield
+        finally:
+            acl('.', '/restore', saved.name)
+            acl(member.name, '/save', restored.name)
+            assert restored.read_bytes() == original_acl, 'the owned file DACL was not restored exactly'
+    else:
+        original_mode = member.stat().st_mode
+        try:
+            member.chmod(0)
+            yield
+        finally:
+            member.chmod(original_mode)
+
+
+def _assert_unreadable_ca(source: Source, member: Path) -> None:
+    assert _policy(source, member) is not None
+    with _deny_ca_read(member):
+        with pytest.raises(PermissionError) as caught:
+            _policy(source, member)
+        assert caught.value.errno == errno.EACCES
+        if os.name == 'nt':
+            assert getattr(caught.value, 'winerror', None) == 5
+        diagnostic = '\n'.join([str(caught.value), *getattr(caught.value, '__notes__', [])])
+        assert 'unreadable.pem' in diagnostic
+        assert 'BEGIN CERTIFICATE' not in diagnostic
+    assert _policy(source, member) is not None
+
+
 @requires_mysql
-@pytest.mark.skipif(os.name != 'posix', reason='requires an actual POSIX EACCES boundary')
 @pytest.mark.parametrize('source', ['file', 'dir'])
 def test_actual_unreadable_ca_preserves_permission_error_and_member_path(
     tmp_path: Path, source: Source,
 ) -> None:
-    if os.geteuid() == 0:
-        pytest.skip('root cannot establish this test account permission boundary')
+    ca = (ROOT / 'tls/ca.pem').read_bytes()
+    if os.name == 'posix' and os.geteuid() == 0:
+        import pwd
+        identity = pwd.getpwnam('nobody')
+        assert identity.pw_uid != 0, 'the permission child must use an existing nonroot identity'
+        # The child owns only a new temporary directory and public certificate;
+        # no fixture, checkout, global user or parent permission is changed.
+        with TemporaryDirectory(prefix='sqlaero-ca-permission-', dir='/tmp') as directory:
+            parent = Path(directory)
+            member = parent / 'unreadable.pem'
+            member.write_bytes(ca)
+            os.chown(parent, identity.pw_uid, identity.pw_gid)
+            os.chown(member, identity.pw_uid, identity.pw_gid)
+            code = r'''
+import os
+from pathlib import Path
+import sys
+import sysconfig
+assert os.geteuid() != 0
+if sysconfig.get_config_var('Py_GIL_DISABLED'):
+    assert not sys._is_gil_enabled()
+sys.path.insert(0, sys.argv[3])
+from test_tls_material_boundaries import _assert_unreadable_ca
+_assert_unreadable_ca(sys.argv[1], Path(sys.argv[2]))
+if sysconfig.get_config_var('Py_GIL_DISABLED'):
+    assert not sys._is_gil_enabled()
+print('nonroot permission boundary and restoration verified')
+'''
+            child = subprocess.run([sys.executable, '-c', code, source, str(member),
+                                    str(Path(__file__).resolve().parent)],
+                                   user=identity.pw_uid, group=identity.pw_gid, extra_groups=[],
+                                   capture_output=True, text=True, timeout=8, check=False)
+            assert child.returncode == 0, child.stdout + child.stderr
+            assert child.stdout.strip() == 'nonroot permission boundary and restoration verified'
+        return
     member = tmp_path / 'unreadable.pem'
-    member.write_bytes((ROOT / 'tls/ca.pem').read_bytes())
-    assert _policy(source, member) is not None
-    original_mode = member.stat().st_mode
-    try:
-        member.chmod(0)
-        with pytest.raises(PermissionError) as caught:
-            _policy(source, member)
-        assert caught.value.errno == errno.EACCES
-        diagnostic = '\n'.join([str(caught.value), *getattr(caught.value, '__notes__', [])])
-        assert 'unreadable.pem' in diagnostic
-        assert 'BEGIN CERTIFICATE' not in diagnostic
-    finally:
-        member.chmod(original_mode)
-    assert _policy(source, member) is not None
+    member.write_bytes(ca)
+    _assert_unreadable_ca(source, member)
 
 
 def _openssl() -> str:
