@@ -2,6 +2,7 @@
 
 # pyright: reportPrivateUsage=false
 
+from collections.abc import Callable
 import math
 import subprocess
 import sys
@@ -718,15 +719,53 @@ def test_numpy_record_callback_failure_preserves_the_original_exception_and_rele
 
 
 @pytest.mark.parametrize("kind", ["S", "U"])
-def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(kind: str) -> None:
+def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(
+    kind: str, record_property: Callable[[str, object], None],
+) -> None:
+    from time import perf_counter_ns
     from sqlaero._sqlaero import OperationalTimeoutError
     # Prepare the same provider before starting the tested operation budget.
     _sqlaero._bind_sql("SELECT %s", np.array(["x"], dtype=f"{kind}1"))
     source = np.array(["'" * (8 * 1024 * 1024)], dtype=f"{kind}{8 * 1024 * 1024}")
+    args = (7, source)
+    encoder = _sqlaero._prepare_encoder()
+    observations_ns: list[int] = []
+    for index in range(2):
+        started = perf_counter_ns()
+        owner = encoder.encode(args)
+        elapsed_ns = perf_counter_ns() - started
+        observations_ns.append(elapsed_ns)
+        record_property(f"native_observation_{index + 1}_ns", elapsed_ns)
+        # Both original payloads expand to at least two bytes per source quote.
+        # Length checks and owner destruction stay outside the observation.
+        assert len(owner) >= 2 * (8 * 1024 * 1024)
+        del owner
+    timeout_ns = min(5_000_000, min(observations_ns) // 2)
+    record_property("timeout_budget_ns", timeout_ns)
+    assert timeout_ns > 0, observations_ns
+    actual_elapsed_ns = 0
     with pytest.raises(OperationalTimeoutError) as caught:
-        _sqlaero._bind_sql("SELECT %s,%s", (7, source), timeout_ns=5_000_000)
+        started = perf_counter_ns()
+        try:
+            _sqlaero._bind_sql("SELECT %s,%s", args, timeout_ns=timeout_ns)
+        except BaseException as error:
+            actual_elapsed_ns = perf_counter_ns() - started
+            record_property("bind_elapsed_ns", actual_elapsed_ns)
+            record_property("bind_outcome", type(error).__name__)
+            record_property("bind_error_code", getattr(error, "code", None))
+            record_property("bind_location", "\n".join(getattr(error, "__notes__", ())))
+            raise
+        else:
+            actual_elapsed_ns = perf_counter_ns() - started
+            record_property("bind_elapsed_ns", actual_elapsed_ns)
+            record_property("bind_outcome", "success")
+            record_property("bind_error_code", None)
+            record_property("bind_location", "")
     assert caught.value.code == 65544
-    assert "args[1]" in "\n".join(getattr(caught.value, "__notes__", ()))
+    notes = "\n".join(getattr(caught.value, "__notes__", ()))
+    diagnostics = (observations_ns, timeout_ns, actual_elapsed_ns, notes)
+    assert "args[1]" in notes, diagnostics
+    assert "args[1][0]" in notes, diagnostics
 
 
 @pytest.mark.parametrize("kind", ["S", "U"])
