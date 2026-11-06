@@ -1,13 +1,16 @@
 """Final result-set, retained-prefix and navigation contracts on installed wheels."""
 
+from typing import SupportsIndex, cast
+
 import pytest
 
+from sqlaero import Connection
 from sqlaero.errors import ProgrammingError
-from test_public_connection import connection, requires_mysql
+from test_public_connection import connection as connection, requires_mysql
 
 
 @requires_mysql
-def test_current_set_counts_and_all_results_are_independent(connection):
+def test_current_set_counts_and_all_results_are_independent(connection: Connection) -> None:
     with connection.cursor() as cur:
         assert hasattr(cur, "nextset")
         assert cur.execute("SELECT 10 AS first UNION ALL SELECT 11; SELECT 20 AS second") == 2
@@ -29,7 +32,7 @@ def test_current_set_counts_and_all_results_are_independent(connection):
 
 
 @requires_mysql
-def test_all_batch_requests_are_retained_and_first_counts_are_summed(connection):
+def test_all_batch_requests_are_retained_and_first_counts_are_summed(connection: Connection) -> None:
     with connection.cursor() as cur:
         assert cur.executemany("SELECT %s AS value", [(10,), (20,), (30,)]) == 3
         assert cur.batch_row_count == 3
@@ -40,7 +43,7 @@ def test_all_batch_requests_are_retained_and_first_counts_are_summed(connection)
 
 
 @requires_mysql
-def test_later_server_error_keeps_trusted_prefix_and_failure_boundary(connection):
+def test_later_server_error_keeps_trusted_prefix_and_failure_boundary(connection: Connection) -> None:
     with connection.cursor() as cur:
         with pytest.raises(ProgrammingError) as caught:
             cur.execute("SELECT 7 AS trusted; SELECT * FROM sqlaero_absent_result_chain_table")
@@ -58,7 +61,7 @@ def test_later_server_error_keeps_trusted_prefix_and_failure_boundary(connection
 
 
 @requires_mysql
-def test_local_preflight_failure_does_not_replace_old_chain(connection):
+def test_local_preflight_failure_does_not_replace_old_chain(connection: Connection) -> None:
     with connection.cursor() as cur:
         cur.execute("SELECT 1 AS first; SELECT 2 AS second")
         old_columns = cur.columns
@@ -71,9 +74,9 @@ def test_local_preflight_failure_does_not_replace_old_chain(connection):
 
 
 @requires_mysql
-def test_buffered_navigation_keeps_native_rows_at_eof(connection):
+def test_buffered_navigation_keeps_native_rows_at_eof(connection: Connection) -> None:
     class Index:
-        def __index__(self):
+        def __index__(self) -> int:
             return 0
 
     with connection.cursor() as cur:
@@ -89,7 +92,8 @@ def test_buffered_navigation_keeps_native_rows_at_eof(connection):
         assert cur.fetchone() is None
         for invalid in (True, 1.5, "1", None):
             with pytest.raises(TypeError):
-                cur.scroll(invalid)
+                # Deliberate runtime rejection cases remain unchanged objects.
+                cur.scroll(cast(SupportsIndex, invalid))
         connection.close()
         cur.scroll(0, mode="absolute")
         assert cur.fetchall() == ((1,), (2,))
