@@ -466,8 +466,15 @@ pub struct CommandConfirmation {
     pub(crate) warnings: u16,
     pub(crate) last_insert_id: Option<u64>,
     status: StatusFlags,
+    has_rows: bool,
 }
 impl CommandConfirmation {
+    /// Whether the actually parsed terminal response was a row result, even
+    /// when its row count is zero. This is not inferred from SQL or counts.
+    #[must_use]
+    pub const fn has_rows(self) -> bool {
+        self.has_rows
+    }
     /// Status bits validated in the complete final terminator. They do not
     /// supply missing SESSION_TRACK values after local ownership failed.
     #[must_use]
@@ -478,11 +485,14 @@ impl CommandConfirmation {
     /// Capture only a complete native response, never a sent/partial command.
     #[must_use]
     pub fn from_response(response: &Response) -> Self {
-        Self::from_completion(response.completion(), match response {
-            Response::Command(_) => None,
-            Response::Rows(result) => Some(result.row_count),
-            Response::Counted { rows, .. } => Some(*rows),
-        })
+        Self::from_completion(
+            response.completion(),
+            match response {
+                Response::Command(_) => None,
+                Response::Rows(result) => Some(result.row_count),
+                Response::Counted { rows, .. } => Some(*rows),
+            },
+        )
     }
 
     /// Capture a real streaming set terminator, without inventing a buffered
@@ -490,10 +500,14 @@ impl CommandConfirmation {
     #[must_use]
     pub fn from_completion(completion: &OkPacket<'_>, rows: Option<usize>) -> Self {
         Self {
-            count: rows.map_or_else(|| u128::from(completion.affected_rows()), |rows| rows as u128),
+            count: rows.map_or_else(
+                || u128::from(completion.affected_rows()),
+                |rows| rows as u128,
+            ),
             warnings: completion.warnings(),
             last_insert_id: completion.last_insert_id(),
             status: completion.status_flags(),
+            has_rows: rows.is_some(),
         }
     }
 }
@@ -767,9 +781,7 @@ impl Receiver {
 
     fn take_rows(&mut self) -> Result<RowBatch, ResultError> {
         if self.discard {
-            return Err(
-                WireError::Malformed("discarded rows have no publishable storage").into(),
-            );
+            return Err(WireError::Malformed("discarded rows have no publishable storage").into());
         }
         let owner = self.scope.charge(size_of::<RowBatch>())?;
         let columns = self.freeze_columns()?;
@@ -841,6 +853,7 @@ impl Receiver {
                 warnings: packet.warnings(),
                 last_insert_id: packet.last_insert_id(),
                 status: packet.status_flags(),
+                has_rows: rows.is_some(),
             });
         }
     }
@@ -1128,6 +1141,7 @@ mod tests {
             .take_confirmation()
             .expect("validated final ACK facts");
         assert_eq!(confirmed.status(), StatusFlags::SERVER_STATUS_AUTOCOMMIT);
+        assert!(!confirmed.has_rows());
         assert!(collector.take_confirmation().is_none());
         drop(collector);
         drop(scope);
@@ -1148,6 +1162,7 @@ mod tests {
             .take_confirmation()
             .expect("validated control EOF before local storage failure");
         assert_eq!(control_ack.count, 0);
+        assert!(!control_ack.has_rows());
         assert_eq!(control_ack.warnings, 3);
         assert_eq!(
             control_ack.status(),
@@ -1247,6 +1262,27 @@ mod tests {
             discard,
         )
         .unwrap()
+    }
+    #[test]
+    fn zero_row_completion_is_not_a_no_row_command_confirmation() {
+        let pool = Pool::new(1_000_000);
+        let mut rows = receiver(&pool, false);
+        rows.push(&[1]).unwrap();
+        rows.push(&packet(253)).unwrap();
+        let row_response = rows.push(&[0xfe, 0, 0, 2, 0, 0, 0]).unwrap().unwrap();
+        assert!(matches!(&row_response, Response::Rows(value) if value.row_count == 0));
+        assert!(rows.take_confirmation().unwrap().has_rows());
+        assert!(CommandConfirmation::from_response(&row_response).has_rows());
+        let mut command = receiver(&pool, false);
+        let command_response = command.push(&[0, 0, 0, 2, 0, 0, 0]).unwrap().unwrap();
+        assert!(matches!(&command_response, Response::Command(_)));
+        assert!(!command.take_confirmation().unwrap().has_rows());
+        assert!(!CommandConfirmation::from_response(&command_response).has_rows());
+        drop(row_response);
+        drop(command_response);
+        drop(rows);
+        drop(command);
+        assert_eq!(pool.used(), 0);
     }
     #[test]
     fn metadata_matches_public_packet_parser_and_has_separate_ownership() {
