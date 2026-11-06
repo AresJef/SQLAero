@@ -111,3 +111,26 @@ fn large_protected_source_yields_without_reinterpreting_binding_directives() {
     assert_eq!(request.as_ptr(), pointer);
     assert!(request.ends_with(b"SET a=%(name)s, b=%s, c=%%;"));
 }
+
+#[test]
+fn a_non_load_first_keyword_returns_before_scanning_a_long_sql_tail() {
+    let codec = Codec::new(resolve(None, None).unwrap().charset);
+    for prefix in [
+        b"\x03SELECT ".as_slice(),
+        b"\x03/* ordinary */ SHOW ",
+        b"\x03/*!80000 ",
+        b"\x03'not LOAD'",
+    ] {
+        let mut request = prefix.to_vec();
+        request.extend(std::iter::repeat_n(b'\'', 2_000_000));
+        let pointer = request.as_ptr();
+        let mut compiler = Compiler::for_local_query(request, codec, false, false);
+        let template = compiler
+            .advance()
+            .unwrap()
+            .expect("a rejected prefix must not scan the long tail");
+        assert!(!template.is_single_local_infile());
+        let request = template.into_source();
+        assert_eq!(request.as_ptr(), pointer);
+    }
+}

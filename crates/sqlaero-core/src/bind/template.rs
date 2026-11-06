@@ -307,6 +307,14 @@ pub struct Compiler {
     merge_safe: bool,
     native_markers: bool,
     binding: bool,
+    local: LocalGate,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LocalGate {
+    Off,
+    Prefix,
+    Load,
+    Rejected,
 }
 #[derive(Clone, Copy)]
 enum Lex {
@@ -345,6 +353,7 @@ impl Compiler {
             merge_safe: true,
             native_markers: false,
             binding: true,
+            local: LocalGate::Off,
         }
     }
 
@@ -358,9 +367,11 @@ impl Compiler {
     }
 
     /// Inspect an already assembled COM_QUERY without activating binding or
-    /// changing its bytes. The command prefix is retained in the allocation
-    /// but excluded from SQL tokens. A different/missing prefix is unreliable
-    /// for LOCAL authorization and can never produce a positive classification.
+    /// changing its bytes. A non-LOAD first keyword returns immediately without
+    /// token/piece allocation or scanning the remaining SQL. Actual LOAD keeps
+    /// bounded lexical checks. This read-only template is consumed with
+    /// `is_single_local_infile` and `into_source`, never as a binding writer.
+    /// A different/missing command prefix cannot authorize a LOCAL source.
     #[must_use]
     pub fn for_local_query(
         request: Vec<u8>,
@@ -369,10 +380,15 @@ impl Compiler {
         ansi_quotes: bool,
     ) -> Self {
         let valid = request.first() == Some(&0x03);
-        let mut compiler = Self::for_batch(request, codec, no_backslash, ansi_quotes);
+        let mut compiler = Self::new(request, codec, no_backslash, ansi_quotes);
         compiler.binding = false;
         compiler.merge_safe = valid;
-        compiler.position = usize::from(valid);
+        compiler.local = if valid {
+            LocalGate::Prefix
+        } else {
+            LocalGate::Rejected
+        };
+        compiler.position = if valid { 1 } else { compiler.source.len() };
         compiler
     }
 
@@ -506,7 +522,7 @@ impl Compiler {
                     }
                 }
                 Lex::Code => {
-                    if self.tokens.is_some()
+                    if (self.tokens.is_some() || self.local == LocalGate::Prefix)
                         && (byte >= 128
                             || byte.is_ascii_alphanumeric()
                             || matches!(byte, b'_' | b'$'))
@@ -521,6 +537,10 @@ impl Compiler {
                     }
                     match byte {
                         b'\'' | b'"' | b'`' => {
+                            if self.local == LocalGate::Prefix {
+                                self.reject_local();
+                                continue;
+                            }
                             self.state = Lex::Quote {
                                 delimiter: byte,
                                 identifier: byte == b'`' || (byte == b'"' && self.ansi_quotes),
@@ -548,6 +568,10 @@ impl Compiler {
                                     .get(position + 2)
                                     .is_some_and(|byte| matches!(byte, b'!' | b'+'))
                             {
+                                if self.local != LocalGate::Off {
+                                    self.reject_local();
+                                    continue;
+                                }
                                 self.merge_safe = false;
                                 self.special = true;
                                 self.position += 3;
@@ -565,6 +589,10 @@ impl Compiler {
                             });
                         }
                         b'%' => {
+                            if self.local == LocalGate::Prefix {
+                                self.reject_local();
+                                continue;
+                            }
                             if !self.binding {
                                 self.position += 1;
                                 continue;
@@ -594,6 +622,10 @@ impl Compiler {
                         }
                         _ => {
                             if !byte.is_ascii_whitespace() {
+                                if self.local == LocalGate::Prefix {
+                                    self.reject_local();
+                                    continue;
+                                }
                                 self.token(byte, position, position + 1)?;
                             }
                             self.position += 1;
@@ -610,7 +642,7 @@ impl Compiler {
         } else if !matches!(self.state, Lex::Code | Lex::Line) {
             self.merge_safe = false;
         }
-        if self.copied < self.source.len() {
+        if self.local == LocalGate::Off && self.copied < self.source.len() {
             self.pieces.try_reserve(1).map_err(WireError::from)?;
             self.pieces
                 .push(Piece::Bytes(self.copied..self.source.len()));
@@ -635,8 +667,23 @@ impl Compiler {
         Ok(())
     }
     fn word(&mut self, start: usize, end: usize) -> Result<(), WireError> {
+        if self.local == LocalGate::Prefix {
+            if !self.source[start..end].eq_ignore_ascii_case(b"LOAD") {
+                self.reject_local();
+                return Ok(());
+            }
+            self.local = LocalGate::Load;
+            self.tokens = Some(Vec::new());
+        }
         let symbol = super::batch::word(&self.source[start..end]);
         self.token(symbol, start, end)
+    }
+    fn reject_local(&mut self) {
+        self.local = LocalGate::Rejected;
+        self.merge_safe = false;
+        self.tokens = None;
+        self.position = self.source.len();
+        self.state = Lex::Code;
     }
     fn character(&self, position: usize) -> usize {
         self.codec
