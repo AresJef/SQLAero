@@ -1045,6 +1045,15 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
         unsafe in-request binding-context changes fail before that request sends.
         No merge switch or execute-time adaptive measurement is provided.
 
+        Text parameter/percent directives after a statement changing sql_mode,
+        the input charset/collation, or time_zone are rejected before sending.
+        The same conservative boundary follows opaque CALL/EXECUTE statements.
+        The suffix is not reinterpreted using guessed new quote or encoding
+        rules. Execute and confirm the change separately, then bind the next
+        request. Raw omitted-args SQL and settings unrelated to input binding
+        remain supported. This does not predict arbitrary hidden routine
+        mutations; do not change binding dependencies inside such a request.
+
         Buffered classes return the reliable sum of each actual request's first
         result count. SS returns None while a required contribution is unknown;
         None is neither zero rows nor execution failure. Current-set counts and
@@ -1082,6 +1091,8 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
         this independent local helper. It does not occupy execution/fetch state,
         inherit SQL deadlines or use database result quotas. Actual later sends
         may differ after facts change; the preview is not execution confirmation.
+        Unsafe in-request text-binding context changes use execute's same local
+        rejection rule, including readable prepared previews.
         """
         ...
     def callproc(self, proc_name: str, args: object = (), *, database: str | None = None,

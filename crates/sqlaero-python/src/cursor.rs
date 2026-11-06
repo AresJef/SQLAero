@@ -1740,6 +1740,11 @@ macro_rules! cursor_api {
             /// Omitted args sends original SQL; explicit None binds one NULL.
             /// many/itemize are exact bool and keyword-only. All request chunks
             /// share one deadline. Confirmed prefixes never imply a commit.
+            /// Text directives after a statement changing input charset,
+            /// sql_mode or time_zone, or after opaque CALL/EXECUTE, fail locally
+            /// before the request sends. Run and confirm that statement first,
+            /// then bind the next request. Hidden routine mutations are not
+            /// predicted by a general SQL interpreter.
             /// Escape validates supported built-in values, approved real
             /// subclasses, containers and optional NumPy/Pandas/Arrow/Polars
             /// inputs. One-dimensional sources follow many/itemize; tables

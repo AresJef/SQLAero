@@ -28,6 +28,18 @@ pub enum TemplateError {
         /// Zero-based original Unicode character of the raw marker.
         offset: usize,
     },
+    /// A preceding statement can change how later text values are parsed.
+    #[error(
+        "cannot safely bind the directive at SQL character {offset} after {setting} at SQL character {change_offset} may change the request context; execute the context change separately and wait for its response before binding another request"
+    )]
+    ContextChange {
+        /// Zero-based original character of the later potential directive.
+        offset: usize,
+        /// Zero-based original character of the context-changing target.
+        change_offset: usize,
+        /// The lexical setting or opaque statement responsible for the barrier.
+        setting: &'static str,
+    },
     /// A native allocation or final request-bound failure.
     #[error(transparent)]
     Wire(#[from] WireError),
@@ -308,6 +320,169 @@ pub struct Compiler {
     native_markers: bool,
     binding: bool,
     local: LocalGate,
+    context: ContextGuard,
+    special_version: bool,
+    hint: bool,
+}
+
+#[derive(Clone, Copy)]
+struct ContextChange {
+    start: usize,
+    setting: &'static str,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ContextStatement {
+    First,
+    Other,
+    Set,
+}
+
+/// Observe only statement prefixes and SET assignment targets, never SQL
+/// expressions or Python values. This is a binding precondition, not a SQL
+/// validator. A possible change remains unconfirmed for this whole request.
+struct ContextGuard {
+    enabled: bool,
+    statement: ContextStatement,
+    default_global: bool,
+    target_global: bool,
+    at_marks: u8,
+    value: bool,
+    depth: usize,
+    character: bool,
+    candidate: Option<ContextChange>,
+    pending: Option<ContextChange>,
+    barrier: Option<ContextChange>,
+}
+
+impl ContextGuard {
+    fn new() -> Self {
+        Self {
+            enabled: true,
+            statement: ContextStatement::First,
+            default_global: false,
+            target_global: false,
+            at_marks: 0,
+            value: false,
+            depth: 0,
+            character: false,
+            candidate: None,
+            pending: None,
+            barrier: None,
+        }
+    }
+
+    fn needs_words(&self) -> bool {
+        self.enabled
+            && self.barrier.is_none()
+            && (self.statement == ContextStatement::First
+                || (self.statement == ContextStatement::Set && !self.value))
+    }
+
+    fn word(&mut self, word: &[u8], start: usize) {
+        if !self.needs_words() {
+            return;
+        }
+        if self.statement == ContextStatement::First {
+            self.statement = if word.eq_ignore_ascii_case(b"SET") {
+                ContextStatement::Set
+            } else {
+                ContextStatement::Other
+            };
+            let setting = if word.eq_ignore_ascii_case(b"CALL") {
+                Some("CALL")
+            } else if word.eq_ignore_ascii_case(b"EXECUTE") {
+                Some("EXECUTE")
+            } else {
+                None
+            };
+            self.pending = setting.map(|setting| ContextChange { start, setting });
+            return;
+        }
+        if self.at_marks == 1 {
+            return; // @user variables cannot change the input context.
+        }
+        if word.eq_ignore_ascii_case(b"GLOBAL")
+            || word.eq_ignore_ascii_case(b"PERSIST")
+            || word.eq_ignore_ascii_case(b"PERSIST_ONLY")
+        {
+            self.target_global = true;
+            if self.at_marks == 0 {
+                self.default_global = true;
+            }
+        } else if word.eq_ignore_ascii_case(b"SESSION") || word.eq_ignore_ascii_case(b"LOCAL") {
+            self.target_global = false;
+            if self.at_marks == 0 {
+                self.default_global = false;
+            }
+        } else if !self.target_global {
+            if self.at_marks == 0
+                && (word.eq_ignore_ascii_case(b"NAMES")
+                    || word.eq_ignore_ascii_case(b"CHARSET")
+                    || (self.character && word.eq_ignore_ascii_case(b"SET")))
+            {
+                self.pending.get_or_insert(ContextChange {
+                    start,
+                    setting: "SET NAMES / CHARACTER SET / CHARSET",
+                });
+                self.value = true;
+            } else {
+                self.character = self.at_marks == 0 && word.eq_ignore_ascii_case(b"CHARACTER");
+                self.candidate = [
+                    "sql_mode",
+                    "character_set_client",
+                    "character_set_connection",
+                    "collation_connection",
+                    "time_zone",
+                ]
+                .into_iter()
+                .find(|name| word.eq_ignore_ascii_case(name.as_bytes()))
+                .map(|setting| ContextChange { start, setting });
+            }
+        }
+    }
+
+    fn punctuation(&mut self, symbol: u8) {
+        if !self.enabled {
+            return;
+        }
+        if symbol == b';' {
+            self.barrier = self.barrier.or(self.pending);
+            self.statement = ContextStatement::First;
+            self.default_global = false;
+            self.reset_target();
+        } else if self.statement == ContextStatement::Set {
+            match symbol {
+                b'@' if !self.value => {
+                    if self.at_marks == 0 {
+                        // @@ without an explicit qualifier means SESSION,
+                        // even after a sticky GLOBAL keyword assignment.
+                        self.target_global = false;
+                    }
+                    self.at_marks = self.at_marks.saturating_add(1);
+                }
+                b'=' if !self.value => {
+                    if self.at_marks != 1 && !self.target_global {
+                        self.pending = self.pending.or(self.candidate);
+                    }
+                    self.value = true;
+                }
+                b'(' => self.depth = self.depth.saturating_add(1),
+                b')' => self.depth = self.depth.saturating_sub(1),
+                b',' if self.depth == 0 => self.reset_target(),
+                _ => (),
+            }
+        }
+    }
+
+    fn reset_target(&mut self) {
+        self.target_global = self.default_global;
+        self.at_marks = 0;
+        self.value = false;
+        self.depth = 0;
+        self.character = false;
+        self.candidate = None;
+    }
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum LocalGate {
@@ -354,6 +529,9 @@ impl Compiler {
             native_markers: false,
             binding: true,
             local: LocalGate::Off,
+            context: ContextGuard::new(),
+            special_version: false,
+            hint: false,
         }
     }
 
@@ -382,6 +560,7 @@ impl Compiler {
         let valid = request.first() == Some(&0x03);
         let mut compiler = Self::new(request, codec, no_backslash, ansi_quotes);
         compiler.binding = false;
+        compiler.context.enabled = false;
         compiler.merge_safe = valid;
         compiler.local = if valid {
             LocalGate::Prefix
@@ -403,6 +582,22 @@ impl Compiler {
     ) -> Self {
         let mut compiler = Self::new(source, codec, no_backslash, ansi_quotes);
         compiler.native_markers = true;
+        compiler.context.enabled = false;
+        compiler
+    }
+
+    /// Build a readable text preview with native-marker validation and the
+    /// same context barrier as ordinary text interpolation. Actual PREPARE
+    /// leaves multiple-statement validity to the server instead.
+    #[must_use]
+    pub fn for_prepared_display(
+        source: Vec<u8>,
+        codec: Codec,
+        no_backslash: bool,
+        ansi_quotes: bool,
+    ) -> Self {
+        let mut compiler = Self::for_prepared(source, codec, no_backslash, ansi_quotes);
+        compiler.context.enabled = true;
         compiler
     }
 
@@ -445,10 +640,31 @@ impl Compiler {
         while self.position < boundary {
             let position = self.position;
             let byte = self.source[position];
+            if let Some(change) = self.context.barrier {
+                // The old lexer/codec can no longer prove which later bytes
+                // are protected. Inspect the bounded suffix conservatively,
+                // without rewriting it or guessing the new server context.
+                if byte == b'%'
+                    && self
+                        .source
+                        .get(position + 1)
+                        .is_some_and(|next| matches!(next, b's' | b'%' | b'('))
+                {
+                    return Err(TemplateError::ContextChange {
+                        offset: self.source_position(position)?,
+                        change_offset: self.source_position(change.start)?,
+                        setting: change.setting,
+                    });
+                }
+                self.position += 1;
+                continue;
+            }
             // Executable comments terminate at the original block boundary,
             // including when their interior quote or line comment is unfinished.
             if self.special && self.source.get(position..position + 2) == Some(b"*/") {
                 self.special = false;
+                self.special_version = false;
+                self.hint = false;
                 self.state = Lex::Code;
                 self.position += 2;
                 continue;
@@ -522,7 +738,9 @@ impl Compiler {
                     }
                 }
                 Lex::Code => {
-                    if (self.tokens.is_some() || self.local == LocalGate::Prefix)
+                    if (self.tokens.is_some()
+                        || self.local == LocalGate::Prefix
+                        || self.context.needs_words())
                         && (byte >= 128
                             || byte.is_ascii_alphanumeric()
                             || matches!(byte, b'_' | b'$'))
@@ -574,6 +792,8 @@ impl Compiler {
                                 }
                                 self.merge_safe = false;
                                 self.special = true;
+                                self.special_version = self.source[position + 2] == b'!';
+                                self.hint = self.source[position + 2] == b'+';
                                 self.position += 3;
                             } else {
                                 self.state = Lex::Block;
@@ -660,6 +880,24 @@ impl Compiler {
         }))
     }
     fn token(&mut self, symbol: u8, start: usize, end: usize) -> Result<(), WireError> {
+        if !self.hint
+            && symbol == b'i'
+            && self
+                .source
+                .get(start)
+                .is_some_and(|byte| matches!(byte, b'`' | b'\'' | b'"'))
+        {
+            if self.context.statement == ContextStatement::First {
+                self.context.statement = ContextStatement::Other;
+            } else {
+                self.context.word(&self.source[start + 1..end - 1], start);
+            }
+        } else if !self.hint {
+            self.context.punctuation(symbol);
+        }
+        if self.context.barrier.is_some() {
+            self.merge_safe = false;
+        }
         if let Some(tokens) = &mut self.tokens {
             tokens.try_reserve(1)?;
             tokens.push(super::batch::Token { symbol, start, end });
@@ -674,6 +912,22 @@ impl Compiler {
             }
             self.local = LocalGate::Load;
             self.tokens = Some(Vec::new());
+        }
+        let mut context_start = start;
+        if self.special_version {
+            // MySQL recognizes five- or six-digit executable-comment version
+            // prefixes. Keep this work bounded even for a giant numeric word.
+            for _ in 0..6 {
+                if context_start == end || !self.source[context_start].is_ascii_digit() {
+                    break;
+                }
+                context_start += 1;
+            }
+            self.special_version = false;
+        }
+        if context_start < end && !self.hint {
+            self.context
+                .word(&self.source[context_start..end], context_start);
         }
         let symbol = super::batch::word(&self.source[start..end]);
         self.token(symbol, start, end)
@@ -755,6 +1009,122 @@ mod tests {
                 .slots(),
             1
         );
+    }
+
+    #[test]
+    fn context_changes_before_later_text_directives_are_rejected() {
+        for prefix in [
+            "SET sql_mode='NO_BACKSLASH_ESCAPES'",
+            "SET SESSION `sql_mode`=''",
+            "SET @@SESSION.sql_mode=''",
+            "SET @@local.`character_set_client`=latin1",
+            "SET @@`sql_mode`=''",
+            "SET LOCAL character_set_connection=latin1",
+            "SET NAMES latin1",
+            "SET CHARACTER SET latin1",
+            "SET CHARSET latin1",
+            "SET collation_connection=latin1_swedish_ci",
+            "SET time_zone='+01:00'",
+            "SET @label=CONCAT('a', 'b'), sql_mode=''",
+            "SET GLOBAL net_read_timeout=30, @@sql_mode=''",
+            "SET @@GLOBAL.net_read_timeout=30, sql_mode=''",
+            "SET GLOBAL net_read_timeout=30, SESSION sql_mode=''",
+            "/*!80000 SET sql_mode='' */",
+            "/*!80000SET sql_mode='' */",
+            "/*+ fixed_hint */ SET sql_mode=''",
+            "SET /*!80000 SESSION */ `sql_mode`=''",
+            "CALL application_routine()",
+            "EXECUTE application_statement",
+        ] {
+            let source = format!("{prefix}; SELECT %s");
+            assert!(
+                Template::compile(source.clone().into_bytes(), codec(), false, false).is_err(),
+                "an unconfirmed request context must not bind later values: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn unrelated_settings_and_values_before_a_change_keep_their_contract() {
+        for source in [
+            "SET @label=@@sql_mode; SELECT %s",
+            "SET @sql_mode='text'; SELECT %s",
+            "SET character_set_results=latin1; SELECT %s",
+            "SET net_read_timeout=30; SELECT %s",
+            "SET GLOBAL sql_mode=''; SELECT %s",
+            "SET GLOBAL net_read_timeout=30, sql_mode=''; SELECT %s",
+            "SET @@GLOBAL.sql_mode=''; SELECT %s",
+            "SET PERSIST sql_mode=''; SELECT %s",
+            "SET @@PERSIST_ONLY.sql_mode=''; SELECT %s",
+            "SET @sql_mode=@@sql_mode, @name=CONCAT('a', 'b'); SELECT %s",
+            "/*+ fixed_hint */ SELECT %s",
+            "SELECT 'SET NAMES latin1;'; SELECT %s",
+            "/* SET sql_mode=''; */ SELECT %s",
+            "SELECT %s; SET sql_mode=''; SELECT 1",
+            "SET sql_mode=%s",
+        ] {
+            assert_eq!(
+                Template::compile(source.as_bytes().to_vec(), codec(), false, false)
+                    .unwrap()
+                    .slots(),
+                1,
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn changed_context_suffix_does_not_reuse_old_quote_rules_or_rewrite_percent() {
+        for suffix in [
+            "SELECT %s",
+            "SELECT '%s'",
+            "SELECT \"%s\"",
+            "SELECT %%",
+            "SELECT %(name)s",
+        ] {
+            let source = format!("SET sql_mode='ANSI_QUOTES'; {suffix}");
+            assert!(matches!(
+                Template::compile(source.into_bytes(), codec(), false, false),
+                Err(TemplateError::ContextChange {
+                    setting: "sql_mode",
+                    ..
+                })
+            ));
+        }
+        let source = "SELECT '中'; SET sql_mode=''; SELECT %s";
+        let error = match Template::compile(source.as_bytes().to_vec(), codec(), false, false) {
+            Err(error) => error,
+            Ok(_) => panic!("the later directive must not use an unconfirmed context"),
+        };
+        assert!(matches!(error, TemplateError::ContextChange {
+            offset, change_offset, setting: "sql_mode",
+        } if offset == source.chars().position(|ch| ch == '%').unwrap()
+             && change_offset == 16));
+    }
+
+    #[test]
+    fn prepared_protocol_keeps_server_validation_while_text_preview_uses_guard() {
+        let source = b"SET NAMES latin1; SELECT %s".to_vec();
+        let mut native = Compiler::for_prepared(source.clone(), codec(), false, false);
+        let native = native.advance().unwrap().unwrap();
+        assert_eq!(native.slots(), 1);
+        let mut preview = Compiler::for_prepared_display(source, codec(), false, false);
+        assert!(matches!(
+            preview.advance(),
+            Err(TemplateError::ContextChange { .. })
+        ));
+    }
+
+    #[test]
+    fn context_barrier_survives_bounded_yields_without_a_suffix_allocation() {
+        let source = format!("SET sql_mode=''; {}%s", " ".repeat(600_000)).into_bytes();
+        let mut compiler = Compiler::new(source, codec(), false, false);
+        assert!(compiler.advance().unwrap().is_none());
+        assert!(compiler.advance().unwrap().is_none());
+        assert!(matches!(
+            compiler.advance(),
+            Err(TemplateError::ContextChange { .. })
+        ));
     }
 
     #[test]

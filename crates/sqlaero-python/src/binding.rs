@@ -117,8 +117,15 @@ impl Prepared {
             false,
             Some(budget),
         )?;
-        let mut compiler = if mode != PlanMode::Text {
+        let mut compiler = if mode == PlanMode::PreparedNative {
             Compiler::for_prepared(encoded, context.codec, context.no_backslash_escapes, ansi)
+        } else if mode == PlanMode::PreparedDisplay {
+            Compiler::for_prepared_display(
+                encoded,
+                context.codec,
+                context.no_backslash_escapes,
+                ansi,
+            )
         } else if merge {
             Compiler::for_batch(encoded, context.codec, context.no_backslash_escapes, ansi)
         } else {
