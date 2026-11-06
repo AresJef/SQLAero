@@ -54,6 +54,7 @@ jobs:
         shell: bash
     env:
       SQLAERO_NATIVE_MYSQL: "1"
+      SQLAERO_TEST_CALLPROC_PREFIX: 'sqlaero_ci_call'
       HOMEBREW_NO_AUTO_UPDATE: "1"
       MACOSX_DEPLOYMENT_TARGET: "11.0"
     steps:
@@ -66,6 +67,8 @@ jobs:
           architecture: ${{ (matrix.platform == 'macos-arm64' || matrix.platform == 'windows-arm64') && 'arm64' || 'x64' }}
       - name: Prepare the shared native test environment
         uses: ./.github/actions/native-environment
+      - name: Select only this job's owned mutable TLS fixture
+        run: python tools/mysql_fixture.py environment --output "$GITHUB_ENV"
       - name: Verify native sources
         run: |
           set -euo pipefail
@@ -104,13 +107,19 @@ jobs:
           set -euo pipefail
           mkdir -p probe-evidence
           python tools/release_artifacts.py identity --kind "${{ inputs.published && 'pypi' || 'original' }}" --wheel probe-wheels/*.whl --output probe-evidence/installed-identity.json
+          python tools/release_artifacts.py providers --identity probe-evidence/installed-identity.json --output probe-evidence/providers.json
           python tools/mysql_fixture.py prepare > probe-evidence/mysql-instances.json
           cargo test -p sqlaero-core --lib explicit_roots_keep_platform_ssl_name_usage_and_time_policy --locked -- --ignored --test-threads=1
           cargo test -p sqlaero-core --test establish --locked -- --ignored --test-threads=1
           cargo test -p sqlaero-core --test component_contracts --locked -- --ignored --test-threads=1
           cargo test -p sqlaero-core --test protocol_wire --locked -- --ignored --test-threads=1
+          cargo test -p sqlaero-core --test prepared_protocol --locked -- --ignored --test-threads=1
+          cargo test -p sqlaero-core --test stream_native --locked -- --ignored --test-threads=1
+          cargo test -p sqlaero-core --test local_infile_native --locked -- --ignored --test-threads=1
+          cargo test -p sqlaero-core --test tls_append --locked -- --ignored --test-threads=1
           python tests/_native_signal.py
           python tests/_native_signal.py --pytest -q tests --junitxml=probe-evidence/python-tests.xml
+          python -c 'from pathlib import Path; import json; from tools.release_artifacts import test_totals; p=Path("probe-evidence/providers.json"); print(test_totals(Path("probe-evidence/python-tests.xml"), json.loads(p.read_text())["platform"], p))'
           python -m pip check
       - name: Stop only this job's isolated servers
         if: always()
@@ -141,6 +150,7 @@ jobs:
         shell: bash
     env:
       SQLAERO_NATIVE_MYSQL: '1'
+      SQLAERO_TEST_CALLPROC_PREFIX: 'sqlaero_ci_call'
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -151,6 +161,8 @@ jobs:
           architecture: ${{ endsWith(matrix.platform, 'aarch64') && 'arm64' || 'x64' }}
       - name: Prepare the shared native server environment
         uses: ./.github/actions/native-environment
+      - name: Select only this job's owned mutable TLS fixture
+        run: python tools/mysql_fixture.py environment --output "$GITHUB_ENV"
       - name: Read the published project manifest
         if: inputs.published
         env:

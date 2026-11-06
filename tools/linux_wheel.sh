@@ -86,6 +86,7 @@ PY
     -v /var/run/docker.sock:/var/run/docker.sock \
     -e SQLAERO_TEST_MYSQL_ROOT -e SQLAERO_NATIVE_MYSQL=1 \
     -e SQLAERO_TEST_TLS="$SQLAERO_TEST_MYSQL_ROOT/tls" \
+    -e SQLAERO_TEST_MUTABLE_TLS_ROOT -e SQLAERO_TEST_CALLPROC_PREFIX \
     -e LINUX_LIBC -e PYTHON_MINOR -e PYTHON_FLAVOR -e LINUX_IMAGE_DIGEST \
     -e EVIDENCE_DIR="$evidence" -e WHEEL_DIR="$wheels" \
     -e EXPECTED_SDIST_SHA -e RELEASE_VERSION \
@@ -104,6 +105,7 @@ else
     timeout 180 dnf install -y openssl ca-certificates
   fi
 fi
+export SQLAERO_OPENSSL="$(command -v openssl)"
 export CARGO_HOME=/tmp/sqlaero-cargo RUSTUP_HOME=/tmp/sqlaero-rustup
 abi="cp${PYTHON_MINOR/./}-cp${PYTHON_MINOR/./}${abi_suffix}"
 test -x "/opt/python/$abi/bin/python"
@@ -177,8 +179,12 @@ cargo test -p sqlaero-core --lib explicit_roots_keep_platform_ssl_name_usage_and
 cargo test -p sqlaero-core --test establish --locked -- --ignored --test-threads=1
 cargo test -p sqlaero-core --test component_contracts --locked -- --ignored --test-threads=1
 cargo test -p sqlaero-core --test protocol_wire --locked -- --ignored --test-threads=1
+cargo test -p sqlaero-core --test prepared_protocol --locked -- --ignored --test-threads=1
+cargo test -p sqlaero-core --test stream_native --locked -- --ignored --test-threads=1
+cargo test -p sqlaero-core --test local_infile_native --locked -- --ignored --test-threads=1
 if [[ "$PYTHON_MINOR" == 3.13 ]]; then
   cargo test -p sqlaero-core --test system_trust --locked -- --ignored --test-threads=1
+  cargo test -p sqlaero-core --test tls_append --locked -- --ignored --test-threads=1
 fi
 phase original-test test_package python original
 if [[ "$mode" == probe ]]; then exit; fi
