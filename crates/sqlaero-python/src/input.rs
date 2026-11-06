@@ -637,9 +637,23 @@ fn binary_long(
 // Keep the Python-error path out of the recursive value visitor's stack frame.
 // This boundary remains checked at every existing signal/deadline checkpoint.
 #[inline(never)]
+#[track_caller]
 pub(crate) fn check(py: Python<'_>, budget: &IoBudget) -> PyResult<()> {
+    let caller = std::panic::Location::caller();
     py.check_signals()?;
-    budget.check().map_err(|error| errors::timeout(py, error))
+    budget.check().map_err(|timeout| {
+        let error = errors::timeout(py, timeout);
+        errors::note_format(
+            py,
+            &error,
+            format_args!(
+                "diagnostic-only budget timeout at {}:{}",
+                caller.file(),
+                caller.line()
+            ),
+        );
+        error
+    })
 }
 fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
     match budget {
