@@ -871,6 +871,7 @@ impl Row<'_, '_> {
         let row = self.public_row();
         let mut values = Vec::new();
         let mut encoded = Vec::new();
+        check(py, budget)?;
         self.walk::<false>(
             types,
             context,
@@ -890,6 +891,7 @@ impl Row<'_, '_> {
                 Ok(())
             },
         )?;
+        check(py, budget)?;
         if row {
             crate::output::tuple_from_ready_vec(py, values).map(Bound::into_any)
         } else {
@@ -1232,6 +1234,8 @@ impl Row<'_, '_> {
 
     /// Traverse each existing positional role exactly once. Binder framing and
     /// final public projection are static consumers around the same writes.
+    /// Callers check the original budget and signals immediately before and
+    /// after successful traversal; Visit retains the dynamic work checkpoints.
     #[expect(
         clippy::too_many_arguments,
         reason = "One traversal shares projection, text and CALL framing; the optional template supplies per-slot facts without another visitor or allocation."
@@ -1247,7 +1251,6 @@ impl Row<'_, '_> {
         mut after: impl FnMut(usize, &mut Vec<u8>, FragmentRole) -> PyResult<()>,
     ) -> PyResult<FragmentRole> {
         let py = self.value.py();
-        check(py, budget)?;
         let width = self.width();
         let mut visit = Visit {
             types,
@@ -1416,7 +1419,6 @@ impl Row<'_, '_> {
                 }
             };
         }
-        check(py, budget)?;
         Ok(role)
     }
 }

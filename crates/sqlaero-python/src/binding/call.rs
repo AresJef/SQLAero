@@ -173,6 +173,7 @@ impl NativeCall {
             // This single native buffer stores stable text fragments, never
             // per-value Python SQL strings. IN and INOUT occupy different
             // final requests, so their combined capture may exceed one packet.
+            input::check(py, budget)?;
             row.walk::<false>(
                 types,
                 &Context {
@@ -198,6 +199,7 @@ impl NativeCall {
                     Ok(())
                 },
             )?;
+            input::check(py, budget)?;
         }
         if ranges.len() != width {
             return Err(errors::client(
