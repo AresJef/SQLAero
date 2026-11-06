@@ -236,7 +236,8 @@ def _signed_chain(tmp_path: Path) -> tuple[bytes, bytes]:
                            'subjectKeyIdentifier=hash\n')
     leaf = tmp_path / 'leaf.pem'
     try:
-        run([openssl, 'req', '-new', '-newkey', 'rsa:2048', '-nodes',
+        run([openssl, 'req', '-config', str(ROOT / 'tls/openssl.cnf'),
+             '-new', '-newkey', 'rsa:2048', '-nodes',
              '-subj', '/CN=SQLAero D test intermediate',
              '-keyout', str(key), '-out', str(csr)])
         run([openssl, 'x509', '-req', '-in', str(csr),
@@ -312,21 +313,40 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
     certificate = _large_san_peer(tmp_path)
     original_der = certificate.to_der()
     original = KeyboardInterrupt('D TLS diagnostic interruption')
-    observed: list[int] = []
-    samples: list[int] = []
+    observed: list[tuple[int, int]] = []
+    samples: list[tuple[str, int, int, bool]] = []
     baseline = 0
+    returned = False
 
-    def interrupt(_number: int, _frame: FrameType | None) -> None:
+    def read_names() -> tuple[str, ...]:
+        nonlocal baseline, returned
+        # Exclude the sender's readiness/arming work from output progress.
+        baseline = sys.getallocatedblocks()
+        names = certificate.dns_names
+        returned = True
+        return names
+
+    reads: set[int] = set()
+    reading = False
+    for instruction in dis.get_instructions(read_names, show_caches=True):
+        if instruction.opname != 'CACHE':
+            reading = instruction.opname == 'LOAD_ATTR' and instruction.argval == 'dns_names'
+        if reading:
+            reads.add(instruction.offset)
+
+    def interrupt(_number: int, frame: FrameType | None) -> None:
         allocated = sys.getallocatedblocks() - baseline
         if len(samples) < 32:
-            samples.append(allocated)
-        # Lower bound excludes arming/entry; upper bound excludes a completed
-        # 15000-name tuple delivered before a late timer. Two-byte duplicate
-        # names keep the actual certificate under the existing TLS size bound.
-        # This is actual Python output progress inside the native conversion,
-        # not a timing SLA.
-        if 128 <= allocated < _DNS_COUNT // 2:
-            observed.append(allocated)
+            samples.append((frame.f_code.co_name if frame is not None else '<none>',
+                            frame.f_lasti if frame is not None else -1, allocated, returned))
+        # Require the actual cold getter instruction, before any result was
+        # delivered, together with generated Python output. A late signal in
+        # the sender/cleanup or after a complete tuple is never accepted. The
+        # full name count replaces an arbitrary first-half timing window.
+        if (frame is not None and frame.f_code is read_names.__code__
+                and frame.f_lasti in reads and not returned
+                and 128 <= allocated < _DNS_COUNT):
+            observed.append((frame.f_lasti, allocated))
             alarm.cancel()
             raise original
 
@@ -337,13 +357,18 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
     try:
         alarm.start(0.00005, 0.00005, wait_ready=True)
         try:
-            _ = certificate.dns_names
+            _ = read_names()
         except KeyboardInterrupt as error:
             captured = error
     finally:
         alarm.close()
     assert captured is original, f'no original interruption during conversion; progress samples={samples}'
+    assert not returned, 'the diagnostic value was delivered before interruption'
     assert len(observed) == 1, 'no in-progress diagnostic signal was observed'
+    location = original.__traceback__
+    while location is not None and location.tb_frame.f_code is not read_names.__code__:
+        location = location.tb_next
+    assert location is not None and location.tb_lasti in reads
     assert not hasattr(original, 'error_info')
     record_property('actual_gil', getattr(sys, '_is_gil_enabled', lambda: True)())
     record_property('allocation_progress_at_signal', observed)
