@@ -58,6 +58,7 @@ pub struct Template {
     pieces: Vec<Piece>,
     slots: usize,
     pub(crate) merge_tokens: Option<Vec<super::batch::Token>>,
+    utc_overrides: Vec<UtcOverride>,
 }
 
 impl Template {
@@ -84,6 +85,40 @@ impl Template {
     #[must_use]
     pub fn slots(&self) -> usize {
         self.slots
+    }
+
+    /// Encoded byte offset of a SET_VAR hint whose effective statement time
+    /// zone cannot be proven UTC for this slot. This independent fact applies
+    /// to text, native PREPARE and prepared display alike; it does not assert
+    /// that a possibly invalid or ignored hint actually changed the server.
+    #[must_use]
+    pub fn utc_override(&self, slot: usize) -> Option<usize> {
+        if slot >= self.slots {
+            return None;
+        }
+        let index = self
+            .utc_overrides
+            .partition_point(|entry| entry.slots.end <= slot);
+        self.utc_overrides
+            .get(index)
+            .filter(|entry| entry.slots.contains(&slot))
+            .map(|entry| entry.hint)
+    }
+
+    /// Resolve a hint's original Unicode position only when an actual aware
+    /// value needs a diagnostic. Ordinary and non-aware values pay no prefix
+    /// decoding or allocation merely because the SQL contains a fixed hint.
+    ///
+    /// # Errors
+    /// Returns an invalid encoded-source failure using the caller's real codec.
+    pub fn utc_override_character(
+        &self,
+        slot: usize,
+        codec: Codec,
+    ) -> Result<Option<usize>, WireError> {
+        self.utc_override(slot)
+            .map(|offset| source_position(&self.source, codec, offset))
+            .transpose()
     }
 
     /// Recognize one ordinary `LOAD DATA ... LOCAL INFILE` request using the
@@ -301,6 +336,179 @@ impl PrepareWriter<'_> {
     }
 }
 
+/// One affected statement's ordered native slots and original hint location.
+struct UtcOverride {
+    slots: Range<usize>,
+    hint: usize,
+}
+
+/// Statement-local facts, never a permanent request-context barrier. Ranges
+/// are materialized only for affected statements with actual binding slots.
+struct UtcHints {
+    ranges: Vec<UtcOverride>,
+    first_slot: usize,
+    risk: Option<usize>,
+    comment: HintUtc,
+}
+impl UtcHints {
+    fn new() -> Self {
+        Self {
+            ranges: Vec::new(),
+            first_slot: 0,
+            risk: None,
+            comment: HintUtc::new(),
+        }
+    }
+    fn close_comment(&mut self) {
+        self.comment.finish_candidate(false);
+        self.risk = self.risk.or(self.comment.risk);
+        self.comment = HintUtc::new();
+    }
+    fn finish_statement(&mut self, slots: usize) -> Result<(), WireError> {
+        if let Some(hint) = self.risk.take()
+            && self.first_slot < slots
+        {
+            self.ranges.try_reserve(1)?;
+            self.ranges.push(UtcOverride {
+                slots: self.first_slot..slots,
+                hint,
+            });
+        }
+        self.first_slot = slots;
+        Ok(())
+    }
+}
+
+#[derive(Clone, Copy)]
+enum HintStage {
+    Idle,
+    Open,
+    Name,
+    Equals,
+    Value,
+}
+
+/// Observe just SET_VAR's name/scalar/closing delimiter in the existing lexer.
+/// No SQL AST, timezone evaluation, source copy or per-token allocation lives
+/// here. A proven first UTC assignment suppresses duplicates only in this same
+/// comment; a different comment has no such applicability proof.
+struct HintUtc {
+    depth: usize,
+    stage: HintStage,
+    start: usize,
+    target: bool,
+    known_target: bool,
+    utc: bool,
+    value_tokens: u8,
+    first_utc: bool,
+    risk: Option<usize>,
+}
+impl HintUtc {
+    fn new() -> Self {
+        Self {
+            depth: 0,
+            stage: HintStage::Idle,
+            start: 0,
+            target: false,
+            known_target: false,
+            utc: false,
+            value_tokens: 0,
+            first_utc: false,
+            risk: None,
+        }
+    }
+    fn finish_candidate(&mut self, closed: bool) {
+        if self.target && !self.known_target {
+            // The server resolves system names with its own collation. An
+            // unknown name must not establish same-target duplicate identity.
+            self.risk.get_or_insert(self.start);
+        } else if self.target && !self.first_utc {
+            if closed
+                && matches!(self.stage, HintStage::Value)
+                && self.value_tokens == 1
+                && self.utc
+                && self.depth == 1
+            {
+                self.first_utc = true;
+            } else {
+                self.risk.get_or_insert(self.start);
+            }
+        }
+        self.target = false;
+    }
+    fn token(&mut self, symbol: u8, raw: &[u8], start: usize) {
+        let depth = self.depth;
+        if symbol == b'(' {
+            self.depth = self.depth.saturating_add(1);
+        }
+        if symbol == b')' {
+            if depth == 1 {
+                self.finish_candidate(true);
+                self.stage = HintStage::Idle;
+            } else if self.target {
+                self.value_tokens = 2;
+                self.utc = false;
+            }
+            self.depth = self.depth.saturating_sub(1);
+            return;
+        }
+        if depth == 0 {
+            if matches!(self.stage, HintStage::Open) && symbol == b'(' {
+                self.stage = HintStage::Name;
+            } else if raw.eq_ignore_ascii_case(b"SET_VAR") {
+                self.stage = HintStage::Open;
+                self.start = start;
+                self.target = false;
+                self.known_target = false;
+                self.value_tokens = 0;
+                self.utc = false;
+            } else {
+                self.stage = HintStage::Idle;
+            }
+            return;
+        }
+        if depth > 1 {
+            if self.target {
+                self.value_tokens = 2;
+                self.utc = false;
+            }
+            return;
+        }
+        match self.stage {
+            HintStage::Name => {
+                let name = if symbol == b'i' && raw.len() >= 2 && matches!(raw[0], b'`' | b'"') {
+                    &raw[1..raw.len() - 1]
+                } else {
+                    raw
+                };
+                self.known_target = symbol == b'i' && name.eq_ignore_ascii_case(b"time_zone");
+                self.target = self.known_target || (symbol == b'i' && !name.is_ascii());
+                self.stage = if self.target {
+                    HintStage::Equals
+                } else {
+                    HintStage::Idle
+                };
+            }
+            HintStage::Equals => {
+                self.stage = HintStage::Value;
+                if symbol != b'=' {
+                    self.value_tokens = 2;
+                }
+            }
+            HintStage::Value => {
+                self.value_tokens = self.value_tokens.saturating_add(1);
+                self.utc = self.value_tokens == 1
+                    && matches!(symbol, b'i' | b'x')
+                    && raw.len() == 8
+                    && matches!(raw[0], b'\'' | b'"' | b'`')
+                    && raw[7] == raw[0]
+                    && &raw[1..7] == b"+00:00";
+            }
+            _ => (),
+        }
+    }
+}
+
 /// A bounded native lexical preparation job. It owns only source bytes and
 /// fragment ranges; the host checks signals/deadlines between advance calls.
 pub struct Compiler {
@@ -323,6 +531,7 @@ pub struct Compiler {
     context: ContextGuard,
     special_version: bool,
     hint: bool,
+    utc: UtcHints,
 }
 
 #[derive(Clone, Copy)]
@@ -428,16 +637,23 @@ impl ContextGuard {
                 self.value = true;
             } else {
                 self.character = self.at_marks == 0 && word.eq_ignore_ascii_case(b"CHARACTER");
-                self.candidate = [
-                    "sql_mode",
-                    "character_set_client",
-                    "character_set_connection",
-                    "collation_connection",
-                    "time_zone",
-                ]
-                .into_iter()
-                .find(|name| word.eq_ignore_ascii_case(name.as_bytes()))
-                .map(|setting| ContextChange { start, setting });
+                self.candidate = if !word.is_ascii() {
+                    Some(ContextChange {
+                        start,
+                        setting: "unconfirmed non-ASCII session SET target",
+                    })
+                } else {
+                    [
+                        "sql_mode",
+                        "character_set_client",
+                        "character_set_connection",
+                        "collation_connection",
+                        "time_zone",
+                    ]
+                    .into_iter()
+                    .find(|name| word.eq_ignore_ascii_case(name.as_bytes()))
+                    .map(|setting| ContextChange { start, setting })
+                };
             }
         }
     }
@@ -532,6 +748,7 @@ impl Compiler {
             context: ContextGuard::new(),
             special_version: false,
             hint: false,
+            utc: UtcHints::new(),
         }
     }
 
@@ -663,6 +880,9 @@ impl Compiler {
             // Executable comments terminate at the original block boundary,
             // including when their interior quote or line comment is unfinished.
             if self.special && self.source.get(position..position + 2) == Some(b"*/") {
+                if self.hint {
+                    self.utc.close_comment();
+                }
                 self.special = false;
                 self.special_version = false;
                 self.hint = false;
@@ -686,7 +906,7 @@ impl Compiler {
                             self.token(if identifier { b'i' } else { b'x' }, start, self.position)?;
                             self.state = Lex::Code;
                         }
-                    } else if byte == b'\\' && !identifier && !self.no_backslash {
+                    } else if byte == b'\\' && !identifier && !self.no_backslash && !self.hint {
                         self.position += 1;
                         if self.position < self.source.len()
                             && !(self.special
@@ -741,7 +961,8 @@ impl Compiler {
                 Lex::Code => {
                     if (self.tokens.is_some()
                         || self.local == LocalGate::Prefix
-                        || self.context.needs_words())
+                        || self.context.needs_words()
+                        || self.hint)
                         && (byte >= 128
                             || byte.is_ascii_alphanumeric()
                             || matches!(byte, b'_' | b'$'))
@@ -868,11 +1089,16 @@ impl Compiler {
             self.pieces
                 .push(Piece::Bytes(self.copied..self.source.len()));
         }
+        if self.hint {
+            self.utc.close_comment();
+        }
+        self.utc.finish_statement(self.slots)?;
         self.finished = true;
         Ok(Some(Template {
             source: std::mem::take(&mut self.source),
             pieces: std::mem::take(&mut self.pieces),
             slots: self.slots,
+            utc_overrides: std::mem::take(&mut self.utc.ranges),
             merge_tokens: if self.merge_safe {
                 self.tokens.take()
             } else {
@@ -881,6 +1107,13 @@ impl Compiler {
         }))
     }
     fn token(&mut self, symbol: u8, start: usize, end: usize) -> Result<(), WireError> {
+        if self.hint {
+            self.utc
+                .comment
+                .token(symbol, &self.source[start..end], start);
+        } else if symbol == b';' {
+            self.utc.finish_statement(self.slots)?;
+        }
         if !self.hint
             && symbol == b'i'
             && self
@@ -947,10 +1180,7 @@ impl Compiler {
             .min(self.source.len() - position)
     }
     fn source_position(&self, byte: usize) -> Result<usize, WireError> {
-        let text = self.codec.decode(&self.source[..byte]).map_err(|_| {
-            WireError::Malformed("template source did not retain its validated encoding")
-        })?;
-        Ok(text.chars().count())
+        source_position(&self.source, self.codec, byte)
     }
     fn edit(&mut self, position: usize, value: bool) -> Result<(), WireError> {
         self.pieces.try_reserve(2)?;
@@ -966,6 +1196,13 @@ impl Compiler {
         self.copied = position + 2;
         Ok(())
     }
+}
+
+fn source_position(source: &[u8], codec: Codec, byte: usize) -> Result<usize, WireError> {
+    let text = codec.decode(&source[..byte]).map_err(|_| {
+        WireError::Malformed("template source did not retain its validated encoding")
+    })?;
+    Ok(text.chars().count())
 }
 
 #[cfg(test)]
@@ -1170,5 +1407,279 @@ mod tests {
         assert!(job.advance().unwrap().is_none());
         assert!(job.advance().unwrap().is_none());
         assert!(matches!(job.advance(), Err(TemplateError::Named { .. })));
+    }
+    #[test]
+    fn time_zone_hint_records_all_slots_of_only_its_statement() {
+        let source = "SELECT %s; WITH c AS (SELECT %s) SELECT /*+ SET_VAR(time_zone='+01:00') */ %s; SELECT %s";
+        let template =
+            Template::compile(source.as_bytes().to_vec(), codec(), false, false).unwrap();
+        let offset = source.find("SET_VAR").unwrap();
+        assert_eq!(template.slots(), 4);
+        assert_eq!(template.utc_override(0), None);
+        assert_eq!(template.utc_override(1), Some(offset));
+        assert_eq!(template.utc_override(2), Some(offset));
+        assert_eq!(template.utc_override(3), None);
+        assert_eq!(template.utc_override(4), None);
+        assert_eq!(template.source, source.as_bytes());
+    }
+
+    #[test]
+    fn time_zone_hint_facts_are_independent_of_prepared_context_barriers() {
+        for preview in [false, true] {
+            let source = "WITH c AS (SELECT %s) SELECT /*+ SET_VAR(`time_zone`='+08:00') */ %s";
+            let mut compiler = if preview {
+                Compiler::for_prepared_display(source.as_bytes().to_vec(), codec(), false, false)
+            } else {
+                Compiler::for_prepared(source.as_bytes().to_vec(), codec(), false, false)
+            };
+            let template = compiler.advance().unwrap().unwrap();
+            assert_eq!(template.utc_override(0), source.find("SET_VAR"));
+            assert_eq!(template.utc_override(1), source.find("SET_VAR"));
+            let mut writer = template.prepare_request(1024).unwrap();
+            assert_eq!(
+                writer.advance().unwrap().unwrap(),
+                [vec![0x16], source.replace("%s", "?").into_bytes()].concat()
+            );
+        }
+    }
+
+    #[test]
+    fn hint_offsets_are_encoded_bytes_until_unicode_diagnostics_are_requested() {
+        let source = "SELECT '中😀',%s /*+ SET_VAR(time_zone=SYSTEM) */";
+        let template =
+            Template::compile(source.as_bytes().to_vec(), codec(), false, false).unwrap();
+        let offset = source.find("SET_VAR").unwrap();
+        assert_eq!(template.utc_override(0), Some(offset));
+        assert_eq!(
+            template.utc_override_character(0, codec()).unwrap(),
+            Some(source[..offset].chars().count())
+        );
+    }
+    #[test]
+    fn exact_utc_and_same_comment_first_utc_duplicates_keep_no_fact_allocation() {
+        for source in [
+            "SELECT %s",
+            "SELECT /*+ SET_VAR(time_zone='+00:00') */ %s",
+            "SELECT /*+ SET_VAR(`time_zone`=`+00:00`) */ %s",
+            "SELECT /*+ SET_VAR(time_zone=\"+00:00\") */ %s",
+            "SELECT /*+ SET_VAR(time_zone='+00:00') SET_VAR(time_zone='+08:00') */ %s",
+            "SELECT /*+ SET_VAR(sort_buffer_size=16M) SET_VAR(time_zone='+00:00') SET_VAR(time_zone=SYSTEM) */ %s",
+            "SELECT /*+ SET_VAR(time_zone='+08:00') */ 1",
+        ] {
+            for ansi in [false, true] {
+                let template =
+                    Template::compile(source.as_bytes().to_vec(), codec(), false, ansi).unwrap();
+                assert!(
+                    (0..template.slots()).all(|slot| template.utc_override(slot).is_none()),
+                    "{source}"
+                );
+                assert_eq!(template.utc_overrides.capacity(), 0, "{source}");
+                assert_eq!(template.source, source.as_bytes());
+            }
+        }
+    }
+
+    #[test]
+    fn non_utc_or_unknown_values_do_not_gain_a_guessed_utc_guarantee() {
+        for value in [
+            "'+01:00'",
+            "'UTC'",
+            "SYSTEM",
+            "0",
+            "NULL",
+            "CONCAT('+00:00')",
+            "('+00:00')",
+            "'+00:00' extra",
+            "'+00:00'+0",
+            "'+00:00''x'",
+            "' +00:00'",
+        ] {
+            let source = format!("SELECT /*+ SET_VAR(time_zone={value}) */ %s");
+            let template =
+                Template::compile(source.as_bytes().to_vec(), codec(), false, false).unwrap();
+            assert_eq!(template.utc_override(0), source.find("SET_VAR"), "{source}");
+        }
+        for body in [
+            "SET_VAR(time_zone='+01:00') SET_VAR(time_zone='+00:00')",
+            "SET_VAR(time_zone=unknown) SET_VAR(time_zone='+00:00')",
+        ] {
+            let source = format!("SELECT /*+ {body} */ %s");
+            let template =
+                Template::compile(source.as_bytes().to_vec(), codec(), false, false).unwrap();
+            assert_eq!(template.utc_override(0), source.find("SET_VAR"));
+        }
+        let source = "SELECT /*+ SET_VAR(time_zone='+00:00' */ %s";
+        let template =
+            Template::compile(source.as_bytes().to_vec(), codec(), false, false).unwrap();
+        assert_eq!(
+            template.utc_override(0),
+            source.find("SET_VAR"),
+            "missing ')' is not a proven UTC hint"
+        );
+    }
+
+    #[test]
+    fn different_comments_do_not_inherit_a_first_comments_applicability() {
+        let source = "SELECT /*+ SET_VAR(time_zone='+00:00') */ %s /*+ SET_VAR(time_zone='+02:00') */; SELECT %s";
+        let template =
+            Template::compile(source.as_bytes().to_vec(), codec(), false, false).unwrap();
+        assert_eq!(template.utc_override(0), source.rfind("SET_VAR"));
+        assert_eq!(template.utc_override(1), None);
+    }
+
+    #[test]
+    fn hint_quoted_names_follow_the_official_identifier_rule() {
+        for name in ["time_zone", "`TIME_ZONE`", "\"time_zone\""] {
+            for ansi in [false, true] {
+                let source = format!("SELECT /*+ SET_VAR({name}='+01:00') */ %s");
+                let template =
+                    Template::compile(source.as_bytes().to_vec(), codec(), false, ansi).unwrap();
+                assert_eq!(
+                    template.utc_override(0),
+                    if name.starts_with('"') && !ansi {
+                        None
+                    } else {
+                        source.find("SET_VAR")
+                    },
+                    "{source}, ansi={ansi}"
+                );
+            }
+        }
+        for source in [
+            "SELECT /*+ SET_VAR('time_zone'='+01:00') */ %s",
+            "SELECT /*+ `SET_VAR`(time_zone='+01:00') */ %s",
+            "SELECT /*+ SET_VAR(`time``_zone`='+01:00') */ %s",
+        ] {
+            assert_eq!(
+                Template::compile(source.as_bytes().to_vec(), codec(), false, false)
+                    .unwrap()
+                    .utc_override(0),
+                None,
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn protected_hint_text_and_ordinary_sql_rules_remain_distinct() {
+        for source in [
+            "SELECT '/*+ SET_VAR(time_zone=SYSTEM) */',%s",
+            "SELECT /* SET_VAR(time_zone=SYSTEM) */ %s",
+            "SELECT -- /*+ SET_VAR(time_zone=SYSTEM) */\n%s",
+            "SELECT # /*+ SET_VAR(time_zone=SYSTEM) */\n%s",
+            "SELECT /*+ QB_NAME(`SET_VAR(time_zone=SYSTEM)`) */ %s",
+            "SELECT /*+ SET_VAR(sort_buffer_size=16M) */ %s",
+            "SELECT /*+ SET_VAR(sql_mode='NO_BACKSLASH_ESCAPES') */ %s; SELECT %s",
+        ] {
+            let template =
+                Template::compile(source.as_bytes().to_vec(), codec(), false, false).unwrap();
+            assert!(
+                (0..template.slots()).all(|slot| template.utc_override(slot).is_none()),
+                "{source}"
+            );
+            assert_eq!(template.utc_overrides.capacity(), 0);
+        }
+        let source = r"SELECT /*+ SET_VAR(sort_buffer_size='x\') SET_VAR(time_zone='+01:00') */ %s";
+        for no_backslash in [false, true] {
+            let template =
+                Template::compile(source.as_bytes().to_vec(), codec(), no_backslash, false)
+                    .unwrap();
+            assert_eq!(template.utc_override(0), source.find("SET_VAR(time_zone"));
+            assert_eq!(template.source, source.as_bytes());
+        }
+        assert_eq!(
+            Template::compile(br"SELECT 'x\'%s',%s".to_vec(), codec(), false, false)
+                .unwrap()
+                .slots(),
+            1,
+            "ordinary SQL still recognizes backslash escapes"
+        );
+    }
+
+    #[test]
+    fn late_hint_ranges_survive_bounded_scans_and_remain_after_merge_metadata_is_taken() {
+        let source = format!(
+            "WITH c AS (SELECT %s) SELECT /*+ SET_VAR(sort_buffer_size='{}') SET_VAR(time_zone='+01:00') */ %s; SELECT %s",
+            "x".repeat(600_000)
+        );
+        let mut compiler = Compiler::for_batch(source.as_bytes().to_vec(), codec(), false, false);
+        let mut yields = 0;
+        let mut template = loop {
+            let before = compiler.position;
+            let value = compiler.advance().unwrap();
+            assert!(compiler.position - before <= 256 * 1024 + 4);
+            if let Some(template) = value {
+                break template;
+            }
+            yields += 1;
+        };
+        assert!(yields >= 2);
+        let offset = source.find("SET_VAR(time_zone").unwrap();
+        template.prepare_merge();
+        assert_eq!(template.utc_override(0), Some(offset));
+        assert_eq!(template.utc_override(1), Some(offset));
+        assert_eq!(template.utc_override(2), None);
+        assert_eq!(template.source, source.as_bytes());
+    }
+    #[test]
+    fn non_ascii_set_var_names_have_no_unproved_target_or_duplicate_identity() {
+        for (source, last) in [
+            ("SELECT /*+ SET_VAR(timé_zone='+02:00') */ %s", false),
+            (
+                "SELECT /*+ SET_VAR(`timé_zone`='+00:00') SET_VAR(time_zone='+01:00') */ %s",
+                false,
+            ),
+            (
+                "SELECT /*+ SET_VAR(time_zone='+00:00') SET_VAR(timé_zone='+01:00') */ %s",
+                true,
+            ),
+            (
+                "SELECT /*+ SET_VAR(sórt_buffer_size='+00:00') SET_VAR(time_zone='+01:00') */ %s",
+                false,
+            ),
+        ] {
+            let template =
+                Template::compile(source.as_bytes().to_vec(), codec(), false, false).unwrap();
+            assert_eq!(
+                template.utc_override(0),
+                if last {
+                    source.rfind("SET_VAR")
+                } else {
+                    source.find("SET_VAR")
+                },
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn non_ascii_session_set_targets_keep_the_existing_scope_and_value_rules() {
+        for source in [
+            "SET sql_móde='NO_BACKSLASH_ESCAPES'; SELECT %s",
+            "SET SESSION `time_zóne`='+00:00'; SELECT %s",
+            "SET @@SESSION.`cháracter_set_client`=latin1; SELECT %s",
+            "SET @label=1, sql_móde=''; SELECT %s",
+            "SET @@GLOBAL.net_read_timeout=30, sql_móde=''; SELECT %s",
+        ] {
+            assert!(
+                matches!(
+                    Template::compile(source.as_bytes().to_vec(), codec(), false, false),
+                    Err(TemplateError::ContextChange { .. })
+                ),
+                "{source}"
+            );
+        }
+        for source in [
+            "SET GLOBAL sql_móde=''; SELECT %s",
+            "SET @@GLOBAL.`time_zóne`=''; SELECT %s",
+            "SET GLOBAL net_read_timeout=30, sql_móde=''; SELECT %s",
+            "SET @sql_móde='text'; SELECT %s",
+            "SET @x=@@session.sql_móde; SELECT %s",
+        ] {
+            assert!(
+                Template::compile(source.as_bytes().to_vec(), codec(), false, false).is_ok(),
+                "{source}"
+            );
+        }
     }
 }
