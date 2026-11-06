@@ -310,6 +310,9 @@ def _large_san_peer(tmp_path: Path, *, dns_count: int = _DNS_COUNT, ip_count: in
 def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retry(
     tmp_path: Path, record_property: Callable[[str, object], None],
 ) -> None:
+    gil_before = getattr(sys, '_is_gil_enabled', lambda: True)()
+    import tracemalloc
+
     certificate = _large_san_peer(tmp_path)
     original_der = certificate.to_der()
     original = KeyboardInterrupt('D TLS diagnostic interruption')
@@ -352,32 +355,48 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
 
     alarm = NativeAlarm(interrupt)
     gc.collect()
-    baseline = sys.getallocatedblocks()
-    captured: KeyboardInterrupt | None = None
+    was_tracing = tracemalloc.is_tracing()
+    record_property('actual_gil_before', gil_before)
+    record_property('allocation_tracing_was_active', was_tracing)
     try:
-        alarm.start(0.00005, 0.00005, wait_ready=True)
+        captured: KeyboardInterrupt | None = None
         try:
-            _ = read_names()
-        except KeyboardInterrupt as error:
-            captured = error
+            if not was_tracing:
+                # Standard allocation tracing broadens the same real output work;
+                # it does not replace the getter position/progress signal gate.
+                tracemalloc.start(1)
+            record_property('signal_allocation_instrumentation', 'tracemalloc')
+            record_property('signal_traceback_frames', tracemalloc.get_traceback_limit())
+            baseline = sys.getallocatedblocks()
+            alarm.start(0.00005, 0.00005, wait_ready=True)
+            try:
+                _ = read_names()
+            except KeyboardInterrupt as error:
+                captured = error
+        finally:
+            alarm.close()
+        assert captured is original, f'no original interruption during conversion; progress samples={samples}'
+        assert not returned, 'the diagnostic value was delivered before interruption'
+        assert len(observed) == 1, 'no in-progress diagnostic signal was observed'
+        location = original.__traceback__
+        while location is not None and location.tb_frame.f_code is not read_names.__code__:
+            location = location.tb_next
+        assert location is not None and location.tb_lasti in reads
+        assert not hasattr(original, 'error_info')
+        record_property('actual_gil', getattr(sys, '_is_gil_enabled', lambda: True)())
+        record_property('allocation_progress_at_signal', observed)
+        names = certificate.dns_names
+        assert len(names) == _DNS_COUNT
+        assert all(name == ('aa' if index % 2 == 0 else 'ab') for index, name in enumerate(names))
+        assert certificate.dns_names is names
+        assert certificate.to_der() is original_der
+        assert certificate.fingerprint_sha256 == hashlib.sha256(original_der).hexdigest()
     finally:
-        alarm.close()
-    assert captured is original, f'no original interruption during conversion; progress samples={samples}'
-    assert not returned, 'the diagnostic value was delivered before interruption'
-    assert len(observed) == 1, 'no in-progress diagnostic signal was observed'
-    location = original.__traceback__
-    while location is not None and location.tb_frame.f_code is not read_names.__code__:
-        location = location.tb_next
-    assert location is not None and location.tb_lasti in reads
-    assert not hasattr(original, 'error_info')
-    record_property('actual_gil', getattr(sys, '_is_gil_enabled', lambda: True)())
-    record_property('allocation_progress_at_signal', observed)
-    names = certificate.dns_names
-    assert len(names) == _DNS_COUNT
-    assert all(name == ('aa' if index % 2 == 0 else 'ab') for index, name in enumerate(names))
-    assert certificate.dns_names is names
-    assert certificate.to_der() is original_der
-    assert certificate.fingerprint_sha256 == hashlib.sha256(original_der).hexdigest()
+        if not was_tracing:
+            tracemalloc.stop()
+        record_property('actual_gil_after', getattr(sys, '_is_gil_enabled', lambda: True)())
+    assert tracemalloc.is_tracing() is was_tracing
+    assert getattr(sys, '_is_gil_enabled', lambda: True)() is gil_before
 
 
 @requires_mysql
