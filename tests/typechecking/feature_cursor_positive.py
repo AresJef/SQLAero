@@ -115,6 +115,9 @@ def rows(buffered: Cursor, mapping: DictCursor, stream: SSCursor, mapped_stream:
     assert_type(stream.batch_row_count, int | None)
     assert_type(buffered.prepared, bool)
     assert_type(buffered.callproc("report", (5, None), database="analytics",
-                                  parameter_modes=["IN", "OUT"]), int | None)
+                                  parameter_modes=["IN", "OUT"]), int)
+    assert_type(mapping.callproc("report"), int)
+    assert_type(stream.callproc("report"), int | None)
+    assert_type(mapped_stream.callproc("report"), int | None)
     assert_type(stream.call_output_params, Mapping[int, Any] | None)
     assert_type(mapped_stream.execute("LOAD DATA LOCAL INFILE 'label' INTO TABLE t", local_file="data.csv"), int | None)

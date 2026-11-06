@@ -1,5 +1,7 @@
 //! Operation-owned CALL output facts, separate from traversal and network I/O.
 
+pub(crate) mod flow;
+
 use crate::{call_output::Snapshot, errors, input::ScalarTypes, output};
 use pyo3::prelude::*;
 use sqlaero_core::{
@@ -33,7 +35,7 @@ pub(crate) fn slot_prefix<'a>(
         let mut name = String::new();
         name.try_reserve_exact(32)
             .map_err(|_| errors::memory_error(py))?;
-        name.push_str("_sqlaero_");
+        name.push_str(crate::binding::call::SLOT_NAMESPACE);
         const HEX: &[u8; 16] = b"0123456789abcdef";
         for byte in random {
             name.push(char::from(HEX[(byte >> 4) as usize]));
@@ -98,6 +100,9 @@ impl Output {
         }))
     }
 
+    /// Commit one complete output only after Flow has a real successful CALL
+    /// tail. Prepared output received before that tail stays with the native
+    /// query/Flow; an ERR, truncated tail or timeout must not make it ready.
     pub(crate) fn save(
         &self,
         py: Python<'_>,

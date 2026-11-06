@@ -19,6 +19,9 @@ pub(crate) enum Direction {
     InOut,
 }
 
+/// One shared prefix for generated slot names and their trusted validation.
+pub(crate) const SLOT_NAMESPACE: &str = "_sqlaero_call_";
+
 /// Complete owned requests for one logical CALL. The execution owner decides
 /// combined versus segmented delivery before sending, keeps private responses
 /// private, and owns the slot namespace, output readiness and cleanup lifetime.
@@ -383,7 +386,7 @@ fn validate_prefix(py: Python<'_>, prefix: &str, count: usize) -> PyResult<()> {
         .saturating_sub(1)
         .checked_ilog10()
         .map_or(1, |digits| digits as usize + 1);
-    if !prefix.starts_with("_sqlaero_call_")
+    if !prefix.starts_with(SLOT_NAMESPACE)
         || !prefix
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')

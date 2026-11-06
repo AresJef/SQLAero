@@ -49,6 +49,31 @@ struct Collected {
     final_first_known: bool,
     statement_invalidated: bool,
 }
+impl Collected {
+    /// Both ordinary requests and managed CALL count only their first public
+    /// set. Private protocol/variable stages never enter this boundary.
+    fn first_response(
+        &mut self,
+        py: Python<'_>,
+        response: &Response,
+        final_request: bool,
+    ) -> PyResult<CommandConfirmation> {
+        let count = match response {
+            Response::Command(ok) => u128::from(ok.affected_rows()),
+            Response::Rows(rows) => rows.row_count as u128,
+            Response::Counted { rows, .. } => *rows as u128,
+        };
+        self.total = self.total.checked_add(count).ok_or_else(|| {
+            errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "batch first-result row count overflow",
+            )
+        })?;
+        self.final_first_known |= final_request;
+        Ok(CommandConfirmation::from_response(response))
+    }
+}
 
 struct Publication {
     collected: Collected,
@@ -156,6 +181,8 @@ pub(crate) struct DictCursor {
     core: CursorCore,
 }
 /// Tuple rows received incrementally from the original native response.
+/// Prepared callproc with explicit OUT/INOUT may look ahead at most two native
+/// rows to identify the actual output flag; ordinary queries return at headers.
 #[pyclass(frozen, module = "sqlaero")]
 pub(crate) struct SSCursor {
     core: CursorCore,
@@ -967,20 +994,7 @@ impl CursorCore {
                 }
             };
             if first.is_none() {
-                let count = match &response {
-                    Response::Command(ok) => u128::from(ok.affected_rows()),
-                    Response::Rows(rows) => rows.row_count as u128,
-                    Response::Counted { rows, .. } => *rows as u128,
-                };
-                collected.total = collected.total.checked_add(count).ok_or_else(|| {
-                    errors::client(
-                        py,
-                        ClientErrorCode::InternalState,
-                        "batch first-result row count overflow",
-                    )
-                })?;
-                first = Some(CommandConfirmation::from_response(&response));
-                collected.final_first_known |= final_request;
+                first = Some(collected.first_response(py, &response, final_request)?);
             }
             let finished = job.is_finished();
             if finished {
@@ -1061,6 +1075,124 @@ impl CursorCore {
             }
         }
     }
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "a CALL consumes the ordinary operation owners and result policy"
+    )]
+    fn receive_call(
+        &self,
+        py: Python<'_>,
+        connection: &Connection,
+        lease: &mut CommandLease<'_>,
+        mut flow: crate::call::flow::Flow,
+        budget: &mut IoBudget,
+        source_rows: std::ops::Range<usize>,
+        codec: OutputCodec,
+        options: Options,
+        collected: &mut Collected,
+    ) -> PyResult<()> {
+        let request_index = collected.prefix.commands;
+        let mut first = None;
+        let mut recorded = false;
+        let mut set_index = 0;
+        loop {
+            let response = flow.advance_buffered(py, connection, lease, budget);
+            collected.statement_invalidated |= flow.invalidates_statement();
+            // CALL completion is independent of output SELECT/cleanup. Keep
+            // this real fact even if a later private stage or host save fails.
+            let recording = if !recorded && flow.call_completed() {
+                if let Some(confirmation) = first.or_else(|| flow.call_confirmation()) {
+                    collected
+                        .prefix
+                        .record_confirmation(source_rows.clone(), confirmation)
+                        .map_err(|error| errors::wire(py, error))
+                        .map(|()| recorded = true)
+                } else {
+                    Ok(())
+                }
+            } else {
+                Ok(())
+            };
+            let response = match response {
+                Ok(response) => {
+                    recording?;
+                    response
+                }
+                Err(primary) => {
+                    if let Some(native) = flow.take_native_failure() {
+                        collected.chain.fail(native);
+                    }
+                    if let Err(secondary) = recording {
+                        errors::additional(py, &primary, secondary, "cursor.call_confirmation");
+                    }
+                    collected.total_unknown |= first.is_none();
+                    errors::note_format(
+                        py,
+                        &primary,
+                        format_args!(
+                            "while receiving CALL request {request_index}, public result set {set_index}; source rows {}..{}; no CALL request was replayed",
+                            source_rows.start, source_rows.end,
+                        ),
+                    );
+                    return Err(primary);
+                }
+            };
+            let Some(response) = response else {
+                if !flow.is_finished() || first.is_none() {
+                    lease.invalidate();
+                    return Err(errors::client(
+                        py,
+                        ClientErrorCode::InternalState,
+                        "CALL ended without a complete public response and private finish",
+                    ));
+                }
+                return Ok(());
+            };
+            if first.is_none() {
+                first = Some(collected.first_response(py, &response, true)?);
+            }
+            let names_codec = if matches!(&response, Response::Rows(_)) {
+                flow.metadata_codec().ok_or_else(|| errors::client(
+                    py, ClientErrorCode::UnsupportedCharset,
+                    "The CALL result's actual metadata encoding is unknown; the entry encoding was not substituted",
+                ))
+            } else {
+                Ok(codec)
+            };
+            let result = names_codec.and_then(|names_codec| {
+                collected
+                    .chain
+                    .push(NativeSet {
+                        response,
+                        options,
+                        names_codec,
+                        request_index,
+                        set_index,
+                    })
+                    .map_err(|error| output::memory(py, error))
+            });
+            if let Err(error) = result {
+                if !flow.synchronized() {
+                    lease.invalidate();
+                }
+                return Err(error);
+            }
+            set_index = set_index.checked_add(1).ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "CALL result index overflow",
+                )
+            })?;
+            if let Err(error) = input::check(py, budget) {
+                if !flow.synchronized() {
+                    lease.invalidate();
+                }
+                return Err(error);
+            }
+        }
+    }
+
     fn handoff(&self, py: Python<'_>, begun: &mut bool) -> PyResult<()> {
         if !*begun {
             self.reader.clear_result(py)?;
@@ -1232,7 +1364,7 @@ impl CursorCore {
                         py,
                         &connection,
                         &mut lease,
-                        job,
+                        crate::stream::Job::Query(job),
                         budget,
                         options,
                         request.source_rows,
@@ -1300,7 +1432,11 @@ impl CursorCore {
         connection.ensure_context(py, &mut lease, &mut budget)?;
         let (context, ansi, names_codec) = connection.context(py)?;
         let options = self.settings(py)?.options;
-        let prefix = crate::call::slot_prefix(py, &connection)?;
+        let prefix = if self.prepared || parameter_modes.is_none_or(|value| value.is_none()) {
+            ""
+        } else {
+            crate::call::slot_prefix(py, &connection)?
+        };
         let types = connection.types.borrow(py);
         let mut plan = binding::call::NativeCall::new(
             proc_name,
@@ -1319,15 +1455,16 @@ impl CursorCore {
             &budget,
         )?;
         drop(types);
-        // The OUT stage consumer is added after the direct-CALL shared path.
-        // This development slice never silently executes an incomplete plan.
-        if !plan.output_positions.is_empty() {
-            return Err(errors::client(
-                py,
-                ClientErrorCode::UnsupportedCapability,
-                "The managed OUT/INOUT execution consumer is not connected in this development slice",
-            ));
-        }
+        let multi_statements = if !self.prepared && !plan.output_positions.is_empty() {
+            connection.native.facts.lock().map_err(|_| errors::client(
+                py, ClientErrorCode::InternalState, "Confirmed CALL capabilities are unavailable",
+            ))?.multi_statements.ok_or_else(|| errors::client(
+                py, ClientErrorCode::SessionState,
+                "multi_statements has not been confirmed; no CALL layout was guessed or sent",
+            ))?
+        } else {
+            false
+        };
         let call_output = crate::call::Output::new(
             py,
             &plan.output_positions,
@@ -1368,13 +1505,26 @@ impl CursorCore {
             })?;
             id_field.copy_from_slice(&id.to_le_bytes());
         }
-        let job = connection.query_job(py, &mut lease, plan.call.bytes, false)?;
-        let job = if self.streaming {
-            job.with_streaming()
-                .map_err(|error| errors::query(py, error))?
-        } else {
-            job
-        };
+        let source_rows = plan.call.source_rows.clone();
+        let scope = sqlaero_core::memory::Scope::new(
+            std::sync::Arc::clone(&connection.native.result_pool),
+            connection.result_limit,
+        )
+        .map_err(|error| output::memory(py, error))?;
+        let flow = crate::call::flow::Flow::new(
+            py,
+            &connection,
+            &mut lease,
+            plan,
+            std::sync::Arc::clone(&call_output),
+            crate::call::flow::Policy {
+                multi_statements,
+                streaming: self.streaming,
+                send_limit: context.limit,
+            },
+            &scope,
+            &budget,
+        )?;
         input::check(py, &budget)?;
         let mut begun = false;
         self.handoff(py, &mut begun)?;
@@ -1385,10 +1535,10 @@ impl CursorCore {
                 py,
                 &connection,
                 &mut lease,
-                job,
+                crate::stream::Job::Call(flow),
                 budget,
                 options,
-                plan.call.source_rows,
+                source_rows,
                 ConfirmedPrefix::default(),
                 0,
             )
@@ -1397,21 +1547,24 @@ impl CursorCore {
                 live = Some(stream);
             })
         } else {
-            self.receive_request(
+            self.receive_call(
                 py,
                 &connection,
                 &mut lease,
-                job,
+                flow,
                 &mut budget,
-                plan.call.source_rows,
-                true,
+                source_rows,
                 names_codec,
                 options,
                 &mut collected,
             )
         };
-        if !self.streaming && result.is_ok() {
-            call_output.finish();
+        if !self.streaming {
+            if result.is_ok() {
+                call_output.finish();
+            } else {
+                call_output.fail();
+            }
         }
         if collected.statement_invalidated || connection.native.is_closed() {
             drop(
@@ -1454,14 +1607,13 @@ impl CursorCore {
             }
             Ok(())
         });
-        if live
+        if (live
             .as_ref()
             .is_some_and(|stream| stream.statement_invalidated)
-            || connection.native.is_closed()
+            || connection.native.is_closed())
+            && let Some(statement) = statement
         {
-            if let Some(statement) = statement {
-                drop(statement.take());
-            }
+            drop(statement.take());
         }
         let first = collected.chain.take_next();
         let publication = if let Some(set) = first {
@@ -1616,6 +1768,20 @@ macro_rules! cursor_api {
             /// row. Omitted args means zero positions; explicit None is NULL.
             /// parameter_modes explicitly declares IN/OUT/INOUT, never inferred
             /// from values. Results use this Cursor's normal nextset/fetch path.
+            /// Modes must be an exact list/tuple of direction strings, or None
+            /// for all IN; OUT requires a source NULL placeholder. MySQL still
+            /// decides the actual procedure signature. Detectable disagreement
+            /// may be reported after CALL was sent; the request is not replayed.
+            /// Buffered calls return the first public count. SS returns None
+            /// while that count is unknown. Prepared SS calls with declared
+            /// outputs may read up to two native rows to identify the actual
+            /// output flag, without buffering the full business result.
+            /// Finish all public sets with nextset() until None, or close the
+            /// Cursor within the original remaining budget, to obtain outputs.
+            /// call_output_params is a local read-only original-position mapping.
+            /// Decode uses actual fields and this operation's option snapshot;
+            /// text user-variable output may expose dates and JSON as strings.
+            /// Prepared output can preserve native date/JSON field types.
             #[pyo3(signature=(proc_name,args=Argument::default(),*,database=None,parameter_modes=None))]
             #[pyo3(text_signature="($self, proc_name, args=(), *, database=None, parameter_modes=None)")]
             fn callproc<'py>(&self,py:Python<'py>,proc_name:&Bound<'_,PyAny>,args:Argument<'_>,database:Option<&Bound<'_,PyAny>>,parameter_modes:Option<&Bound<'_,PyAny>>)->PyResult<Bound<'py,PyAny>> {

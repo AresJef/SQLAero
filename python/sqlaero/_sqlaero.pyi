@@ -1085,7 +1085,7 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
         """
         ...
     def callproc(self, proc_name: str, args: object = (), *, database: str | None = None,
-                 parameter_modes: list[str] | tuple[str, ...] | None = None) -> int | None:
+                 parameter_modes: list[str] | tuple[str, ...] | None = None) -> _ExecutionCountT:
         """Call one stored procedure and return its first public result count.
 
         proc_name/database are separately quoted raw identifiers; a dot in
@@ -1097,8 +1097,10 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
         parameter_modes is None (all IN), or a list/tuple of case-insensitive
         IN/OUT/INOUT strings, exactly one per argument. OUT requires a None
         placeholder. INOUT accepts an initial value including None. A NULL value
-        never infers a direction. Mismatches/invalid OUT placeholders fail before
-        CALL; MySQL remains authoritative for the actual procedure definition.
+        never infers a direction. Local direction-count mismatches and invalid
+        OUT placeholders fail before CALL. MySQL defines the actual signature;
+        a detectable disagreement may be discovered after sending and does not
+        cause automatic replay.
 
         Pure IN example: cur.callproc('report', (2026, 11)). For a procedure
         adjust(IN n, OUT result, INOUT counter), use
@@ -1108,7 +1110,11 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
 
         Buffered results complete before return, so confirmed output is ready.
         SS keeps its early-return behavior and does not buffer rows merely to
-        obtain OUT values. Finish every CALL set, including its final status,
+        obtain OUT values. Only prepared SS callproc with explicitly declared
+        OUT/INOUT may look ahead at most two native rows or to the set terminator
+        to identify the real output flag. Ordinary queries, direct execute CALL
+        and calls declaring no outputs still return at metadata headers.
+        Finish every CALL set, including its final status,
         before reading output: while processing sets, iterate rows only when
         description is not None, then call nextset() until it returns None.
         Explicit close/context/transaction exit can also perform bounded finish.
@@ -1133,8 +1139,11 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
                     break
             outputs = ss.call_output_params
 
-        Output uses actual server-field decode policy. Text output management
-        may add internal communication; prepared CALL uses native output metadata.
+        Output uses actual server-field decode policy. The text user-variable
+        bridge may return dates or JSON as strings. Prepared output can retain
+        native date/JSON fields and then uses the corresponding Decode options.
+        Text output management may add internal communication; prepared CALL
+        uses native output metadata and creates no output user variables.
         Internal cleanup shares the remaining deadline, preserves the primary
         failure/real transaction facts and never silently replays the call.
         """
@@ -1385,7 +1394,9 @@ class DictCursor(_CursorCore[dict[str, object], int]):
 class SSCursor(_CursorCore[tuple[object, ...], int | None]):
     """Forward-only tuple rows; a streaming request returns at complete metadata.
 
-    No row is prefetched to learn its count. Unread response ownership prevents
+    No row is prefetched to learn its count. Prepared callproc with explicit
+    OUT/INOUT alone may inspect up to two native rows for the real output flag.
+    Unread response ownership prevents
     another command without blocking. Explicit close can drain safely; abandoning
     its last reader retires the connection. Connection close does not drain it.
     """

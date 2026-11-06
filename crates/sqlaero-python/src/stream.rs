@@ -31,9 +31,36 @@ pub(crate) struct Event {
     pub(crate) codec: Option<OutputCodec>,
 }
 
+/// Only CALL adds staged private work. The ordinary stream keeps its concrete
+/// Query; Flow owns a prepaid small handle rather than enlarging that parser.
+#[expect(
+    clippy::large_enum_variant,
+    reason = "keeping ordinary Query inline avoids an allocation in every streaming command; only CALL pays for Flow's checked storage"
+)]
+pub(crate) enum Job {
+    Query(Query),
+    Call(crate::call::flow::Flow),
+}
+impl Job {
+    fn is_finished(&self) -> bool {
+        match self {
+            Self::Query(query) => query.is_finished(),
+            Self::Call(flow) => flow.is_finished(),
+        }
+    }
+    fn discard_current_rows(&mut self, py: Python<'_>) -> PyResult<()> {
+        match self {
+            Self::Query(query) => query
+                .discard_current_rows()
+                .map_err(|error| errors::query(py, error)),
+            Self::Call(flow) => flow.discard_current_rows(py),
+        }
+    }
+}
+
 pub(crate) struct Stream {
     owner: Option<OwnedCommand>,
-    job: Query,
+    job: Job,
     pub(crate) budget: IoBudget,
     returned: Option<Instant>,
     pub(crate) rows: Option<StreamRows>,
@@ -45,6 +72,7 @@ pub(crate) struct Stream {
     prefix: ConfirmedPrefix,
     base_count: u128,
     first: Option<CommandConfirmation>,
+    recorded: bool,
     pub(crate) batch: Option<u128>,
     pub(crate) failed: bool,
     pub(crate) statement_invalidated: bool,
@@ -60,7 +88,7 @@ impl Stream {
         py: Python<'_>,
         connection: &Connection,
         lease: &mut CommandLease<'_>,
-        job: Query,
+        job: Job,
         budget: IoBudget,
         options: Options,
         source_rows: Range<usize>,
@@ -85,6 +113,7 @@ impl Stream {
             prefix,
             base_count,
             first: None,
+            recorded: false,
             batch: None,
             failed: false,
             statement_invalidated: false,
@@ -109,9 +138,7 @@ impl Stream {
         self.job.is_finished()
     }
     pub(crate) fn discard_current(&mut self, py: Python<'_>) -> PyResult<()> {
-        self.job
-            .discard_current_rows()
-            .map_err(|error| errors::query(py, error))
+        self.job.discard_current_rows(py)
     }
     pub(crate) fn abort(&mut self, connection: &Connection) {
         self.failed = true;
@@ -175,17 +202,41 @@ impl Stream {
             )
         })?;
         let mut lease = owner.resume().map_err(|error| errors::access(py, error))?;
-        let result = connection.drive_stream(
-            py,
-            &mut lease,
-            &mut self.job,
-            &mut self.budget,
-            CommandRole::UserSql,
-            limit,
-        );
-        let synchronized = result
-            .as_ref()
-            .map_or_else(|failure| failure.synchronized(), |_| self.job.is_finished());
+        let (result, synchronized, confirmation) = match &mut self.job {
+            Job::Query(query) => {
+                let result = connection.drive_stream(
+                    py,
+                    &mut lease,
+                    query,
+                    &mut self.budget,
+                    CommandRole::UserSql,
+                    limit,
+                );
+                let synchronized = result
+                    .as_ref()
+                    .map_or_else(|failure| failure.synchronized(), |_| query.is_finished());
+                let confirmation = result
+                    .as_ref()
+                    .err()
+                    .and_then(|failure| failure.confirmation());
+                if let Err(failure) = &result {
+                    self.statement_invalidated |= failure
+                        .native_failure()
+                        .is_some_and(|failure| crate::statement::invalidates(&failure.error));
+                }
+                (
+                    result.map(Some).map_err(PyErr::from),
+                    synchronized,
+                    confirmation,
+                )
+            }
+            Job::Call(flow) => {
+                let result =
+                    flow.advance_stream(py, connection, &mut lease, &mut self.budget, limit);
+                self.statement_invalidated |= flow.invalidates_statement();
+                (result, flow.synchronized(), flow.call_confirmation())
+            }
+        };
         let released = if synchronized && !connection.native.is_closed() {
             lease
                 .finish_owned(owner)
@@ -202,15 +253,17 @@ impl Stream {
                 released?;
                 event
             }
-            Err(failure) => {
+            Err(error) => {
                 self.failed = true;
                 if let Some(output) = &self.call_output {
                     output.fail();
                 }
-                self.statement_invalidated |= failure
-                    .native_failure()
-                    .is_some_and(|failure| crate::statement::invalidates(&failure.error));
-                let error: PyErr = failure.into();
+                if let Some(confirmation) = confirmation {
+                    self.first.get_or_insert(confirmation);
+                    if let Err(recording) = self.record_command(py) {
+                        errors::additional(py, &error, recording, "cursor.call_confirmation");
+                    }
+                }
                 errors::note_format(
                     py,
                     &error,
@@ -226,6 +279,21 @@ impl Stream {
                 return Err(error);
             }
         };
+        let Some(event) = event else {
+            if !self.job.is_finished() {
+                self.abort(connection);
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "The native CALL yielded no public event before its private stages finished",
+                ));
+            }
+            self.record_command(py)?;
+            if let Some(output) = &self.call_output {
+                output.finish();
+            }
+            return Ok(None);
+        };
         if let StreamEvent::End {
             completion,
             total_rows,
@@ -235,18 +303,21 @@ impl Stream {
             self.completed(py, completion, *total_rows)?;
         }
         let codec = if matches!(event, StreamEvent::Header(_)) {
-            connection
-                .native
-                .facts
-                .lock()
-                .map_err(|_| {
-                    errors::client(
-                        py,
-                        ClientErrorCode::InternalState,
-                        "stream metadata facts are unavailable",
-                    )
-                })?
-                .metadata_codec()
+            match &self.job {
+                Job::Call(flow) => flow.metadata_codec(),
+                Job::Query(_) => connection
+                    .native
+                    .facts
+                    .lock()
+                    .map_err(|_| {
+                        errors::client(
+                            py,
+                            ClientErrorCode::InternalState,
+                            "stream metadata facts are unavailable",
+                        )
+                    })?
+                    .metadata_codec(),
+            }
         } else {
             None
         };
@@ -283,17 +354,12 @@ impl Stream {
                 )
             })?);
         }
-        if self.job.is_finished() {
-            let first = self.first.ok_or_else(|| {
-                errors::client(
-                    py,
-                    ClientErrorCode::InternalState,
-                    "stream command ended without a first result",
-                )
-            })?;
-            self.prefix
-                .record_confirmation(self.source_rows.clone(), first)
-                .map_err(|error| errors::wire(py, error))?;
+        let confirmed = match &self.job {
+            Job::Query(query) => query.is_finished(),
+            Job::Call(flow) => flow.call_completed(),
+        };
+        if confirmed {
+            self.record_command(py)?;
         }
         self.set_index = self.set_index.checked_add(1).ok_or_else(|| {
             errors::client(
@@ -302,6 +368,23 @@ impl Stream {
                 "stream result index overflow",
             )
         })?;
+        Ok(())
+    }
+
+    fn record_command(&mut self, py: Python<'_>) -> PyResult<()> {
+        if !self.recorded {
+            let first = self.first.ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "The native command completed without a first public result confirmation",
+                )
+            })?;
+            self.prefix
+                .record_confirmation(self.source_rows.clone(), first)
+                .map_err(|error| errors::wire(py, error))?;
+            self.recorded = true;
+        }
         Ok(())
     }
 }

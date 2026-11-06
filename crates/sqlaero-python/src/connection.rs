@@ -63,10 +63,18 @@ pub(crate) enum CommandRole {
 /// acknowledgement path. A header or row batch carries no completion claim.
 trait Received {
     fn completion(&self) -> Option<&sqlaero_core::protocol::OkPacket<'static>>;
+    /// A parsed public no-row set is separate from whole-command completion.
+    /// The latter still comes only from Query's actual framing/ACK facts.
+    fn command_set_confirmation(&self) -> Option<CommandConfirmation> {
+        None
+    }
 }
 impl Received for Response {
     fn completion(&self) -> Option<&sqlaero_core::protocol::OkPacket<'static>> {
         Some(Response::completion(self))
+    }
+    fn command_set_confirmation(&self) -> Option<CommandConfirmation> {
+        matches!(self, Self::Command(_)).then(|| CommandConfirmation::from_response(self))
     }
 }
 impl Received for sqlaero_core::result::text::StreamEvent {
@@ -76,12 +84,28 @@ impl Received for sqlaero_core::result::text::StreamEvent {
             _ => None,
         }
     }
+    fn command_set_confirmation(&self) -> Option<CommandConfirmation> {
+        match self {
+            Self::End {
+                completion,
+                total_rows: None,
+                ..
+            } => Some(CommandConfirmation::from_completion(completion, None)),
+            _ => None,
+        }
+    }
 }
 impl<T: Received> Received for Managed<T> {
     fn completion(&self) -> Option<&sqlaero_core::protocol::OkPacket<'static>> {
         match self {
             Self::Public(response) => response.completion(),
             Self::InternalOutput { completion, .. } => Some(completion),
+        }
+    }
+    fn command_set_confirmation(&self) -> Option<CommandConfirmation> {
+        match self {
+            Self::Public(response) => response.command_set_confirmation(),
+            Self::InternalOutput { .. } => None,
         }
     }
 }
@@ -127,6 +151,7 @@ pub(crate) struct DriveFailure {
 enum FailureFacts {
     None,
     Confirmed(CommandConfirmation),
+    CommandSet(CommandConfirmation),
     Native(Arc<QueryError>),
 }
 impl DriveFailure {
@@ -151,6 +176,22 @@ impl DriveFailure {
             unavailable,
             facts: confirmed.map_or(FailureFacts::None, FailureFacts::Confirmed),
             outcome,
+        }
+    }
+    fn with_command_set_confirmation(mut self, value: Option<CommandConfirmation>) -> Self {
+        // Ready publication failures carry either the stronger whole-command
+        // confirmation or this parsed no-row set. They never need two copies.
+        if matches!(self.facts, FailureFacts::None)
+            && let Some(value) = value
+        {
+            self.facts = FailureFacts::CommandSet(value);
+        }
+        self
+    }
+    pub(crate) fn command_set_confirmation(&self) -> Option<CommandConfirmation> {
+        match self.facts {
+            FailureFacts::CommandSet(value) => Some(value),
+            _ => None,
         }
     }
     fn with_native(mut self, error: Arc<QueryError>, _codec: Option<OutputCodec>) -> Self {
@@ -624,7 +665,9 @@ impl Connection {
                         // Only Query's actual whole-command facts certify a
                         // final response. A public set or managed OUT may still
                         // have MORE/unread data, or queued business delivery.
-                        return Err(self.query_failure(py, lease, job, error, false, false));
+                        return Err(self
+                            .query_failure(py, lease, job, error, false, false)
+                            .with_command_set_confirmation(response.command_set_confirmation()));
                     }
                     return Ok(response);
                 }
