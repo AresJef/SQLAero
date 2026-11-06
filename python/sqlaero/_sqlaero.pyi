@@ -512,11 +512,13 @@ class TLSCertificate:
         """Multiline twelve-field display; deterministic content failures use markers.
 
         Explicit display may parse details and compute the fingerprint, without
-        expanding PEM. Resource and control exceptions propagate unchanged.
+        expanding PEM. Multi-entry DNS/IP collections show their total count
+        and complete-property name; empty or single-entry tuples remain exact.
+        Resource and control exceptions propagate unchanged.
         """
         ...
     def __repr__(self) -> str:
-        """Compact twelve-field display in the same order, without PEM expansion."""
+        """Compact twelve-field display, with the same DNS/IP collection summaries."""
         ...
 
 @final

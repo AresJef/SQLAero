@@ -29,6 +29,12 @@ performance guard passed.
 The [Python boundary contracts](docs/python-boundary-extension-contracts.md)
 define ownership, mutable input, GC and future Escape/Decode extension rules.
 
+The current feature candidate adds streaming and dictionary Cursors, ordered
+multiple results, native prepared execution, protocol compression, explicit
+LOCAL uploads, local SQL previews and expanded TLS configuration/diagnostics.
+Its own source, installed-package, platform and performance evidence is recorded
+separately; the historical run above does not validate these additions.
+
 Use a matching free-threaded interpreter and wheel without forcing the GIL off
 to bypass an unsupported extension. `sysconfig.get_config_var('Py_GIL_DISABLED')`
 identifies the build; `sys._is_gil_enabled()` must remain false after import and
@@ -144,7 +150,11 @@ as `'00:30:00'`; unlike aware `datetime`, it is not converted to UTC.
 Approved INSERT/REPLACE VALUES forms merge complete rows within the actual
 encoded request limit; other legal SQL executes per row. A confirmed prefix is
 not a promise that its transaction committed. An entered failed call exposes
-unknown aggregate counters and preserves confirmed prefix facts in diagnostics.
+unknown aggregate counters while preserving complete trusted prefix results and
+their execution facts. Current `rowcount`/`row_count`/`affected_rows`, insert ID
+and warning count describe the current result set. `batch_row_count` separately
+retains the reliable sum of each actual request's first result count. A failed
+call does not turn a partial sum into overall success.
 
 ### Optional typed Escape inputs
 
@@ -180,11 +190,61 @@ separate from the kernel's 48 GIL/NoGIL platform/runtime combinations: fixed
 PyArrow 26.0.0 has no official Windows ARM64 wheel, and the fixed Polars 2.1.0
 runtime has no free-threaded wheel.
 
-Rows are tuples. Results are received into native storage, then converted lazily
-by fetch. A failed multi-row fetch leaves its original position unchanged.
+Rows default to tuples. `connection.cursor(dict)` selects `DictCursor`;
+`streaming=True` selects `SSCursor` or `SSDictCursor` for the chosen row format.
+The same selection is available on `connection.transaction()`. Buffered results
+are received into native storage, then converted lazily by fetch. Streaming
+results arrive as they are consumed; a new command on that Connection reports
+busy until the response is safely finished. A failed multi-row conversion
+leaves its original position unchanged.
 `columns` is an immutable sequence with integer/slice/unique-key access;
 `names` preserves actual labels, while `keys` resolves duplicate labels once.
 Old column snapshots remain valid after another execution or Cursor close.
+
+### Execution and result options
+
+```python
+with connection.cursor(dict, streaming=True, prepared=True) as cursor:
+    cursor.execute('SELECT %s AS n', (7,))
+    assert cursor.fetchone() == {'n': 7}
+```
+
+Prepared mode uses the native MySQL protocol and retains public `%s` positions;
+each position binds one scalar value. Ordinary text mode keeps structural
+fragments and approved automatic VALUES merging. A prepared Cursor manages its
+current server handle; changing SQL or its required context rebuilds it on the
+next explicit execution. Execution does not automatically fall back or replay.
+
+`multi_statements` defaults to True. `nextset()` advances through every result
+in order, including independent no-row states, returning True on a switch and
+None at the normal end. Batch results are retained in the same order. After a
+later failure, complete trusted prefix results remain readable; reaching the
+saved failure boundary raises its recorded cause instead of reporting a normal
+end. Buffered `scroll()` supports relative/absolute navigation; streaming
+Cursors move only forward and raise IndexError on an invalid position.
+
+`connection.escape()` and `cursor.mogrify()` are local helpers. Escape returns
+the documented str/tuple/list shape; mogrify returns str for one planned request
+or list[str] for multiple requests. They capture a complete native reference
+without executing SQL or taking over a Cursor's fetch state. A preview cannot
+confirm what a later execution will do after session facts change. SQL that
+changes binding dependencies before later parameters is rejected when safe
+binding cannot be guaranteed. Aware inputs also require the statement's
+effective time zone to remain reliably UTC.
+
+Optional connection features include `init_sql`, explicit `show_warnings()` and
+`create_savepoint()`/`rollback_to_savepoint()`/`release_savepoint()`. Protocol
+compression is selected only from the supplied `compression` permissions;
+advanced zstd levels use the immutable `Compression` class. LOCAL upload needs
+both `local_infile=True` and the current execute's `local_file` path; the server's
+INFILE label never authorizes opening a different client file.
+
+SSL supports version bounds, CA directories or memory PEM, and explicit append
+or replace trust policy. `connection.tls_info` is an immutable snapshot of actual
+TLS facts, available after close; certificate exports retain the original peer
+material. Displays summarize multi-entry name collections, while read-only
+attributes return their complete tuples. The sole `server_public_key` argument
+accepts trusted SPKI PEM bytes or a str/PathLike file path.
 
 ## Transactions, local settings and errors
 

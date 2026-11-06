@@ -47,6 +47,9 @@ impl<const N: usize> Cache<N> {
         // No Python constructor, signal check, callback, or native preparation
         // runs while a cache lock is held. Failed candidates are never cached.
         let value = make()?;
+        // Native parsing can finish while a signal is pending. Observe it
+        // before publishing a completed Python diagnostic candidate.
+        py.check_signals()?;
         let winner = {
             let mut cache = self.lock(py)?;
             if let Some(winner) = &cache[index] {
@@ -442,6 +445,22 @@ impl TlsCertificate {
                     append(&errors::message(py, format_args!("<unavailable: {error}>"))?)?;
                     continue;
                 }
+                if matches!(field, 6 | 7) {
+                    let details = self.details(py, field)?;
+                    let names = if field == 6 { &details.dns_names } else { &details.ip_addresses };
+                    let names = names.as_ref().map_err(|source| self.content(py, field, source))?;
+                    if names.len() > 1 {
+                        // Summarize the whole collection, rather than truncating
+                        // an arbitrary number of entries or materializing a
+                        // Python tuple merely to display it. Empty and single
+                        // values retain the documented complete tuple form.
+                        py.check_signals()?;
+                        append(&errors::message(py, format_args!(
+                            "<{} entries; complete tuple available as .{name}>", names.len()
+                        ))?)?;
+                        continue;
+                    }
+                }
                 if field == 2 {
                     append(&errors::message(py, format_args!("{}", self.details(py, field)?.serial_number))?)?;
                     continue;
@@ -539,11 +558,14 @@ impl TlsCertificate {
         self.value(py, 13)
     }
     /// Return all twelve fields as a multiline str; explicit use may parse details.
+    /// Multi-entry DNS/IP collections show their total count and complete-property
+    /// name. Empty and single-entry tuples retain their complete representation.
     /// Deterministic content failures appear as unavailable markers.
     fn __str__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
         self.display(py, true)
     }
-    /// Return a compact str in the same field order, without PEM expansion.
+    /// Return a compact str in the same field order and DNS/IP summary policy.
+    /// No PEM or complete multi-entry name tuple is expanded by display.
     fn __repr__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
         self.display(py, false)
     }
