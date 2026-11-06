@@ -937,6 +937,7 @@ impl CursorCore {
         let request_index = collected.prefix.commands;
         let mut first = None;
         let mut set_index = 0;
+        let mut current_codec = Some(codec);
         loop {
             let response = match connection.drive_set(
                 py,
@@ -981,10 +982,64 @@ impl CursorCore {
                 first = Some(CommandConfirmation::from_response(&response));
                 collected.final_first_known |= final_request;
             }
+            let finished = job.is_finished();
+            if finished {
+                collected
+                    .prefix
+                    .record_confirmation(
+                        source_rows.clone(),
+                        first.ok_or_else(|| {
+                            errors::client(
+                                py,
+                                ClientErrorCode::InternalState,
+                                "a completed command has no first result",
+                            )
+                        })?,
+                    )
+                    .map_err(|error| errors::wire(py, error))?;
+            }
+            // The common driver already applies tracked changes. Refresh only
+            // when the actual terminator reports one, keeping ordinary rows
+            // free from another facts lock while not freezing a whole request.
+            let names_codec = (|| {
+                if response.completion().status_flags().contains(
+                    sqlaero_core::protocol::StatusFlags::SERVER_SESSION_STATE_CHANGED,
+                ) {
+                    current_codec = connection
+                        .native
+                        .facts
+                        .lock()
+                        .map_err(|_| {
+                            errors::client(
+                                py,
+                                ClientErrorCode::InternalState,
+                                "The completed result's metadata facts are unavailable",
+                            )
+                        })?
+                        .metadata_codec();
+                }
+                if matches!(&response, Response::Rows(_)) {
+                    current_codec.ok_or_else(|| {
+                        errors::client(
+                            py,
+                            ClientErrorCode::UnsupportedCharset,
+                            "The completed result's actual metadata encoding is unknown; the request-entry encoding was not substituted",
+                        )
+                    })
+                } else {
+                    Ok(codec)
+                }
+            })()
+            .inspect_err(|_| {
+                if !finished {
+                    lease.invalidate();
+                }
+                collected.total_unknown |= !final_request;
+            })?;
             let result = collected.chain.push(NativeSet {
                 response,
                 options,
-                names_codec: codec,
+                names_codec,
                 request_index,
                 set_index,
             });
@@ -995,20 +1050,7 @@ impl CursorCore {
                 collected.total_unknown |= !final_request;
                 return Err(output::memory(py, error));
             }
-            if job.is_finished() {
-                collected
-                    .prefix
-                    .record_confirmation(
-                        source_rows,
-                        first.ok_or_else(|| {
-                            errors::client(
-                                py,
-                                ClientErrorCode::InternalState,
-                                "a completed command has no first result",
-                            )
-                        })?,
-                    )
-                    .map_err(|error| errors::wire(py, error))?;
+            if finished {
                 return Ok(());
             }
             set_index += 1;

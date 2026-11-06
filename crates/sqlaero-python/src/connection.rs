@@ -161,7 +161,7 @@ impl DriveFailure {
         }
         self
     }
-    fn confirmation(&self) -> Option<CommandConfirmation> {
+    pub(crate) fn confirmation(&self) -> Option<CommandConfirmation> {
         match self.facts {
             FailureFacts::Confirmed(value) => Some(value),
             _ => None,
