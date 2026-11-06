@@ -6,7 +6,8 @@ global settings. Expected behavior comes from the finalized R03 contract.
 """
 
 import pytest
-from sqlaero import ProgrammingError, _sqlaero
+from sqlaero import _sqlaero
+from sqlaero.errors import ProgrammingError
 from test_public_connection import live, requires_mysql
 
 
