@@ -4,6 +4,7 @@ The direct controls run independently of managed OUT support. Unsupported
 managed cases remain real failures when selected; no capability skip hides them.
 """
 
+from collections.abc import Mapping
 from datetime import date
 from decimal import Decimal
 from functools import partial
@@ -150,6 +151,7 @@ def test_managed_prepared_positions_hidden_out_tail_busy_and_no_user_slots(routi
 @pytest.mark.parametrize('kind', KINDS)
 def test_managed_prepared_actual_fields_decode_policy_and_closed_first_getter(routines: Routines, kind: CursorType) -> None:
     with live(routines.label) as connection:
+        expected: tuple[object, ...] | None = None
         with connection.cursor(prepared=True) as reference:
             reference.use_decimal = True
             reference.decode_json = True
@@ -160,6 +162,7 @@ def test_managed_prepared_actual_fields_decode_policy_and_closed_first_getter(ro
             expected = cast(tuple[object, ...], sets[0][1][0])
             assert expected[3:] == (b'\x00\xff', None)
             # The direct protocol fields supply this oracle, without a guessed type.
+        assert expected is not None
         with connection.cursor(kind, prepared=True) as cur:
             cur.use_decimal = True
             cur.decode_json = True
@@ -169,7 +172,7 @@ def test_managed_prepared_actual_fields_decode_policy_and_closed_first_getter(ro
             cur.decode_json = False
             assert drain(cur) == [(None, None, 0)]
             connection.close()
-            outputs = readonly_outputs(cur, dict(enumerate(expected)))
+            outputs = cast(Mapping[int, object], readonly_outputs(cur, dict(enumerate(expected))))
             assert tuple(type(outputs[i]) for i in range(5)) == tuple(type(value) for value in expected)
 
 
