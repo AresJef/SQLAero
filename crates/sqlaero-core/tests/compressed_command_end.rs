@@ -10,7 +10,7 @@ use sqlaero_core::transport::channel::{Channel, ChannelError, Step};
 use sqlaero_core::transport::compression::{Algorithm, Codec};
 use sqlaero_core::transport::deadline::{Direction, IoBudget, TimeoutKind};
 use sqlaero_core::transport::socket::Transport;
-use std::io::{Read, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::net::TcpListener;
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -88,7 +88,20 @@ fn peer(
         }
         codec.finish_response().unwrap();
         socket.write_all(&wire).unwrap();
-        assert_eq!(socket.read(&mut [0]).unwrap(), 0, "no command replay");
+        // Rejecting unread corrupt data may close TCP with RST instead of FIN.
+        // Either close is final; a byte, timeout or other error is not success.
+        match socket.read(&mut [0]) {
+            Ok(0) => (),
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+                ) =>
+            {
+                ()
+            }
+            other => panic!("no command replay; expected closed peer, got {other:?}"),
+        }
     });
     let mut channel = Channel::new(Transport::tcp(address).unwrap(), false);
     let mut budget = IoBudget::new(

@@ -7,11 +7,12 @@ from decimal import Decimal
 from argparse import Namespace
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
 from sqlaero import _sqlaero
-from tools.benchmark import Case, collect, fingerprint, quality, target
+from tools.benchmark import Case, collect, fingerprint, network_target, quality, target
 
 
 @pytest.mark.parametrize("version", [None, "TLSv1.3"])
@@ -25,6 +26,43 @@ def test_connection_validation_fingerprint_accepts_both_public_tls_contracts(ver
         "tls_info": None if version is None else SimpleNamespace(version=version),
     })
     assert fingerprint(legacy()) == fingerprint(current())
+
+
+@pytest.mark.parametrize("current", [False, True])
+def test_connection_measurement_prepares_each_public_key_contract(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, current: bool,
+) -> None:
+    import json
+
+    (tmp_path / '84').mkdir()
+    (tmp_path / '84/state.json').write_text(json.dumps({
+        'test_password': 'owned-test-only', 'port': 13384,
+    }))
+    monkeypatch.setenv('SQLAERO_TEST_MYSQL_ROOT', str(tmp_path))
+    observed: dict[str, object] = {}
+
+    def legacy_connect(*, server_public_key_path: Path, **settings: Any) -> object:
+        observed.update(settings, key=server_public_key_path, contract='legacy')
+        return object()
+
+    def current_connect(*, server_public_key: Path, **settings: Any) -> object:
+        observed.update(settings, key=server_public_key, contract='current')
+        return object()
+
+    def ssl(**_settings: object) -> None:
+        return None
+
+    native = SimpleNamespace(connect=current_connect if current else legacy_connect,
+                             SSL=ssl)
+    case = Case('connect/84/tcp/disabled/cached', {
+        'server': '84', 'transport': 'tcp', 'tls': 'disabled', 'auth': 'cached',
+    }, 'connect')
+    task = network_target(case, native, {})
+    assert observed == {}
+    task.call()
+    assert observed['key'] == tmp_path / '84/data/public_key.pem'
+    assert observed['contract'] == ('current' if current else 'legacy')
+    assert observed['user'] == 'sqlaero' and observed['port'] == 13384
 
 
 def test_mixed_valid_and_misspelled_case_ids_do_not_silently_reduce_coverage(tmp_path: Path) -> None:

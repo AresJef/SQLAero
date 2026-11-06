@@ -18,6 +18,7 @@ import hashlib
 import importlib
 import importlib.util
 from importlib.machinery import EXTENSION_SUFFIXES
+import inspect
 import json
 import math
 import os
@@ -67,7 +68,7 @@ def fingerprint(value: object) -> dict[str, object]:
     if original_type == "Connection":
         connection = cast(Any, value)
         missing = object()
-        info = getattr(connection, "tls_info", missing)
+        info: Any = getattr(connection, "tls_info", missing)
         tls_version = (connection.tls_version if info is missing
                        else None if info is None else info.version)
         value = (connection.server_version, tls_version)
@@ -607,7 +608,11 @@ def network_target(case: Case, native: Any, sessions: dict[str, Any]) -> Task:
     else:
         settings.update(host="127.0.0.1", port=int(secret.get("port", 13384 if label == "84" else 13397)))
         settings["ssl"] = native.SSL(mode="DISABLED")
-        settings["server_public_key_path"] = fixture / label / "data/public_key.pem"
+        # Only public option preparation differs between the frozen baseline
+        # and the current API. Signature inspection is outside every timing.
+        public_key = ("server_public_key" if "server_public_key" in
+                      inspect.signature(native.connect).parameters else "server_public_key_path")
+        settings[public_key] = fixture / label / "data/public_key.pem"
     if spec.get("tls") == "verified":
         settings["ssl"] = native.SSL(mode="VERIFY_IDENTITY", ca_file=fixture / "tls/ca.pem",
                                      server_name="localhost")
