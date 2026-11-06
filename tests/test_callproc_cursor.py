@@ -4,13 +4,13 @@ The direct-CALL control verifies these task-owned routines and server field
 behavior. It is fixture evidence, not evidence that callproc is implemented.
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import partial
 from itertools import count
 import os
-from typing import Any
+from typing import Any, TypeAlias, cast
 from uuid import uuid4
 
 import pytest
@@ -19,7 +19,12 @@ from sqlaero.errors import InterfaceBusyError, SQLAeroError
 from test_public_connection import live, requires_mysql
 
 
-KINDS = (sqlaero.Cursor, sqlaero.DictCursor, sqlaero.SSCursor, sqlaero.SSDictCursor)
+CursorType: TypeAlias = (
+    type[sqlaero.Cursor] | type[sqlaero.DictCursor]
+    | type[sqlaero.SSCursor] | type[sqlaero.SSDictCursor]
+)
+CursorValue: TypeAlias = sqlaero.Cursor | sqlaero.DictCursor | sqlaero.SSCursor | sqlaero.SSDictCursor
+KINDS: tuple[CursorType, ...] = (sqlaero.Cursor, sqlaero.DictCursor, sqlaero.SSCursor, sqlaero.SSDictCursor)
 MISSING_API = tuple(
     f'{kind.__name__}.{name}' for kind in KINDS
     for name in ('callproc', 'call_output_params') if not hasattr(kind, name)
@@ -42,7 +47,7 @@ def scalar(connection: Any, sql: str) -> Any:
 
 
 def drain(cursor: Any) -> list[tuple[tuple[str, ...] | None, Any, int | None]]:
-    result = []
+    result: list[tuple[tuple[str, ...] | None, Any, int | None]] = []
     while True:
         names = None if cursor.description is None else cursor.columns.names
         rows = None if names is None else cursor.fetchall()
@@ -51,18 +56,18 @@ def drain(cursor: Any) -> list[tuple[tuple[str, ...] | None, Any, int | None]]:
             return result
 
 
-def streaming(kind: Any) -> bool:
+def streaming(kind: CursorType) -> bool:
     return kind in (sqlaero.SSCursor, sqlaero.SSDictCursor)
 
 
-def formatted(kind: Any, name: str, *values: Any) -> tuple[Any, ...]:
+def formatted(kind: CursorType, name: str, *values: Any) -> tuple[Any, ...]:
     if kind in (sqlaero.DictCursor, sqlaero.SSDictCursor):
         return tuple({name: value} for value in values)
     return tuple((value,) for value in values)
 
 
 def readonly_outputs(cursor: Any, expected: dict[int, Any]) -> Mapping[int, Any]:
-    outputs = cursor.call_output_params
+    outputs = cast(Mapping[int, Any], cursor.call_output_params)
     assert isinstance(outputs, Mapping)
     assert tuple(outputs) == tuple(expected)
     assert dict(outputs) == expected
@@ -92,7 +97,7 @@ class Routines:
     table: str
     quoted_database: str | None
     database_error: str | None
-    typed: tuple[Any, ...] | None = None
+    typed: tuple[object, ...] | None = None
     variables_error: str | None = None
 
     def qualified(self, name: str) -> str:
@@ -100,7 +105,7 @@ class Routines:
 
 
 @pytest.fixture(scope='module', params=('84', '97'))
-def routines(request: pytest.FixtureRequest) -> Any:
+def routines(request: pytest.FixtureRequest) -> Iterator[Routines]:
     if 'SQLAERO_TEST_MYSQL_ROOT' not in os.environ:
         pytest.skip('requires explicitly selected owned MySQL fixtures')
     label = str(request.param)
@@ -109,7 +114,7 @@ def routines(request: pytest.FixtureRequest) -> Any:
     )}
     names['quoted'] += '`name.with.dot'
     table = PREFIX + '_receipts'
-    created = []
+    created: list[str] = []
     quoted_database = None
     database_error = None
     with live(label) as setup, setup.cursor() as cur:
@@ -176,7 +181,7 @@ def test_public_callproc_surface_is_registered_on_all_four_cursor_classes() -> N
 
 @requires_mysql
 def test_fixture_direct_call_controls_and_actual_text_output_fields(routines: Routines,
-                                                                  record_property: Any) -> None:
+                                                                  record_property: Callable[[str, object], None]) -> None:
     with live(routines.label) as connection, connection.cursor() as cur:
         cur.execute(f'CALL {routines.qualified("pure")}(4,8)')
         assert drain(cur) == [(('value',), ((12,), (13,)), 2),
@@ -204,7 +209,7 @@ def test_fixture_direct_call_controls_and_actual_text_output_fields(routines: Ro
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
-def test_pure_in_results_tail_and_confirmed_empty_mapping(routines: Routines, kind: Any) -> None:
+def test_pure_in_results_tail_and_confirmed_empty_mapping(routines: Routines, kind: CursorType) -> None:
     with live(routines.label) as connection, connection.cursor(kind) as cur:
         assert cur.call_output_params is None
         result = cur.callproc(routines.names['pure'], (4, 8))
@@ -221,7 +226,7 @@ def test_pure_in_results_tail_and_confirmed_empty_mapping(routines: Routines, ki
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
-def test_explicit_out_inout_positions_snapshot_and_no_hidden_sets(routines: Routines, kind: Any) -> None:
+def test_explicit_out_inout_positions_snapshot_and_no_hidden_sets(routines: Routines, kind: CursorType) -> None:
     with live(routines.label) as connection, connection.cursor(kind) as cur:
         args = [5, None, 10]
         result = cur.callproc(routines.names['adjust'], args, parameter_modes=['in', 'Out', 'InOuT'])
@@ -246,7 +251,7 @@ def test_explicit_out_inout_positions_snapshot_and_no_hidden_sets(routines: Rout
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
-def test_none_is_input_without_inferred_direction_and_inout_accepts_null(routines: Routines, kind: Any) -> None:
+def test_none_is_input_without_inferred_direction_and_inout_accepts_null(routines: Routines, kind: CursorType) -> None:
     with live(routines.label) as connection, connection.cursor(kind) as cur:
         cur.callproc(routines.names['null'], None)
         assert drain(cur)[0][1] == formatted(kind, 'value', 1)
@@ -263,7 +268,7 @@ def test_none_is_input_without_inferred_direction_and_inout_accepts_null(routine
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
-def test_omitted_args_are_zero_positions_and_text_bytes_are_single_values(routines: Routines, kind: Any) -> None:
+def test_omitted_args_are_zero_positions_and_text_bytes_are_single_values(routines: Routines, kind: CursorType) -> None:
     with live(routines.label) as connection, connection.cursor(kind) as cur:
         cur.callproc(routines.names['zero'])
         assert drain(cur) == [(('value',), formatted(kind, 'value', 42), 1), (None, None, 0)]
@@ -281,7 +286,7 @@ def test_omitted_args_are_zero_positions_and_text_bytes_are_single_values(routin
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
-def test_direct_execute_call_does_not_create_managed_outputs(routines: Routines, kind: Any) -> None:
+def test_direct_execute_call_does_not_create_managed_outputs(routines: Routines, kind: CursorType) -> None:
     with live(routines.label) as connection, connection.cursor(kind) as cur:
         cur.callproc(routines.names['zero'])
         drain(cur)
@@ -296,7 +301,7 @@ def test_direct_execute_call_does_not_create_managed_outputs(routines: Routines,
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
 @pytest.mark.parametrize('multi', [False, True])
-def test_initialization_reuse_and_old_native_outputs_are_independent(routines: Routines, kind: Any, multi: bool) -> None:
+def test_initialization_reuse_and_old_native_outputs_are_independent(routines: Routines, kind: CursorType, multi: bool) -> None:
     connection = live(routines.label, multi_statements=multi)
     first = connection.cursor(kind)
     second = connection.cursor(kind)
@@ -317,7 +322,7 @@ def test_initialization_reuse_and_old_native_outputs_are_independent(routines: R
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
-def test_unassigned_out_is_null_instead_of_previous_slot_value(routines: Routines, kind: Any) -> None:
+def test_unassigned_out_is_null_instead_of_previous_slot_value(routines: Routines, kind: CursorType) -> None:
     with live(routines.label) as connection, connection.cursor(kind) as cur:
         for flag, expected in ((1, 99), (0, None), (1, 99)):
             cur.callproc(routines.names['sparse'], (flag, None), parameter_modes=('IN', 'OUT'))
@@ -328,7 +333,7 @@ def test_unassigned_out_is_null_instead_of_previous_slot_value(routines: Routine
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
-def test_actual_output_decode_policy_is_captured_before_later_option_changes(routines: Routines, kind: Any) -> None:
+def test_actual_output_decode_policy_is_captured_before_later_option_changes(routines: Routines, kind: CursorType) -> None:
     assert routines.typed is not None, 'direct text-field fixture control must run first'
     with live(routines.label) as connection, connection.cursor(kind) as cur:
         cur.decode_json = True
@@ -338,14 +343,14 @@ def test_actual_output_decode_policy_is_captured_before_later_option_changes(rou
         cur.decode_json = False
         drain(cur)
         connection.close()
-        outputs = readonly_outputs(cur, dict(enumerate(routines.typed)))
+        outputs = cast(Mapping[int, object], readonly_outputs(cur, dict(enumerate(routines.typed))))
         assert tuple(type(outputs[index]) for index in range(5)) == tuple(type(value) for value in routines.typed)
 
 
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
-def test_close_and_business_exception_preserve_confirmed_outputs(routines: Routines, kind: Any) -> None:
+def test_close_and_business_exception_preserve_confirmed_outputs(routines: Routines, kind: CursorType) -> None:
     with live(routines.label) as connection:
         cur = connection.cursor(kind)
         original = ValueError('dcpd business primary')
@@ -363,8 +368,9 @@ def test_close_and_business_exception_preserve_confirmed_outputs(routines: Routi
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
 @pytest.mark.parametrize('rollback', [False, True])
-def test_transaction_receipt_and_closed_output_are_separate_facts(routines: Routines, kind: Any, rollback: bool) -> None:
+def test_transaction_receipt_and_closed_output_are_separate_facts(routines: Routines, kind: CursorType, rollback: bool) -> None:
     with live(routines.label) as connection:
+        cur: CursorValue | None = None
         value = next(IDS)
         original = ValueError('dcpd rollback primary')
         if rollback:
@@ -377,7 +383,7 @@ def test_transaction_receipt_and_closed_output_are_separate_facts(routines: Rout
         else:
             with connection.transaction(kind) as cur:
                 cur.callproc(routines.names['receipt'], (value, None), parameter_modes=('IN', 'OUT'))
-        assert cur.closed
+        assert cur is not None and cur.closed
         readonly_outputs(cur, {1: value * 2})
         with connection.cursor() as check:
             check.execute(f'SELECT v FROM {quote(routines.database)}.{quote(routines.table)} WHERE v=%s', value)
@@ -387,7 +393,7 @@ def test_transaction_receipt_and_closed_output_are_separate_facts(routines: Rout
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
-def test_failed_call_keeps_real_error_prefix_and_never_publishes_output(routines: Routines, kind: Any) -> None:
+def test_failed_call_keeps_real_error_prefix_and_never_publishes_output(routines: Routines, kind: CursorType) -> None:
     with live(routines.label) as connection, connection.cursor(kind) as cur:
         if streaming(kind):
             cur.callproc(routines.names['failure'], (23, None), parameter_modes=('IN', 'OUT'))
@@ -408,7 +414,7 @@ def test_failed_call_keeps_real_error_prefix_and_never_publishes_output(routines
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', [sqlaero.SSCursor, sqlaero.SSDictCursor])
-def test_business_primary_survives_later_call_error_on_exit(routines: Routines, kind: Any) -> None:
+def test_business_primary_survives_later_call_error_on_exit(routines: Routines, kind: CursorType) -> None:
     connection = live(routines.label)
     cur = connection.cursor(kind)
     original = ValueError('business before CALL tail')
@@ -427,7 +433,7 @@ def test_business_primary_survives_later_call_error_on_exit(routines: Routines, 
 @requires_mysql
 @requires_callproc
 @pytest.mark.parametrize('kind', KINDS)
-def test_raw_routine_name_and_explicit_database_are_quoted_separately(routines: Routines, kind: Any) -> None:
+def test_raw_routine_name_and_explicit_database_are_quoted_separately(routines: Routines, kind: CursorType) -> None:
     class Name(str):
         def __str__(self) -> str:
             raise AssertionError('native string subclasses must not call __str__')
@@ -462,7 +468,7 @@ def test_strict_preparation_failure_preserves_old_mapping_and_results(routines: 
         cur.callproc(routines.names['adjust'], (5, None, 10), parameter_modes=('IN', 'OUT', 'INOUT'))
         old = readonly_outputs(cur, {1: 10, 2: 11})
         columns = cur.columns
-        invalid = [
+        invalid: list[tuple[object, object, dict[str, object]]] = [
             (None, (), {}), (42, (), {}), (NotName(), (), {}),
             ('', (), {}), ('a\x00b', (), {}), (routines.names['zero'], (), {'database': ''}),
             (routines.names['zero'], (), {'database': 42}),
@@ -476,13 +482,13 @@ def test_strict_preparation_failure_preserves_old_mapping_and_results(routines: 
         ]
         for name, args, keywords in invalid:
             with pytest.raises((TypeError, ValueError, SQLAeroError)) as caught:
-                cur.callproc(name, args, **keywords)
+                cast(Any, cur).callproc(name, args, **keywords)
             assert getattr(caught.value, 'is_server_error', None) is not True
             assert cur.call_output_params is old and cur.columns is columns
         with pytest.raises(TypeError):
-            cur.callproc(routines.names['zero'], many=True)
+            cast(Any, cur).callproc(routines.names['zero'], many=True)
         with pytest.raises(TypeError):
-            cur.callproc(routines.names['zero'], itemize=True)
+            cast(Any, cur).callproc(routines.names['zero'], itemize=True)
         assert cur.fetchone() == (5,)
 
 
@@ -502,7 +508,8 @@ def test_multirow_table_is_rejected_before_call(routines: Routines) -> None:
 @requires_mysql
 @requires_callproc
 def test_output_mapping_allocation_failure_is_atomic_and_retryable(routines: Routines) -> None:
-    import _testcapi
+    from importlib import import_module
+    capi = cast(Any, import_module('_testcapi'))
     assert routines.typed is not None
     expected = dict(enumerate(routines.typed))
     failures = 0
@@ -513,16 +520,16 @@ def test_output_mapping_allocation_failure_is_atomic_and_retryable(routines: Rou
             cur.callproc(routines.names['typed'], (None,) * 5, parameter_modes=('OUT',) * 5)
             connection.close()
             operation = partial(getattr, cur, 'call_output_params')
-            bounded = getattr(_testcapi, 'call_with_nomemory', None)
+            bounded = getattr(capi, 'call_with_nomemory', None)
             try:
                 if bounded is not None:
                     result = bounded(offset, offset + 1, operation)
                 else:
-                    _testcapi.set_nomemory(offset, offset + 1)
+                    capi.set_nomemory(offset, offset + 1)
                     try:
                         result = operation()
                     finally:
-                        _testcapi.remove_mem_hooks()
+                        capi.remove_mem_hooks()
             except MemoryError:
                 failures += 1
                 result = operation()
