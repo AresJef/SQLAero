@@ -181,6 +181,7 @@ def _send(parent: int, event: int) -> None:
 
     Thread(target=read_commands, daemon=True).start()
     print('ready', flush=True)
+    # Keep deadlines high resolution on Windows Python 3.12 as well.
     deadline: float | None = None
     repeat = 0.0
     while True:
@@ -190,7 +191,7 @@ def _send(parent: int, event: int) -> None:
             try:
                 command = commands.get_nowait()
             except Empty:
-                remaining = deadline - time.monotonic()
+                remaining = deadline - time.perf_counter()
                 if remaining > 0:
                     # Queue's timed lock wait uses the coarse Windows wait
                     # clock. CPython's public sleep uses a high-resolution
@@ -199,14 +200,14 @@ def _send(parent: int, event: int) -> None:
                     continue
                 if not kernel.GenerateConsoleCtrlEvent(event, 0):
                     raise _win.WinError(_win.get_last_error())
-                deadline = time.monotonic() + repeat if repeat else None
+                deadline = time.perf_counter() + repeat if repeat else None
                 continue
         if command is None:
             return
         delay, repeat, acknowledge = command
         if acknowledge:
             print('armed', flush=True)
-        deadline = time.monotonic() + delay if delay else None
+        deadline = time.perf_counter() + delay if delay else None
 
 
 if __name__ == '__main__':
