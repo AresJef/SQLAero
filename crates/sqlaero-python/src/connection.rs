@@ -1461,6 +1461,40 @@ fn configured_size(
 /// value. Supplied values are applied during initialization; MySQL decides any
 /// version-specific upper limit or normalization. Later remote changes use
 /// explicit set_* methods; three local runtime timeouts use property assignment.
+///
+/// multi_statements defaults to True and requires an exact bool; later changes
+/// use set_multi_statements(). local_infile defaults to False and requires an
+/// exact bool. An upload also needs that execute() call's explicit local_file
+/// path; a server-supplied filename never authorizes a local file by itself.
+///
+/// compression accepts an algorithm CSV str, list[str], tuple[str, ...], a
+/// reusable Compression configuration, or None to disable compression. Shorthand
+/// zstd uses level 3; a different level requires Compression. Uncompressed
+/// fallback is allowed only when explicitly listed. This does not weaken TLS.
+/// Connection.compression reports an independent snapshot of the actual
+/// negotiated compression, or None when no compression is active.
+///
+/// Explicit utf8mb3 selects BMP-only UTF-8; utf8 and utf-8 still select utf8mb4.
+/// Binary parameter and result roles remain binary regardless of this charset.
+///
+/// init_sql accepts None, one nonempty SQL str, or a finite list/tuple of nonempty
+/// SQL str. It runs after normal initialization under the original connect
+/// deadline. Each statement and all its results are processed and discarded;
+/// strings are not split at semicolons. Confirmed final settings and transaction
+/// state are retained without an automatic commit or rollback. Required final
+/// UTC/session conditions still apply. Failure stops later steps and does not
+/// undo effects that were already committed.
+///
+/// server_public_key is an explicitly trusted RSA SubjectPublicKeyInfo PEM
+/// source. str and PathLike values are paths; top-level bytes are PEM contents,
+/// even if they look like a filename. A PathLike returning bytes remains a path.
+/// None supplies no key. Invalid explicit material fails preparation even when
+/// TLS or fast authentication would not use it. No content guessing, DER/PKCS#1
+/// conversion or automatic network key fetching occurs. This key does not
+/// encrypt later SQL/results or independently verify the server's identity.
+/// The old server_public_key_path keyword is no longer accepted; use
+/// server_public_key instead. See SSL and Compression for their configuration
+/// contracts, and Connection.tls_info for actual negotiated TLS facts.
 #[pyfunction]
 #[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,compression=None,server_public_key=None,autocommit=Argument::default(),sql_mode=None,init_sql=None,multi_statements=Argument::default(),local_infile=Argument::default(),connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
 #[pyo3(
