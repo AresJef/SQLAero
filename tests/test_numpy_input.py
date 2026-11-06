@@ -726,9 +726,9 @@ def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(
     from sqlaero._sqlaero import OperationalTimeoutError
     # Prepare the same provider before starting the tested operation budget.
     _sqlaero._bind_sql("SELECT %s", np.array(["x"], dtype=f"{kind}1"))
-    # Expand the target-value window after platform-specific preparation costs.
+    # A larger value separates conversion work from short preparation costs.
     # The escaped request is about 48MiB, below the unchanged 64MiB limit.
-    # This candidate does not establish the cause of the original smaller RED.
+    # Derive one deadline from native work without refreshing it during binding.
     logical_length = 24 * 1024 * 1024
     budget_cap_ns = 50_000_000
     source = np.array(["'" * logical_length], dtype=f"{kind}{logical_length}")

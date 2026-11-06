@@ -323,7 +323,7 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
 
     def read_names() -> tuple[str, ...]:
         nonlocal baseline, returned
-        # Exclude the sender's readiness/arming work from output progress.
+        # Keep a diagnostic global baseline; acceptance uses getter-line traces.
         baseline = sys.getallocatedblocks()
         names = certificate.dns_names
         returned = True
