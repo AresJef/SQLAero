@@ -21,7 +21,7 @@ from uuid import uuid4
 
 import pytest
 from sqlaero import Connection
-from sqlaero.errors import SQLAeroError
+from sqlaero.errors import InterfaceError, SQLAeroError
 from test_public_connection import live, requires_mysql
 from tools.mysql_fixture import mysql_command, run as fixture_command
 
@@ -186,7 +186,15 @@ def test_only_the_explicit_source_is_imported_and_all_four_cursors_publish_nonro
             assert current.lastrowid is current.last_row_id is None
             assert current.description is None
             assert len(current.columns) == 0
-            assert current.fetchone() is None and current.fetchall() == ()
+            with pytest.raises(InterfaceError):
+                current.fetchone()
+            with pytest.raises(InterfaceError):
+                current.fetchall()
+            # MySQL returns an additional empty success for the preserved
+            # post-semicolon comment. Real nonrow statuses remain public.
+            assert current.nextset() is True
+            assert current.description is None and current.row_count == 0
+            assert current.batch_row_count == 2
             assert current.nextset() is None
         if isinstance(authorized, (OncePath, OnceBytesPath)):
             assert authorized.calls == 1
@@ -209,7 +217,9 @@ def test_empty_file_and_unrelated_legal_sql_label_use_the_actual_final_ok(
             assert current.execute(load_sql(), ('orders; ? %s 中文.csv',), local_file=source) == 0
             assert current.row_count == current.rowcount == current.batch_row_count == 0
             assert current.warning_count == 0
-            assert current.description is None and current.fetchall() == ()
+            assert current.description is None
+            with pytest.raises(InterfaceError):
+                current.fetchall()
             assert current.execute('SELECT COUNT(*) FROM local_rows') == 1
             assert current.fetchone() == (0,)
 
