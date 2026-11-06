@@ -726,7 +726,15 @@ def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(
     from sqlaero._sqlaero import OperationalTimeoutError
     # Prepare the same provider before starting the tested operation budget.
     _sqlaero._bind_sql("SELECT %s", np.array(["x"], dtype=f"{kind}1"))
-    source = np.array(["'" * (8 * 1024 * 1024)], dtype=f"{kind}{8 * 1024 * 1024}")
+    # Expand the target-value window after platform-specific preparation costs.
+    # The escaped request is about 48MiB, below the unchanged 64MiB limit.
+    # This candidate does not establish the cause of the original smaller RED.
+    logical_length = 24 * 1024 * 1024
+    budget_cap_ns = 50_000_000
+    source = np.array(["'" * logical_length], dtype=f"{kind}{logical_length}")
+    record_property("source_logical_length", logical_length)
+    record_property("source_byte_length", int(source.nbytes))
+    record_property("timeout_budget_cap_ns", budget_cap_ns)
     args = (7, source)
     encoder = _sqlaero._prepare_encoder()
     observations_ns: list[int] = []
@@ -738,9 +746,9 @@ def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(
         record_property(f"native_observation_{index + 1}_ns", elapsed_ns)
         # Both original payloads expand to at least two bytes per source quote.
         # Length checks and owner destruction stay outside the observation.
-        assert len(owner) >= 2 * (8 * 1024 * 1024)
+        assert len(owner) >= 2 * logical_length
         del owner
-    timeout_ns = min(5_000_000, min(observations_ns) // 2)
+    timeout_ns = min(budget_cap_ns, min(observations_ns) // 2)
     record_property("timeout_budget_ns", timeout_ns)
     assert timeout_ns > 0, observations_ns
     actual_elapsed_ns = 0
