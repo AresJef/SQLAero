@@ -2121,4 +2121,351 @@ mod tests {
             }
         });
     }
+
+    #[test]
+    #[ignore = "requires C's fixture host and its existing controlled native peer"]
+    fn host_publication_failure_preserves_the_actual_no_row_call_tail_kind() {
+        use sqlaero_core::protocol::framing::{self, Sequence};
+        use sqlaero_core::transport::channel::Channel;
+        use sqlaero_core::transport::deadline::Direction as IoDirection;
+        use sqlaero_core::transport::socket::Transport;
+        use std::net::TcpListener;
+        Python::initialize();
+        Python::attach(|py| {
+            for streaming in [false, true] {
+                for kind in 0..3 {
+                    let zero_row_business = kind == 1;
+                    let combined = kind == 2;
+                    let owner = connected(py, "84", combined);
+                    let connection = owner.borrow(py);
+                    let mut operation = budget();
+                    let mut lease = connection.acquire(py, &mut operation).unwrap();
+                    let (context, ansi, _) = connection.context(py).unwrap();
+                    let args = py.eval(c"(5,None,10)", None, None).unwrap();
+                    let modes = py.eval(c"('IN','OUT','INOUT')", None, None).unwrap();
+                    let prefix = if combined {
+                        super::super::slot_prefix(py, &connection)
+                            .unwrap()
+                            .to_owned()
+                    } else {
+                        String::new()
+                    };
+                    let mut native = NativeCall::new(
+                        &PyString::new(py, "c_flow_host_kind"),
+                        Some(&args),
+                        None,
+                        Some(&modes),
+                        &prefix,
+                        if combined {
+                            PlanMode::Text
+                        } else {
+                            PlanMode::PreparedNative
+                        },
+                        &connection.types.borrow(py),
+                        &context,
+                        ansi,
+                        &operation,
+                    )
+                    .unwrap();
+                    if !combined {
+                        native.call.bytes[1..5].copy_from_slice(&42_u32.to_le_bytes());
+                    }
+                    let request = if combined {
+                        native.combined(py, LIMIT, &operation).unwrap().unwrap()
+                    } else {
+                        native.call.bytes.clone()
+                    };
+                    let output = Output::new(
+                        py,
+                        &native.output_positions,
+                        Options::default(),
+                        Arc::clone(&connection.native.result_pool),
+                        LIMIT,
+                    )
+                    .unwrap();
+                    let scope =
+                        Scope::new(Arc::clone(&connection.native.result_pool), LIMIT).unwrap();
+                    let mut flow = Flow::new(
+                        py,
+                        &connection,
+                        &mut lease,
+                        native,
+                        Arc::clone(&output),
+                        Policy {
+                            multi_statements: combined,
+                            streaming,
+                            send_limit: LIMIT,
+                        },
+                        &scope,
+                        &operation,
+                    )
+                    .unwrap();
+                    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                    let address = listener.local_addr().unwrap();
+                    let server = std::thread::spawn(move || {
+                        let (mut socket, _) = listener.accept().unwrap();
+                        socket
+                            .set_read_timeout(Some(Duration::from_secs(3)))
+                            .unwrap();
+                        let mut sequence = Sequence::default();
+                        assert_eq!(
+                            framing::read_message(&mut socket, &mut sequence, LIMIT).unwrap(),
+                            request
+                        );
+                        if combined {
+                            let flags = (StatusFlags::SERVER_STATUS_AUTOCOMMIT
+                                | StatusFlags::SERVER_MORE_RESULTS_EXISTS)
+                                .bits()
+                                .to_le_bytes();
+                            framing::write_message(
+                                &mut socket,
+                                &[0, 0, 0, flags[0], flags[1], 0, 0, 0],
+                                &mut sequence,
+                                LIMIT,
+                            )
+                            .unwrap();
+                        } else {
+                            framing::write_message(&mut socket, &[2], &mut sequence, LIMIT)
+                                .unwrap();
+                            for name in [b"b", b"c"] {
+                                let mut column = Vec::new();
+                                for label in
+                                    [b"def".as_slice(), b"", b"", b"", name.as_slice(), b""]
+                                {
+                                    column.push(label.len() as u8);
+                                    column.extend_from_slice(label);
+                                }
+                                column
+                                    .extend_from_slice(&[12, 63, 0, 20, 0, 0, 0, 8, 0, 0, 0, 0, 0]);
+                                framing::write_message(&mut socket, &column, &mut sequence, LIMIT)
+                                    .unwrap();
+                            }
+                            if !zero_row_business {
+                                let mut row = vec![0, 0];
+                                row.extend_from_slice(&99_i64.to_le_bytes());
+                                row.extend_from_slice(&11_i64.to_le_bytes());
+                                framing::write_message(&mut socket, &row, &mut sequence, LIMIT)
+                                    .unwrap();
+                                let flags = (StatusFlags::SERVER_STATUS_AUTOCOMMIT
+                                    | StatusFlags::SERVER_MORE_RESULTS_EXISTS
+                                    | StatusFlags::SERVER_PS_OUT_PARAMS)
+                                    .bits()
+                                    .to_le_bytes();
+                                framing::write_message(
+                                    &mut socket,
+                                    &[0xfe, 0, 0, flags[0], flags[1], 0, 0, 0],
+                                    &mut sequence,
+                                    LIMIT,
+                                )
+                                .unwrap();
+                            }
+                        }
+                        // The OK envelope is complete and structurally valid.
+                        // Its non-ASCII tracked system identity fails only in
+                        // host Facts::apply, after Query's real terminator.
+                        let name = b"character_set_results";
+                        let mut variable = vec![name.len() as u8];
+                        variable.extend_from_slice(name);
+                        variable.extend_from_slice(&[1, 0xff]);
+                        let mut changes = vec![0, variable.len() as u8];
+                        changes.extend_from_slice(&variable);
+                        let flags = (StatusFlags::SERVER_STATUS_AUTOCOMMIT
+                            | StatusFlags::SERVER_SESSION_STATE_CHANGED
+                            | if combined {
+                                StatusFlags::SERVER_MORE_RESULTS_EXISTS
+                            } else {
+                                StatusFlags::empty()
+                            })
+                        .bits()
+                        .to_le_bytes();
+                        let mut tail = vec![
+                            if zero_row_business { 0xfe } else { 0 },
+                            0,
+                            0,
+                            flags[0],
+                            flags[1],
+                            0,
+                            0,
+                            0,
+                            changes.len() as u8,
+                        ];
+                        tail.extend_from_slice(&changes);
+                        framing::write_message(&mut socket, &tail, &mut sequence, LIMIT).unwrap();
+                    });
+                    let mut channel = Channel::new(Transport::tcp(address).unwrap(), false);
+                    while !channel.connected().unwrap() {
+                        channel.wait(IoDirection::Write, &mut operation).unwrap();
+                    }
+                    // Keep the existing ownership, facts, capabilities and
+                    // driver, replacing only this test connection's transport.
+                    // No second I/O driver or fabricated DriveFailure is used.
+                    let old = std::mem::replace(&mut lease.session().unwrap().channel, channel);
+                    drop(old);
+                    let failure = loop {
+                        let role = if flow.inner().phase == Phase::Initialize {
+                            CommandRole::InternalControl
+                        } else {
+                            CommandRole::UserSql
+                        };
+                        if streaming {
+                            let result = if combined {
+                                connection
+                                    .drive_stream(
+                                        py,
+                                        &mut lease,
+                                        &mut flow.inner_mut().current,
+                                        &mut operation,
+                                        role,
+                                        NonZeroUsize::MIN,
+                                    )
+                                    .map(Managed::Public)
+                            } else {
+                                connection.drive_managed_stream(
+                                    py,
+                                    &mut lease,
+                                    &mut flow.inner_mut().current,
+                                    &mut operation,
+                                    CommandRole::UserSql,
+                                    NonZeroUsize::MIN,
+                                )
+                            };
+                            match result {
+                                Err(failure) => break failure,
+                                Ok(event) => match flow.inner_mut().received(Ok(event)).unwrap() {
+                                    Managed::InternalOutput { completion, .. } => {
+                                        assert!(!zero_row_business);
+                                        flow.inner_mut()
+                                            .track(py, &connection, completion.status_flags())
+                                            .unwrap();
+                                        flow.inner_mut().received_native(py).unwrap();
+                                    }
+                                    Managed::Public(StreamEvent::Header(_)) => {
+                                        assert!(zero_row_business)
+                                    }
+                                    Managed::Public(StreamEvent::End {
+                                        total_rows: None,
+                                        completion,
+                                        ..
+                                    }) if combined => {
+                                        flow.inner_mut()
+                                            .track(py, &connection, completion.status_flags())
+                                            .unwrap();
+                                        flow.inner_mut().initialized(py, &connection).unwrap();
+                                    }
+                                    _ => panic!(
+                                        "only internal OUT or empty-business header can precede host publication failure"
+                                    ),
+                                },
+                            }
+                        } else {
+                            let result = if combined {
+                                connection
+                                    .drive_set(
+                                        py,
+                                        &mut lease,
+                                        &mut flow.inner_mut().current,
+                                        &mut operation,
+                                        role,
+                                    )
+                                    .map(Managed::Public)
+                            } else {
+                                connection.drive_managed_set(
+                                    py,
+                                    &mut lease,
+                                    &mut flow.inner_mut().current,
+                                    &mut operation,
+                                    CommandRole::UserSql,
+                                )
+                            };
+                            match result {
+                                Err(failure) => break failure,
+                                Ok(event) => match flow.inner_mut().received(Ok(event)).unwrap() {
+                                    Managed::InternalOutput { completion, .. } => {
+                                        assert!(!zero_row_business);
+                                        flow.inner_mut()
+                                            .track(py, &connection, completion.status_flags())
+                                            .unwrap();
+                                        flow.inner_mut().received_native(py).unwrap();
+                                    }
+                                    Managed::Public(Response::Command(completion)) if combined => {
+                                        flow.inner_mut()
+                                            .track(py, &connection, completion.status_flags())
+                                            .unwrap();
+                                        flow.inner_mut().initialized(py, &connection).unwrap();
+                                    }
+                                    _ => panic!(
+                                        "no public successful set is delivered after host publication failure"
+                                    ),
+                                },
+                            }
+                        }
+                    };
+                    assert_eq!(flow.inner().current.is_finished(), !combined);
+                    if combined {
+                        assert!(
+                            failure.confirmation().is_none(),
+                            "MORE sub-tail cannot confirm the whole combined request"
+                        );
+                        assert!(
+                            failure
+                                .command_set_confirmation()
+                                .unwrap()
+                                .status()
+                                .contains(StatusFlags::SERVER_MORE_RESULTS_EXISTS)
+                        );
+                    } else {
+                        let confirmation = failure
+                            .confirmation()
+                            .expect("whole Query termination was actually parsed");
+                        assert_eq!(confirmation.has_rows(), zero_row_business);
+                    }
+                    assert_eq!(
+                        failure.command_set_confirmation().is_some(),
+                        !zero_row_business
+                    );
+                    assert_eq!(failure.synchronized(), !combined);
+                    let primary = flow.inner_mut().received::<()>(Err(failure)).unwrap_err();
+                    let original = primary.value(py).clone();
+                    let error = flow.inner_mut().failed(
+                        py,
+                        &connection,
+                        &mut lease,
+                        &mut operation,
+                        primary,
+                    );
+                    assert!(
+                        error.value(py).is(&original),
+                        "host primary exception identity survives"
+                    );
+                    assert!(
+                        error
+                            .to_string()
+                            .contains("non-ASCII tracked system identity")
+                    );
+                    assert!(connection.native.is_closed());
+                    assert_eq!(flow.call_completed(), !zero_row_business);
+                    assert_eq!(flow.call_confirmation().is_some(), !zero_row_business);
+                    assert_eq!(output.is_ready(), !zero_row_business && !combined);
+                    if zero_row_business || combined {
+                        assert!(output.rows.get().is_none());
+                        assert!(output.get(py, &connection.types).unwrap().is_none());
+                    } else {
+                        assert!(!flow.call_confirmation().unwrap().has_rows());
+                        assert_eq!(numbers(output.rows.get().unwrap()), [vec![99, 11]]);
+                        let values = output.get(py, &connection.types).unwrap();
+                        assert_eq!(values.get_item(1).unwrap().extract::<i64>().unwrap(), 99);
+                        assert_eq!(values.get_item(2).unwrap().extract::<i64>().unwrap(), 11);
+                    }
+                    if combined {
+                        assert!(!flow.synchronized());
+                        assert!(!flow.inner().cleanup_attempted && !flow.inner().cleanup_confirmed);
+                    }
+                    server.join().unwrap();
+                    drop(lease);
+                    drop(connection);
+                    owner.bind(py).call_method0("close").unwrap();
+                }
+            }
+        });
+    }
 }
