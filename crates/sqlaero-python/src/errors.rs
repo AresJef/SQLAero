@@ -1744,3 +1744,62 @@ fn register_codes(module: &Bound<'_, PyModule>) -> PyResult<()> {
     }
     module.add("MySQLErrorCode", server)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io;
+
+    #[test]
+    fn wire_out_of_memory_preserves_python_memory_error() {
+        Python::initialize();
+        Python::attach(|py| {
+            // Controlled error kinds verify mapping; no global/native OOM is
+            // induced, and compression's typed classification is tested there.
+            for source in [
+                WireError::Io(io::ErrorKind::OutOfMemory.into()),
+                WireError::Decode(io::ErrorKind::OutOfMemory.into()),
+            ] {
+                let error = wire(py, source);
+                assert!(error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py));
+            }
+        });
+    }
+
+    #[test]
+    fn ordinary_wire_errors_keep_registered_client_diagnostics() {
+        Python::initialize();
+        Python::attach(|py| {
+            for (source, expected) in [
+                (
+                    WireError::Io(io::ErrorKind::ConnectionReset.into()),
+                    ClientErrorCode::Transport,
+                ),
+                (
+                    WireError::Decode(io::ErrorKind::InvalidData.into()),
+                    ClientErrorCode::Protocol,
+                ),
+            ] {
+                let error = wire(py, source);
+                assert!(!error.is_instance_of::<pyo3::exceptions::PyMemoryError>(py));
+                assert_eq!(
+                    error
+                        .value(py)
+                        .getattr("code")
+                        .unwrap()
+                        .extract::<u32>()
+                        .unwrap(),
+                    expected as u32
+                );
+                assert!(
+                    !error
+                        .value(py)
+                        .getattr("is_server_error")
+                        .unwrap()
+                        .extract::<bool>()
+                        .unwrap()
+                );
+            }
+        });
+    }
+}

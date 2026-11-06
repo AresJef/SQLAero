@@ -378,9 +378,9 @@ impl CursorCore {
         &self,
         py: Python<'_>,
         error: &PyErr,
-        invalidates_statement: bool,
+        stream: &crate::stream::Stream,
     ) -> PyResult<()> {
-        if invalidates_statement {
+        if stream.statement_invalidated {
             let old = self
                 .statement
                 .lock()
@@ -400,6 +400,9 @@ impl CursorCore {
         let previous = {
             let mut state = self.results(py)?;
             state.failed = true;
+            // All stream consumers share this failure boundary, including
+            // nextset's discard path, not only fetch's row-publication path.
+            state.batch = stream.batch;
             std::mem::replace(&mut state.failure_note, snapshot)
         };
         drop(previous);
@@ -514,7 +517,7 @@ impl CursorCore {
             Ok(Some(true))
         })();
         if let Err(error) = &result {
-            self.save_stream_failure(py, error, stream.statement_invalidated)?;
+            self.save_stream_failure(py, error, stream)?;
         }
         result
     }
@@ -641,7 +644,7 @@ impl CursorCore {
         })();
         self.results(py)?.batch = stream.batch;
         if let Err(error) = &result {
-            self.save_stream_failure(py, error, stream.statement_invalidated)?;
+            self.save_stream_failure(py, error, stream)?;
         }
         result
     }
@@ -756,15 +759,10 @@ impl CursorCore {
             .reserve(py, connection)
             .and_then(|()| stream.advance(py, connection, remaining))
             .and_then(|event| self.stream_event(py, stream, event));
-        if result.is_err() && stream.batch.is_some() {
-            // A complete first terminator remains a real contribution even
-            // when saving its response fails before an End can be published.
-            self.results(py)?.batch = stream.batch;
-        }
         if let Err(error) = &result
             && !stream.resource_paused
         {
-            self.save_stream_failure(py, error, stream.statement_invalidated)?;
+            self.save_stream_failure(py, error, stream)?;
         }
         result
     }
@@ -1899,6 +1897,7 @@ macro_rules! cursor_api {
                 if !self.results(py)?.started {return Err(errors::client(py,ClientErrorCode::SessionState,"Cursor has no result sequence; execute a command before nextset"));}
                 let next=self.results(py)?.pending.take_next();
                 if let Some(set)=next {
+                    self.reader.end_set(py)?;
                     let (request,set_index)=(set.request_index,set.set_index);
                     if let Err(error)=self.publish_set(py,set) {
                         errors::note_format(py,&error,format_args!("while publishing request {request}, result set {set_index}; later sets cannot be skipped after this local failure"));
