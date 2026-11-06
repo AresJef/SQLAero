@@ -71,6 +71,40 @@ def test_nextset_reader_quota_failure_keeps_an_explicit_failure_boundary(
         assert connection.closed is False and connection.ping() is True
 
 
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
+@pytest.mark.parametrize("dictionary", [False, True])
+def test_first_reader_publication_failure_cannot_expose_later_buffered_sets(
+    label: str, dictionary: bool,
+) -> None:
+    wide = ",".join(f"{value} AS c{value}" for value in range(256))
+    with live(label, result_memory_limit=READER_LIMIT,
+              total_result_memory_limit=4 * 1024 * 1024) as connection:
+        current = connection.cursor(dict) if dictionary else connection.cursor()
+        try:
+            with pytest.raises(OperationalError) as immediate:
+                current.execute(f"SELECT {wide};SELECT 99 AS a_later")
+            assert immediate.value.code == SQLAeroErrorCode.RESOURCE_LIMIT
+            assert immediate.value.is_server_error is False
+            assert "native result requires" in immediate.value.message
+            assert str(READER_LIMIT) in immediate.value.message
+            notes = "\n".join(getattr(immediate.value, "__notes__", ()))
+            # Both native sets finished before the first Reader's local plans
+            # failed. Keep that real request contribution without publishing
+            # the unrelated second set as if the first had succeeded.
+            assert "confirmed 1 commands" in notes
+            assert "actual cumulative row count 1," in notes
+            assert current.batch_row_count == 1
+            for _ in range(2):
+                with pytest.raises(SQLAeroError) as repeated:
+                    current.nextset()
+                assert repeated.value.code == immediate.value.code
+                assert repeated.value.is_server_error is False
+        finally:
+            current.close()
+        assert connection.closed is False and connection.ping() is True
+
+
 @dataclass
 class _AckTrace:
     queries: list[bytes] = field(default_factory=lambda: list[bytes]())
