@@ -243,7 +243,9 @@ fn _bind_sql<'py>(
         limit: usize::MAX,
         ..context
     };
-    input::text(sql, &mut encoded, &source_context, false, Some(&budget))?;
+    if let Err(error) = input::text(sql, &mut encoded, &source_context, false, Some(&budget)) {
+        return Err(diagnostic_outer_check(py, error, "sql-encoding"));
+    }
     let mut rows = binding::Rows::new(args, many, itemize, &types, &budget)?;
     let mut compiler = if rows.is_batch() && itemize {
         Compiler::for_batch(encoded, context.codec, no_backslash, ansi_quotes)
