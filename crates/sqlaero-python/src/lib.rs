@@ -173,6 +173,19 @@ fn _decode_text<'py>(data: &Bound<'py, PyBytes>, charset: &str) -> PyResult<Boun
     }
 }
 
+// Diagnostic-only branch: annotate a failed existing outer check without
+// changing the shared check ABI or any successful value traversal.
+#[cold]
+#[inline(never)]
+fn diagnostic_outer_check(py: Python<'_>, error: PyErr, phase: &'static str) -> PyErr {
+    errors::note_format(
+        py,
+        &error,
+        format_args!("diagnostic-only outer check phase: {phase}"),
+    );
+    error
+}
+
 /// Return actual native COM_QUERY requests from the incremental binder.
 /// Production executes one prepared request before asking for the next row;
 /// this private correctness probe only materializes the final request bytes.
@@ -206,7 +219,9 @@ fn _bind_sql<'py>(
         None,
         None,
     );
-    input::check(py, &budget)?;
+    if let Err(error) = input::check(py, &budget) {
+        return Err(diagnostic_outer_check(py, error, "before-sql"));
+    }
     let owner = module.getattr(PyString::from_bytes(module.py(), b"_scalar_types")?)?;
     let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
     let context = Context {
@@ -239,7 +254,9 @@ fn _bind_sql<'py>(
         let step = py
             .detach(|| compiler.advance())
             .map_err(|error| binding::template_error(py, error))?;
-        input::check(py, &budget)?;
+        if let Err(error) = input::check(py, &budget) {
+            return Err(diagnostic_outer_check(py, error, "after-compiler"));
+        }
         if let Some(template) = step {
             break template;
         }

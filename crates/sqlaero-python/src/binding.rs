@@ -1181,7 +1181,9 @@ impl Row<'_, '_> {
         output: &mut Vec<u8>,
     ) -> PyResult<FragmentRole> {
         let py = self.value.py();
-        check(py, budget)?;
+        if let Err(error) = check(py, budget) {
+            return Err(crate::diagnostic_outer_check(py, error, "before-row"));
+        }
         let width = self.width();
         if width != template.slots() {
             return Err(errors::client_format(
@@ -1228,7 +1230,9 @@ impl Row<'_, '_> {
                 "unconsumed binding position",
             ));
         }
-        check(py, budget)?;
+        if let Err(error) = check(py, budget) {
+            return Err(crate::diagnostic_outer_check(py, error, "after-row"));
+        }
         Ok(role)
     }
 
