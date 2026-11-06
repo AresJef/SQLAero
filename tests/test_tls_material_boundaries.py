@@ -1,7 +1,7 @@
 """Public TLS material, peer-chain and real-signal boundaries on owned fixtures."""
 
 from collections.abc import Callable, Generator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 import base64
 import dis
 import errno
@@ -14,7 +14,7 @@ import subprocess
 import sys
 from tempfile import TemporaryDirectory
 from types import FrameType
-from typing import Literal
+from typing import Literal, cast
 
 import pytest
 from _native_signal import NativeAlarm
@@ -41,17 +41,22 @@ def _policy(source: Source, member: Path) -> SSL:
 def test_special_ca_object_is_rejected_without_waiting_for_stream_contents(
     source: Source, kind: str,
 ) -> None:
-    if sys.platform == 'win32':
-        pytest.skip('requires POSIX FIFO and Unix socket file objects')
+    if kind == 'fifo' and not hasattr(os, 'mkfifo'):
+        pytest.skip('CPython does not expose os.mkfifo')
+    if kind == 'socket' and not hasattr(socket, 'AF_UNIX'):
+        pytest.skip('CPython does not expose socket.AF_UNIX')
     # A short owned directory also stays within native Unix socket path limits.
-    with TemporaryDirectory(prefix='sqlaero-ca-', dir='/tmp') as directory:
+    with TemporaryDirectory(prefix='ca-', dir=ROOT) as directory:
         parent = Path(directory)
         (parent / 'valid.pem').write_bytes((ROOT / 'tls/ca.pem').read_bytes())
         member = parent / 'special.pem'
-        with socket.socket(socket.AF_UNIX) as endpoint:
+        with ExitStack() as cleanup:
             if kind == 'fifo':
-                os.mkfifo(member)
+                mkfifo = cast(Callable[[Path], None], getattr(os, 'mkfifo'))
+                mkfifo(member)
             else:
+                family = cast(int, getattr(socket, 'AF_UNIX'))
+                endpoint = cleanup.enter_context(socket.socket(family))
                 endpoint.bind(str(member))
             # A regression that opens a FIFO must fail finitely rather than
             # block the parent runner. The product still owns all validation.
