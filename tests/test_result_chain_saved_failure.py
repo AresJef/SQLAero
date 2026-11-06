@@ -1,10 +1,13 @@
 """R05 retained boundaries preserve frame-free original error facts."""
 
-import signal
+from contextlib import closing
+from types import FrameType
 import gc
 import weakref
 
 import pytest
+from _native_signal import NativeAlarm
+from sqlaero import Connection
 from sqlaero.errors import InterfaceError, ProgrammingError, SQLAeroErrorCode
 
 from test_public_connection import connection, live, requires_mysql
@@ -49,8 +52,7 @@ def test_retained_native_error_keeps_execution_and_position_notes(connection) ->
 
 
 @requires_mysql
-@pytest.mark.skipif(not hasattr(signal, 'setitimer'), reason='requires an interval signal')
-def test_retained_signal_type_does_not_call_user_constructors(connection) -> None:
+def test_retained_signal_type_does_not_call_user_constructors(connection: Connection) -> None:
     forbidden = False
 
     class Sentinel(LookupError):
@@ -64,16 +66,15 @@ def test_retained_signal_type_does_not_call_user_constructors(connection) -> Non
 
     original = Sentinel('retained signal origin')
 
-    def interrupt(*_):
+    def interrupt(_number: int, _frame: FrameType | None) -> None:
         raise original
 
-    previous = signal.signal(signal.SIGALRM, interrupt)
-    try:
+    with closing(NativeAlarm(interrupt)) as alarm:
         with connection.cursor() as cur:
-            signal.setitimer(signal.ITIMER_REAL, 0.1)
+            alarm.start(0.1)
             with pytest.raises(Sentinel) as immediate:
                 cur.execute('SELECT 11 AS trusted; DO SLEEP(1)')
-            signal.setitimer(signal.ITIMER_REAL, 0)
+            alarm.cancel()
             assert immediate.value is original
             notes = tuple(original.__notes__)
             forbidden = True
@@ -83,9 +84,6 @@ def test_retained_signal_type_does_not_call_user_constructors(connection) -> Non
                     cur.nextset()
                 assert str(boundary.value) == str(original)
                 assert tuple(boundary.value.__notes__) == notes
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
 
 
 @requires_mysql
@@ -111,8 +109,7 @@ def test_oversized_unicode_object_reports_retained_diagnostic_limit() -> None:
 
 
 @requires_mysql
-@pytest.mark.skipif(not hasattr(signal, 'setitimer'), reason='requires an interval signal')
-def test_retained_custom_state_is_not_kept_alive(connection) -> None:
+def test_retained_custom_state_is_not_kept_alive(connection: Connection) -> None:
     cur = connection.cursor()
 
     class Payload:
@@ -126,19 +123,15 @@ def test_retained_custom_state_is_not_kept_alive(connection) -> None:
         error = Sentinel('state requires the original object')
         error.payload = payload
 
-        def interrupt(*_):
+        def interrupt(_number: int, _frame: FrameType | None) -> None:
             raise error
 
-        previous = signal.signal(signal.SIGALRM, interrupt)
-        try:
-            signal.setitimer(signal.ITIMER_REAL, 0.1)
+        with closing(NativeAlarm(interrupt)) as alarm:
+            alarm.start(0.1)
             with pytest.raises(Sentinel) as immediate:
                 cur.execute('SELECT 13 AS trusted; DO SLEEP(1)')
             assert immediate.value.payload is payload
             return weakref.ref(payload)
-        finally:
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            signal.signal(signal.SIGALRM, previous)
 
     reference = fail()
     gc.collect()
@@ -151,8 +144,7 @@ def test_retained_custom_state_is_not_kept_alive(connection) -> None:
 
 
 @requires_mysql
-@pytest.mark.skipif(not hasattr(signal, 'setitimer'), reason='requires an interval signal')
-def test_retained_type_cycle_is_visible_to_python_gc(connection) -> None:
+def test_retained_type_cycle_is_visible_to_python_gc(connection: Connection) -> None:
     def cycle():
         cur = connection.cursor()
 
@@ -161,18 +153,14 @@ def test_retained_type_cycle_is_visible_to_python_gc(connection) -> None:
 
         error = Sentinel('type to cursor cycle')
 
-        def interrupt(*_):
+        def interrupt(_number: int, _frame: FrameType | None) -> None:
             raise error
 
-        previous = signal.signal(signal.SIGALRM, interrupt)
-        try:
-            signal.setitimer(signal.ITIMER_REAL, 0.1)
+        with closing(NativeAlarm(interrupt)) as alarm:
+            alarm.start(0.1)
             with pytest.raises(Sentinel):
                 cur.execute('SELECT 17 AS trusted; DO SLEEP(1)')
             return weakref.ref(Sentinel)
-        finally:
-            signal.setitimer(signal.ITIMER_REAL, 0)
-            signal.signal(signal.SIGALRM, previous)
 
     reference = cycle()
     gc.collect()
@@ -180,9 +168,8 @@ def test_retained_type_cycle_is_visible_to_python_gc(connection) -> None:
 
 
 @requires_mysql
-@pytest.mark.skipif(not hasattr(signal, 'setitimer'), reason='requires an interval signal')
 @pytest.mark.parametrize('kind', ['slots', 'display', 'args', 'os-fields', 'exit-code', 'getattribute', 'library'])
-def test_unreconstructible_state_is_explicit_at_retained_boundary(connection, kind) -> None:
+def test_unreconstructible_state_is_explicit_at_retained_boundary(connection: Connection, kind: str) -> None:
     class WithSlots(LookupError):
         __slots__ = ('payload',)
 
@@ -213,16 +200,15 @@ def test_unreconstructible_state_is_explicit_at_retained_boundary(connection, ki
         original = ProgrammingError('known original database reason', code=1146, is_server_error=True)
         original.payload = object()
 
-    def interrupt(*_):
+    def interrupt(_number: int, _frame: FrameType | None) -> None:
         raise original
 
-    previous = signal.signal(signal.SIGALRM, interrupt)
-    try:
+    with closing(NativeAlarm(interrupt)) as alarm:
         with connection.cursor() as cur:
-            signal.setitimer(signal.ITIMER_REAL, 0.1)
+            alarm.start(0.1)
             with pytest.raises(type(original)) as immediate:
                 cur.execute('SELECT 19 AS trusted; DO SLEEP(1)')
-            signal.setitimer(signal.ITIMER_REAL, 0)
+            alarm.cancel()
             assert immediate.value is original
             assert cur.fetchall() == ((19,),)
             with pytest.raises(InterfaceError) as boundary:
@@ -238,6 +224,3 @@ def test_unreconstructible_state_is_explicit_at_retained_boundary(connection, ki
                 assert 'original code=Some(1146), is_server_error=Some(true)' in boundary.value.message
             if kind != 'getattribute':
                 assert any('result set 1' in note for note in boundary.value.__notes__)
-    finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
