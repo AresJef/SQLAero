@@ -150,8 +150,7 @@ pub(crate) struct DriveFailure {
 }
 enum FailureFacts {
     None,
-    Confirmed(CommandConfirmation),
-    CommandSet(CommandConfirmation),
+    Completion(CommandConfirmation),
     Native(Arc<QueryError>),
 }
 impl DriveFailure {
@@ -174,7 +173,7 @@ impl DriveFailure {
         Self {
             error,
             unavailable,
-            facts: confirmed.map_or(FailureFacts::None, FailureFacts::Confirmed),
+            facts: confirmed.map_or(FailureFacts::None, FailureFacts::Completion),
             outcome,
         }
     }
@@ -184,27 +183,28 @@ impl DriveFailure {
         if matches!(self.facts, FailureFacts::None)
             && let Some(value) = value
         {
-            self.facts = FailureFacts::CommandSet(value);
+            self.facts = FailureFacts::Completion(value);
         }
         self
     }
     pub(crate) fn command_set_confirmation(&self) -> Option<CommandConfirmation> {
         match self.facts {
-            FailureFacts::CommandSet(value) => Some(value),
+            FailureFacts::Completion(value) if !value.has_rows() => Some(value),
             _ => None,
         }
     }
     fn with_native(mut self, error: Arc<QueryError>, _codec: Option<OutputCodec>) -> Self {
-        // Confirmed completion is the stronger execution fact. Its mapped
-        // primary already owns native diagnostic facts; retain no second owner.
+        // Keep parsed completion facts without a second native error owner.
+        // Only outcome=Confirmed certifies a whole request; a public set with
+        // MORE keeps its original incomplete/retired outcome independently.
         if matches!(self.facts, FailureFacts::None) {
             self.facts = FailureFacts::Native(error);
         }
         self
     }
     pub(crate) fn confirmation(&self) -> Option<CommandConfirmation> {
-        match self.facts {
-            FailureFacts::Confirmed(value) => Some(value),
+        match (self.outcome, &self.facts) {
+            (FailureOutcome::Confirmed, FailureFacts::Completion(value)) => Some(*value),
             _ => None,
         }
     }
