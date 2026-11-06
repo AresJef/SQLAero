@@ -1,6 +1,6 @@
 //! One native command exchange over the existing channel and original budget.
 
-use crate::memory::{Pool, Scope};
+use crate::memory::{Pool, Reservation, Scope};
 use crate::protocol::framing::{MessageReader, MessageWriter, WireError};
 use crate::protocol::local_infile::{LocalError, Source, Upload, UploadProgress};
 use crate::result::text::{
@@ -12,7 +12,7 @@ use crate::transport::deadline::IoBudget;
 use crate::transport::socket::WaitStatus;
 use mysql_common::constants::{CapabilityFlags, Command, StatusFlags};
 use std::num::NonZeroUsize;
-use std::ops::Range;
+use std::ops::{Deref, DerefMut, Range};
 use std::sync::Arc;
 
 /// A command failure whose server/transport/resource origin remains explicit.
@@ -152,6 +152,44 @@ impl ManagedOutputs {
     }
 }
 
+// One concrete opt-in control owner, not a result registry or growable queue.
+// Keep one checked allocation: ordinary queries carry only its empty handle.
+struct ManagedStorage {
+    state: Vec<ManagedOutputs>,
+    _owner: Reservation,
+}
+impl ManagedStorage {
+    fn new(expected: usize, scope: &Arc<Scope>) -> Result<Self, ResultError> {
+        let mut owner = scope.charge(std::mem::size_of::<ManagedOutputs>())?;
+        let mut state = Vec::new();
+        state
+            .try_reserve_exact(1)
+            .map_err(crate::memory::MemoryError::from)?;
+        owner.resize(
+            state
+                .capacity()
+                .checked_mul(std::mem::size_of::<ManagedOutputs>())
+                .ok_or(WireError::Malformed("managed control capacity overflow"))?,
+        )?;
+        state.push(ManagedOutputs::new(expected));
+        Ok(Self {
+            state,
+            _owner: owner,
+        })
+    }
+}
+impl Deref for ManagedStorage {
+    type Target = ManagedOutputs;
+    fn deref(&self) -> &Self::Target {
+        &self.state[0]
+    }
+}
+impl DerefMut for ManagedStorage {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.state[0]
+    }
+}
+
 fn output_status(status: StatusFlags, metadata_status: Option<StatusFlags>) -> bool {
     (status | metadata_status.unwrap_or_default()).contains(StatusFlags::SERVER_PS_OUT_PARAMS)
 }
@@ -255,7 +293,7 @@ pub struct Query {
     finished: bool,
     streaming: bool,
     stream_boundary: bool,
-    managed: Option<ManagedOutputs>,
+    managed: Option<ManagedStorage>,
 }
 
 impl Query {
@@ -263,7 +301,11 @@ impl Query {
     /// A validated server ERR also ends this exchange without inventing success.
     #[must_use]
     pub fn is_finished(&self) -> bool {
-        self.finished && !self.managed.as_ref().is_some_and(ManagedOutputs::pending)
+        self.finished
+            && !self
+                .managed
+                .as_ref()
+                .is_some_and(|managed| managed.pending())
     }
 
     /// Read existing framing facts only when needed for failure handling.
@@ -429,7 +471,7 @@ impl Query {
         {
             return Err(WireError::Malformed("invalid managed output command").into());
         }
-        self.managed = Some(ManagedOutputs::new(expected));
+        self.managed = Some(ManagedStorage::new(expected, &self.scope)?);
         Ok(self)
     }
 

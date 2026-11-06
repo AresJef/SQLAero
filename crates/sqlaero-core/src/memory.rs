@@ -149,7 +149,7 @@ impl Reservation {
     pub fn scope(&self) -> &Arc<Scope> {
         &self.scope
     }
-    fn resize(&mut self, bytes: usize) -> Result<(), MemoryError> {
+    pub(crate) fn resize(&mut self, bytes: usize) -> Result<(), MemoryError> {
         if bytes > self.bytes {
             self.scope.acquire(bytes - self.bytes)?;
         } else {
