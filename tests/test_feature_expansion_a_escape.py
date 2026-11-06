@@ -1,5 +1,7 @@
 """Public SQL fragment projection uses the existing native row roles."""
 
+# pyright: reportPrivateUsage=false
+
 from typing import Any
 
 import pytest
@@ -25,8 +27,9 @@ def test_sequence_and_batch_projection_preserves_explicit_rows() -> None:
     assert escape([(1, 2), (3, 4)], many=True) == [("1", "2"), ("3", "4")]
     assert escape([(1, 2), (3, 4)], many=True, itemize=False) == ["(1,2)", "(3,4)"]
     assert escape([[1, 2], [3, 4]], itemize=False) == "((1,2),(3,4))"
-    assert escape([[]], many=True) == [()]
-    assert escape([[]], many=True, itemize=False) == ["()"]
+    empty_rows: list[list[object]] = [[]]
+    assert escape(empty_rows, many=True) == [()]
+    assert escape(empty_rows, many=True, itemize=False) == ["()"]
 
 
 @pytest.mark.parametrize("root", [[], ()])
@@ -38,7 +41,7 @@ def test_empty_ordinary_root_preserves_synthetic_zero_positions(root: object) ->
 
 
 def test_native_empty_and_zero_column_roles_are_not_empty_batches() -> None:
-    import numpy as np
+    np: Any = pytest.importorskip("numpy")
     for itemize in (False, True):
         assert escape(np.empty(0), itemize=itemize) == ()
         assert escape(np.empty(0), many=True, itemize=itemize) == [()]
@@ -49,13 +52,11 @@ def test_native_empty_and_zero_column_roles_are_not_empty_batches() -> None:
 
 
 def test_natural_table_and_record_projection_uses_shared_shapes() -> None:
-    import numpy as np
-    import pandas as pd
-    import pyarrow as pa
+    np: Any = pytest.importorskip("numpy")
+    pd: Any = pytest.importorskip("pandas")
 
     for many in (False, True):
-        for table in (np.array([[1, 2], [3, 4]]), pd.DataFrame({"a": [1, 3], "b": [2, 4]}),
-                      pa.table({"a": [1, 3], "b": [2, 4]})):
+        for table in (np.array([[1, 2], [3, 4]]), pd.DataFrame({"a": [1, 3], "b": [2, 4]})):
             assert escape(table, many=many) == [("1", "2"), ("3", "4")]
             assert escape(table, many=many, itemize=False) == ["(1,2)", "(3,4)"]
         record = np.array([(1, 2)], dtype=[("z", "i4"), ("a", "i4")])[0]
@@ -65,6 +66,14 @@ def test_natural_table_and_record_projection_uses_shared_shapes() -> None:
         assert escape(empty_record, many=many) == ()
         assert escape(empty_record, many=many, itemize=False) == "()"
     assert escape([record], many=True) == [("1", "2")]
+
+
+def test_arrow_natural_table_projection_uses_shared_shapes() -> None:
+    pa: Any = pytest.importorskip("pyarrow")
+    for many in (False, True):
+        table = pa.table({"a": [1, 3], "b": [2, 4]})
+        assert escape(table, many=many) == [("1", "2"), ("3", "4")]
+        assert escape(table, many=many, itemize=False) == ["(1,2)", "(3,4)"]
 
 
 @pytest.mark.parametrize(("charset", "text"), [("utf8mb4", "中😀'\\"), ("utf8mb3", "中\uffff'\\"),

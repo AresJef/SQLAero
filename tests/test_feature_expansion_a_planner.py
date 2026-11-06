@@ -1,5 +1,7 @@
 """Request planning shared by execution and complete local SQL previews."""
 
+# pyright: reportPrivateUsage=false
+
 from datetime import datetime, timedelta, tzinfo
 from typing import Any
 
@@ -76,17 +78,22 @@ def test_prepared_display_plans_rows_without_text_values_merging() -> None:
 
 
 def test_natural_table_and_zero_field_record_keep_the_shared_row_roles() -> None:
-    import numpy as np
-    import pandas as pd
-    import pyarrow as pa
+    np: Any = pytest.importorskip("numpy")
+    pd: Any = pytest.importorskip("pandas")
 
-    for table in (np.array([[1, 2], [3, 4]]), pd.DataFrame({"a": [1, 3], "b": [2, 4]}),
-                  pa.table({"a": [1, 3], "b": [2, 4]})):
+    for table in (np.array([[1, 2], [3, 4]]), pd.DataFrame({"a": [1, 3], "b": [2, 4]})):
         assert plan("INSERT t VALUES (%s,%s)", table) == [
             (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
         ]
     assert plan("SELECT 1", np.empty((0, 2))) == [(b"\x03SELECT 1", 0, 0, True)]
     assert plan("SELECT 1", np.empty((1,), dtype=[])[0]) == [(b"\x03SELECT 1", 0, 1, True)]
+
+
+def test_arrow_natural_table_keeps_the_shared_row_role() -> None:
+    pa: Any = pytest.importorskip("pyarrow")
+    assert plan("INSERT t VALUES (%s,%s)", pa.table({"a": [1, 3], "b": [2, 4]})) == [
+        (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
+    ]
 
 
 @pytest.mark.parametrize(("sql", "args", "expected"), [
@@ -133,14 +140,13 @@ def test_mixed_whole_row_and_scalar_values_flush_in_input_order() -> None:
     ]
 
 
-def test_native_object_and_nested_arrow_cells_publish_actual_writer_roles() -> None:
-    import numpy as np
-    import pandas as pd
-    import pyarrow as pa
+def test_native_object_cells_publish_actual_writer_roles() -> None:
+    np: Any = pytest.importorskip("numpy")
+    pd: Any = pytest.importorskip("pandas")
 
     array = np.empty(2, dtype=object)
     array[:] = [(1, 2), (3, 4)]
-    for vector in (array, pd.Series([(1, 2), (3, 4)]), pa.array([[1, 2], [3, 4]])):
+    for vector in (array, pd.Series([(1, 2), (3, 4)])):
         assert plan("INSERT t VALUES %s", vector, many=True) == [
             (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
         ]
@@ -148,6 +154,13 @@ def test_native_object_and_nested_arrow_cells_publish_actual_writer_roles() -> N
         assert plan("INSERT t VALUES %s", table, itemize=False) == [
             (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
         ]
+
+
+def test_nested_arrow_cells_publish_actual_writer_roles() -> None:
+    pa: Any = pytest.importorskip("pyarrow")
+    assert plan("INSERT t VALUES %s", pa.array([[1, 2], [3, 4]]), many=True) == [
+        (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
+    ]
 
 
 def test_original_multiple_groups_cannot_be_split_to_satisfy_request_limit() -> None:
@@ -186,17 +199,22 @@ def test_prepared_display_rejects_active_raw_question_without_rejecting_literals
 
 
 def test_prepared_display_native_structures_and_empty_roles_match_parameter_sink() -> None:
-    import numpy as np
-    import pyarrow as pa
+    np: Any = pytest.importorskip("numpy")
     from sqlaero.errors import NotSupportedError
 
     assert plan("SELECT 1", np.empty(0), itemize=False, prepared=True) == [(b"\x03SELECT 1", 0, 0, True)]
     assert plan("SELECT %s", np.array([[1], [2]]), prepared=True) == [
         (b"\x03SELECT 1", 0, 1, False), (b"\x03SELECT 2", 1, 2, True),
     ]
-    for value in (pa.array([[1, 2]]), np.empty(1, dtype=[])[0]):
-        with pytest.raises(NotSupportedError):
-            plan("SELECT %s", value, itemize=False, prepared=True)
+    with pytest.raises(NotSupportedError):
+        plan("SELECT %s", np.empty(1, dtype=[])[0], itemize=False, prepared=True)
+
+
+def test_prepared_display_rejects_nested_arrow_parameters() -> None:
+    pa: Any = pytest.importorskip("pyarrow")
+    from sqlaero.errors import NotSupportedError
+    with pytest.raises(NotSupportedError):
+        plan("SELECT %s", pa.array([[1, 2]]), itemize=False, prepared=True)
 
 
 def test_prepared_display_checks_native_packet_size_without_capping_readable_sql() -> None:

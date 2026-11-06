@@ -39,7 +39,7 @@ fn try_connect_mode(
     )
     .unwrap();
     let parameters = ConnectParams {
-        endpoint: if secure {
+        endpoint: if secure || cfg!(windows) {
             Endpoint::Tcp {
                 host: "127.0.0.1".to_owned(),
                 port: state["port"].as_str().unwrap().parse().unwrap(),
@@ -65,7 +65,11 @@ fn try_connect_mode(
             .unwrap(),
             name: "127.0.0.1".to_owned().try_into().unwrap(),
         }),
-        server_public_key: None,
+        server_public_key: (cfg!(windows) && !secure).then(|| {
+            sqlaero_core::session::connect::PublicKeySource::Path(
+                root.join(label).join("data/public_key.pem"),
+            )
+        }),
         compression,
         multi_statements: false,
         local_infile: true,
