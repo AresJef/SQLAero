@@ -44,7 +44,7 @@ pub struct Upload {
     buffer: Buffer<u8>,
     chunk_size: usize,
     sender: Option<MessageWriter>,
-    scope: Arc<Scope>,
+    work_scope: Arc<Scope>,
     max_send: usize,
     requested: bool,
     eof: bool,
@@ -58,8 +58,13 @@ impl Upload {
     /// Prepare bounded upload storage from an explicitly authorized source.
     ///
     /// # Errors
-    /// Returns request-bound or actual scope/allocation failures before reading.
-    pub fn new(source: Source, max_send: usize, scope: Arc<Scope>) -> Result<Self, LocalError> {
+    /// Returns request-bound or actual work-allocation failures before reading.
+    /// The work scope is independent of retained database result quotas.
+    pub fn new(
+        source: Source,
+        max_send: usize,
+        work_scope: Arc<Scope>,
+    ) -> Result<Self, LocalError> {
         // Even an empty file uses an empty packet, but a non-empty file must
         // make progress under the configured logical-message bound.
         if max_send == 0 && source.remaining() != 0 {
@@ -69,13 +74,13 @@ impl Upload {
             }
             .into());
         }
-        let owner = scope
+        let owner = work_scope
             .charge(std::mem::size_of::<Self>())
             .map_err(WireError::from)?;
         let chunk_size = (64 * 1024)
             .min(max_send)
             .min(usize::try_from(source.remaining()).unwrap_or(usize::MAX));
-        let mut buffer = Buffer::tracked(&scope);
+        let mut buffer = Buffer::tracked(&work_scope);
         buffer.resize(chunk_size, 0).map_err(WireError::from)?;
         buffer.clear();
         Ok(Self {
@@ -83,7 +88,7 @@ impl Upload {
             buffer,
             chunk_size,
             sender: None,
-            scope,
+            work_scope,
             max_send,
             requested: false,
             eof: false,
@@ -179,7 +184,7 @@ impl Upload {
                 self.sender.as_mut().expect("prepared LOCAL message"),
                 &self.buffer,
                 budget,
-                Some(&self.scope),
+                Some(&self.work_scope),
             )? {
                 Step::Ready(()) => {
                     self.sender = None;

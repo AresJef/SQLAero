@@ -259,6 +259,41 @@ def test_ordinary_symlink_resolution_is_allowed(local_server: str, tmp_path: Pat
 
 
 @requires_mysql
+@pytest.mark.parametrize('compression', [None, 'zlib', 'zstd'], ids=['plain', 'zlib', 'zstd'])
+def test_upload_work_storage_is_independent_of_result_memory_limits(
+    local_server: str, tmp_path: Path, compression: str | None,
+) -> None:
+    """A small confirmed ACK fits; the same result quota does not cap upload work."""
+    small = tmp_path / 'small.tsv'
+    small.write_bytes(b'0\tcontrol\n')
+    large = tmp_path / 'large.tsv'
+    rows = 2_000
+    large.write_text(''.join(f'{index}\tbounded-{48 * "x"}\n'
+                             for index in range(1, rows + 1)), encoding='ascii')
+    assert 64 * 1024 < large.stat().st_size < 128 * 1024
+    with live(local_server, local_infile=True, compression=compression,
+              max_allowed_packet=128 * 1024, result_memory_limit=32 * 1024,
+              total_result_memory_limit=32 * 1024) as connection:
+        snapshot = connection.compression
+        if compression is None:
+            assert snapshot is None
+        else:
+            assert snapshot is not None and snapshot.algorithms == (compression,)
+        make_table(connection)
+        with connection.cursor() as current:
+            # Calibrate the real final LOCAL ACK under these exact quotas and
+            # transport, before requiring a full 64 KiB file-work block.
+            assert current.execute(load_sql(), ('small-control',), local_file=small) == 1
+            assert current.row_count == current.batch_row_count == 1
+            assert current.warning_count == 0
+            assert current.execute(load_sql(), ('bounded-work',), local_file=large) == rows
+            assert current.row_count == current.batch_row_count == rows
+            assert current.warning_count == 0
+            current.execute('SELECT COUNT(*),MIN(id),MAX(id) FROM local_rows')
+            assert current.fetchone() == (rows + 1, 0, rows)
+
+
+@requires_mysql
 def test_large_file_is_chunked_beyond_message_and_result_limits(
     local_server: str, tmp_path: Path,
 ) -> None:

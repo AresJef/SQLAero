@@ -452,7 +452,12 @@ impl Query {
         {
             return Err(WireError::Malformed("LOCAL client capability is disabled").into());
         }
-        self.local_upload = Some(Upload::new(source, self.max_send, Arc::clone(&self.scope))?);
+        // LOCAL upload storage is bounded work, not a retained database result.
+        // Its data/EOF compression uses this same independent scope; response
+        // parsing keeps the configured result scope and connection pool.
+        let work_scope =
+            Scope::new(Pool::new(usize::MAX), usize::MAX).map_err(ResultError::from)?;
+        self.local_upload = Some(Upload::new(source, self.max_send, work_scope)?);
         Ok(self)
     }
 
@@ -1016,5 +1021,63 @@ impl Query {
                 return Ok(Step::Control);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::{self, OpenOptions};
+    use std::path::PathBuf;
+
+    struct LocalFile(PathBuf);
+    impl Drop for LocalFile {
+        fn drop(&mut self) {
+            fs::remove_file(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn local_work_storage_does_not_charge_live_result_quotas() {
+        let path =
+            std::env::temp_dir().join(format!("sqlaero-local-work-quota-{}", std::process::id()));
+        let opened = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .unwrap();
+        let file = LocalFile(path);
+        opened.set_len(128 * 1024).unwrap();
+        drop(opened);
+        let pool = Pool::new(4096);
+        let old_result = Scope::new(Arc::clone(&pool), 4096).unwrap();
+        let old_credit = old_result.charge(512).unwrap();
+        let old_used = pool.used();
+        let query = Query::with_pool(
+            vec![Command::COM_QUERY as u8],
+            CapabilityFlags::CLIENT_LOCAL_FILES,
+            128 * 1024,
+            128 * 1024,
+            4096,
+            Arc::clone(&pool),
+            false,
+        )
+        .unwrap();
+        let before = pool.used();
+        let query = query
+            .with_local_infile(Source::open(&file.0).unwrap())
+            .unwrap();
+        assert_eq!(pool.used(), before);
+        assert_eq!(old_result.used(), old_used);
+        assert_eq!(query.local_progress().unwrap().read_bytes, 0);
+        assert!(matches!(
+            query.scope.charge(4096),
+            Err(MemoryError::Result { limit: 4096, .. })
+        ));
+        drop(query);
+        assert_eq!(pool.used(), old_used);
+        drop(old_credit);
+        drop(old_result);
+        assert_eq!(pool.used(), 0);
     }
 }
