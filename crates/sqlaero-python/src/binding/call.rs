@@ -110,16 +110,23 @@ impl NativeCall {
                 null: false,
             };
             if let Some(row) = row {
-                row.write_parameters_checked(types, context, budget, &mut sink, |index, sink| {
-                    let direction = directions.get(index).ok_or_else(|| {
-                        errors::client(
-                            py,
-                            ClientErrorCode::ParameterCount,
-                            "CALL parameter row changed width during preparation",
-                        )
-                    })?;
-                    validate_out(py, index, *direction, sink.null)
-                })?;
+                row.write_parameters_checked(
+                    types,
+                    context,
+                    budget,
+                    &mut sink,
+                    None,
+                    |index, sink| {
+                        let direction = directions.get(index).ok_or_else(|| {
+                            errors::client(
+                                py,
+                                ClientErrorCode::ParameterCount,
+                                "CALL parameter row changed width during preparation",
+                            )
+                        })?;
+                        validate_out(py, index, *direction, sink.null)
+                    },
+                )?;
             }
             let bytes = sink
                 .inner
@@ -174,6 +181,7 @@ impl NativeCall {
                 },
                 budget,
                 &mut values,
+                None,
                 |index, output| {
                     start.set(output.len());
                     let direction = directions.get(index).ok_or_else(|| {

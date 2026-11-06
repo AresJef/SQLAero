@@ -414,6 +414,7 @@ impl<'types, 'py> Planner<'types, 'py> {
                         row.display_parameters(&prepared.template, self.types, context, budget)?
                     }
                     PlanMode::PreparedNative => row.native_parameters(
+                        &prepared.template,
                         prepared
                             .native
                             .as_ref()
@@ -875,6 +876,7 @@ impl Row<'_, '_> {
             context,
             budget,
             &mut encoded,
+            None,
             |_, output| {
                 output.clear();
                 Ok(false)
@@ -934,7 +936,7 @@ impl Row<'_, '_> {
         budget: &IoBudget,
         sink: &mut S,
     ) -> PyResult<()> {
-        self.write_parameters_checked(types, context, budget, sink, |_, _| Ok(()))
+        self.write_parameters_checked(types, context, budget, sink, None, |_, _| Ok(()))
     }
 
     fn write_parameters_checked<
@@ -945,6 +947,7 @@ impl Row<'_, '_> {
         context: &Context,
         budget: &IoBudget,
         sink: &mut S,
+        template: Option<&Template>,
         mut after: impl FnMut(usize, &S) -> PyResult<()>,
     ) -> PyResult<()> {
         let py = self.value.py();
@@ -952,7 +955,7 @@ impl Row<'_, '_> {
         let width = self.width();
         let mut visit = Visit {
             types,
-            context,
+            context: *context,
             budget,
             active: SmallVec::new(),
             path: self.path,
@@ -991,6 +994,8 @@ impl Row<'_, '_> {
             }
         }
         for index in 0..width {
+            let effective = slot_context(template, index, context);
+            visit.context = effective;
             let result = if let Some(native) = native.as_deref_mut() {
                 let shape = native.source.shape();
                 let coordinates = match (self.itemize, shape, native.row) {
@@ -1007,7 +1012,7 @@ impl Row<'_, '_> {
                     let result = native
                         .source
                         .source()
-                        .write_parameter_cell(row, column, sink, context, budget, &mut visit);
+                        .write_parameter_cell(row, column, sink, &effective, budget, &mut visit);
                     if result.is_ok() && positional {
                         visit.pop_index();
                     }
@@ -1032,6 +1037,7 @@ impl Row<'_, '_> {
                 visit.native_python(&value, sink, sequence.map(|_| index))
             };
             if let Err(error) = result {
+                note_slot_context(py, &error, template, index, context);
                 errors::note_format(
                     py,
                     &error,
@@ -1064,6 +1070,7 @@ impl Row<'_, '_> {
 
     fn native_parameters(
         self,
+        template: &Template,
         expected: u16,
         types: &ScalarTypes,
         context: &Context,
@@ -1074,7 +1081,14 @@ impl Row<'_, '_> {
         let mut sink =
             sqlaero_core::protocol::prepared::Parameters::new(0, expected, context.limit)
                 .map_err(|error| crate::input::sink::failure(py, error))?;
-        self.write_parameters(types, context, budget, &mut sink)?;
+        self.write_parameters_checked(
+            types,
+            context,
+            budget,
+            &mut sink,
+            Some(template),
+            |_, _| Ok(()),
+        )?;
         sink.finish()
             .map_err(|error| crate::input::sink::failure(py, error))
     }
@@ -1090,7 +1104,7 @@ impl Row<'_, '_> {
         let expected = self.parameter_count(template.slots())?;
         let mut sink = prepared_display::DisplaySink::new(template, expected, context.limit)
             .map_err(|error| crate::input::sink::failure(py, error))?;
-        self.write_parameters(
+        self.write_parameters_checked(
             types,
             &Context {
                 limit: usize::MAX,
@@ -1098,6 +1112,8 @@ impl Row<'_, '_> {
             },
             budget,
             &mut sink,
+            Some(template),
+            |_, _| Ok(()),
         )?;
         sink.finish()
             .map_err(|error| crate::input::sink::failure(py, error))
@@ -1182,6 +1198,7 @@ impl Row<'_, '_> {
             context,
             budget,
             output,
+            Some(template),
             |_, output| {
                 if template
                     .append_range_until_slot(&range, &mut cursor, output, context.limit)
@@ -1215,12 +1232,17 @@ impl Row<'_, '_> {
 
     /// Traverse each existing positional role exactly once. Binder framing and
     /// final public projection are static consumers around the same writes.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "One traversal shares projection, text and CALL framing; the optional template supplies per-slot facts without another visitor or allocation."
+    )]
     fn walk<const TRACK_ROLE: bool>(
         mut self,
         types: &ScalarTypes,
         context: &Context,
         budget: &IoBudget,
         output: &mut Vec<u8>,
+        template: Option<&Template>,
         mut before: impl FnMut(usize, &mut Vec<u8>) -> PyResult<bool>,
         mut after: impl FnMut(usize, &mut Vec<u8>, FragmentRole) -> PyResult<()>,
     ) -> PyResult<FragmentRole> {
@@ -1229,7 +1251,7 @@ impl Row<'_, '_> {
         let width = self.width();
         let mut visit = Visit {
             types,
-            context,
+            context: *context,
             budget,
             active: SmallVec::new(),
             path: self.path,
@@ -1274,6 +1296,8 @@ impl Row<'_, '_> {
         }
         let mut role = FragmentRole::Scalar;
         for index in 0..width {
+            let effective = slot_context(template, index, context);
+            visit.context = effective;
             let source = if let Some(row) = row {
                 row.row_item(index).inspect_err(|error| {
                     errors::note_format(
@@ -1301,7 +1325,7 @@ impl Row<'_, '_> {
                     };
                     visit.push_index(py, index)?;
                     native.source.source().write_parameter_cell(
-                        source_row, column, &mut guard, context, budget, &mut visit,
+                        source_row, column, &mut guard, &effective, budget, &mut visit,
                     )?;
                     visit.pop_index();
                 } else {
@@ -1379,6 +1403,7 @@ impl Row<'_, '_> {
                     role
                 }
                 Err(error) => {
+                    note_slot_context(py, &error, template, index, context);
                     errors::note_format(
                         py,
                         &error,
@@ -1396,9 +1421,48 @@ impl Row<'_, '_> {
     }
 }
 
+fn slot_context(template: Option<&Template>, slot: usize, base: &Context) -> Context {
+    Context {
+        utc_confirmed: base.utc_confirmed
+            && template.is_none_or(|template| template.utc_override(slot).is_none()),
+        ..*base
+    }
+}
+
+#[cold]
+fn note_slot_context(
+    py: Python<'_>,
+    error: &PyErr,
+    template: Option<&Template>,
+    slot: usize,
+    context: &Context,
+) {
+    let Some(template) = template.filter(|template| template.utc_override(slot).is_some()) else {
+        return;
+    };
+    match template.utc_override_character(slot, context.codec) {
+        Ok(Some(position)) => errors::note_format(
+            py,
+            error,
+            format_args!(
+                "SQL parameter {slot} belongs to a statement with a SET_VAR hint at SQL character {position}; its effective time_zone cannot be certified as UTC. Aware inputs require reliably confirmed UTC. Session facts were not changed and the current request was not sent."
+            ),
+        ),
+        _ => errors::note_format(
+            py,
+            error,
+            format_args!(
+                "SQL parameter {slot} belongs to a statement with a SET_VAR hint; its effective time_zone cannot be certified as UTC. The hint's Unicode position could not be reconstructed. The original failure is preserved; the current request was not sent."
+            ),
+        ),
+    }
+}
+
 struct Visit<'a> {
     types: &'a ScalarTypes,
-    context: &'a Context,
+    // Copy only the native policy, so one SQL position can refine its temporal
+    // precondition without mutating session facts or another position.
+    context: Context,
     budget: &'a IoBudget,
     // Common shallow ancestry stays inline. This is an allocation hint, not
     // the nesting limit: deeper valid paths spill with checked reservation.
@@ -1423,7 +1487,7 @@ pub(crate) fn encode_value(
     let mut output = Vec::new();
     Visit {
         types,
-        context,
+        context: *context,
         budget,
         active: SmallVec::new(),
         path: SmallVec::new(),
@@ -1444,11 +1508,12 @@ impl Visit<'_> {
         column: usize,
         output: &mut Vec<u8>,
     ) -> PyResult<FragmentRole> {
+        let context = self.context;
         if TRACK_ROLE {
-            source.write_role_cell(row, column, output, self.context, self.budget, self)
+            source.write_role_cell(row, column, output, &context, self.budget, self)
         } else {
             source
-                .write_cell(row, column, output, self.context, self.budget, self)
+                .write_cell(row, column, output, &context, self.budget, self)
                 .map(|()| FragmentRole::Scalar)
         }
     }
@@ -1512,7 +1577,7 @@ impl Visit<'_> {
         } else {
             match self
                 .types
-                .try_write(value, output, self.context, Some(self.budget))
+                .try_write(value, output, &self.context, Some(self.budget))
             {
                 Ok(true) => return Ok(FragmentRole::Scalar),
                 Err(error) => {
@@ -1683,6 +1748,7 @@ impl Visit<'_> {
         output: &mut Vec<u8>,
     ) -> PyResult<()> {
         let py = source.owner().py();
+        let context = self.context;
         match source.shape() {
             Shape::Vector { length } => {
                 writer::append(output, b"(", self.context.limit)
@@ -1693,7 +1759,7 @@ impl Visit<'_> {
                             .map_err(|e| errors::wire(py, e))?;
                     }
                     self.push_index(py, index)?;
-                    source.write_cell(index, 0, output, self.context, self.budget, self)?;
+                    source.write_cell(index, 0, output, &context, self.budget, self)?;
                     self.pop_index();
                 }
                 writer::append(output, b")", self.context.limit).map_err(|e| errors::wire(py, e))
@@ -1727,6 +1793,7 @@ impl Visit<'_> {
         output: &mut Vec<u8>,
     ) -> PyResult<()> {
         let py = source.owner().py();
+        let context = self.context;
         writer::append(output, b"(", self.context.limit).map_err(|e| errors::wire(py, e))?;
         for column in 0..columns {
             if column != 0 {
@@ -1734,7 +1801,7 @@ impl Visit<'_> {
                     .map_err(|e| errors::wire(py, e))?;
             }
             self.push_index(py, column)?;
-            source.write_cell(row, column, output, self.context, self.budget, self)?;
+            source.write_cell(row, column, output, &context, self.budget, self)?;
             self.pop_index();
         }
         writer::append(output, b")", self.context.limit).map_err(|e| errors::wire(py, e))
@@ -1783,7 +1850,7 @@ impl CellWriter for Visit<'_> {
             if self.types.try_write_to(
                 value,
                 &mut crate::input::sink::Native(sink),
-                self.context,
+                &self.context,
                 Some(self.budget),
             )? {
                 return Ok(());

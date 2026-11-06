@@ -15,7 +15,8 @@ pub struct Context {
     pub codec: crate::charset::codec::Codec,
     /// Actual NO_BACKSLASH_ESCAPES value, not a guessed SQL mode.
     pub no_backslash_escapes: bool,
-    /// Whether session time_zone is reliably confirmed as UTC.
+    /// Whether UTC is reliably confirmed for this value's execution context.
+    /// Statement-local modifiers can invalidate the confirmed session snapshot.
     pub utc_confirmed: bool,
     /// Effective native request bound, including command byte when present.
     pub limit: usize,
