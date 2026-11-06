@@ -280,7 +280,8 @@ def test_managed_prepared_all_in_declaration_detects_later_native_out(routines: 
         assert caught.value.is_server_error is False and cur.call_output_params is None
         diagnostic = (caught.value.message + ' ' + ' '.join(getattr(caught.value, '__notes__', ()))).lower()
         assert 'parameter_modes' in diagnostic and 'call' in diagnostic
-        assert 'sent' in diagnostic or 'execut' in diagnostic
+        assert 'returned native out' in diagnostic and 'not replayed' in diagnostic
+        assert 'call sending started=true' in diagnostic
 
 
 @pytest.mark.parametrize('kind', KINDS)
