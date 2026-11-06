@@ -260,6 +260,7 @@ pub(crate) struct Connection {
     tls_info_value: OnceLock<Py<crate::tls_info::TlsInfo>>,
     compression_snapshot: Option<sqlaero_core::transport::compression::Options>,
     compression_value: OnceLock<Py<crate::compression::Compression>>,
+    pub(crate) local_infile: bool,
     pub(crate) transaction_scope: Arc<AtomicBool>,
 }
 impl Connection {
@@ -1056,6 +1057,11 @@ macro_rules! connection_api {
             #[getter] fn server_version(&self)->&str { &self.native.metadata.version }
             /// Actual server connection ID; remains readable after close.
             #[getter] fn connection_id(&self)->u32 { self.native.metadata.connection_id }
+            /// Actual negotiated LOCAL upload capability; strict opt-in at
+            /// connect, default False. Each upload also requires its own
+            /// execute(local_file=...) path. Reading performs no I/O and remains
+            /// valid after close; this grants no server-selected file access.
+            #[getter] fn local_infile(&self)->bool {self.local_infile}
             /// Actual negotiated compression as an immutable cached snapshot,
             /// or None when uncompressed. This is independent of the original
             /// permission configuration, sends no SQL and remains readable
@@ -1332,9 +1338,9 @@ fn configured_size(
 /// version-specific upper limit or normalization. Later remote changes use
 /// explicit set_* methods; three local runtime timeouts use property assignment.
 #[pyfunction]
-#[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,compression=None,server_public_key=None,autocommit=Argument::default(),sql_mode=None,init_sql=None,multi_statements=Argument::default(),connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
+#[pyo3(pass_module,signature=(*,user,host=Argument::default(),port=Argument::default(),unix_socket=None,password=None,database=None,charset=None,collation=None,ssl=None,compression=None,server_public_key=None,autocommit=Argument::default(),sql_mode=None,init_sql=None,multi_statements=Argument::default(),local_infile=Argument::default(),connect_timeout=Argument::default(),read_timeout=None,write_timeout=None,operation_timeout=None,net_read_timeout=None,net_write_timeout=None,wait_timeout=None,innodb_lock_wait_timeout=None,max_allowed_packet=Argument::default(),max_received_packet=Argument::default(),result_memory_limit=Argument::default(),total_result_memory_limit=Argument::default(),decode_json=Argument::default(),decode_set=Argument::default(),decode_bit=Argument::default(),use_decimal=Argument::default(),use_timedelta=Argument::default(),decode_text_strict=Argument::default(),decode_date_strict=Argument::default()))]
 #[pyo3(
-    text_signature = "(*, user, host='127.0.0.1', port=3306, unix_socket=None, password=None, database=None, charset=None, collation=None, ssl=None, compression=None, server_public_key=None, autocommit=True, sql_mode=None, init_sql=None, multi_statements=True, connect_timeout=10, read_timeout=None, write_timeout=None, operation_timeout=None, net_read_timeout=None, net_write_timeout=None, wait_timeout=None, innodb_lock_wait_timeout=None, max_allowed_packet='64MB', max_received_packet='64MB', result_memory_limit='256MB', total_result_memory_limit='512MB', decode_json=False, decode_set=False, decode_bit=False, use_decimal=True, use_timedelta=True, decode_text_strict=True, decode_date_strict=True)"
+    text_signature = "(*, user, host='127.0.0.1', port=3306, unix_socket=None, password=None, database=None, charset=None, collation=None, ssl=None, compression=None, server_public_key=None, autocommit=True, sql_mode=None, init_sql=None, multi_statements=True, local_infile=False, connect_timeout=10, read_timeout=None, write_timeout=None, operation_timeout=None, net_read_timeout=None, net_write_timeout=None, wait_timeout=None, innodb_lock_wait_timeout=None, max_allowed_packet='64MB', max_received_packet='64MB', result_memory_limit='256MB', total_result_memory_limit='512MB', decode_json=False, decode_set=False, decode_bit=False, use_decimal=True, use_timedelta=True, decode_text_strict=True, decode_date_strict=True)"
 )]
 #[expect(
     clippy::too_many_arguments,
@@ -1357,6 +1363,7 @@ pub(crate) fn connect(
     sql_mode: Option<&Bound<'_, PyAny>>,
     init_sql: Option<&Bound<'_, PyAny>>,
     multi_statements: Argument<'_>,
+    local_infile: Argument<'_>,
     connect_timeout: Argument<'_>,
     read_timeout: Option<&Bound<'_, PyAny>>,
     write_timeout: Option<&Bound<'_, PyAny>>,
@@ -1523,6 +1530,10 @@ pub(crate) fn connect(
         .0
         .as_ref()
         .map_or(Ok(true), |value| config::boolean(value, "multi_statements"))?;
+    let local_infile = local_infile
+        .0
+        .as_ref()
+        .map_or(Ok(false), |value| config::boolean(value, "local_infile"))?;
     let params = ConnectParams {
         endpoint: match socket {
             Some(socket) => Endpoint::Unix(socket),
@@ -1535,7 +1546,7 @@ pub(crate) fn connect(
         server_public_key,
         compression,
         multi_statements,
-        local_infile: false,
+        local_infile,
         connect_timeout: timeout_config.connect,
         read_timeout: timeout_config.read,
         write_timeout: timeout_config.write,
@@ -1572,6 +1583,10 @@ pub(crate) fn connect(
         }
     };
     let compression_snapshot = ready.transport.channel.compression_options();
+    let local_infile = ready
+        .transport
+        .capabilities
+        .contains(sqlaero_core::protocol::CapabilityFlags::CLIENT_LOCAL_FILES);
     let tls_snapshot = ready
         .transport
         .channel
@@ -1620,6 +1635,7 @@ pub(crate) fn connect(
         tls_info_value: OnceLock::new(),
         compression_snapshot,
         compression_value: OnceLock::new(),
+        local_infile,
         transaction_scope: Arc::new(AtomicBool::new(false)),
     };
     if !user_initialization.is_empty()

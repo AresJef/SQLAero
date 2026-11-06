@@ -1021,13 +1021,13 @@ impl CursorCore {
         args: Argument<'_>,
         many: &Argument<'_>,
         itemize: &Argument<'_>,
+        local_file: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Bound<'py, PyAny>> {
         let _operation = self.reader.operation(py)?;
         self.reader.open(py)?;
         let connection = self.connection.borrow(py);
         let timeouts = connection.runtime(py)?.timeouts;
         let mut budget = timeouts.operation();
-        let mut lease = connection.acquire(py, &mut budget)?;
         let sql = sql.cast::<PyString>().map_err(|_| {
             crate::errors::builtin_message::<pyo3::exceptions::PyTypeError>(
                 py,
@@ -1042,6 +1042,18 @@ impl CursorCore {
             .0
             .as_ref()
             .map_or(Ok(true), |value| config::boolean(value, "itemize"))?;
+        // The Cursor operation is already protected, but user __fspath__ runs
+        // before acquiring the wire. The same original budget then covers
+        // native opening, the upload and its actual final server response.
+        let local_path = crate::local::path(py, local_file, &budget)?;
+        if local_path.is_some() && (many || self.prepared) {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::UnsupportedCapability,
+                "local_file requires one ordinary text LOAD DATA LOCAL INFILE; many/executemany and prepared uploads are not supported",
+            ));
+        }
+        let mut lease = connection.acquire(py, &mut budget)?;
         let options = self.settings(py)?.options;
         let types = connection.types.borrow(py);
         let mut statement = if self.prepared {
@@ -1067,6 +1079,13 @@ impl CursorCore {
                 &types,
                 &budget,
             )?;
+            if local_path.is_some() && planner.is_batch() {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::UnsupportedCapability,
+                    "local_file cannot be shared across a batch of logical input rows; use a single text LOAD operation",
+                ));
+            }
             loop {
                 input::check(py, &budget)?;
                 connection.ensure_context(py, &mut lease, &mut budget)?;
@@ -1102,7 +1121,40 @@ impl CursorCore {
                     })?;
                     slot.copy_from_slice(&id.to_le_bytes());
                 }
+                let source = if self.prepared {
+                    None
+                } else {
+                    let (bytes, is_local) =
+                        crate::local::statement(py, request.bytes, &context, ansi, &budget)?;
+                    request.bytes = bytes;
+                    match (is_local, local_path.as_ref()) {
+                        (true, Some(path)) if connection.local_infile && request.final_request => {
+                            Some(crate::local::open(py, path, &budget)?)
+                        }
+                        (true, _) => {
+                            return Err(errors::client(
+                                py,
+                                ClientErrorCode::UnsupportedCapability,
+                                "LOAD DATA LOCAL INFILE requires connect(local_infile=True) and this single execute call's local_file path; no source was opened and SQL was not sent",
+                            ));
+                        }
+                        (false, Some(_)) => {
+                            return Err(errors::client(
+                                py,
+                                ClientErrorCode::UnsupportedCapability,
+                                "local_file is accepted only for one reliably recognized ordinary text LOAD DATA LOCAL INFILE; multi-SQL, special executable comments and other statements are not upload authorizations",
+                            ));
+                        }
+                        (false, None) => None,
+                    }
+                };
                 let job = connection.query_job(py, &mut lease, request.bytes, false)?;
+                let job = match source {
+                    Some(source) => job
+                        .with_local_infile(source)
+                        .map_err(|error| errors::query(py, error))?,
+                    None => job,
+                };
                 input::check(py, &budget)?;
                 let job = if self.streaming && request.final_request {
                     job.with_streaming()
@@ -1313,9 +1365,19 @@ macro_rules! cursor_api {
             /// Keep args and all nested mutable values unchanged until this
             /// call returns. Each constructed Rust request owns stable bytes;
             /// batch construction does not provide an atomic snapshot of all inputs.
-            #[pyo3(signature=(sql,args=Argument::default(),*,many=Argument::default(),itemize=Argument::default()))]
-            #[pyo3(text_signature="($self, sql, args=..., *, many=False, itemize=True)")]
-            fn execute<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:Argument<'_>,many:Argument<'_>,itemize:Argument<'_>)->PyResult<Bound<'py,PyAny>> {self.run(py,sql,args,&many,&itemize).map_err(|error|errors::at(py,error,"cursor.execute"))}
+            /// local_file optionally selects one regular local source through
+            /// str/Path/PathLike. Upload requires connect(local_infile=True) and
+            /// one ordinary text LOAD DATA LOCAL INFILE, without a batch or
+            /// prepared mode. The SQL filename is only a protocol label and
+            /// never selects the actual file. Rust opens the explicit source
+            /// once and uploads only its opening length in bounded chunks.
+            /// Keep its contents stable through return. Filesystem calls are
+            /// cooperatively checked against the original operation budget;
+            /// blocking OS I/O cannot promise a hard interruption deadline.
+            /// Native opening errors preserve standard OSError/errno details.
+            #[pyo3(signature=(sql,args=Argument::default(),*,many=Argument::default(),itemize=Argument::default(),local_file=None))]
+            #[pyo3(text_signature="($self, sql, args=..., *, many=False, itemize=True, local_file=None)")]
+            fn execute<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:Argument<'_>,many:Argument<'_>,itemize:Argument<'_>,local_file:Option<&Bound<'_,PyAny>>)->PyResult<Bound<'py,PyAny>> {self.run(py,sql,args,&many,&itemize,local_file).map_err(|error|errors::at(py,error,"cursor.execute"))}
             /// Execute using the same native many=True,itemize=True operation.
             /// Input value and timezone rules are the same as execute().
             /// Keep args and all nested mutable values unchanged until this
@@ -1323,7 +1385,7 @@ macro_rules! cursor_api {
             /// batch construction does not provide an atomic snapshot of all inputs.
             fn executemany<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:&Bound<'_,PyAny>)->PyResult<Bound<'py,PyAny>> {
                 let many=true.into_pyobject(py)?.to_owned().into_any();
-                self.run(py,sql,Argument(Some(args.clone())),&Argument(Some(many.clone())),&Argument(Some(many)))
+                self.run(py,sql,Argument(Some(args.clone())),&Argument(Some(many.clone())),&Argument(Some(many)),None)
                     .map_err(|error|errors::at(py,error,"cursor.executemany"))
             }
             /// Advance to the next actual result set, discarding unread rows of

@@ -309,10 +309,12 @@ def test_source_preparation_errors_preserve_old_result_and_original_python_excep
                 assert caught.value is original
                 assert isinstance(source, BrokenPath) and source.calls == 1
             else:
-                with pytest.raises(SQLAeroError) as caught_native:
+                # Local source preparation shares the existing standard-I/O
+                # boundary, including errno-specific OSError subclasses.
+                with pytest.raises(OSError) as caught_native:
                     current.execute(load_sql(), ('source-error',), local_file=source)
-                assert caught_native.value.is_server_error is False
-                assert any(word in str(caught_native.value).lower() for word in ('file', 'local', 'source'))
+                assert any('local_file' in note and 'not been sent' in note
+                           for note in caught_native.value.__notes__)
             assert_saved(current, columns, dictionary)
             assert not connection.closed
 

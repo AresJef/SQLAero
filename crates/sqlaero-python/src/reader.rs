@@ -217,6 +217,62 @@ pub(crate) struct Reader {
     dictionary: bool,
 }
 impl Reader {
+    /// Decode one confirmed output row directly into a private integer-keyed
+    /// dict. The temporary context is a Rust value, not a Python Reader object;
+    /// it borrows the same native row/plans and calls the ordinary field loop.
+    /// No fetch position or retained input is created, so a failed mapping
+    /// construction can retry from the original immutable native snapshot.
+    pub(crate) fn snapshot_dict<'py>(
+        py: Python<'py>,
+        rows: &RowBatch,
+        plans: &[Plan],
+        types: &Py<ScalarTypes>,
+        metadata: &Arc<metadata::Snapshot>,
+        keys: &Bound<'py, PyTuple>,
+    ) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+        if rows.row_count != 1 || plans.len() != rows.columns.len() || keys.len() != plans.len() {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "A confirmed CALL output snapshot requires one row and matching field plans and position keys",
+            ));
+        }
+        let reader = Self::with_format(types.clone_ref(py), true);
+        reader.lock(py)?.metadata = Some(Arc::clone(metadata));
+        let source = RowSource {
+            rows,
+            plans,
+            base: 0,
+        };
+        let types = types.borrow(py);
+        let mut progress = FetchProgress::default();
+        let output = match rows.encoding {
+            sqlaero_core::result::value::RowEncoding::Binary => reader
+                .row_tuple::<true, true, true>(
+                    py,
+                    &source,
+                    &types,
+                    0,
+                    0,
+                    &mut progress,
+                    Some(keys),
+                )?,
+            sqlaero_core::result::value::RowEncoding::Text => reader
+                .row_tuple::<true, true, false>(
+                    py,
+                    &source,
+                    &types,
+                    0,
+                    0,
+                    &mut progress,
+                    Some(keys),
+                )?,
+        };
+        output
+            .cast_into::<pyo3::types::PyDict>()
+            .map_err(Into::into)
+    }
+
     /// Share the existing exact built-in fetch count boundary with SS callers.
     pub(crate) fn fetch_size(
         &self,

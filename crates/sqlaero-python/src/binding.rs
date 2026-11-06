@@ -186,6 +186,10 @@ pub(crate) struct Planner<'types, 'py> {
     finished: bool,
 }
 impl<'types, 'py> Planner<'types, 'py> {
+    pub(crate) fn is_batch(&self) -> bool {
+        self.rows.as_ref().is_some_and(Rows::is_batch)
+    }
+
     pub(crate) fn new(
         sql: &Bound<'py, PyString>,
         args: Option<&Bound<'py, PyAny>>,
