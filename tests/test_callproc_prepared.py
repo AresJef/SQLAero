@@ -268,8 +268,15 @@ def test_managed_prepared_all_in_declaration_detects_later_native_out(routines: 
         assert cur.fetchall() == formatted(kind, 'value', 5)
         assert cur.nextset() is True
         assert cur.fetchall() == formatted(kind, 'second', 11)
-        with pytest.raises(SQLAeroError) as caught:
-            cur.nextset()
+        if streaming(kind):
+            # All-IN keeps Header return; PS_OUT_PARAMS is unavailable until
+            # the real row End, so no column-name/count guess may reject here.
+            assert cur.nextset() is True
+            with pytest.raises(SQLAeroError) as caught:
+                cur.fetchall()
+        else:
+            with pytest.raises(SQLAeroError) as caught:
+                cur.nextset()
         assert caught.value.is_server_error is False and cur.call_output_params is None
         diagnostic = (caught.value.message + ' ' + ' '.join(getattr(caught.value, '__notes__', ()))).lower()
         assert 'parameter_modes' in diagnostic and 'call' in diagnostic
