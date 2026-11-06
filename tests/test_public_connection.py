@@ -637,17 +637,21 @@ def test_context_confirmation_uses_its_actual_server_only_encoding(connection: C
 
 
 @requires_mysql
-def test_unexpected_multi_results_are_drained_and_update_actual_session_facts(connection: Connection) -> None:
-    from sqlaero.errors import NotSupportedError
+def test_multi_results_are_readable_and_update_actual_session_facts(connection: Connection) -> None:
     cursor = connection.cursor()
     cursor.execute('DROP PROCEDURE IF EXISTS sqlaero_public_multi')
     cursor.execute("CREATE PROCEDURE sqlaero_public_multi() BEGIN SELECT 1; SET time_zone='+08:00'; SELECT 2; END")
     try:
-        with pytest.raises(NotSupportedError):
-            cursor.execute('CALL sqlaero_public_multi()')
-        assert not connection.closed and cursor.columns.names == ()
+        assert cursor.execute('CALL sqlaero_public_multi()') == 1
+        assert not connection.closed and cursor.row_count == 1
         with pytest.raises(InterfaceError, match='UTC'):
             cursor.execute('SELECT %s', datetime(2024, 1, 1, tzinfo=timezone.utc))
+        assert cursor.fetchall() == ((1,),)
+        assert cursor.nextset() is True
+        assert cursor.fetchall() == ((2,),)
+        assert cursor.nextset() is True
+        assert cursor.description is None and cursor.row_count == 0
+        assert cursor.nextset() is None
         cursor.execute('SELECT @@SESSION.time_zone')
         assert cursor.fetchone() == ('+08:00',)
     finally:
@@ -664,7 +668,17 @@ def test_native_complete_row_splitting_and_failed_call_prefix(label: str, bad_va
         cursor.execute('CREATE TEMPORARY TABLE split_public (id INT PRIMARY KEY,value VARCHAR(128))')
         rows = [(index, 'x' * 100) for index in range(100)]
         assert cursor.executemany('INSERT INTO split_public VALUES (%s,%s)', rows) == 100
-        assert cursor.row_count == 100 and cursor.warning_count == 0
+        assert cursor.batch_row_count == 100
+        counts: list[int] = []
+        while True:
+            count = cursor.row_count
+            assert type(count) is int and count > 0
+            assert cursor.rowcount == count and cursor.warning_count == 0
+            assert cursor.description is None and cursor.batch_row_count == 100
+            counts.append(count)
+            if cursor.nextset() is None:
+                break
+        assert len(counts) > 1 and sum(counts) == 100
         cursor.execute('SELECT COUNT(*) FROM split_public')
         assert cursor.fetchone() == (100,)
         cursor.execute('TRUNCATE TABLE split_public')
@@ -672,11 +686,23 @@ def test_native_complete_row_splitting_and_failed_call_prefix(label: str, bad_va
         broken[70] = (70, bad_value)
         with pytest.raises(TypeError) as caught:
             cursor.executemany('INSERT INTO split_public VALUES (%s,%s)', broken)  # type: ignore[arg-type]
-        assert cursor.row_count is None and cursor.rowcount == -1 and cursor.description is None
+        assert cursor.batch_row_count is None
         assert any('confirmed ' in note for note in getattr(caught.value, '__notes__', []))
+        confirmed = 0
+        while True:
+            count = cursor.row_count
+            assert type(count) is int and count > 0
+            assert cursor.description is None and cursor.warning_count == 0
+            confirmed += count
+            try:
+                assert cursor.nextset() is True
+            except TypeError as boundary:
+                assert any('confirmed ' in note for note in getattr(boundary, '__notes__', []))
+                break
+        assert 0 < confirmed < 70
         cursor.execute('SELECT COUNT(*) FROM split_public')
         count = cursor.fetchone()
-        assert count is not None and isinstance(count[0], int) and 0 < count[0] < 70
+        assert count == (confirmed,)
         # A server error also leaves the healthy wire usable, while aggregate
         # failed-call counters do not report the already confirmed prefix.
         with pytest.raises(SQLAeroError):
@@ -1278,7 +1304,7 @@ def test_fixed_seed_values_round_trip_through_the_public_request_path(connection
 
 
 @requires_mysql
-def test_real_itemize_many_shapes_preserve_counts_and_final_result(connection: Connection) -> None:
+def test_real_itemize_many_shapes_preserve_all_results_and_counts(connection: Connection) -> None:
     cursor = connection.cursor()
     assert cursor.execute('SELECT 1 IN %s', [1, 2, 3], itemize=False) == 1
     assert cursor.fetchone() == (1,)
@@ -1286,9 +1312,17 @@ def test_real_itemize_many_shapes_preserve_counts_and_final_result(connection: C
     cursor.execute('SELECT 1 IN %s,2 IN %s', (shared, shared))
     assert cursor.fetchone() == (1, 1)
     assert cursor.execute('SELECT %s,%s', [(1, 'a'), [2, 'b'], (3, 'c')], many=True) == 3
-    assert cursor.row_count == 3 and cursor.fetchall() == ((3, 'c'),)
+    assert cursor.batch_row_count == 3
+    for index, row in enumerate(((1, 'a'), (2, 'b'), (3, 'c'))):
+        assert cursor.row_count == cursor.rowcount == 1
+        assert cursor.fetchall() == (row,)
+        assert cursor.nextset() is (True if index < 2 else None)
     assert cursor.executemany('SELECT 8', [(), ()]) == 2
-    assert cursor.row_count == 2 and cursor.fetchone() == (8,)
+    assert cursor.batch_row_count == 2 and cursor.row_count == 1
+    assert cursor.fetchall() == ((8,),)
+    assert cursor.nextset() is True
+    assert cursor.row_count == 1 and cursor.fetchall() == ((8,),)
+    assert cursor.nextset() is None
     assert cursor.execute('SELECT 9', (), many=True, itemize=False) == 1
     assert cursor.fetchone() == (9,)
 
