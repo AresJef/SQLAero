@@ -18,6 +18,7 @@ use sqlaero_core::transport::deadline::IoBudget;
 use std::ops::Range;
 use std::sync::Arc;
 
+pub(crate) mod call;
 mod prepared_display;
 #[cfg(test)]
 mod prepared_native_tests;
@@ -869,7 +870,7 @@ impl Row<'_, '_> {
             &mut encoded,
             |_, output| {
                 output.clear();
-                Ok(())
+                Ok(false)
             },
             |_, output, _| {
                 let value = display(py, output, context.codec)?.into_any().unbind();
@@ -920,11 +921,24 @@ impl Row<'_, '_> {
     pub(crate) fn write_parameters<
         S: sqlaero_core::bind::value::ValueSink<Error = sqlaero_core::bind::value::ValueError>,
     >(
+        self,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &IoBudget,
+        sink: &mut S,
+    ) -> PyResult<()> {
+        self.write_parameters_checked(types, context, budget, sink, |_, _| Ok(()))
+    }
+
+    fn write_parameters_checked<
+        S: sqlaero_core::bind::value::ValueSink<Error = sqlaero_core::bind::value::ValueError>,
+    >(
         mut self,
         types: &ScalarTypes,
         context: &Context,
         budget: &IoBudget,
         sink: &mut S,
+        mut after: impl FnMut(usize, &S) -> PyResult<()>,
     ) -> PyResult<()> {
         let py = self.value.py();
         check(py, budget)?;
@@ -1021,6 +1035,7 @@ impl Row<'_, '_> {
                 );
                 return Err(error);
             }
+            after(index, sink)?;
         }
         check(py, budget)
     }
@@ -1172,7 +1187,7 @@ impl Row<'_, '_> {
                         "binding position is unavailable",
                     ));
                 }
-                Ok(())
+                Ok(false)
             },
             |_, _, _| Ok(()),
         )?;
@@ -1199,7 +1214,7 @@ impl Row<'_, '_> {
         context: &Context,
         budget: &IoBudget,
         output: &mut Vec<u8>,
-        mut before: impl FnMut(usize, &mut Vec<u8>) -> PyResult<()>,
+        mut before: impl FnMut(usize, &mut Vec<u8>) -> PyResult<bool>,
         mut after: impl FnMut(usize, &mut Vec<u8>, FragmentRole) -> PyResult<()>,
     ) -> PyResult<FragmentRole> {
         let py = self.value.py();
@@ -1266,8 +1281,30 @@ impl Row<'_, '_> {
             } else {
                 self.value.clone()
             };
-            before(index, output)?;
-            let result = if let Some(native) = native.as_deref_mut() {
+            let out = before(index, output)?;
+            let result = if out {
+                let mut guard = call::NullGuard::default();
+                if let Some(native) = native.as_deref_mut() {
+                    let (source_row, column) = match (native.source.shape(), native.row) {
+                        (Shape::Vector { .. }, Some(row)) => (row, 0),
+                        (Shape::Vector { .. }, None) => (index, 0),
+                        (Shape::Record { .. }, _) => (0, index),
+                        (Shape::Table { .. }, Some(row)) => (row, index),
+                        _ => return Err(crate::input::sink::fragment_error(py)),
+                    };
+                    visit.push_index(py, index)?;
+                    native.source.source().write_parameter_cell(
+                        source_row, column, &mut guard, context, budget, &mut visit,
+                    )?;
+                    visit.pop_index();
+                } else {
+                    visit.native_python(&source, &mut guard, row.map(|_| index))?;
+                }
+                guard.validate(py, index)?;
+                writer::append(output, b"NULL", context.limit)
+                    .map_err(|error| errors::wire(py, error))?;
+                Ok(FragmentRole::Scalar)
+            } else if let Some(native) = native.as_deref_mut() {
                 let shape = native.source.shape();
                 let source_row = native.row;
                 if self.itemize {

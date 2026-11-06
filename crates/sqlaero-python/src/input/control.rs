@@ -26,16 +26,7 @@ pub(crate) fn savepoint(
 ) -> PyResult<Vec<u8>> {
     let py = name.py();
     super::check(py, budget)?;
-    let source = name
-        .cast::<PyString>()
-        .map_err(|_| errors::builtin_message::<PyTypeError>(py, "name must be str"))?;
-    let text = super::unicode(source, context)?;
-    if text.is_empty() || text.contains('\0') {
-        return Err(errors::builtin_message::<PyValueError>(
-            py,
-            "name must be nonempty and contain no NUL",
-        ));
-    }
+    let (source, text) = identifier_text(name, "name", context)?;
     let command = match action {
         SavepointAction::Create => b"\x03SAVEPOINT ".as_slice(),
         SavepointAction::Rollback => b"\x03ROLLBACK TO SAVEPOINT ",
@@ -43,7 +34,53 @@ pub(crate) fn savepoint(
     };
     let mut output = Vec::new();
     writer::append(&mut output, command, context.limit).map_err(|error| errors::wire(py, error))?;
-    writer::append(&mut output, b"`", context.limit).map_err(|error| errors::wire(py, error))?;
+    identifier_write(source, text, &mut output, context, budget)?;
+    Ok(output)
+}
+
+/// Append one raw name as one quoted identifier under the current codec.
+/// The original Python string remains available only at this attached boundary
+/// for exact Unicode error offsets; no Python SQL object is created.
+pub(crate) fn identifier(
+    name: &Bound<'_, PyAny>,
+    name_label: &str,
+    output: &mut Vec<u8>,
+    context: &Context,
+    budget: &IoBudget,
+) -> PyResult<()> {
+    super::check(name.py(), budget)?;
+    let (source, text) = identifier_text(name, name_label, context)?;
+    identifier_write(source, text, output, context, budget)
+}
+
+fn identifier_text<'a, 'py>(
+    name: &'a Bound<'py, PyAny>,
+    name_label: &str,
+    context: &Context,
+) -> PyResult<(&'a Bound<'py, PyString>, &'a str)> {
+    let py = name.py();
+    let source = name.cast::<PyString>().map_err(|_| {
+        errors::builtin_format::<PyTypeError>(py, format_args!("{name_label} must be str"))
+    })?;
+    let text = super::unicode(source, context)?;
+    if text.is_empty() || text.contains('\0') {
+        return Err(errors::builtin_format::<PyValueError>(
+            py,
+            format_args!("{name_label} must be nonempty and contain no NUL"),
+        ));
+    }
+    Ok((source, text))
+}
+
+fn identifier_write(
+    source: &Bound<'_, PyString>,
+    text: &str,
+    output: &mut Vec<u8>,
+    context: &Context,
+    budget: &IoBudget,
+) -> PyResult<()> {
+    let py = source.py();
+    writer::append(output, b"`", context.limit).map_err(|error| errors::wire(py, error))?;
     let mut start = 0;
     while start < text.len() {
         super::check(py, budget)?;
@@ -53,7 +90,7 @@ pub(crate) fn savepoint(
         }
         context
             .codec
-            .identifier_fragment(&text[start..end], &mut output, context.limit)
+            .identifier_fragment(&text[start..end], output, context.limit)
             .map_err(|error| {
                 let error = match error {
                     CodecError::Encode { offset, point } => CodecError::Encode {
@@ -66,9 +103,9 @@ pub(crate) fn savepoint(
             })?;
         start = end;
     }
-    writer::append(&mut output, b"`", context.limit).map_err(|error| errors::wire(py, error))?;
+    writer::append(output, b"`", context.limit).map_err(|error| errors::wire(py, error))?;
     super::check(py, budget)?;
-    Ok(output)
+    Ok(())
 }
 
 /// Copy a finite sequence of complete SQL units before connection delivery.
