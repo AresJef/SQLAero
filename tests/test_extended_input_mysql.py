@@ -4,6 +4,7 @@
 from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 import pytest
+from sqlaero import Cursor
 
 from test_public_connection import live, requires_mysql
 from sqlaero.errors import DataError
@@ -194,6 +195,15 @@ def table_input(provider: str, rows: list[tuple[int, object]], *, objects: bool 
                          "value": pl.Series("value", values, dtype=pl.Object) if objects else values})
 
 
+def current_insert_ack(cursor: Cursor) -> int:
+    """Read one real INSERT result's count without substituting batch totals."""
+    count = cursor.row_count
+    assert type(count) is int and count > 0
+    assert cursor.rowcount == cursor.affected_rows == count
+    assert cursor.warning_count == 0 and cursor.description is None
+    return count
+
+
 @requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
 def test_multi_index_owned_signed_tuple_uses_public_cursor_and_current_context(label: str) -> None:
@@ -246,7 +256,13 @@ def test_nullable_primitive_blocks_keep_actual_values_across_statement_rollover(
         cursor.execute("CREATE TEMPORARY TABLE nullable_block_probe "
                        "(pos INT AUTO_INCREMENT PRIMARY KEY,x BIGINT,y DOUBLE,z TINYINT)")
         assert cursor.execute("INSERT INTO nullable_block_probe(x,y,z) VALUES (%s,%s,%s)", source) == 1025
-        assert cursor.row_count == 1025 and cursor.warning_count == 0
+        assert cursor.batch_row_count == 1025
+        counts = [current_insert_ack(cursor)]
+        assert counts[0] < 1025
+        while cursor.nextset():
+            counts.append(current_insert_ack(cursor))
+            assert cursor.batch_row_count == 1025
+        assert sum(counts) == 1025
         cursor.execute("SELECT x,y,z FROM nullable_block_probe ORDER BY pos")
         assert cursor.fetchall() == expected
 
@@ -261,7 +277,13 @@ def test_typed_table_rollover_preserves_every_actual_row(label: str, provider: s
     with live(label, max_allowed_packet="2KB") as connection, connection.cursor() as cursor:
         cursor.execute("CREATE TEMPORARY TABLE typed_rollover_probe (id INT PRIMARY KEY,value VARCHAR(128))")
         assert cursor.execute("INSERT INTO typed_rollover_probe VALUES (%s,%s)", source) == count
-        assert cursor.row_count == count and cursor.warning_count == 0
+        assert cursor.batch_row_count == count
+        counts = [current_insert_ack(cursor)]
+        assert counts[0] < count
+        while cursor.nextset():
+            counts.append(current_insert_ack(cursor))
+            assert cursor.batch_row_count == count
+        assert sum(counts) == count
         cursor.execute("SELECT id,value FROM typed_rollover_probe ORDER BY id")
         assert cursor.fetchall() == tuple(rows)
 
@@ -282,14 +304,31 @@ def test_typed_later_callback_failure_keeps_original_and_confirmed_prefix(label:
         with pytest.raises(MemoryError) as caught:
             cursor.execute("INSERT INTO typed_failure_probe VALUES (%s,%s)", source)
         assert caught.value is original
-        assert cursor.row_count is None and cursor.rowcount == -1 and cursor.description is None
+        counts = [current_insert_ack(cursor)]
+        assert cursor.batch_row_count is None
         notes = "\n".join(getattr(original, "__notes__", ()))
         assert "[70]" in notes and "confirmed " in notes and "not sent" in notes
-        cursor.execute("SELECT COUNT(*) FROM typed_failure_probe")
-        count = cursor.fetchone()
-        assert count is not None and isinstance(count[0], int) and 0 < count[0] < 70
-        cursor.execute("SELECT 42")
-        assert cursor.fetchone() == (42,)
+        while True:
+            try:
+                more = cursor.nextset()
+            except MemoryError as saved:
+                assert type(saved) is type(original) and str(saved) == str(original)
+                break
+            assert more is True, "the retained local failure must follow every confirmed set"
+            counts.append(current_insert_ack(cursor))
+            assert cursor.batch_row_count is None
+        assert cursor.batch_row_count is None
+        # The temporary table belongs to this session. A separate Cursor keeps
+        # observation independent of the failed Cursor's saved result boundary.
+        with connection.cursor() as observer:
+            observer.execute("SELECT COUNT(*) FROM typed_failure_probe")
+            count = observer.fetchone()
+            assert count is not None and isinstance(count[0], int) and 0 < count[0] <= 70
+            assert count[0] == sum(counts)
+            observer.execute("SELECT id,value FROM typed_failure_probe ORDER BY id")
+            assert observer.fetchall() == tuple((index, "x" * 100) for index in range(count[0]))
+            observer.execute("SELECT 42")
+            assert observer.fetchone() == (42,)
 
 
 @requires_mysql
