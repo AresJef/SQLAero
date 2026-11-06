@@ -3,12 +3,14 @@
 use crate::memory::{Pool, Scope};
 use crate::protocol::framing::{MessageReader, MessageWriter, WireError};
 use crate::protocol::local_infile::{LocalError, Source, Upload, UploadProgress};
-use crate::result::text::{self, Delivery, Receiver, Response, ResultError, StreamEvent};
+use crate::result::text::{
+    self, Completion, Delivery, Header, Receiver, Response, ResultError, RowBatch, StreamEvent,
+};
 use crate::result::value::RowEncoding;
 use crate::transport::channel::{Channel, ChannelError, Step};
 use crate::transport::deadline::IoBudget;
 use crate::transport::socket::WaitStatus;
-use mysql_common::constants::{CapabilityFlags, Command};
+use mysql_common::constants::{CapabilityFlags, Command, StatusFlags};
 use std::num::NonZeroUsize;
 use std::ops::Range;
 use std::sync::Arc;
@@ -31,6 +33,128 @@ pub enum QueryError {
 }
 
 pub use crate::result::text::CommandConfirmation;
+
+/// Managed CALL delivery keeps an internal output's actual status independent
+/// of business results and their counters. Ordinary query delivery is unchanged.
+pub enum Managed<T> {
+    /// One original business result or streaming boundary.
+    Public(T),
+    /// An actual validated native output terminator, never a business set.
+    /// Apply its status/session tracking before continuing the original CALL.
+    InternalOutput {
+        /// The original completion, without synthesized status flags.
+        completion: Completion,
+        /// Original legacy metadata flags, when that packet existed.
+        metadata_status: Option<StatusFlags>,
+    },
+}
+
+struct ManagedOutputs {
+    expected: usize,
+    output: Option<RowBatch>,
+    seen: bool,
+    header: Option<Header>,
+    rows: [Option<RowBatch>; 2],
+    end: Option<StreamEvent>,
+    publish: bool,
+    business: bool,
+    failed_completion: Option<(Completion, Option<StatusFlags>)>,
+}
+
+impl ManagedOutputs {
+    fn new(expected: usize) -> Self {
+        Self {
+            expected,
+            output: None,
+            seen: false,
+            header: None,
+            rows: [None, None],
+            end: None,
+            publish: false,
+            business: false,
+            failed_completion: None,
+        }
+    }
+
+    fn pending(&self) -> bool {
+        self.header.is_some() || self.rows.iter().any(Option::is_some) || self.end.is_some()
+    }
+
+    fn pop(&mut self) -> Option<StreamEvent> {
+        if !self.publish {
+            return None;
+        }
+        if let Some(header) = self.header.take() {
+            return Some(StreamEvent::Header(header));
+        }
+        if let Some(rows) = self.rows[0].take() {
+            self.rows[0] = self.rows[1].take();
+            return Some(StreamEvent::Rows(rows));
+        }
+        self.publish = false;
+        if let Some(end) = self.end.take() {
+            self.business = false;
+            return Some(end);
+        }
+        None
+    }
+
+    fn retain(&mut self, rows: RowBatch) -> Result<(), WireError> {
+        if self.seen {
+            return Err(WireError::Malformed("duplicate managed output result"));
+        }
+        if rows.row_count != 1 || rows.columns.len() != self.expected {
+            return Err(WireError::Malformed(
+                "managed output row or column count mismatch",
+            ));
+        }
+        self.seen = true;
+        self.output = Some(rows);
+        Ok(())
+    }
+
+    fn internal<T>(
+        &mut self,
+        rows: Option<RowBatch>,
+        completion: Completion,
+        metadata_status: Option<StatusFlags>,
+    ) -> Result<Managed<T>, QueryError> {
+        let result = rows
+            .ok_or(WireError::Malformed(
+                "managed output requires exactly one row",
+            ))
+            .and_then(|rows| self.retain(rows));
+        match result {
+            Ok(()) => Ok(Managed::InternalOutput {
+                completion,
+                metadata_status,
+            }),
+            Err(error) => Err(self.invalid(completion, metadata_status, error)),
+        }
+    }
+
+    fn invalid(
+        &mut self,
+        completion: Completion,
+        metadata_status: Option<StatusFlags>,
+        error: WireError,
+    ) -> QueryError {
+        self.failed_completion = Some((completion, metadata_status));
+        error.into()
+    }
+
+    fn clear_pending(&mut self) {
+        self.header = None;
+        self.rows = [None, None];
+        self.end = None;
+        self.publish = false;
+        self.business = false;
+    }
+}
+
+fn output_status(status: StatusFlags, metadata_status: Option<StatusFlags>) -> bool {
+    (status | metadata_status.unwrap_or_default()).contains(StatusFlags::SERVER_PS_OUT_PARAMS)
+}
 
 /// Actual request-transfer progress, independent of response or commit facts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -131,14 +255,15 @@ pub struct Query {
     finished: bool,
     streaming: bool,
     stream_boundary: bool,
+    managed: Option<ManagedOutputs>,
 }
 
 impl Query {
     /// Whether the complete command ended, rather than just one result set.
     /// A validated server ERR also ends this exchange without inventing success.
     #[must_use]
-    pub const fn is_finished(&self) -> bool {
-        self.finished
+    pub fn is_finished(&self) -> bool {
+        self.finished && !self.managed.as_ref().is_some_and(ManagedOutputs::pending)
     }
 
     /// Read existing framing facts only when needed for failure handling.
@@ -240,6 +365,7 @@ impl Query {
             finished: false,
             streaming: false,
             stream_boundary: false,
+            managed: None,
         })
     }
 
@@ -286,6 +412,46 @@ impl Query {
         Ok(self)
     }
 
+    /// Hide only a prepared CALL's explicitly managed native OUT/INOUT result.
+    /// This opt-in belongs to callproc with known output directions. Direct
+    /// execute CALL and calls without outputs must keep ordinary delivery.
+    ///
+    /// # Errors
+    /// Rejects a started, non-EXECUTE, zero-output, duplicate or discard-only
+    /// setup before sending bytes. The caller supplies the declared count;
+    /// this does not inspect SQL or query a routine signature.
+    pub fn with_managed_outputs(mut self, expected: usize) -> Result<Self, QueryError> {
+        if self.started
+            || self.managed.is_some()
+            || self.encoding != RowEncoding::Binary
+            || expected == 0
+            || self.discard
+        {
+            return Err(WireError::Malformed("invalid managed output command").into());
+        }
+        self.managed = Some(ManagedOutputs::new(expected));
+        Ok(self)
+    }
+
+    /// Consume one completely received and shape-validated native output row.
+    /// A later error does not erase it. This alone does not assert that the
+    /// full CALL succeeded or that a public output mapping is ready.
+    pub fn take_call_output(&mut self) -> Option<RowBatch> {
+        self.managed
+            .as_mut()
+            .and_then(|managed| managed.output.take())
+    }
+
+    /// Consume a real non-business terminator saved only when subsequent OUT
+    /// shape/duplicate validation failed. Publish its actual session status
+    /// before reporting that error; it is never a whole-CALL confirmation.
+    /// Normal InternalOutput events do not duplicate their completion here.
+    pub fn take_managed_completion(&mut self) -> Option<(Completion, Option<StatusFlags>)> {
+        self.managed
+            .as_mut()
+            .and_then(|managed| managed.failed_completion.take())
+    }
+
     /// A Header/Rows/End was returned and no later logical message was started.
     /// The host can reserve its accumulation slot here before calling advance:
     /// a local reservation failure outside Query leaves this state and all
@@ -308,8 +474,200 @@ impl Query {
                 WireError::Malformed("discard requires a streaming result boundary").into(),
             );
         }
+        if let Some(managed) = self.managed.as_mut() {
+            if !managed.business || managed.header.is_some() {
+                return Err(
+                    WireError::Malformed("discard requires a published business header").into(),
+                );
+            }
+            // Its real End may already be queued after a zero/one-row
+            // lookahead. Only drop business rows; keep that original End.
+            managed.rows = [None, None];
+            if managed.end.is_some() {
+                return Ok(());
+            }
+        }
         self.collector.discard_current_rows()?;
         Ok(())
+    }
+
+    /// Receive one buffered business set or one actual managed OUT completion.
+    /// It uses the same complete-set parser, without a second network driver.
+    ///
+    /// # Errors
+    /// Returns real exchange errors and native output shape/duplicate errors.
+    /// After the latter, take_managed_completion retains its real terminator.
+    pub fn advance_managed(
+        &mut self,
+        channel: &mut Channel,
+        budget: &mut IoBudget,
+    ) -> Result<Step<Managed<Response>>, QueryError> {
+        if self.managed.is_none() || self.streaming {
+            return Err(WireError::Malformed("query needs managed buffered delivery").into());
+        }
+        let result = self.advance_buffered_raw(channel, budget).and_then(|step| {
+            let Step::Ready(response) = step else {
+                return Ok(match step {
+                    Step::Control => Step::Control,
+                    Step::Wait(direction) => Step::Wait(direction),
+                    Step::Ready(_) => unreachable!(),
+                });
+            };
+            let metadata_status = match &response {
+                Response::Rows(rows) => rows.metadata_status,
+                _ => None,
+            };
+            if !output_status(response.completion().status_flags(), metadata_status) {
+                return Ok(Step::Ready(Managed::Public(response)));
+            }
+            let managed = self.managed.as_mut().expect("validated managed mode");
+            let (rows, completion) = match response {
+                Response::Rows(rows) => (Some(rows.rows), rows.completion),
+                Response::Command(completion) | Response::Counted { completion, .. } => {
+                    (None, completion)
+                }
+            };
+            managed
+                .internal(rows, completion, metadata_status)
+                .map(Step::Ready)
+        });
+        if result.is_err() {
+            self.finished = true;
+        }
+        result
+    }
+
+    /// Receive managed streaming delivery. Only this explicit mode waits for
+    /// up to two native rows or the real set End before publishing its header.
+    /// Two business rows are replayed in order without reading a third row.
+    ///
+    /// # Errors
+    /// Returns actual parser/storage/transport errors without replaying SQL.
+    /// Completed output and its real error completion remain independently
+    /// takeable after a later failure or host signal.
+    pub fn advance_managed_stream(
+        &mut self,
+        channel: &mut Channel,
+        budget: &mut IoBudget,
+        row_limit: NonZeroUsize,
+    ) -> Result<Step<Managed<StreamEvent>>, QueryError> {
+        if self.managed.is_none() || !self.streaming {
+            return Err(WireError::Malformed("query needs managed streaming delivery").into());
+        }
+        self.stream_boundary = false;
+        let result = self.advance_managed_stream_inner(channel, budget, row_limit);
+        match &result {
+            Ok(Step::Ready(Managed::Public(_))) => self.stream_boundary = true,
+            Err(_) => {
+                self.finished = true;
+                self.managed
+                    .as_mut()
+                    .expect("validated managed mode")
+                    .clear_pending();
+            }
+            _ => self.stream_boundary = false,
+        }
+        result
+    }
+
+    fn advance_managed_stream_inner(
+        &mut self,
+        channel: &mut Channel,
+        budget: &mut IoBudget,
+        row_limit: NonZeroUsize,
+    ) -> Result<Step<Managed<StreamEvent>>, QueryError> {
+        loop {
+            let managed = self.managed.as_mut().expect("validated managed mode");
+            if let Some(event) = managed.pop() {
+                return Ok(Step::Ready(Managed::Public(event)));
+            }
+            let limit = if managed.business {
+                row_limit
+            } else {
+                NonZeroUsize::MIN
+            };
+            let event = match self.advance_stream_raw(channel, budget, limit)? {
+                Step::Ready(event) => event,
+                Step::Control => return Ok(Step::Control),
+                Step::Wait(direction) => return Ok(Step::Wait(direction)),
+            };
+            let managed = self.managed.as_mut().expect("validated managed mode");
+            match event {
+                StreamEvent::Header(header) => managed.header = Some(header),
+                StreamEvent::Rows(rows) if managed.business => {
+                    return Ok(Step::Ready(Managed::Public(StreamEvent::Rows(rows))));
+                }
+                StreamEvent::Rows(rows) => {
+                    if rows.row_count != 1 || managed.header.is_none() {
+                        return Err(
+                            WireError::Malformed("invalid managed lookahead row boundary").into(),
+                        );
+                    }
+                    if managed.rows[0].is_none() {
+                        managed.rows[0] = Some(rows);
+                    } else {
+                        if managed
+                            .header
+                            .as_ref()
+                            .and_then(|header| header.metadata_status)
+                            .is_some_and(|status| {
+                                status.contains(StatusFlags::SERVER_PS_OUT_PARAMS)
+                            })
+                        {
+                            return Err(WireError::Malformed(
+                                "managed output has more than one row",
+                            )
+                            .into());
+                        }
+                        managed.rows[1] = Some(rows);
+                        managed.publish = true;
+                        managed.business = true;
+                    }
+                }
+                StreamEvent::End {
+                    tail,
+                    completion,
+                    total_rows,
+                    metadata_status,
+                } => {
+                    if output_status(completion.status_flags(), metadata_status) {
+                        if managed.business {
+                            return Err(managed.invalid(
+                                completion,
+                                metadata_status,
+                                WireError::Malformed("managed output has more than one row"),
+                            ));
+                        }
+                        if tail.is_some() {
+                            return Err(managed.invalid(
+                                completion,
+                                metadata_status,
+                                WireError::Malformed("invalid managed lookahead tail"),
+                            ));
+                        }
+                        let rows = managed.rows[0].take();
+                        managed.header = None;
+                        return managed
+                            .internal(rows, completion, metadata_status)
+                            .map(Step::Ready);
+                    }
+                    let end = StreamEvent::End {
+                        tail,
+                        completion,
+                        total_rows,
+                        metadata_status,
+                    };
+                    if managed.header.is_some() {
+                        managed.end = Some(end);
+                        managed.publish = true;
+                        managed.business = true;
+                    } else {
+                        managed.business = false;
+                        return Ok(Step::Ready(Managed::Public(end)));
+                    }
+                }
+            }
+        }
     }
 
     /// Advance only to completed column definitions, a bounded complete-row
@@ -320,6 +678,18 @@ impl Query {
     /// Native framing/required storage/parser failure is terminal. Host-side
     /// batch-slot reservation before this call is the controlled retry branch.
     pub fn advance_stream(
+        &mut self,
+        channel: &mut Channel,
+        budget: &mut IoBudget,
+        row_limit: NonZeroUsize,
+    ) -> Result<Step<StreamEvent>, QueryError> {
+        if self.managed.is_some() {
+            return Err(WireError::Malformed("managed query needs managed delivery").into());
+        }
+        self.advance_stream_raw(channel, budget, row_limit)
+    }
+
+    fn advance_stream_raw(
         &mut self,
         channel: &mut Channel,
         budget: &mut IoBudget,
@@ -354,6 +724,17 @@ impl Query {
     /// Returns real server, resource, protocol or transport failures. Callers
     /// preserve actual sending/confirmation facts when invalidating a session.
     pub fn advance(
+        &mut self,
+        channel: &mut Channel,
+        budget: &mut IoBudget,
+    ) -> Result<Step<Response>, QueryError> {
+        if self.managed.is_some() {
+            return Err(WireError::Malformed("managed query needs managed delivery").into());
+        }
+        self.advance_buffered_raw(channel, budget)
+    }
+
+    fn advance_buffered_raw(
         &mut self,
         channel: &mut Channel,
         budget: &mut IoBudget,
