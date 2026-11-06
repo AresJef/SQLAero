@@ -31,9 +31,11 @@ class _SlowIndex:
 
     def __index__(self) -> int:
         self.calls += 1
-        start = time.monotonic()
+        # Windows CPython 3.12's monotonic clock can have coarse ticks. Observe
+        # the callback with the high-resolution duration clock on every host.
+        start = time.perf_counter()
         time.sleep(_INDEX_SECONDS)
-        self.elapsed += time.monotonic() - start
+        self.elapsed += time.perf_counter() - start
         return self.value
 
 
