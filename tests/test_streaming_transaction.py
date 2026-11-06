@@ -2,6 +2,7 @@
 
 import pytest
 
+from sqlaero import SSCursor, SSDictCursor
 from sqlaero.errors import OperationalTimeoutError, SQLAeroError
 from test_public_connection import live, requires_mysql
 
@@ -30,6 +31,7 @@ def test_successful_transaction_drains_before_commit_and_closes_only_owned_curso
 @pytest.mark.parametrize("dictionary", [False, True])
 def test_business_error_survives_drain_then_actual_rollback(label: str, dictionary: bool) -> None:
     primary = RuntimeError("original business failure")
+    cursor: SSCursor | SSDictCursor | None = None
     with live(label) as connection:
         with connection.cursor() as setup:
             setup.execute("CREATE TEMPORARY TABLE ss_tx (v INT) ENGINE=InnoDB")
@@ -39,7 +41,7 @@ def test_business_error_survives_drain_then_actual_rollback(label: str, dictiona
                 cursor.execute("SELECT v FROM ss_tx ORDER BY v")
                 assert cursor.fetchone() == ({"v": 1} if dictionary else (1,))
                 raise primary
-        assert caught.value is primary and cursor.closed
+        assert caught.value is primary and cursor is not None and cursor.closed
         assert any("ROLLBACK" in note and "confirmed" in note for note in primary.__notes__)
         with connection.cursor() as check:
             check.execute("SELECT COUNT(*) FROM ss_tx")
@@ -50,6 +52,7 @@ def test_business_error_survives_drain_then_actual_rollback(label: str, dictiona
 @pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("dictionary", [False, True])
 def test_server_error_found_during_exit_rolls_back_and_remains_the_primary(label: str, dictionary: bool) -> None:
+    cursor: SSCursor | SSDictCursor | None = None
     with live(label) as connection:
         with connection.cursor() as setup:
             setup.execute("CREATE TEMPORARY TABLE ss_tx (v INT) ENGINE=InnoDB")
@@ -59,7 +62,7 @@ def test_server_error_found_during_exit_rolls_back_and_remains_the_primary(label
         assert caught.value.code == 1644 and caught.value.is_server_error is True
         assert "late stream failure" in str(caught.value)
         assert any("ROLLBACK" in note and "confirmed" in note for note in caught.value.__notes__)
-        assert cursor.closed and connection.closed is False
+        assert cursor is not None and cursor.closed and connection.closed is False
         with connection.cursor() as check:
             check.execute("SELECT COUNT(*) FROM ss_tx")
             assert check.fetchone() == (0,)
@@ -68,11 +71,12 @@ def test_server_error_found_during_exit_rolls_back_and_remains_the_primary(label
 @requires_mysql
 def test_expired_exit_cap_does_not_grant_old_stream_a_fresh_cleanup_window() -> None:
     connection = live("84", operation_timeout=1)
+    cursor: SSCursor | None = None
     with pytest.raises(OperationalTimeoutError) as caught:
         with connection.transaction(streaming=True) as cursor:
             cursor.execute("SELECT 1 UNION ALL SELECT 2")
             connection.operation_timeout = 1e-9
-    assert cursor.closed and connection.closed
+    assert cursor is not None and cursor.closed and connection.closed
     assert caught.value.is_server_error is False
     assert any("COMMIT was not attempted" in note for note in caught.value.__notes__)
     connection.close()

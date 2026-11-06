@@ -1,6 +1,7 @@
 """Prepared rows and statement release share the real streaming ownership path."""
 
 import gc
+from typing import cast
 
 import pytest
 import sqlaero
@@ -67,7 +68,7 @@ def test_completed_prepared_handle_release_does_not_disturb_another_unread_strea
         with connection.cursor() as observer:
             observer.execute("SHOW SESSION STATUS LIKE 'Com_stmt_close'")
             result = observer.fetchone()
-            assert result is not None and int(result[1]) == 1
+            assert result is not None and int(cast(str, result[1])) == 1
 
 
 @requires_mysql

@@ -2,12 +2,19 @@
 
 import gc
 import time
-from typing import Any
+from typing import TypeAlias
 
 import pytest
 import sqlaero
 from sqlaero.errors import DataError, InterfaceBusyError, InterfaceError, NotSupportedError
 from test_public_connection import live, requires_mysql
+
+
+CursorFactory: TypeAlias = (
+    None | type[tuple[object, ...]] | type[dict[str, object]]
+    | type[sqlaero.Cursor] | type[sqlaero.DictCursor]
+    | type[sqlaero.SSCursor] | type[sqlaero.SSDictCursor]
+)
 
 
 def row(value: int, dictionary: bool) -> tuple[int] | dict[str, int]:
@@ -157,7 +164,7 @@ def test_user_idle_and_later_timeout_assignment_do_not_reset_existing_stream_pol
 
 @requires_mysql
 @pytest.mark.parametrize("selector", [None, tuple, dict, sqlaero.Cursor, sqlaero.DictCursor, sqlaero.SSCursor, sqlaero.SSDictCursor])
-def test_streaming_selector_override_preserves_format(selector: Any) -> None:
+def test_streaming_selector_override_preserves_format(selector: CursorFactory) -> None:
     with live("84") as connection:
         dictionary = selector in (dict, sqlaero.DictCursor, sqlaero.SSDictCursor)
         for streaming in (True, False):

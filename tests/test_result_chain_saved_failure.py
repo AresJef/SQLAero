@@ -2,15 +2,16 @@
 
 from contextlib import closing
 from types import FrameType
+from typing import Self, cast
 import gc
 import weakref
 
 import pytest
 from _native_signal import NativeAlarm
 from sqlaero import Connection
-from sqlaero.errors import InterfaceError, ProgrammingError, SQLAeroErrorCode
+from sqlaero.errors import InterfaceError, ProgrammingError, SQLAeroError, SQLAeroErrorCode
 
-from test_public_connection import connection, live, requires_mysql
+from test_public_connection import connection as connection, live, requires_mysql
 
 
 @requires_mysql
@@ -33,11 +34,11 @@ def test_retained_unicode_encode_error_preserves_structure_and_notes() -> None:
 
 
 @requires_mysql
-def test_retained_native_error_keeps_execution_and_position_notes(connection) -> None:
+def test_retained_native_error_keeps_execution_and_position_notes(connection: Connection) -> None:
     with connection.cursor() as cur:
         with pytest.raises(Exception) as immediate:
             cur.execute('SELECT 7 AS trusted; SELECT * FROM sqlaero_absent_saved_failure')
-        original = immediate.value
+        original = cast(SQLAeroError, immediate.value)
         assert original.code == 1146
         notes = tuple(original.__notes__)
         assert any('request 0, result set 1' in note for note in notes)
@@ -56,11 +57,11 @@ def test_retained_signal_type_does_not_call_user_constructors(connection: Connec
     forbidden = False
 
     class Sentinel(LookupError):
-        def __new__(cls, *args):
+        def __new__(cls, *args: object) -> Self:
             assert not forbidden, 'retained failure called user __new__'
             return super().__new__(cls, *args)
 
-        def __init__(self, *args):
+        def __init__(self, *args: object) -> None:
             assert not forbidden, 'retained failure called user __init__'
             super().__init__(*args)
 
@@ -118,10 +119,11 @@ def test_retained_custom_state_is_not_kept_alive(connection: Connection) -> None
     class Sentinel(LookupError):
         pass
 
-    def fail():
+    def fail() -> weakref.ReferenceType[Payload]:
         payload = Payload()
         error = Sentinel('state requires the original object')
-        error.payload = payload
+        # This custom instance state is intentionally outside the exception API.
+        setattr(error, 'payload', payload)
 
         def interrupt(_number: int, _frame: FrameType | None) -> None:
             raise error
@@ -130,7 +132,7 @@ def test_retained_custom_state_is_not_kept_alive(connection: Connection) -> None
             alarm.start(0.1)
             with pytest.raises(Sentinel) as immediate:
                 cur.execute('SELECT 13 AS trusted; DO SLEEP(1)')
-            assert immediate.value.payload is payload
+            assert getattr(immediate.value, 'payload') is payload
             return weakref.ref(payload)
 
     reference = fail()
@@ -145,7 +147,7 @@ def test_retained_custom_state_is_not_kept_alive(connection: Connection) -> None
 
 @requires_mysql
 def test_retained_type_cycle_is_visible_to_python_gc(connection: Connection) -> None:
-    def cycle():
+    def cycle() -> weakref.ReferenceType[type[LookupError]]:
         cur = connection.cursor()
 
         class Sentinel(LookupError):
@@ -174,11 +176,11 @@ def test_unreconstructible_state_is_explicit_at_retained_boundary(connection: Co
         __slots__ = ('payload',)
 
     class WithDisplay(LookupError):
-        def __str__(self):
+        def __str__(self) -> str:
             return 'custom display'
 
     class WithAccess(LookupError):
-        def __getattribute__(self, name):
+        def __getattribute__(self, name: str) -> object:
             if name in ('args', '__cause__', '__context__', '__notes__'):
                 raise AssertionError('user exception attribute access must be bypassed')
             return super().__getattribute__(name)
@@ -198,7 +200,8 @@ def test_unreconstructible_state_is_explicit_at_retained_boundary(connection: Co
         original = WithAccess('safe intrinsic original reason')
     else:
         original = ProgrammingError('known original database reason', code=1146, is_server_error=True)
-        original.payload = object()
+        # Deliberate custom state on the otherwise standard library exception.
+        setattr(original, 'payload', object())
 
     def interrupt(_number: int, _frame: FrameType | None) -> None:
         raise original

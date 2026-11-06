@@ -1,30 +1,39 @@
 """Dictionary rows reuse result keys without changing native read ownership."""
 
-from typing import Any
+from typing import SupportsFloat, TypeAlias, cast
 
 import pytest
 import sqlaero
+from sqlaero.errors import DataError
 
-from test_public_connection import connection, requires_mysql
+from test_public_connection import connection as connection, requires_mysql
+
+
+CursorClass: TypeAlias = type[sqlaero.Cursor] | type[sqlaero.DictCursor]
+CursorFactory: TypeAlias = None | type[tuple[object, ...]] | type[dict[str, object]] | CursorClass
 
 
 @requires_mysql
-def test_builtin_format_selection_and_no_user_constructor(connection: Any) -> None:
-    dict_cursor = getattr(sqlaero, "DictCursor")
-    for selector, expected in ((None, sqlaero.Cursor), (tuple, sqlaero.Cursor),
-                               (sqlaero.Cursor, sqlaero.Cursor), (dict, dict_cursor),
-                               (dict_cursor, dict_cursor)):
+def test_builtin_format_selection_and_no_user_constructor(connection: sqlaero.Connection) -> None:
+    dict_cursor: type[sqlaero.DictCursor] = getattr(sqlaero, "DictCursor")
+    selectors: tuple[tuple[CursorFactory, CursorClass], ...] = (
+        (None, sqlaero.Cursor), (tuple, sqlaero.Cursor),
+        (sqlaero.Cursor, sqlaero.Cursor), (dict, dict_cursor), (dict_cursor, dict_cursor),
+    )
+    for selector, expected in selectors:
         with connection.cursor(selector) as cur:
             assert type(cur) is expected
             assert cur.execute("SELECT 1 AS value") == 1
             assert cur.fetchone() == ({"value": 1} if expected is dict_cursor else (1,))
-    for selector in ({}, (), "dict", object, lambda: None):
+    invalid_selectors: tuple[object, ...] = ({}, (), "dict", object, lambda: None)
+    for selector in invalid_selectors:
         with pytest.raises(TypeError, match="cursor"):
-            connection.cursor(selector)
+            # These deliberately invalid selectors must reach runtime validation.
+            connection.cursor(cast(CursorFactory, selector))
 
 
 @requires_mysql
-def test_dictionary_keys_are_shared_but_each_final_row_is_independent(connection: Any) -> None:
+def test_dictionary_keys_are_shared_but_each_final_row_is_independent(connection: sqlaero.Connection) -> None:
     with connection.cursor(dict) as cur:
         cur.execute("SELECT 10 AS id, 20 AS id UNION ALL SELECT 11, 21")
         assert cur.columns.names == ("id", "id")
@@ -48,7 +57,7 @@ def test_dictionary_keys_are_shared_but_each_final_row_is_independent(connection
 
 
 @requires_mysql
-def test_dictionary_transaction_and_multiple_results(connection: Any) -> None:
+def test_dictionary_transaction_and_multiple_results(connection: sqlaero.Connection) -> None:
     with connection.transaction(dict) as cur:
         assert type(cur) is getattr(sqlaero, "DictCursor")
         cur.execute("SELECT 1 AS first; SELECT 2 AS second")
@@ -62,12 +71,12 @@ def test_dictionary_transaction_and_multiple_results(connection: Any) -> None:
 
 
 @requires_mysql
-def test_dictionary_wide_rows_and_empty_results(connection: Any) -> None:
+def test_dictionary_wide_rows_and_empty_results(connection: sqlaero.Connection) -> None:
     with connection.cursor(dict) as cur:
         cur.execute("SELECT 1 AS a, NULL AS b, 'x' AS c, 1.5 AS d, X'00FF' AS e")
-        row = cur.fetchone()
+        row = cast(dict[str, object], cur.fetchone())
         assert row["a"] == 1 and row["b"] is None and row["c"] == "x"
-        assert float(row["d"]) == 1.5 and row["e"] == b"\x00\xff"
+        assert float(cast(SupportsFloat, row["d"])) == 1.5 and row["e"] == b"\x00\xff"
         cur.execute("SELECT 1 AS missing WHERE FALSE")
         assert cur.fetchmany(0) == ()
         assert cur.fetchone() is None
@@ -75,12 +84,12 @@ def test_dictionary_wide_rows_and_empty_results(connection: Any) -> None:
 
 
 @requires_mysql
-def test_dictionary_decode_failure_keeps_atomic_position(connection: Any) -> None:
+def test_dictionary_decode_failure_keeps_atomic_position(connection: sqlaero.Connection) -> None:
     with connection.cursor(dict) as cur:
         cur.execute("SET SESSION sql_mode=''")
         cur.execute("SELECT CAST('0000-00-00' AS DATE) AS value")
         for _ in range(2):
-            with pytest.raises(sqlaero.errors.DataError):
+            with pytest.raises(DataError):
                 cur.fetchone()
         cur.scroll(0, mode="absolute")
         assert cur.row_count == 1
