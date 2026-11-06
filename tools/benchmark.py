@@ -29,6 +29,7 @@ import statistics
 import subprocess
 import sys
 import sysconfig
+import tempfile
 import threading
 import time
 from typing import Any, Callable, TextIO, cast
@@ -523,6 +524,10 @@ def load_legacy() -> Any:
 
 
 def target(case: Case, native: Any, legacy: Any | None, sessions: dict[str, Any]) -> Task:
+    if case.family == "feature":
+        if legacy is not None:
+            raise ValueError("Feature observations require two implementations of the actual feature, never a legacy no-op")
+        return feature_target(case, native, sessions)
     if legacy is not None:
         if case.family != "escape" or case.no_backslash:
             raise ValueError("v23 whole-value boundary does not implement this task")
@@ -730,6 +735,291 @@ def network_target(case: Case, native: Any, sessions: dict[str, Any]) -> Task:
     return Task(fetch, prepare_fetch, finish=release_fetch)
 
 
+def feature_cases() -> list[Case]:
+    """Separate F-to-F absolute-cost observations, not r7 speedup claims.
+
+    The old buffered tuple R1000 roundtrip remains the fourth Cursor control.
+    These 15 cases per server use network quality and the unchanged sampler.
+    Every call consumes the complete response; inputs and one independent
+    value oracle are prepared before timing. All files are existing at call
+    entry, while Rust opening/reading/upload and the final ACK stay timed.
+    """
+    result: list[Case] = []
+    size = 256 * 1024
+    repeated = b"SQLAero fixed compression payload|"
+    payloads = {
+        "repeated": (repeated * ((size + len(repeated) - 1) // len(repeated)))[:size],
+        "incompressible": hashlib.shake_256(b"SQLAero fixed feature payload").digest(size),
+    }
+    source = b"".join(f"{index}\tvalue{index}\n".encode("ascii") for index in range(10000))
+    projection = "n,s,d,DATE'2024-02-29' AS dt"
+    row_sql = f"SELECT {projection} FROM sqlaero_bench WHERE n < %s ORDER BY n"
+    procedure = ("(IN p_n INT,OUT result_value INT,INOUT counter_value INT) "
+                 "BEGIN SET result_value=p_n*2;SET counter_value=counter_value+1;"
+                 "SELECT p_n AS value;SELECT p_n+1 AS second;END")
+    for server in ("84", "97"):
+        common: dict[str, object] = {"server": server, "transport": "unix", "tls": "disabled",
+                                     "compression": None, "local_infile": False}
+        for mode in ("first", "reuse"):
+            result.append(Case(f"feature/{server}/prepared/{mode}/R1",
+                {**common, "recipe": "prepared", "mode": mode, "args": (7,),
+                 "boundary": "PREPARE+EXECUTE+fetch for fresh handles; reuse PREPARE is untimed; CLOSE is untimed"},
+                "feature", "SELECT %s AS v"))
+        for mode in ("dict", "ss-tuple", "ss-dict"):
+            result.append(Case(f"feature/{server}/cursor/{mode}/R1000",
+                {**common, "recipe": "cursor", "mode": mode, "rows": 1000,
+                 "boundary": "execute+fetchall+nextset(None), including all network and final Python rows"},
+                "feature", row_sql))
+        for mode in ("raw", "zlib", "zstd"):
+            for name, payload in payloads.items():
+                result.append(Case(f"feature/{server}/compression/{mode}/{name}/B{size}",
+                    {**common, "transport": "tcp", "tls": "verified", "recipe": "compression",
+                     "compression": None if mode == "raw" else mode, "payload": payload,
+                     "boundary": "bind+send+receive+fetch full binary echo over the same verified-TLS policy; compression work only when enabled"},
+                    "feature", "SELECT CAST(%s AS BINARY) AS payload"))
+        result.append(Case(f"feature/{server}/local/N10000",
+            {**common, "recipe": "local", "local_infile": True, "rows": 10000, "payload": source,
+             "boundary": "existing file Rust open+read+upload+final ACK; file creation, TRUNCATE and cleanup untimed"},
+            "feature", "LOAD DATA LOCAL INFILE 'sqlaero-feature-source' INTO TABLE sqlaero_feature_local"))
+        result.append(Case(f"feature/{server}/multiset/R1-R1000",
+            {**common, "recipe": "multiset", "rows": 1000,
+             "boundary": "one multi-SQL request, both fetchall calls and nextset through None"},
+            "feature", "SELECT 10 AS first_result;" + row_sql))
+        for mode in ("text-buffered", "prepared-ss"):
+            result.append(Case(f"feature/{server}/call/{mode}/OUT",
+                {**common, "recipe": "call", "mode": mode, "args": (7, None, 10),
+                 "procedure": procedure,
+                 "boundary": "hot CALL, all business sets/tail/private cleanup and first output getter+dict; procedure/handle setup and CLOSE untimed"},
+                "feature", "CALL <owned-procedure>(%s,%s,%s)"))
+    return result
+
+
+def feature_session_key(spec: dict[str, Any], fixture: Path) -> str:
+    """A physical connection cannot silently inherit another case's options."""
+    return "feature/data/" + json.dumps(
+        [str(fixture.resolve()), spec["server"], spec["transport"], spec["tls"],
+         spec["compression"], spec["local_infile"]], separators=(",", ":"))
+
+
+def feature_connection(spec: dict[str, Any], native: Any, sessions: dict[str, Any]) -> Any:
+    fixture = Path(os.environ.get("SQLAERO_TEST_MYSQL_ROOT", "/private/tmp/sqlaero-mysql-501"))
+    key = feature_session_key(spec, fixture)
+    if key not in sessions:
+        label = str(spec["server"])
+        secret = json.loads((fixture / label / "state.json").read_text())
+        settings: dict[str, Any] = {
+            "user": "sqlaero", "password": secret["test_password"], "database": "sqlaero_test",
+            "operation_timeout": 10, "charset": "utf8mb4", "autocommit": True,
+            "compression": spec["compression"], "local_infile": spec["local_infile"],
+            "multi_statements": True,
+        }
+        if spec["transport"] == "unix":
+            settings["unix_socket"] = fixture / f"{label}.sock"
+        else:
+            settings.update(host="127.0.0.1", port=int(secret["port"]),
+                            server_public_key=fixture / label / "data/public_key.pem")
+            settings["ssl"] = (native.SSL(mode="VERIFY_IDENTITY", ca_file=fixture / "tls/ca.pem",
+                                           server_name="localhost") if spec["tls"] == "verified"
+                               else native.SSL(mode="DISABLED"))
+        connection = native.connect(**settings)
+        actual = connection.compression
+        expected = spec["compression"]
+        if ((expected is None and actual is not None)
+                or (expected is not None and (actual is None or actual.algorithms != (expected,)))
+                or (expected == "zstd" and actual is not None and actual.zstd_compression_level != 3)):
+            connection.close()
+            raise AssertionError("Feature connection negotiated a different compression profile")
+        if spec["tls"] == "verified" and connection.tls_info is None:
+            connection.close()
+            raise AssertionError("Feature connection did not establish its required TLS policy")
+        sessions[key] = connection
+    return sessions[key]
+
+
+def feature_verified(task: Task, expected: object, extra: Call | None = None) -> Task:
+    """Check literal server values once outside every measurement boundary."""
+    try:
+        if task.prepare:
+            task.prepare(1)
+        if task.call() != expected:
+            raise AssertionError("Feature result disagrees with its independent value oracle")
+        if extra:
+            extra()
+    except BaseException as error:
+        if task.finish:
+            try:
+                task.finish()
+            except BaseException as cleanup:
+                error.add_note(f"Feature oracle cleanup also failed: {type(cleanup).__name__}: {cleanup}")
+        raise
+    if task.finish:
+        task.finish()
+    return task
+
+
+def feature_single(cursor: Any, sql: str, args: object) -> object:
+    count = cursor.execute(sql, args)
+    rows = cursor.fetchall()
+    return count, rows, cursor.nextset()
+
+
+def feature_table(connection: Any) -> None:
+    """Use the same 10000 stored rows as the old tuple roundtrip control."""
+    with connection.cursor() as cursor:
+        cursor.execute("CREATE TEMPORARY TABLE IF NOT EXISTS sqlaero_bench(n INT PRIMARY KEY, s VARCHAR(64), d DOUBLE, b BIT(8), choices SET('a','b'))")
+        cursor.execute("SELECT COUNT(*) FROM sqlaero_bench")
+        if cursor.fetchone() == (0,):
+            cursor.execute("INSERT INTO sqlaero_bench VALUES (%s,%s,%s,%s,%s)",
+                           [(i, f"row{i}中", i + 0.125, i % 256, "a,b") for i in range(10000)], many=True)
+
+
+def feature_target(case: Case, native: Any, sessions: dict[str, Any]) -> Task:
+    """Prepare concrete feature work without changing sampling or controls."""
+    spec = cast(dict[str, Any], case.value)
+    connection = feature_connection(spec, native, sessions)
+    recipe = spec["recipe"]
+    if recipe == "prepared":
+        fresh = spec["mode"] == "first"
+        pool: list[Any] = []
+        position = 0
+
+        def close_prepared() -> None:
+            for cursor in pool:
+                cursor.close()
+            pool.clear()
+
+        def prepare_handles(n: int) -> None:
+            nonlocal position
+            close_prepared()
+            position = 0
+            pool.extend(connection.cursor(prepared=True) for _ in range(n if fresh else 1))
+            if not fresh and feature_single(pool[0], case.sql, spec["args"]) != (1, ((7,),), None):
+                raise AssertionError("Prepared reuse setup did not return its actual value")
+
+        def execute_prepared() -> object:
+            nonlocal position
+            cursor = pool[position] if fresh else pool[0]
+            if fresh:
+                position += 1
+            return feature_single(cursor, case.sql, spec["args"])
+
+        return feature_verified(Task(execute_prepared, prepare_handles, finish=close_prepared),
+                                (1, ((7,),), None))
+    if recipe in {"cursor", "multiset"}:
+        feature_table(connection)
+        expected_rows = tuple((i, f"row{i}中", i + 0.125, date(2024, 2, 29))
+                              for i in range(int(spec["rows"])))
+        if recipe == "cursor":
+            mode = str(spec["mode"])
+            streaming, dictionary = mode.startswith("ss-"), mode in {"dict", "ss-dict"}
+            cursor = connection.cursor(dict if dictionary else tuple, streaming=streaming)
+            expected: object = (tuple(dict(zip(("n", "s", "d", "dt"), row)) for row in expected_rows)
+                                if dictionary else expected_rows)
+            return feature_verified(Task(lambda: feature_single(cursor, case.sql, spec["rows"])),
+                                    (None if streaming else spec["rows"], expected, None))
+        cursor = connection.cursor()
+
+        def two_sets() -> object:
+            count = cursor.execute(case.sql, spec["rows"])
+            first = cursor.fetchall()
+            following = cursor.nextset()
+            second = cursor.fetchall()
+            return count, first, following, second, cursor.nextset()
+
+        return feature_verified(Task(two_sets), (1, ((10,),), True, expected_rows, None))
+    if recipe == "compression":
+        cursor = connection.cursor()
+        payload = spec["payload"]
+        return feature_verified(Task(lambda: feature_single(cursor, case.sql, (payload,))),
+                                (1, ((payload,),), None))
+    if recipe == "local":
+        current: list[Any] = []
+        directory: tempfile.TemporaryDirectory[str] | None = None
+        source: Path | None = None
+        with connection.cursor() as cursor:
+            cursor.execute("CREATE TEMPORARY TABLE sqlaero_feature_local(n INT,s VARCHAR(64))")
+
+        def finish_local() -> None:
+            nonlocal directory, source
+            try:
+                for cursor in current:
+                    try:
+                        cursor.execute("TRUNCATE sqlaero_feature_local")
+                    finally:
+                        cursor.close()
+                current.clear()
+            finally:
+                if directory is not None:
+                    directory.cleanup()
+                directory, source = None, None
+
+        def prepare_local(_n: int) -> None:
+            nonlocal directory, source
+            finish_local()
+            directory = tempfile.TemporaryDirectory(prefix="sqlaero-feature-")
+            source = Path(directory.name) / "source.tsv"
+            source.write_bytes(spec["payload"])
+            cursor = connection.cursor()
+            cursor.execute("TRUNCATE sqlaero_feature_local")
+            current.append(cursor)
+
+        def upload() -> object:
+            return current[0].execute(case.sql, local_file=source)
+
+        def local_values() -> object:
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT n,s FROM sqlaero_feature_local ORDER BY n")
+                if cursor.fetchall() != tuple((i, f"value{i}") for i in range(int(spec["rows"]))):
+                    raise AssertionError("LOCAL stored values differ from the fixed source file")
+            return None
+
+        return feature_verified(Task(upload, prepare_local, finish=finish_local), spec["rows"], local_values)
+    if recipe == "call":
+        prepared = spec["mode"] == "prepared-ss"
+        name = f"sqlaero_feature_call_{os.getpid()}_{connection.connection_id}"
+        current: list[Any] = []
+        created = False
+
+        def finish_call() -> None:
+            nonlocal created
+            try:
+                for cursor in current:
+                    cursor.close()
+                current.clear()
+            finally:
+                if created:
+                    with connection.cursor() as cursor:
+                        cursor.execute(f"DROP PROCEDURE `{name}`")
+                    created = False
+
+        def call_all() -> object:
+            cursor = current[0]
+            count = cursor.callproc(name, spec["args"], parameter_modes=("IN", "OUT", "INOUT"))
+            first = cursor.fetchall()
+            next_first = cursor.nextset()
+            second = cursor.fetchall()
+            next_tail = cursor.nextset()
+            tail = cursor.row_count
+            end = cursor.nextset()
+            outputs = cursor.call_output_params
+            return count, first, next_first, second, next_tail, tail, end, (None if outputs is None else dict(outputs))
+
+        expected_call = (None if prepared else 1, ((7,),), True, ((8,),), True, 0, None, {1: 14, 2: 11})
+
+        def prepare_call(_n: int) -> None:
+            nonlocal created
+            finish_call()
+            with connection.cursor() as cursor:
+                cursor.execute(f"CREATE PROCEDURE `{name}`" + str(spec["procedure"]))
+            created = True
+            current.append(connection.cursor(streaming=prepared, prepared=prepared))
+            if call_all() != expected_call:
+                raise AssertionError("Hot CALL setup disagrees with actual business/output values")
+
+        return feature_verified(Task(call_all, prepare_call, finish=finish_call), expected_call)
+    raise ValueError(f"Unknown feature recipe: {recipe}")
+
+
 def clock_calibration() -> dict[str, object]:
     """Record an empirical boundary allowance, not a universal error bound."""
     spans: list[int] = []
@@ -788,7 +1078,7 @@ def measure(call: Call, n: int) -> dict[str, object]:
 def worker(package: str | None, with_legacy: bool, warmup_calls: int = 16) -> None:
     native = load_native(package)
     legacy = load_legacy() if with_legacy else None
-    collection = {case.id: case for case in cases()}
+    collection = {case.id: case for case in cases() + feature_cases()}
     calls: dict[tuple[str, str], Task] = {}
     preparations: dict[tuple[str, str], dict[str, int]] = {}
     sessions: dict[str, Any] = {}
@@ -1039,7 +1329,7 @@ def package_identity(package: str | None) -> dict[str, object]:
 
 
 def collect(args: argparse.Namespace) -> None:
-    selected = [case for case in cases() if case.id in args.case or
+    selected = [case for case in cases() + feature_cases() if case.id in args.case or
                 any(case.id.startswith(prefix) for prefix in args.prefix)]
     if args.legacy:
         selected = [case for case in selected if case.family == "escape" and not case.no_backslash]
@@ -1641,7 +1931,7 @@ def main() -> None:
     elif args.command == "worker":
         worker(args.package, args.legacy, args.warmup_calls)
     elif args.command == "list":
-        print(json.dumps([case.identity() for case in cases()], indent=2))
+        print(json.dumps([case.identity() for case in cases() + feature_cases()], indent=2))
     elif args.command == "summarize":
         summarize(Path(args.output))
     else:
