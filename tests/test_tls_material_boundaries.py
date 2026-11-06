@@ -3,6 +3,7 @@
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 import base64
+import dis
 import errno
 import gc
 import hashlib
@@ -193,13 +194,15 @@ def test_actual_peer_chain_order_is_original_material_not_a_completed_trust_path
     assert tuple(certificate.to_der() for certificate in certificates) == expected
 
 
-def _large_san_peer(tmp_path: Path) -> TLSCertificate:
+def _large_san_peer(tmp_path: Path, *, dns_count: int = _DNS_COUNT, ip_count: int = 0) -> TLSCertificate:
     extensions = tmp_path / 'many-names.ext'
     extensions.write_text('basicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n'
                           'keyUsage=digitalSignature,keyEncipherment\n'
                           'subjectAltName=@names\n[names]\n'
                           + ''.join(f'DNS.{index + 1}={"aa" if index % 2 == 0 else "ab"}\n'
-                                    for index in range(_DNS_COUNT)))
+                                    for index in range(dns_count))
+                          + ''.join(f'IP.{index + 1}=127.0.0.{1 + index % 2}\n'
+                                    for index in range(ip_count)))
     leaf = tmp_path / 'many-names.pem'
     run([_openssl(), 'x509', '-req', '-in', str(ROOT / 'tls/server.csr'),
          '-CA', str(ROOT / 'tls/ca.pem'), '-CAkey', str(ROOT / 'tls/ca-key.pem'),
@@ -215,18 +218,14 @@ def _large_san_peer(tmp_path: Path) -> TLSCertificate:
 
 @requires_mysql
 @requires_mutable_tls
-@pytest.mark.parametrize('kind', ['dns', 'certificate-str'])
 def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retry(
-    tmp_path: Path, kind: str, record_property: Callable[[str, object], None],
+    tmp_path: Path, record_property: Callable[[str, object], None],
 ) -> None:
     certificate = _large_san_peer(tmp_path)
     original_der = certificate.to_der()
     original = KeyboardInterrupt('D TLS diagnostic interruption')
     observed: list[int] = []
     samples: list[int] = []
-    operation: Callable[[], object] = (
-        (lambda: certificate.dns_names) if kind == 'dns' else (lambda: str(certificate))
-    )
     baseline = 0
 
     def interrupt(_number: int, _frame: FrameType | None) -> None:
@@ -236,8 +235,8 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
         # Lower bound excludes arming/entry; upper bound excludes a completed
         # 15000-name tuple delivered before a late timer. Two-byte duplicate
         # names keep the actual certificate under the existing TLS size bound.
-        # This is actual Python
-        # output progress inside the native conversion, not a timing SLA.
+        # This is actual Python output progress inside the native conversion,
+        # not a timing SLA.
         if 128 <= allocated < _DNS_COUNT // 2:
             observed.append(allocated)
             alarm.cancel()
@@ -250,7 +249,7 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
     try:
         alarm.start(0.00005, 0.00005, wait_ready=True)
         try:
-            operation()
+            _ = certificate.dns_names
         except KeyboardInterrupt as error:
             captured = error
     finally:
@@ -264,7 +263,87 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
     assert len(names) == _DNS_COUNT
     assert all(name == ('aa' if index % 2 == 0 else 'ab') for index, name in enumerate(names))
     assert certificate.dns_names is names
-    rendered = operation()
-    assert operation() is rendered
     assert certificate.to_der() is original_der
     assert certificate.fingerprint_sha256 == hashlib.sha256(original_der).hexdigest()
+
+
+@requires_mysql
+@requires_mutable_tls
+def test_real_signal_during_cold_certificate_str_preserves_original_exception_and_retry(
+    tmp_path: Path, record_property: Callable[[str, object], None],
+) -> None:
+    certificate = _large_san_peer(tmp_path)
+    original_der = certificate.to_der()
+    original = KeyboardInterrupt('D TLS display interruption')
+    observed: list[int] = []
+
+    def render() -> str:
+        return str(certificate)
+
+    calls: set[int] = set()
+    reading = False
+    for instruction in dis.get_instructions(render, show_caches=True):
+        if instruction.opname != 'CACHE':
+            reading = instruction.opname == 'CALL'
+        if reading:
+            calls.add(instruction.offset)
+
+    def interrupt(_number: int, frame: FrameType | None) -> None:
+        # The summary no longer constructs one Python object per name. Count
+        # only a real delivery in the cold native str call, without claiming a
+        # particular point inside its native parsing or summary preparation.
+        if frame is None or frame.f_code is not render.__code__ or frame.f_lasti not in calls:
+            return
+        observed.append(frame.f_lasti)
+        alarm.cancel()
+        raise original
+
+    alarm = NativeAlarm(interrupt)
+    try:
+        alarm.start(0.00005, 0.00005, wait_ready=True)
+        with pytest.raises(KeyboardInterrupt) as caught:
+            render()
+        assert caught.value is original
+    finally:
+        alarm.close()
+    assert len(observed) == 1, 'no real signal reached the cold native display call'
+    assert not hasattr(original, 'error_info')
+    record_property('actual_gil', getattr(sys, '_is_gil_enabled', lambda: True)())
+    record_property('native_call_offset_at_signal', observed)
+    rendered = render()
+    assert render() is rendered
+    assert len(certificate.dns_names) == _DNS_COUNT
+    assert certificate.to_der() is original_der
+
+
+@requires_mysql
+@requires_mutable_tls
+@pytest.mark.parametrize(('dns_count', 'ip_count'), [(_DNS_COUNT, 0), (1, 1000), (0, 1), (2, 2)])
+def test_san_display_uses_exact_small_tuples_and_large_count_with_complete_property_guidance(
+    tmp_path: Path, dns_count: int, ip_count: int,
+) -> None:
+    certificate = _large_san_peer(tmp_path, dns_count=dns_count, ip_count=ip_count)
+    expected_dns = tuple('aa' if index % 2 == 0 else 'ab' for index in range(dns_count))
+    expected_ips = tuple(f'127.0.0.{1 + index % 2}' for index in range(ip_count))
+    # Display is cold: complete Python SAN tuples are requested only afterward.
+    multiline = str(certificate)
+    compact = repr(certificate)
+    assert '\n' in multiline and '\n' not in compact
+    for rendered in (multiline, compact):
+        for attribute, following, expected in (
+            ('dns_names', 'ip_addresses', expected_dns),
+            ('ip_addresses', 'is_ca', expected_ips),
+        ):
+            value = rendered.split(f'{attribute}=', 1)[1].split(f'{following}=', 1)[0].rstrip(', \n')
+            if len(expected) <= 1:
+                assert value == repr(expected)
+            else:
+                summarized = str(len(expected)) in value and attribute in value
+                assert summarized, f'{attribute}: missing total count and complete-property guidance'
+                unexpanded = repr(expected[0]) not in value and repr(expected[1]) not in value
+                assert unexpanded, f'{attribute}: display expanded individual entries'
+    assert certificate.dns_names == expected_dns
+    assert certificate.ip_addresses == expected_ips
+    assert certificate.dns_names is certificate.dns_names
+    assert certificate.ip_addresses is certificate.ip_addresses
+    assert str(certificate) is multiline and repr(certificate) is compact
