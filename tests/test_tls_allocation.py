@@ -5,6 +5,7 @@ import subprocess
 import sys
 
 import pytest
+from test_tls_expansion import ROOT, certificate_serial
 
 
 @pytest.mark.skipif('SQLAERO_TEST_MYSQL_ROOT' not in os.environ,
@@ -14,6 +15,7 @@ import pytest
     'info-str', 'certificate-str', 'certificate-repr',
 ])
 def test_single_allocation_fault_propagates_and_cold_property_remains_retryable(kind: str) -> None:
+    expected_serial = certificate_serial(ROOT / 'tls/server.pem')
     source = r'''
 import _testcapi
 from functools import partial
@@ -25,7 +27,8 @@ import sys
 import sysconfig
 from sqlaero import connect, SSL, TLSInfo, TLSCertificate
 
-kind = KIND
+kind = sys.argv[1]
+expected_serial = int(sys.argv[2])
 if sysconfig.get_config_var('Py_GIL_DISABLED'):
     assert not sys._is_gil_enabled(), 'TLS allocation evidence must retain real NoGIL mode'
 root = Path(os.environ['SQLAERO_TEST_MYSQL_ROOT'])
@@ -71,7 +74,7 @@ def verify(result):
     elif kind == 'subject':
         assert 'SQLAero server' in result
     elif kind == 'serial':
-        assert type(result) is int and result.bit_length() > 64
+        assert type(result) is int and result == expected_serial
     elif kind == 'datetime':
         from datetime import datetime, timezone
         assert type(result) is datetime and result.tzinfo is timezone.utc
@@ -119,8 +122,8 @@ assert failures > 0, (kind, failures, successes)
 if sysconfig.get_config_var('Py_GIL_DISABLED'):
     assert not sys._is_gil_enabled(), 'TLS allocation work changed the NoGIL mode'
 print('TLS allocation boundary preserved:', kind, failures, successes)
-'''.replace('KIND', repr(kind))
-    result = subprocess.run([sys.executable, '-'], input=source, text=True,
+'''
+    result = subprocess.run([sys.executable, '-', kind, str(expected_serial)], input=source, text=True,
                             capture_output=True, timeout=45, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
     assert 'TLS allocation boundary preserved:' in result.stdout

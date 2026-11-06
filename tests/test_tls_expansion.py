@@ -9,8 +9,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 from threading import Barrier
-from typing import Any
+from typing import Any, cast
 import weakref
 
 import pytest
@@ -21,6 +22,18 @@ from sqlaero.errors import DataError, OperationalError, SQLAeroErrorCode
 ROOT = Path(os.environ.get('SQLAERO_TEST_MYSQL_ROOT', '/private/tmp/sqlaero-d-unselected'))
 requires_mysql = pytest.mark.skipif('SQLAERO_TEST_MYSQL_ROOT' not in os.environ,
                                    reason='requires explicitly selected owned MySQL fixtures')
+
+
+def certificate_serial(path: Path) -> int:
+    """Read the original certificate's exact serial using the fixture's OpenSSL."""
+    from tools.mysql_fixture import run
+
+    openssl = os.environ.get('SQLAERO_OPENSSL') or shutil.which('openssl')
+    assert openssl is not None, 'select the existing native OpenSSL fixture tool'
+    serial = run([openssl, 'x509', '-in', str(path), '-noout', '-serial']).strip()
+    prefix, separator, hexadecimal = serial.partition('=')
+    assert prefix == 'serial' and separator == '=' and '\n' not in hexadecimal
+    return int(hexadecimal, 16)
 
 
 def live(label: str, **overrides: Any) -> sqlaero.Connection:
@@ -104,6 +117,7 @@ def test_conflicting_material_sources_fail_before_file_io(settings: dict[str, An
 @pytest.mark.parametrize('label', ['84', '97'])
 @pytest.mark.parametrize('version', ['TLSv1.2', 'TLSv1.3'])
 def test_real_tls_diagnostics_survive_close_and_first_concurrent_access(label: str, version: str) -> None:
+    expected_serial = certificate_serial(ROOT / 'tls/server.pem')
     connection = live(label, ssl=sqlaero.SSL(ca_file=ROOT / 'tls/ca.pem',
                                            min_tls_version=version, max_tls_version=version))
     connection.close()
@@ -130,7 +144,7 @@ def test_real_tls_diagnostics_survive_close_and_first_concurrent_access(label: s
     chains = concurrent_read(lambda: info.peer_certificates)
     chain = chains[0]
     assert type(chain) is tuple and chain and all(value is chain for value in chains)
-    certificate = chain[0]
+    certificate = cast(sqlaero.TLSCertificate, chain[0])
     assert type(certificate) is sqlaero.TLSCertificate
     info_ref = weakref.ref(info)
     del connection, infos, chains, chain, info
@@ -142,7 +156,7 @@ def test_real_tls_diagnostics_survive_close_and_first_concurrent_access(label: s
     assert certificate.ip_addresses == ('127.0.0.1',)
     assert 'SQLAero server' in certificate.subject
     assert 'SQLAero isolated test CA' in certificate.issuer
-    assert type(certificate.serial_number) is int and certificate.serial_number.bit_length() > 64
+    assert type(certificate.serial_number) is int and certificate.serial_number == expected_serial
     assert certificate.version == 3 and certificate.is_ca is False
     assert certificate.signature_algorithm_oid == '1.2.840.113549.1.1.11'
     assert certificate.public_key_algorithm_oid == '1.2.840.113549.1.1.1'

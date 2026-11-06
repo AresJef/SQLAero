@@ -29,6 +29,7 @@ requires_mutable_tls = pytest.mark.skipif(
     reason='requires explicit opt-in to reload the selected owned fixture TLS',
 )
 _DNS_COUNT = 15000
+_WIDE_LEAF_SERIAL = 0x0102030405060708090A0B0C0D0E0F1011121314
 
 
 def _policy(source: Source, member: Path) -> SSL:
@@ -235,7 +236,7 @@ def _signed_chain(tmp_path: Path) -> tuple[bytes, bytes]:
              '-out', str(intermediate)])
         run([openssl, 'x509', '-req', '-in', str(ROOT / 'tls/server.csr'),
              '-CA', str(intermediate), '-CAkey', str(key),
-             '-set_serial', '34', '-days', '2', '-extfile', str(ROOT / 'tls/server.ext'),
+             '-set_serial', str(_WIDE_LEAF_SERIAL), '-days', '2', '-extfile', str(ROOT / 'tls/server.ext'),
              '-out', str(leaf)])
         return leaf.read_bytes(), intermediate.read_bytes()
     finally:
@@ -263,6 +264,9 @@ def test_actual_peer_chain_order_is_original_material_not_a_completed_trust_path
             hashlib.sha256(value).hexdigest() for value in expected
         )
         assert (certificates[0].is_ca, certificates[1].is_ca) == (False, True)
+        assert certificates[0].serial_number == _WIDE_LEAF_SERIAL
+        assert certificates[0].serial_number.bit_length() > 64
+        assert certificates[1].serial_number == 33
         assert _der(root_ca) not in expected
         del connection, info
     # The two retained objects remain tied to the old actual peer after reload.
