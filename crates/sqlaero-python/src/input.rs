@@ -945,30 +945,37 @@ pub(crate) fn text(
     Ok(())
 }
 
+/// Borrow immutable UTF-8 directly; translate exceptional input off this path.
+#[inline]
 fn unicode<'a>(source: &'a Bound<'_, PyString>, context: &Context) -> PyResult<&'a str> {
+    source
+        .to_str()
+        .map_err(|error| unicode_error(source, context, error))
+}
+
+#[cold]
+fn unicode_error(source: &Bound<'_, PyString>, context: &Context, error: PyErr) -> PyErr {
     let py = source.py();
-    source.to_str().map_err(|error| {
-        if error.is_instance_of::<PyUnicodeEncodeError>(py) {
-            let native = error.value(py);
-            let positions = native
-                .getattr("start")
-                .and_then(|start| start.extract::<usize>())
-                .and_then(|start| {
-                    native
-                        .getattr("end")?
-                        .extract::<usize>()
-                        .map(|end| (start, end))
-                });
-            if let Ok((start, end)) = positions {
-                return encode_error(
-                    source,
-                    context.codec.name(),
-                    start,
-                    end,
-                    "surrogates are not valid input characters",
-                );
-            }
+    if error.is_instance_of::<PyUnicodeEncodeError>(py) {
+        let native = error.value(py);
+        let positions = native
+            .getattr("start")
+            .and_then(|start| start.extract::<usize>())
+            .and_then(|start| {
+                native
+                    .getattr("end")?
+                    .extract::<usize>()
+                    .map(|end| (start, end))
+            });
+        if let Ok((start, end)) = positions {
+            return encode_error(
+                source,
+                context.codec.name(),
+                start,
+                end,
+                "surrogates are not valid input characters",
+            );
         }
-        error
-    })
+    }
+    error
 }
