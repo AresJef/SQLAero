@@ -539,3 +539,136 @@ def test_optional_time_context_polars_gap_cannot_apply_to_an_ordinary_abi(tmp_pa
         {'polars': 'NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI'})
     with pytest.raises(AssertionError):
         release_artifacts.test_totals(report, 'macos-arm64', capabilities)
+
+
+@pytest.mark.parametrize(('mkfifo', 'af_unix'), [(False, False), (False, True), (True, False), (True, True)])
+def test_provider_report_records_the_two_actual_runtime_primitives(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mkfifo: bool, af_unix: bool,
+) -> None:
+    import sysconfig
+    from types import SimpleNamespace
+
+    identity = tmp_path / 'identity.json'
+    identity.write_text(json.dumps({'platform': 'windows-arm64',
+        'free_threaded': bool(sysconfig.get_config_var('Py_GIL_DISABLED'))}))
+    output = tmp_path / 'providers.json'
+    versions = {'numpy': '2.5.4', 'pandas': '3.1.0', 'pyarrow': '26.0.0', 'polars': '2.1.0'}
+
+    def install(command: list[str], *, check: bool) -> None:
+        assert check
+        Path(command[command.index('--report') + 1]).write_text('{"install": []}')
+
+    def provider(name: str) -> SimpleNamespace:
+        return SimpleNamespace(__version__=versions[name])
+
+    def absent(_name: str) -> None:
+        return None
+
+    # The package install/import is outside this metadata unit. Simulate only
+    # its existing successful handoff; no network or optional module is loaded.
+    monkeypatch.setattr(release_artifacts, 'subprocess', SimpleNamespace(run=install))
+    monkeypatch.setattr(release_artifacts, 'import_module', provider)
+    monkeypatch.setattr('importlib.util.find_spec', absent)
+    monkeypatch.setattr(release_artifacts, 'os', SimpleNamespace(mkfifo=None) if mkfifo else SimpleNamespace())
+    monkeypatch.setattr(release_artifacts, 'socket', SimpleNamespace(AF_UNIX=None) if af_unix else SimpleNamespace())
+    release_artifacts.prepare_providers(identity, output)
+    recorded = json.loads(output.read_text())
+    assert recorded['has_os_mkfifo'] is mkfifo
+    assert recorded['has_socket_af_unix'] is af_unix
+
+
+@pytest.mark.parametrize('target', ['windows-x86_64', 'windows-arm64'])
+@pytest.mark.parametrize('free', [False, True])
+@pytest.mark.parametrize('missing', ['fifo', 'socket', 'both'])
+def test_windows_ca_primitive_na_requires_independent_missing_runtime_facts(
+    tmp_path: Path, target: str, free: bool, missing: str,
+) -> None:
+    cases = [
+        ('tests.test_tls_material_boundaries',
+         f'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[{kind}-{source}]',
+         f'CPython does not expose {primitive}')
+        for kind, primitive in [('fifo', 'os.mkfifo'), ('socket', 'socket.AF_UNIX')]
+        for source in ('file', 'dir')
+        if missing in (kind, 'both')
+    ]
+    report, capabilities = feature_report(tmp_path, target, free, cases)
+    payload = json.loads(capabilities.read_text())
+    payload.update(has_os_mkfifo=missing not in ('fifo', 'both'),
+                   has_socket_af_unix=missing not in ('socket', 'both'))
+    capabilities.write_text(json.dumps(payload))
+    assert release_artifacts.test_totals(report, target, capabilities)['skipped'] == len(PARALLEL_NAMES) + len(cases)
+
+
+@pytest.mark.parametrize(('kind', 'primitive', 'field'), [
+    ('fifo', 'os.mkfifo', 'has_os_mkfifo'), ('socket', 'socket.AF_UNIX', 'has_socket_af_unix'),
+])
+@pytest.mark.parametrize('observed', [True, 0, None, 'False'])
+def test_ca_primitive_na_needs_its_own_exact_false_runtime_fact(
+    tmp_path: Path, kind: str, primitive: str, field: str, observed: object,
+) -> None:
+    case = ('tests.test_tls_material_boundaries',
+        f'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[{kind}-file]',
+        f'CPython does not expose {primitive}')
+    report, capabilities = feature_report(tmp_path, 'windows-arm64', False, [case])
+    payload = json.loads(capabilities.read_text())
+    payload.update(has_os_mkfifo=False, has_socket_af_unix=False)
+    payload[field] = observed
+    capabilities.write_text(json.dumps(payload))
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, 'windows-arm64', capabilities)
+
+
+@pytest.mark.parametrize(('module', 'name', 'reason'), [
+    ('tests.test_tls_expansion',
+     'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[fifo-file]',
+     'CPython does not expose os.mkfifo'),
+    ('tests.test_tls_material_boundaries',
+     'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[fifo-unknown]',
+     'CPython does not expose os.mkfifo'),
+    ('tests.test_tls_material_boundaries',
+     'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[socket-file]',
+     'CPython does not expose os.mkfifo'),
+    ('tests.test_tls_material_boundaries',
+     'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[fifo-file]',
+     'CPython does not expose socket.AF_UNIX'),
+    ('tests.test_tls_material_boundaries',
+     'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[fifo-dir]',
+     'requires POSIX FIFO and Unix socket file objects'),
+    ('tests.test_tls_material_boundaries',
+     'test_actual_unreadable_ca_preserves_permission_error_and_member_path[file]',
+     'root cannot establish this test account permission boundary'),
+])
+def test_ca_primitive_na_rejects_wrong_nodes_reasons_and_permission_skips(
+    tmp_path: Path, module: str, name: str, reason: str,
+) -> None:
+    report, capabilities = feature_report(tmp_path, 'windows-arm64', False, [(module, name, reason)])
+    payload = json.loads(capabilities.read_text())
+    payload.update(has_os_mkfifo=False, has_socket_af_unix=False)
+    capabilities.write_text(json.dumps(payload))
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, 'windows-arm64', capabilities)
+
+
+@pytest.mark.parametrize('target', ['macos-arm64', 'linux-glibc-x86_64', 'linux-musl-aarch64'])
+@pytest.mark.parametrize(('kind', 'primitive'), [('fifo', 'os.mkfifo'), ('socket', 'socket.AF_UNIX')])
+def test_ca_primitive_na_never_applies_to_non_windows_targets(
+    tmp_path: Path, target: str, kind: str, primitive: str,
+) -> None:
+    case = ('tests.test_tls_material_boundaries',
+        f'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[{kind}-file]',
+        f'CPython does not expose {primitive}')
+    report, capabilities = feature_report(tmp_path, target, False, [case])
+    payload = json.loads(capabilities.read_text())
+    payload.update(has_os_mkfifo=False, has_socket_af_unix=False)
+    capabilities.write_text(json.dumps(payload))
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, target, capabilities)
+
+
+def test_ca_primitive_na_requires_an_actual_runtime_report(tmp_path: Path) -> None:
+    case = ('tests.test_tls_material_boundaries',
+        'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[fifo-file]',
+        'CPython does not expose os.mkfifo')
+    report, _ = feature_report(tmp_path, 'windows-arm64', False, [case])
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, 'windows-arm64')

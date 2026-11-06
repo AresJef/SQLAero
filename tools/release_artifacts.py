@@ -13,8 +13,10 @@ import hashlib
 from importlib import import_module
 from importlib.metadata import version
 import json
+import os
 from pathlib import Path
 import platform
+import socket
 import subprocess
 import sys
 import sysconfig
@@ -277,7 +279,9 @@ def prepare_providers(identity: Path, output: Path) -> None:
     for name in unavailable:
         assert find_spec(name) is None, ('Unexpected provider changes the frozen capability context', name)
     result = {'platform': target, 'free_threaded': free, 'packages': loaded,
-              'unavailable': unavailable, 'pip_report_sha256': digest(pip_report)}
+              'unavailable': unavailable, 'pip_report_sha256': digest(pip_report),
+              'has_os_mkfifo': hasattr(os, 'mkfifo'),
+              'has_socket_af_unix': hasattr(socket, 'AF_UNIX')}
     output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
     print(json.dumps(result))
 
@@ -292,6 +296,8 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
     windows = target in ('windows-x86_64', 'windows-arm64')
     free: bool | None = None
     unavailable: dict[str, str] = {}
+    mkfifo_absent = False
+    af_unix_absent = False
     if providers is not None:
         capabilities: dict[str, Any] = json.loads(providers.read_text(encoding='utf-8'))
         assert target is None or capabilities['platform'] == target
@@ -299,6 +305,8 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
         assert type(capabilities['free_threaded']) is bool
         free = capabilities['free_threaded']
         unavailable = capabilities['unavailable']
+        mkfifo_absent = capabilities.get('has_os_mkfifo') is False
+        af_unix_absent = capabilities.get('has_socket_af_unix') is False
         assert set(unavailable) <= {'polars', 'pyarrow'}
         if 'polars' in unavailable:
             assert capabilities['free_threaded'] is True
@@ -346,6 +354,18 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
             tls_unix = (free is not None and windows and identity[0] == 'tests.test_tls_expansion'
                         and identity[1] in WINDOWS_TLS_UNIX_NA
                         and skipped.get('message') == 'Unix socket transport is unavailable')
+            # A real absent CPython primitive can exempt only its exact two
+            # Windows source forms. Permissions and available primitives run.
+            tls_primitive = (free is not None and windows
+                and identity[0] == 'tests.test_tls_material_boundaries'
+                and ((mkfifo_absent and identity[1] in {
+                    'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[fifo-file]',
+                    'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[fifo-dir]',
+                } and skipped.get('message') == 'CPython does not expose os.mkfifo')
+                or (af_unix_absent and identity[1] in {
+                    'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[socket-file]',
+                    'test_special_ca_object_is_rejected_without_waiting_for_stream_contents[socket-dir]',
+                } and skipped.get('message') == 'CPython does not expose socket.AF_UNIX')))
             feature_provider = any(
                 provider in unavailable and identity in cases
                 and skipped.get('message', '').startswith(f"could not import '{provider}':")
@@ -353,7 +373,7 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
             )
             baseline_skips += int(unix_socket or parallel)
             assert (unix_socket or parallel or module_skip or arrow_case or polars_case
-                    or joint_release or nogil_only or tls_unix or feature_provider), (
+                    or joint_release or nogil_only or tls_unix or tls_primitive or feature_provider), (
                         'Unexpected skipped requirement', path, case.attrib, skipped.attrib)
             assert identity not in seen, ('Duplicate skipped requirement', path, identity)
             seen.add(identity)
