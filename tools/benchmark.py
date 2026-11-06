@@ -66,7 +66,11 @@ def fingerprint(value: object) -> dict[str, object]:
         value = cast(Any, value).to_bytes()
     if original_type == "Connection":
         connection = cast(Any, value)
-        value = (connection.server_version, connection.tls_version)
+        missing = object()
+        info = getattr(connection, "tls_info", missing)
+        tls_version = (connection.tls_version if info is missing
+                       else None if info is None else info.version)
+        value = (connection.server_version, tls_version)
     if original_type == "ErrorInfo":
         info = cast(Any, value)
         value = (info.stage, info.message, info.code, info.is_server_error,

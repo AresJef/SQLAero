@@ -6,11 +6,25 @@ from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from argparse import Namespace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from sqlaero import _sqlaero
 from tools.benchmark import Case, collect, fingerprint, quality, target
+
+
+@pytest.mark.parametrize("version", [None, "TLSv1.3"])
+def test_connection_validation_fingerprint_accepts_both_public_tls_contracts(version: str | None) -> None:
+    def obsolete(_connection: object) -> object:
+        raise AssertionError("the current connection must not use its removed TLS alias")
+
+    legacy = type("Connection", (), {"server_version": "8.4.13", "tls_version": version})
+    current = type("Connection", (), {
+        "server_version": "8.4.13", "tls_version": property(obsolete),
+        "tls_info": None if version is None else SimpleNamespace(version=version),
+    })
+    assert fingerprint(legacy()) == fingerprint(current())
 
 
 def test_mixed_valid_and_misspelled_case_ids_do_not_silently_reduce_coverage(tmp_path: Path) -> None:
