@@ -23,6 +23,7 @@ pub enum ScalarError {
 ///
 /// # Errors
 /// Returns the actual request limit or reservation failure.
+#[inline(always)]
 pub fn integer<T: itoa::Integer>(
     output: &mut Vec<u8>,
     value: T,
