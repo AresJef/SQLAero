@@ -317,7 +317,7 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
     original_der = certificate.to_der()
     original = KeyboardInterrupt('D TLS diagnostic interruption')
     observed: list[tuple[int, int]] = []
-    samples: list[tuple[str, int, int, bool]] = []
+    samples: list[tuple[str, int, int | None, bool]] = []
     baseline = 0
     returned = False
 
@@ -330,26 +330,45 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
         return names
 
     reads: set[int] = set()
+    getter_lines: set[int] = set()
     reading = False
     for instruction in dis.get_instructions(read_names, show_caches=True):
         if instruction.opname != 'CACHE':
             reading = instruction.opname == 'LOAD_ATTR' and instruction.argval == 'dns_names'
+            if reading:
+                positions = instruction.positions
+                assert positions is not None and positions.lineno is not None
+                getter_lines.add(positions.lineno)
         if reading:
             reads.add(instruction.offset)
+    assert len(getter_lines) == 1
+    getter_line = next(iter(getter_lines))
+    getter_file = read_names.__code__.co_filename
+    getter_filter = tracemalloc.Filter(True, getter_file, lineno=getter_line,
+                                      all_frames=False, domain=0)
+
+    def getter_trace_blocks() -> int:
+        snapshot = tracemalloc.take_snapshot()
+        return len(snapshot.filter_traces((getter_filter,)).traces)
 
     def interrupt(_number: int, frame: FrameType | None) -> None:
-        allocated = sys.getallocatedblocks() - baseline
+        # NativeAlarm coalesces recursive fixture deliveries. Snapshot only
+        # inside the real suspended getter instruction; its own Python work
+        # is attributed to other source lines, not this most-recent-frame filter.
+        in_getter = (frame is not None and frame.f_code is read_names.__code__
+                     and frame.f_lasti in reads and not returned)
+        trace_blocks = getter_trace_blocks() if in_getter else None
         if len(samples) < 32:
             samples.append((frame.f_code.co_name if frame is not None else '<none>',
-                            frame.f_lasti if frame is not None else -1, allocated, returned))
+                            frame.f_lasti if frame is not None else -1, trace_blocks, returned))
         # Require the actual cold getter instruction, before any result was
-        # delivered, together with generated Python output. A late signal in
-        # the sender/cleanup or after a complete tuple is never accepted. The
-        # full name count replaces an arbitrary first-half timing window.
+        # delivered, together with live traced blocks from this call line.
+        # Blocks are not name-object counts. The complete retry below proves
+        # full output cannot pass the partial range on this actual ABI.
         if (frame is not None and frame.f_code is read_names.__code__
                 and frame.f_lasti in reads and not returned
-                and 128 <= allocated < _DNS_COUNT):
-            observed.append((frame.f_lasti, allocated))
+                and trace_blocks is not None and 128 <= trace_blocks < _DNS_COUNT):
+            observed.append((frame.f_lasti, trace_blocks))
             alarm.cancel()
             raise original
 
@@ -367,6 +386,11 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
                 tracemalloc.start(1)
             record_property('signal_allocation_instrumentation', 'tracemalloc')
             record_property('signal_traceback_frames', tracemalloc.get_traceback_limit())
+            record_property('signal_progress_kind', 'domain0 live trace blocks at exact getter source line')
+            record_property('signal_trace_source', (getter_file, getter_line))
+            before_blocks = getter_trace_blocks()
+            record_property('getter_trace_blocks_before_line', before_blocks)
+            assert before_blocks == 0, 'the getter source line already owns live traced blocks'
             baseline = sys.getallocatedblocks()
             alarm.start(0.00005, 0.00005, wait_ready=True)
             try:
@@ -375,7 +399,7 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
                 captured = error
         finally:
             alarm.close()
-        assert captured is original, f'no original interruption during conversion; progress samples={samples}'
+        assert captured is original, f'no original interruption during conversion; live trace-block samples={samples}'
         assert not returned, 'the diagnostic value was delivered before interruption'
         assert len(observed) == 1, 'no in-progress diagnostic signal was observed'
         location = original.__traceback__
@@ -384,10 +408,23 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
         assert location is not None and location.tb_lasti in reads
         assert not hasattr(original, 'error_info')
         record_property('actual_gil', getattr(sys, '_is_gil_enabled', lambda: True)())
-        record_property('allocation_progress_at_signal', observed)
-        names = certificate.dns_names
+        record_property('getter_live_trace_blocks_at_signal', observed)
+        record_property('global_blocks_baseline_diagnostic_only', baseline)
+        names = read_names()
+        assert returned
+        complete_blocks = getter_trace_blocks()
+        record_property('getter_trace_blocks_after_complete_retry', complete_blocks)
+        assert complete_blocks >= _DNS_COUNT, 'complete output could satisfy the partial progress gate'
         assert len(names) == _DNS_COUNT
         assert all(name == ('aa' if index % 2 == 0 else 'ab') for index, name in enumerate(names))
+        trace_samples: list[tuple[int, str, int]] = []
+        for index in (0, 1, _DNS_COUNT - 2, _DNS_COUNT - 1):
+            allocation = tracemalloc.get_object_traceback(names[index])
+            assert allocation is not None, f'name[{index}] has no allocation traceback'
+            source = allocation[-1]
+            assert source.filename == getter_file and source.lineno == getter_line
+            trace_samples.append((index, source.filename, source.lineno))
+        record_property('completed_name_allocation_tracebacks', trace_samples)
         assert certificate.dns_names is names
         assert certificate.to_der() is original_der
         assert certificate.fingerprint_sha256 == hashlib.sha256(original_der).hexdigest()
