@@ -52,12 +52,19 @@ fn both_mysql_lines_provide_a_valid_protocol_10_greeting() {
     let root = std::env::var_os("SQLAERO_TEST_MYSQL_ROOT")
         .map(PathBuf::from)
         .expect("set SQLAERO_TEST_MYSQL_ROOT to the isolated fixture directory");
-    for (port, prefix) in [(13384, b"8.4.".as_slice()), (13397, b"9.7.".as_slice())] {
+    for (label, default_port, prefix) in [
+        ("84", 13384, b"8.4.".as_slice()),
+        ("97", 13397, b"9.7.".as_slice()),
+    ] {
+        let port = match std::env::var(format!("SQLAERO_TEST_MYSQL_PORT_{label}")) {
+            Ok(value) => value.parse::<u16>().expect("fixture port must be u16"),
+            Err(std::env::VarError::NotPresent) => default_port,
+            Err(error) => panic!("invalid fixture port: {error}"),
+        };
         let address = SocketAddr::from(([127, 0, 0, 1], port));
         greeting(Transport::tcp(address).unwrap(), prefix);
         #[cfg(unix)]
         {
-            let label = if port == 13384 { "84" } else { "97" };
             greeting(
                 Transport::unix(&root.join(format!("{label}.sock"))).unwrap(),
                 prefix,

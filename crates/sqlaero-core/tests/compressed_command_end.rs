@@ -91,15 +91,12 @@ fn peer(
         // Rejecting unread corrupt data may close TCP with RST instead of FIN.
         // Either close is final; a byte, timeout or other error is not success.
         match socket.read(&mut [0]) {
-            Ok(0) => (),
+            Ok(0) => {}
             Err(error)
                 if matches!(
                     error.kind(),
                     ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
-                ) =>
-            {
-                ()
-            }
+                ) => {}
             other => panic!("no command replay; expected closed peer, got {other:?}"),
         }
     });
