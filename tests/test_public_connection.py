@@ -1611,8 +1611,13 @@ def test_batch_timeout_reports_current_unknown_range_and_confirmed_prefix(connec
     assert 'current source rows 1..2' in notes
     assert 'fully sent' in notes and 'outcome is unknown' in notes
     assert 'not attempted' in notes
-    assert connection.closed and cursor.row_count is None
-    assert cursor.rowcount == -1 and cursor.warning_count is None
+    # The failed request is unknown, while R01/R05 retain the first complete
+    # local result and its own facts. A partial sum is not the batch total.
+    assert connection.closed and cursor.row_count == cursor.rowcount == 1
+    assert cursor.warning_count == 0 and cursor.batch_row_count is None
+    assert cursor.fetchall() == ((0,),)
+    with pytest.raises(OperationalTimeoutError):
+        cursor.nextset()
 
 
 @requires_mysql
