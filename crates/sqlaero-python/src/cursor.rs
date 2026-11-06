@@ -433,7 +433,9 @@ impl CursorCore {
             if stream.pending.is_none() && stream.finished() {
                 return Ok(None);
             }
-            let event = stream.advance(py, &connection, 1)?;
+            let Some(event) = stream.advance_optional(py, &connection, 1)? else {
+                return Ok(None);
+            };
             if matches!(
                 event.value,
                 sqlaero_core::result::text::StreamEvent::Rows(_)
@@ -464,7 +466,10 @@ impl CursorCore {
                     self.drain_current(py, &connection, stream)?;
                     stream.rows = None;
                     while stream.pending.is_some() || !stream.finished() {
-                        let event = stream.advance(py, &connection, usize::MAX)?;
+                        let Some(event) = stream.advance_optional(py, &connection, usize::MAX)?
+                        else {
+                            break;
+                        };
                         if matches!(
                             event.value,
                             sqlaero_core::result::text::StreamEvent::Header(_)
@@ -558,7 +563,9 @@ impl CursorCore {
             self.drain_current(py, &connection, stream)?;
             stream.rows = None;
             while stream.pending.is_some() || !stream.finished() {
-                let event = stream.advance(py, &connection, usize::MAX)?;
+                let Some(event) = stream.advance_optional(py, &connection, usize::MAX)? else {
+                    break;
+                };
                 if matches!(
                     event.value,
                     sqlaero_core::result::text::StreamEvent::Header(_)

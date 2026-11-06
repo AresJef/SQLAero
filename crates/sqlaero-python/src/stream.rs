@@ -139,8 +139,26 @@ impl Stream {
         connection: &Connection,
         count: usize,
     ) -> PyResult<Event> {
+        self.advance_optional(py, connection, count)?
+            .ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "The native response ended before the required public result event",
+                )
+            })
+    }
+
+    /// A managed CALL may finish private output/cleanup after its last public
+    /// set. That completion is not an extra result or an invented terminator.
+    pub(crate) fn advance_optional(
+        &mut self,
+        py: Python<'_>,
+        connection: &Connection,
+        count: usize,
+    ) -> PyResult<Option<Event>> {
         if let Some(event) = self.pending.take() {
-            return Ok(event);
+            return Ok(Some(event));
         }
         let limit = NonZeroUsize::new(count.max(1)).ok_or_else(|| {
             errors::client(
@@ -232,10 +250,10 @@ impl Stream {
         } else {
             None
         };
-        Ok(Event {
+        Ok(Some(Event {
             value: event,
             codec,
-        })
+        }))
     }
 
     /// Account only actual set terminators. Each concrete request contributes
