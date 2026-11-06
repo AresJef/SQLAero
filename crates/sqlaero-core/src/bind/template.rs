@@ -1112,7 +1112,23 @@ impl Compiler {
             },
         }))
     }
+    #[inline]
     fn token(&mut self, symbol: u8, start: usize, end: usize) -> Result<(), WireError> {
+        // A completed ordinary statement prefix has no assignment target to
+        // update. Keep delimiters, hints and optional token metadata on the
+        // full path; only a token with no observable work can return here.
+        if !self.hint
+            && self.tokens.is_none()
+            && self.context.statement == ContextStatement::Other
+            && symbol != b';'
+            && self.context.barrier.is_none()
+        {
+            return Ok(());
+        }
+        self.observe_token(symbol, start, end)
+    }
+
+    fn observe_token(&mut self, symbol: u8, start: usize, end: usize) -> Result<(), WireError> {
         if self.hint {
             self.utc
                 .comment
