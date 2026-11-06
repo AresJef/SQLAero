@@ -75,7 +75,7 @@ pub fn regular_file(path: &Path) -> io::Result<Vec<u8>> {
     if !fs::metadata(path)?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "TLS material must be a regular file",
+            "material source must be a regular file",
         ));
     }
     let mut options = OpenOptions::new();
@@ -89,7 +89,7 @@ pub fn regular_file(path: &Path) -> io::Result<Vec<u8>> {
     if !file.metadata()?.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            "opened TLS material is not a regular file",
+            "opened material source is not a regular file",
         ));
     }
     let mut bytes = Vec::new();

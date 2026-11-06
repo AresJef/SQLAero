@@ -4,8 +4,27 @@ use crate::{binding, config, errors, input};
 use pyo3::prelude::*;
 use sqlaero_core::bind::{Context, template::Compiler};
 use sqlaero_core::protocol::local_infile::Source;
-use sqlaero_core::transport::deadline::IoBudget;
+use sqlaero_core::{session::query::Query, transport::deadline::IoBudget};
 use std::path::{Path, PathBuf};
+
+/// Copy already observed upload facts only on failure. These counters describe
+/// this file/channel, not server receipt, SQL success or transaction commit.
+#[cold]
+pub(crate) fn failure(py: Python<'_>, job: &Query, primary: &PyErr) {
+    if let Some(progress) = job.local_progress() {
+        errors::note_format(
+            py,
+            primary,
+            format_args!(
+                "LOCAL upload observations: opening_length={}, read_bytes={}, flushed_bytes={}, eof_flushed={}. Flushed bytes describe this client's completed channel writes, not proof of server receipt, SQL success or transaction commit.",
+                progress.opening_length,
+                progress.read_bytes,
+                progress.flushed_bytes,
+                progress.eof_flushed,
+            ),
+        );
+    }
+}
 
 /// Resolve one optional Python path before entering native wire protection.
 /// The caller already protects this Cursor, and retains its original operation

@@ -176,6 +176,12 @@ enum FailureFacts {
     Native(Arc<QueryError>),
 }
 impl DriveFailure {
+    /// One cold host boundary for native LOCAL facts, including an original
+    /// Python control exception rather than only typed upload I/O failures.
+    fn with_local(self, py: Python<'_>, job: &Query) -> Self {
+        crate::local::failure(py, job, &self.error);
+        self
+    }
     /// A complete ERR/ACK or a request which never entered sending needs no
     /// unread-response retirement merely because a host call returned error.
     pub(crate) fn synchronized(&self) -> bool {
@@ -576,7 +582,7 @@ impl Connection {
         if !keep_unsent || progress != RequestProgress::NotSent {
             lease.invalidate();
         }
-        DriveFailure::new(py, error, outcome, unavailable, confirmed)
+        DriveFailure::new(py, error, outcome, unavailable, confirmed).with_local(py, job)
     }
     /// Consume a fixed internal exchange completely, keeping its last result.
     /// Public result-chain execution uses drive_set and owns every earlier set.
@@ -728,7 +734,8 @@ impl Connection {
                             FailureOutcome::Paused(kind),
                             false,
                             None,
-                        );
+                        )
+                        .with_local(py, job);
                         return Err(failure);
                     }
                     // A post-End managed shape error still owns a real set
@@ -767,6 +774,7 @@ impl Connection {
                             false,
                             None,
                         )
+                        .with_local(py, job)
                         .with_native(error, error_codec));
                     }
                     let unavailable = unavailable(&error);

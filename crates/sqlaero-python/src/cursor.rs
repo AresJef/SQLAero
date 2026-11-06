@@ -668,6 +668,10 @@ impl CursorCore {
                 "scroll value must support __index__; bool is not accepted",
             ));
         }
+        // Resume the operation before invoking the index protocol: time spent
+        // inside this API is library work, not the caller's between-call idle.
+        // HeldStream restores ownership without keeping a state lock across it.
+        let mut held = self.hold_stream(py)?;
         // SAFETY: the attached public index protocol returns an owned exact int
         // or its original exception. No state lock or native view crosses it.
         let index = unsafe {
@@ -676,7 +680,6 @@ impl CursorCore {
         let offset=index.extract::<i128>().map_err(|error| {
             if error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {errors::builtin_message::<pyo3::exceptions::PyIndexError>(py,"scroll target exceeds the representable native row range; the position is unchanged")} else {error}
         })?;
-        let mut held = self.hold_stream(py)?;
         let current = if let Some(held) = &mut held {
             held.get(py)?
                 .rows
@@ -714,6 +717,13 @@ impl CursorCore {
             return self.reader.forward_to(py, target);
         }
         let connection = self.connection.borrow(py);
+        if stream.rows.as_ref().is_some_and(|rows| !rows.is_complete())
+            && let Err(error) = input::check(py, &stream.budget)
+        {
+            stream.abort(&connection);
+            self.save_stream_failure(py, &error, stream)?;
+            return Err(error);
+        }
         loop {
             let rows = stream.rows.as_mut().ok_or_else(|| {
                 errors::client(
@@ -1470,23 +1480,36 @@ impl CursorCore {
                     .and_then(|statement| statement.value.take()),
             );
         }
-        if !begun {
-            return result.map(|()| py.None().into_bound(py));
-        }
         // Release the actual wire guard before returning a persistent owner or
         // constructing final host values. Only the native token crosses calls.
         drop(lease);
-        self.publish_execution(
-            py,
-            &connection,
-            statement.as_mut().map(|statement| &mut statement.value),
-            Publication {
-                collected,
-                live,
-                result,
-                call_output: None,
-            },
-        )
+        let result = if !begun {
+            result.map(|()| py.None().into_bound(py))
+        } else {
+            self.publish_execution(
+                py,
+                &connection,
+                statement.as_mut().map(|statement| &mut statement.value),
+                Publication {
+                    collected,
+                    live,
+                    result,
+                    call_output: None,
+                },
+            )
+        };
+        if let Err(error) = &result
+            && let Some(path) = &local_path
+        {
+            errors::note_format(
+                py,
+                error,
+                format_args!(
+                    "while executing with authorized local_file source {path:?}; no file contents are included in this diagnostic"
+                ),
+            );
+        }
+        result
     }
     fn run_call<'py>(
         &self,
@@ -1707,7 +1730,12 @@ impl CursorCore {
             // The first visible set itself could not be published. Later
             // sets cannot become a substitute for that failed boundary.
             collected.chain = Chain::default();
-            if let Some(stream) = &mut live {
+            if let Some(stream) = &mut live
+                && !stream.finished()
+            {
+                // A purely local prefix publication failure cannot invalidate
+                // an already synchronized final command (including CALL's
+                // required private stages). Only unread wire work is retired.
                 stream.abort(connection);
             }
             match &result {

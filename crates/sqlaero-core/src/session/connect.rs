@@ -107,9 +107,18 @@ pub enum ConnectError {
     /// An invalid native configuration, before opening a socket where possible.
     #[error("invalid connection configuration: {0}")]
     Configuration(&'static str),
-    /// A source file or host resolution operation failed.
+    /// A host resolution or other unclassified preparation operation failed.
     #[error("connection preparation failed: {0}")]
     Preparation(#[from] std::io::Error),
+    /// The explicitly selected trusted public-key file could not be read.
+    #[error("server_public_key file {path:?} could not be prepared: {source}")]
+    PublicKeyFile {
+        /// Actual native source; never key material or a server-provided name.
+        path: PathBuf,
+        /// Original I/O failure, retaining its kind and OS error number.
+        #[source]
+        source: std::io::Error,
+    },
     /// The server did not provide the required modern MySQL protocol.
     #[error("unsupported MySQL server or capability: {0}")]
     Unsupported(&'static str),
@@ -241,7 +250,10 @@ impl Establish {
             .as_ref()
             .map(|source| match source {
                 PublicKeySource::Path(path) => crate::transport::tls::materials::regular_file(path)
-                    .map_err(ConnectError::from)
+                    .map_err(|source| ConnectError::PublicKeyFile {
+                        path: path.clone(),
+                        source,
+                    })
                     .and_then(|bytes| auth::server_key(&bytes).map_err(ConnectError::from)),
                 PublicKeySource::Pem(bytes) => auth::server_key(bytes).map_err(ConnectError::from),
             })
