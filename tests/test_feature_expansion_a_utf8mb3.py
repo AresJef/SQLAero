@@ -1,5 +1,7 @@
 """Explicit BMP-only UTF8MB3 remains separate from UTF-8/UTF8MB4 aliases."""
 
+# pyright: reportPrivateUsage=false
+
 import pytest
 from sqlaero import _sqlaero
 from test_public_connection import live, requires_mysql

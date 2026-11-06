@@ -1,14 +1,19 @@
 """Immutable compression configuration and shorthand share one native parser."""
 
+# pyright: reportPrivateUsage=false
+
 from enum import IntEnum
 import inspect
-from typing import Any
+from typing import TYPE_CHECKING, Any, Never
 
 import pytest
 from sqlaero import _sqlaero
 
+if TYPE_CHECKING:
+    from sqlaero import Compression
 
-def configured(**values: Any) -> Any:
+
+def configured(**values: Any) -> "Compression":
     return getattr(_sqlaero, "Compression")(**values)
 
 
@@ -128,7 +133,7 @@ class Text(str):
 class Names(list[str]):
     def __iter__(self) -> Any:
         raise AssertionError("configuration reads base finite sequence")
-    def __getitem__(self, _index: Any) -> str:
+    def __getitem__(self, _index: Any) -> Never:
         raise AssertionError("configuration reads base finite sequence")
 
 

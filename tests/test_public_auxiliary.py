@@ -1,14 +1,15 @@
 """Auxiliary SQL projection is independent of command and result lifetimes."""
 
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from sqlaero import Connection
 
-from test_public_connection import connection, live, requires_mysql
+from test_public_connection import connection as connection, live, requires_mysql
 
 
 @requires_mysql
-def test_public_projection_preserves_roles_and_result_position(connection: Any) -> None:
+def test_public_projection_preserves_roles_and_result_position(connection: Connection) -> None:
     with connection.cursor() as cur:
         cur.execute("SELECT 10 AS a UNION ALL SELECT 11; SELECT 12 AS b")
         columns = cur.columns
@@ -30,7 +31,7 @@ def test_public_projection_preserves_roles_and_result_position(connection: Any) 
 
 
 @requires_mysql
-def test_auxiliary_functions_remain_local_after_close(connection: Any) -> None:
+def test_auxiliary_functions_remain_local_after_close(connection: Connection) -> None:
     cur = connection.cursor()
     cur.execute("SELECT 7")
     cur.close()
@@ -42,13 +43,14 @@ def test_auxiliary_functions_remain_local_after_close(connection: Any) -> None:
 
 @requires_mysql
 @pytest.mark.parametrize("value", [None, 0, 1, "true", []])
-def test_projection_switches_are_exact_bool(connection: Any, value: object) -> None:
+def test_projection_switches_are_exact_bool(connection: Connection, value: object) -> None:
     with connection.cursor() as cur:
         for name in ("many", "itemize"):
+            # Invalid switches intentionally reach the runtime exact-bool guard.
             with pytest.raises(TypeError, match=name):
-                connection.escape(1, **{name: value})
+                connection.escape(1, **{name: cast(Any, value)})
             with pytest.raises(TypeError, match=name):
-                cur.mogrify("SELECT %s", 1, **{name: value})
+                cur.mogrify("SELECT %s", 1, **{name: cast(Any, value)})
 
 
 @requires_mysql
@@ -67,7 +69,7 @@ def test_sjis_projection_refuses_only_nonlossless_output(label: str) -> None:
 
 
 @requires_mysql
-def test_projection_does_not_use_operation_timeout_or_result_quota(connection: Any) -> None:
+def test_projection_does_not_use_operation_timeout_or_result_quota(connection: Connection) -> None:
     previous = connection.operation_timeout
     try:
         connection.operation_timeout = 1e-9

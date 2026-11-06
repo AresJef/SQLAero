@@ -5,6 +5,8 @@ verify the compiler boundary without executing an unsafe value or changing
 global settings. Expected behavior comes from the finalized R03 contract.
 """
 
+# pyright: reportPrivateUsage=false
+
 import pytest
 from sqlaero import _sqlaero
 from sqlaero.errors import ProgrammingError

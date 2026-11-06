@@ -1,14 +1,17 @@
 """Public compression configuration and actual owned-connection snapshots."""
 
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 import sqlaero
 from sqlaero import SSL
 from test_public_connection import ROOT, fixture_port, live, requires_mysql
 
+if TYPE_CHECKING:
+    from sqlaero import Compression
 
-def configured(**values: Any) -> Any:
+
+def configured(**values: Any) -> "Compression":
     return getattr(sqlaero, "Compression")(**values)
 
 
@@ -20,12 +23,13 @@ def test_public_compression_reports_actual_server_facts_and_retains_closed_snaps
 ) -> None:
     config = configured(algorithms=algorithm, zstd_compression_level=level or 3)
     connection = live(label, compression=config)
+    snapshot: Compression | None = None
     try:
         with connection.cursor() as cursor:
             cursor.execute("SELECT 10 AS v UNION ALL SELECT 20")
             assert cursor.fetchone() == (10,)
             columns = cursor.columns
-            snapshot = getattr(connection, "compression")
+            snapshot = cast("Compression", getattr(connection, "compression"))
             assert type(snapshot) is type(config)
             assert snapshot is getattr(connection, "compression")
             assert snapshot.algorithms == (algorithm,)

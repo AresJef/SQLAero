@@ -1,6 +1,8 @@
 """Thin control inputs stay native and preserve their specified protocols."""
 
-from typing import Any
+# pyright: reportPrivateUsage=false
+
+from typing import Any, Never
 import re
 
 import pytest
@@ -74,7 +76,7 @@ class SQLList(list[str]):
     def __iter__(self) -> Any:
         raise AssertionError("init_sql reads base finite sequence")
 
-    def __getitem__(self, _index: Any) -> str:
+    def __getitem__(self, _index: Any) -> Never:
         raise AssertionError("init_sql reads base finite sequence")
 
 

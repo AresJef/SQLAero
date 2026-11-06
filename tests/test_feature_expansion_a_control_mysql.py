@@ -16,7 +16,7 @@ def test_show_warnings_uses_current_diagnostics_without_changing_business_cursor
         columns, description = business.columns, business.description
         counts = (business.row_count, business.warning_count, business.lastrowid)
         diagnostic.execute("SELECT CAST('not-a-number' AS UNSIGNED)")
-        result = getattr(connection, "show_warnings")()
+        result: tuple[tuple[str, int, str], ...] = getattr(connection, "show_warnings")()
         assert type(result) is tuple and len(result) == 1
         level, code, message = result[0]
         assert type(level) is str and type(code) is int and type(message) is str
@@ -32,6 +32,7 @@ def test_show_warnings_uses_current_diagnostics_without_changing_business_cursor
 @pytest.mark.parametrize("label", ["84", "97"])
 def test_show_warnings_after_error_reads_its_actual_metadata_without_a_prequery(label: str) -> None:
     connection = live(label)
+    result: tuple[tuple[str, int, str], ...] = ()
     with connection.cursor() as cursor:
         with pytest.raises(DatabaseError) as failure:
             cursor.execute("SIGNAL SQLSTATE '45000' SET MYSQL_ERRNO=1644, MESSAGE_TEXT='诊断消息'")
@@ -196,7 +197,7 @@ def test_session_helpers_reject_unread_stream_without_draining_it_and_reject_clo
     actions = ("create_savepoint", "rollback_to_savepoint", "release_savepoint")
     try:
         connection.begin()
-        stream = connection.cursor(getattr(sqlaero, "SSCursor"))
+        stream: sqlaero.SSCursor = connection.cursor(sqlaero.SSCursor)
         try:
             stream.execute("SELECT 1 AS v UNION ALL SELECT 2 UNION ALL SELECT 3")
             assert stream.fetchone() == (1,)

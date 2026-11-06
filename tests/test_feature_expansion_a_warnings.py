@@ -1,5 +1,7 @@
 """Diagnostic rows decode from actual metadata without a name snapshot."""
 
+# pyright: reportPrivateUsage=false
+
 from typing import Any
 
 import pytest
