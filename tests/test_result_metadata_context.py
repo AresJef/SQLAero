@@ -7,7 +7,7 @@ the initial ASCII HEX/collation query independently confirms that value.
 
 import pytest
 from sqlaero import Columns
-from sqlaero.errors import NotSupportedError
+from sqlaero.errors import NotSupportedError, SQLAeroErrorCode
 from test_public_connection import live, requires_mysql
 from uuid import uuid4
 
@@ -110,7 +110,7 @@ def test_direct_call_keeps_each_header_codec_and_the_confirmed_tail_context(
                     # do not force early decoding of these latin1 label bytes.
                     with pytest.raises(NotSupportedError) as caught:
                         cursor.fetchall()
-                    assert caught.value.code == 65547
+                    assert caught.value.code == SQLAeroErrorCode.UNSUPPORTED_CAPABILITY
                     assert caught.value.is_server_error is False
                     assert "character_set_results" in caught.value.message
                     assert "stream" in caught.value.message.lower()
@@ -211,7 +211,8 @@ def test_streaming_internal_charset_change_preserves_already_delivered_ascii_row
             assert cursor.row_count is None
             with pytest.raises(NotSupportedError) as caught:
                 cursor.fetchall()
-            assert caught.value.code == 65547 and caught.value.is_server_error is False
+            assert caught.value.code == SQLAeroErrorCode.UNSUPPORTED_CAPABILITY
+            assert caught.value.is_server_error is False
             assert "character_set_results" in caught.value.message
             assert "stream" in caught.value.message.lower()
             assert cursor.row_count == cursor.batch_row_count == 2
@@ -243,13 +244,14 @@ def test_early_unicode_metadata_failure_does_not_claim_to_detect_internal_change
             assert cursor.execute("CALL " + routine + "()") is None
             with pytest.raises(UnicodeDecodeError) as early:
                 _ = cursor.columns.names
-            assert early.value.encoding == "utf-8"
+            assert early.value.encoding == "utf8mb4"
             assert early.value.object == b"\xe9"
             assert (early.value.start, early.value.end) == (0, 1)
             assert cursor.row_count is None and not connection.closed
             with pytest.raises(NotSupportedError) as actual_end:
                 cursor.fetchall()
-            assert actual_end.value.code == 65547 and actual_end.value.is_server_error is False
+            assert actual_end.value.code == SQLAeroErrorCode.UNSUPPORTED_CAPABILITY
+            assert actual_end.value.is_server_error is False
             assert "character_set_results" in actual_end.value.message
             assert "stream" in actual_end.value.message.lower()
             assert cursor.row_count == cursor.batch_row_count == 1
