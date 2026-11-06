@@ -91,7 +91,6 @@ struct State {
     cleanup_attempted: bool,
     cleanup_confirmed: bool,
     last_synchronized: bool,
-    last_confirmation: Option<CommandConfirmation>,
     failure: Option<Failure>,
     statement_invalidated: bool,
 }
@@ -309,7 +308,6 @@ impl Flow {
             cleanup_attempted: false,
             cleanup_confirmed: false,
             last_synchronized: true,
-            last_confirmation: None,
             failure: None,
             statement_invalidated: false,
         });
@@ -334,12 +332,6 @@ impl Flow {
     pub(crate) fn call_confirmation(&self) -> Option<CommandConfirmation> {
         self.inner().call_confirmation
     }
-    pub(crate) fn output_received(&self) -> bool {
-        self.inner().output_received
-    }
-    pub(crate) fn cleanup_confirmed(&self) -> bool {
-        self.inner().cleanup_confirmed
-    }
     pub(crate) fn invalidates_statement(&self) -> bool {
         self.inner().statement_invalidated
     }
@@ -358,14 +350,6 @@ impl Flow {
     }
     pub(crate) fn take_native_failure(&mut self) -> Option<Failure> {
         self.inner_mut().failure.take()
-    }
-    /// Only actual native whole-command facts; never a hidden set's completion.
-    pub(crate) fn take_confirmation(&mut self) -> Option<CommandConfirmation> {
-        let state = self.inner_mut();
-        state
-            .last_confirmation
-            .take()
-            .or_else(|| state.current.take_confirmation())
     }
     pub(crate) fn discard_current_rows(&mut self, py: Python<'_>) -> PyResult<()> {
         if !self.at_stream_boundary() {
@@ -440,13 +424,10 @@ impl State {
                 if self.phase == Phase::Call
                     && let Some(confirmation) = failure
                         .command_set_confirmation()
-                        .or_else(|| failure.confirmation())
+                        .or_else(|| failure.confirmation().filter(|value| !value.has_rows()))
                 {
                     self.call_complete = true;
                     self.call_confirmation = Some(confirmation);
-                }
-                if let Some(confirmation) = failure.confirmation() {
-                    self.last_confirmation = Some(confirmation);
                 }
                 if let Some(native) = failure.native_failure() {
                     self.statement_invalidated |=
@@ -982,5 +963,875 @@ mod tests {
     #[test]
     fn call_job_keeps_only_an_opt_in_control_handle_inline() {
         assert!(std::mem::size_of::<Flow>() <= 64);
+    }
+
+    use crate::binding::PlanMode;
+    use pyo3::types::{PyDict, PyModule, PyString};
+    use sqlaero_core::result::decode::Options;
+    use sqlaero_core::result::value::{FieldValue, RowEncoding};
+    use sqlaero_core::session::query::QueryError;
+    use sqlaero_core::transport::deadline::TimeoutKind;
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    const LIMIT: usize = 16 * 1024 * 1024;
+    fn budget() -> IoBudget {
+        IoBudget::new(
+            TimeoutKind::Operation,
+            Some(Duration::from_secs(5)),
+            None,
+            None,
+        )
+    }
+    fn connected(py: Python<'_>, label: &str, multi: bool) -> Py<Connection> {
+        let root =
+            PathBuf::from(std::env::var_os("SQLAERO_TEST_MYSQL_ROOT").expect("owned fixture root"));
+        let state = py
+            .import("json")
+            .unwrap()
+            .call_method1(
+                "loads",
+                (std::fs::read_to_string(root.join(label).join("state.json")).unwrap(),),
+            )
+            .unwrap();
+        let module = PyModule::new(py, "_call_flow_test_native").unwrap();
+        crate::_sqlaero(&module).unwrap();
+        let kwargs = PyDict::new(py);
+        kwargs.set_item("user", "sqlaero").unwrap();
+        kwargs
+            .set_item("password", state.get_item("test_password").unwrap())
+            .unwrap();
+        kwargs.set_item("database", "sqlaero_test").unwrap();
+        kwargs
+            .set_item(
+                "unix_socket",
+                root.join(format!("{label}.sock")).to_str().unwrap(),
+            )
+            .unwrap();
+        kwargs.set_item("operation_timeout", 5).unwrap();
+        kwargs.set_item("multi_statements", multi).unwrap();
+        module
+            .getattr("connect")
+            .unwrap()
+            .call((), Some(&kwargs))
+            .unwrap()
+            .extract()
+            .unwrap()
+    }
+    fn sql(
+        py: Python<'_>,
+        connection: &Connection,
+        lease: &mut CommandLease<'_>,
+        source: &str,
+    ) -> Response {
+        let mut request = vec![3];
+        request.extend_from_slice(source.as_bytes());
+        let job = connection.query_job(py, lease, request, false).unwrap();
+        connection
+            .drive(py, lease, job, &mut budget(), CommandRole::UserSql)
+            .map_err(PyErr::from)
+            .unwrap()
+    }
+    fn option_counter(
+        py: Python<'_>,
+        connection: &Connection,
+        lease: &mut CommandLease<'_>,
+    ) -> u64 {
+        let Response::Rows(rows) = sql(
+            py,
+            connection,
+            lease,
+            "SHOW SESSION STATUS LIKE 'Com_set_option'",
+        ) else {
+            panic!("option counter")
+        };
+        std::str::from_utf8(rows.row(0).unwrap()[1].get(&rows.bytes).unwrap().unwrap())
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+    fn native_call(
+        py: Python<'_>,
+        connection: &Connection,
+        lease: &mut CommandLease<'_>,
+        name: &str,
+        prepared: bool,
+        budget: &mut IoBudget,
+    ) -> (NativeCall, Option<crate::statement::Cached>, String) {
+        let prefix = if prepared {
+            String::new()
+        } else {
+            super::super::slot_prefix(py, connection)
+                .unwrap()
+                .to_owned()
+        };
+        let proc_name = PyString::new(py, name);
+        let args = py.eval(c"(5,None,10)", None, None).unwrap();
+        let modes = py.eval(c"('IN','OUT','INOUT')", None, None).unwrap();
+        let (context, ansi, _) = connection.context(py).unwrap();
+        let mut native = {
+            let types = connection.types.borrow(py);
+            NativeCall::new(
+                &proc_name,
+                Some(&args),
+                None,
+                Some(&modes),
+                &prefix,
+                if prepared {
+                    PlanMode::PreparedNative
+                } else {
+                    PlanMode::Text
+                },
+                &types,
+                &context,
+                ansi,
+                budget,
+            )
+            .unwrap()
+        };
+        let mut slot = None;
+        if prepared {
+            let template = native.call.prepared.as_ref().unwrap().clone();
+            let id = crate::statement::resolve(py, connection, lease, template, budget, &mut slot)
+                .unwrap();
+            native.call.bytes[1..5].copy_from_slice(&id.to_le_bytes());
+        }
+        (native, slot, prefix)
+    }
+    fn numbers(rows: &RowBatch) -> Vec<Vec<i64>> {
+        (0..rows.row_count)
+            .map(|index| {
+                rows.columns
+                    .iter()
+                    .zip(rows.row(index).unwrap())
+                    .map(|(column, cell)| {
+                        let raw = cell.get(&rows.bytes).unwrap().unwrap();
+                        if rows.encoding == RowEncoding::Text {
+                            std::str::from_utf8(raw).unwrap().parse().unwrap()
+                        } else {
+                            match sqlaero_core::protocol::binary::value(column, raw).unwrap() {
+                                FieldValue::Signed(value) => value,
+                                FieldValue::Unsigned(value) => i64::try_from(value).unwrap(),
+                                _ => panic!("numeric native field"),
+                            }
+                        }
+                    })
+                    .collect()
+            })
+            .collect()
+    }
+    fn drain(
+        py: Python<'_>,
+        connection: &Connection,
+        lease: &mut CommandLease<'_>,
+        flow: &mut Flow,
+        budget: &mut IoBudget,
+        streaming: bool,
+        discard: bool,
+    ) -> PyResult<Vec<Option<usize>>> {
+        let mut ends = Vec::new();
+        loop {
+            if streaming {
+                let Some(event) = flow.advance_stream(
+                    py,
+                    connection,
+                    lease,
+                    budget,
+                    NonZeroUsize::new(4).unwrap(),
+                )?
+                else {
+                    break;
+                };
+                match event {
+                    StreamEvent::Header(_) => {
+                        assert!(flow.at_stream_boundary());
+                        if discard {
+                            flow.discard_current_rows(py)?;
+                        }
+                    }
+                    StreamEvent::Rows(_) => assert!(!discard),
+                    StreamEvent::End { total_rows, .. } => ends.push(total_rows),
+                }
+            } else {
+                let Some(response) = flow.advance_buffered(py, connection, lease, budget)? else {
+                    break;
+                };
+                ends.push(match response {
+                    Response::Rows(rows) => Some(rows.row_count),
+                    Response::Command(_) => None,
+                    Response::Counted { .. } => panic!("no counted-only CALL set"),
+                });
+            }
+        }
+        Ok(ends)
+    }
+
+    #[test]
+    #[ignore = "requires C's two owned MySQL fixtures and CP313 embedded test runner"]
+    fn real_text_combined_split_and_prepared_preserve_business_output_and_cleanup() {
+        Python::initialize();
+        Python::attach(|py| {
+            for label in ["84", "97"] {
+                for prepared in [false, true] {
+                    for multi in [false, true] {
+                        for streaming in [false, true] {
+                            let owner = connected(py, label, multi);
+                            let connection = owner.borrow(py);
+                            let mut operation = budget();
+                            let mut lease = connection.acquire(py, &mut operation).unwrap();
+                            sql(
+                                py,
+                                &connection,
+                                &mut lease,
+                                "DROP PROCEDURE IF EXISTS c_flow_ok",
+                            );
+                            sql(
+                                py,
+                                &connection,
+                                &mut lease,
+                                "CREATE PROCEDURE c_flow_ok(IN a BIGINT,OUT b BIGINT,INOUT c BIGINT) BEGIN SELECT a AS n WHERE FALSE; SELECT a AS n; SELECT a AS n UNION ALL SELECT a+1 UNION ALL SELECT a+2; SET b=-9223372036854775808; SET c=c+1; END",
+                            );
+                            let (native, slot, prefix) = native_call(
+                                py,
+                                &connection,
+                                &mut lease,
+                                "c_flow_ok",
+                                prepared,
+                                &mut operation,
+                            );
+                            let output = Output::new(
+                                py,
+                                &native.output_positions,
+                                Options::default(),
+                                Arc::clone(&connection.native.result_pool),
+                                LIMIT,
+                            )
+                            .unwrap();
+                            let scope =
+                                Scope::new(Arc::clone(&connection.native.result_pool), LIMIT)
+                                    .unwrap();
+                            let mut flow = Flow::new(
+                                py,
+                                &connection,
+                                &mut lease,
+                                native,
+                                Arc::clone(&output),
+                                Policy {
+                                    multi_statements: multi,
+                                    streaming,
+                                    send_limit: connection.context(py).unwrap().0.limit,
+                                },
+                                &scope,
+                                &operation,
+                            )
+                            .unwrap();
+                            assert_eq!(flow.inner().layout == Layout::Combined, !prepared && multi);
+                            assert_eq!(
+                                drain(
+                                    py,
+                                    &connection,
+                                    &mut lease,
+                                    &mut flow,
+                                    &mut operation,
+                                    streaming,
+                                    streaming
+                                )
+                                .unwrap(),
+                                [Some(0), Some(1), Some(3), None]
+                            );
+                            assert!(
+                                flow.is_finished() && flow.synchronized() && flow.call_completed()
+                            );
+                            assert!(flow.call_confirmation().is_some());
+                            assert!(flow.inner().output_received && output.is_ready());
+                            assert_eq!(numbers(output.rows.get().unwrap()), [vec![i64::MIN, 11]]);
+                            if !prepared {
+                                assert!(flow.inner().cleanup_confirmed);
+                                let Response::Rows(rows) = sql(
+                                    py,
+                                    &connection,
+                                    &mut lease,
+                                    &format!("SELECT @{prefix}0 IS NULL,@{prefix}1 IS NULL"),
+                                ) else {
+                                    panic!("slot check")
+                                };
+                                assert_eq!(numbers(&rows), [vec![1, 1]]);
+                            }
+                            assert_eq!(
+                                flow.metadata_codec().map(OutputCodec::name),
+                                Some("utf8mb4")
+                            );
+                            assert!(!connection.native.is_closed());
+                            assert!(flow.take_native_failure().is_none());
+                            assert!(!flow.invalidates_statement());
+                            eprintln!(
+                                "MySQL {label} prepared={prepared} multi={multi} streaming={streaming}: business 0/1/3+tail, exact native outputs, cleanup confirmed"
+                            );
+                            drop(slot);
+                            sql(py, &connection, &mut lease, "DROP PROCEDURE c_flow_ok");
+                            drop(lease);
+                            drop(connection);
+                            owner.bind(py).call_method0("close").unwrap();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    #[test]
+    #[ignore = "requires C's two owned MySQL fixtures and CP313 embedded test runner"]
+    fn real_call_error_cleans_once_and_cleanup_error_preserves_confirmed_values() {
+        Python::initialize();
+        Python::attach(|py| {
+            for label in ["84", "97"] {
+                for multi in [false, true] {
+                    for cleanup_error in [false, true] {
+                        let owner = connected(py, label, multi);
+                        let connection = owner.borrow(py);
+                        let mut operation = budget();
+                        let mut lease = connection.acquire(py, &mut operation).unwrap();
+                        sql(
+                            py,
+                            &connection,
+                            &mut lease,
+                            "DROP PROCEDURE IF EXISTS c_flow_error",
+                        );
+                        let body = if cleanup_error {
+                            "SET b=99; SET c=c+1;"
+                        } else {
+                            "SET b=99; SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT='c flow primary';"
+                        };
+                        sql(
+                            py,
+                            &connection,
+                            &mut lease,
+                            &format!(
+                                "CREATE PROCEDURE c_flow_error(IN a BIGINT,OUT b BIGINT,INOUT c BIGINT) BEGIN {body} END"
+                            ),
+                        );
+                        let (mut native, _, prefix) = native_call(
+                            py,
+                            &connection,
+                            &mut lease,
+                            "c_flow_error",
+                            false,
+                            &mut operation,
+                        );
+                        if cleanup_error {
+                            native.cleanup = Some(b"\x03THIS IS NOT SQL".to_vec());
+                        }
+                        let output = Output::new(
+                            py,
+                            &native.output_positions,
+                            Options::default(),
+                            Arc::clone(&connection.native.result_pool),
+                            LIMIT,
+                        )
+                        .unwrap();
+                        let scope =
+                            Scope::new(Arc::clone(&connection.native.result_pool), LIMIT).unwrap();
+                        let mut flow = Flow::new(
+                            py,
+                            &connection,
+                            &mut lease,
+                            native,
+                            Arc::clone(&output),
+                            Policy {
+                                multi_statements: multi,
+                                streaming: false,
+                                send_limit: LIMIT,
+                            },
+                            &scope,
+                            &operation,
+                        )
+                        .unwrap();
+                        let error = drain(
+                            py,
+                            &connection,
+                            &mut lease,
+                            &mut flow,
+                            &mut operation,
+                            false,
+                            false,
+                        )
+                        .unwrap_err();
+                        assert_eq!(
+                            error
+                                .value(py)
+                                .getattr("code")
+                                .unwrap()
+                                .extract::<u16>()
+                                .unwrap(),
+                            if cleanup_error { 1064 } else { 1644 }
+                        );
+                        assert_eq!(flow.call_completed(), cleanup_error);
+                        assert_eq!(output.is_ready(), cleanup_error);
+                        assert_eq!(connection.native.is_closed(), cleanup_error);
+                        assert!(flow.inner().cleanup_attempted);
+                        assert_eq!(flow.inner().cleanup_confirmed, !cleanup_error);
+                        assert!(flow.take_native_failure().is_some());
+                        if cleanup_error {
+                            assert_eq!(numbers(output.rows.get().unwrap()), [vec![99, 11]]);
+                        } else {
+                            assert!(flow.synchronized());
+                            let Response::Rows(rows) = sql(
+                                py,
+                                &connection,
+                                &mut lease,
+                                &format!("SELECT @{prefix}0 IS NULL,@{prefix}1 IS NULL"),
+                            ) else {
+                                panic!("cleaned slots")
+                            };
+                            assert_eq!(numbers(&rows), [vec![1, 1]]);
+                            sql(py, &connection, &mut lease, "DROP PROCEDURE c_flow_error");
+                        }
+                        drop(lease);
+                        drop(connection);
+                        owner.bind(py).call_method0("close").unwrap();
+                        if cleanup_error {
+                            let observer = connected(py, label, false);
+                            let connection = observer.borrow(py);
+                            let mut operation = budget();
+                            let mut lease = connection.acquire(py, &mut operation).unwrap();
+                            sql(py, &connection, &mut lease, "DROP PROCEDURE c_flow_error");
+                            drop(lease);
+                            drop(connection);
+                            observer.bind(py).call_method0("close").unwrap();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    #[test]
+    #[ignore = "requires C's fixture for host state and a controlled native socket peer"]
+    fn complete_native_out_with_tail_err_or_truncation_never_readies_output() {
+        use sqlaero_core::protocol::framing::{self, Sequence};
+        use sqlaero_core::transport::channel::{Channel, Step};
+        use sqlaero_core::transport::deadline::Direction;
+        use sqlaero_core::transport::socket::Transport;
+        use std::io::Write;
+        use std::net::TcpListener;
+        Python::initialize();
+        Python::attach(|py| {
+            for streaming in [false, true] {
+                for truncated in [false, true] {
+                    let owner = connected(py, "84", false);
+                    let connection = owner.borrow(py);
+                    let mut operation = budget();
+                    let mut lease = connection.acquire(py, &mut operation).unwrap();
+                    let (context, ansi, _) = connection.context(py).unwrap();
+                    let proc_name = PyString::new(py, "c_flow_controlled");
+                    let args = py.eval(c"(5,None,10)", None, None).unwrap();
+                    let modes = py.eval(c"('IN','OUT','INOUT')", None, None).unwrap();
+                    let mut native = NativeCall::new(
+                        &proc_name,
+                        Some(&args),
+                        None,
+                        Some(&modes),
+                        "",
+                        PlanMode::PreparedNative,
+                        &connection.types.borrow(py),
+                        &context,
+                        ansi,
+                        &operation,
+                    )
+                    .unwrap();
+                    native.call.bytes[1..5].copy_from_slice(&42_u32.to_le_bytes());
+                    let request = native.call.bytes.clone();
+                    let output = Output::new(
+                        py,
+                        &native.output_positions,
+                        Options::default(),
+                        Arc::clone(&connection.native.result_pool),
+                        LIMIT,
+                    )
+                    .unwrap();
+                    let scope =
+                        Scope::new(Arc::clone(&connection.native.result_pool), LIMIT).unwrap();
+                    let mut flow = Flow::new(
+                        py,
+                        &connection,
+                        &mut lease,
+                        native,
+                        Arc::clone(&output),
+                        Policy {
+                            multi_statements: false,
+                            streaming,
+                            send_limit: LIMIT,
+                        },
+                        &scope,
+                        &operation,
+                    )
+                    .unwrap();
+                    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+                    let address = listener.local_addr().unwrap();
+                    let server = std::thread::spawn(move || {
+                        let (mut socket, _) = listener.accept().unwrap();
+                        socket
+                            .set_read_timeout(Some(Duration::from_secs(3)))
+                            .unwrap();
+                        let mut sequence = Sequence::default();
+                        assert_eq!(
+                            framing::read_message(&mut socket, &mut sequence, LIMIT).unwrap(),
+                            request
+                        );
+                        framing::write_message(&mut socket, &[2], &mut sequence, LIMIT).unwrap();
+                        for name in [b"b", b"c"] {
+                            let mut column = Vec::new();
+                            for label in [b"def".as_slice(), b"", b"", b"", name.as_slice(), b""] {
+                                column.push(label.len() as u8);
+                                column.extend_from_slice(label);
+                            }
+                            column.extend_from_slice(&[12, 63, 0, 20, 0, 0, 0, 8, 0, 0, 0, 0, 0]);
+                            framing::write_message(&mut socket, &column, &mut sequence, LIMIT)
+                                .unwrap();
+                        }
+                        let mut row = vec![0, 0];
+                        row.extend_from_slice(&99_i64.to_le_bytes());
+                        row.extend_from_slice(&11_i64.to_le_bytes());
+                        framing::write_message(&mut socket, &row, &mut sequence, LIMIT).unwrap();
+                        let flags = (StatusFlags::SERVER_STATUS_AUTOCOMMIT
+                            | StatusFlags::SERVER_MORE_RESULTS_EXISTS
+                            | StatusFlags::SERVER_PS_OUT_PARAMS)
+                            .bits()
+                            .to_le_bytes();
+                        framing::write_message(
+                            &mut socket,
+                            &[0xfe, 0, 0, flags[0], flags[1], 0, 0, 0],
+                            &mut sequence,
+                            LIMIT,
+                        )
+                        .unwrap();
+                        if truncated {
+                            socket
+                                .write_all(&[10, 0, 0, sequence.next(), 0xfe, 0])
+                                .unwrap();
+                        } else {
+                            framing::write_message(
+                                &mut socket,
+                                b"\xff\x28\x04#42000controlled CALL tail error",
+                                &mut sequence,
+                                LIMIT,
+                            )
+                            .unwrap();
+                        }
+                    });
+                    let mut channel = Channel::new(Transport::tcp(address).unwrap(), false);
+                    while !channel.connected().unwrap() {
+                        channel.wait(Direction::Write, &mut operation).unwrap();
+                    }
+                    loop {
+                        let internal = if streaming {
+                            match flow
+                                .inner_mut()
+                                .current
+                                .advance_managed_stream(
+                                    &mut channel,
+                                    &mut operation,
+                                    NonZeroUsize::MIN,
+                                )
+                                .unwrap()
+                            {
+                                Step::Ready(Managed::InternalOutput { .. }) => true,
+                                Step::Control => false,
+                                _ => panic!("carrier remains internal"),
+                            }
+                        } else {
+                            match flow
+                                .inner_mut()
+                                .current
+                                .advance_managed(&mut channel, &mut operation)
+                                .unwrap()
+                            {
+                                Step::Ready(Managed::InternalOutput { .. }) => true,
+                                Step::Control => false,
+                                _ => panic!("carrier remains internal"),
+                            }
+                        };
+                        if internal {
+                            break;
+                        }
+                    }
+                    flow.inner_mut().received_native(py).unwrap();
+                    assert!(flow.inner().output_received && flow.inner().pending_native.is_some());
+                    assert!(!flow.call_completed());
+                    assert!(!output.is_ready() && output.rows.get().is_none());
+                    assert!(
+                        output.get(py, &connection.types).unwrap().is_none(),
+                        "getter before CALL tail"
+                    );
+                    let error = loop {
+                        let result = if streaming {
+                            flow.inner_mut()
+                                .current
+                                .advance_managed_stream(
+                                    &mut channel,
+                                    &mut operation,
+                                    NonZeroUsize::MIN,
+                                )
+                                .map(|step| match step {
+                                    Step::Control => (),
+                                    _ => panic!("no successful CALL tail"),
+                                })
+                        } else {
+                            flow.inner_mut()
+                                .current
+                                .advance_managed(&mut channel, &mut operation)
+                                .map(|step| match step {
+                                    Step::Control => (),
+                                    _ => panic!("no successful CALL tail"),
+                                })
+                        };
+                        if let Err(error) = result {
+                            break error;
+                        }
+                    };
+                    assert_eq!(
+                        matches!(
+                            error,
+                            QueryError::Result(sqlaero_core::result::text::ResultError::Server(_))
+                        ),
+                        !truncated
+                    );
+                    let error = Arc::new(error);
+                    let primary = errors::query_with_codec(py, error.as_ref(), None);
+                    flow.inner_mut().last_synchronized = flow.inner().current.received_server_err();
+                    flow.inner_mut().failure = Some(Failure { error, codec: None });
+                    let _original = flow.inner_mut().failed(
+                        py,
+                        &connection,
+                        &mut lease,
+                        &mut operation,
+                        primary,
+                    );
+                    assert!(
+                        flow.inner().output_received,
+                        "actual carrier observation is retained"
+                    );
+                    assert!(
+                        flow.inner().pending_native.is_none(),
+                        "unconfirmed row is discarded"
+                    );
+                    assert!(!flow.call_completed() && flow.call_confirmation().is_none());
+                    assert!(!output.is_ready() && output.rows.get().is_none());
+                    assert!(
+                        output.get(py, &connection.types).unwrap().is_none(),
+                        "getter after failed/unconfirmed CALL"
+                    );
+                    server.join().unwrap();
+                    drop(lease);
+                    drop(connection);
+                    owner.bind(py).call_method0("close").unwrap();
+                }
+            }
+        });
+    }
+
+    #[test]
+    #[ignore = "requires C's two owned MySQL fixtures"]
+    fn capacity_preflight_splits_without_toggling_multi_statements() {
+        Python::initialize();
+        Python::attach(|py| {
+            for label in ["84", "97"] {
+                for streaming in [false, true] {
+                    let owner = connected(py, label, true);
+                    let connection = owner.borrow(py);
+                    let mut operation = budget();
+                    let mut lease = connection.acquire(py, &mut operation).unwrap();
+                    sql(
+                        py,
+                        &connection,
+                        &mut lease,
+                        "DROP PROCEDURE IF EXISTS c_flow_capacity",
+                    );
+                    sql(
+                        py,
+                        &connection,
+                        &mut lease,
+                        "CREATE PROCEDURE c_flow_capacity(IN a BIGINT,OUT b BIGINT,INOUT c BIGINT) BEGIN SET b=a; SET c=c+1; END",
+                    );
+                    let options_before = option_counter(py, &connection, &mut lease);
+                    let (native, _, _) = native_call(
+                        py,
+                        &connection,
+                        &mut lease,
+                        "c_flow_capacity",
+                        false,
+                        &mut operation,
+                    );
+                    let limit = [
+                        native.initialize.as_ref().unwrap().len(),
+                        native.call.bytes.len(),
+                        native.select.as_ref().unwrap().len(),
+                        native.cleanup.as_ref().unwrap().len(),
+                    ]
+                    .into_iter()
+                    .max()
+                    .unwrap();
+                    assert!(native.combined(py, limit, &operation).unwrap().is_none());
+                    let output = Output::new(
+                        py,
+                        &native.output_positions,
+                        Options::default(),
+                        Arc::clone(&connection.native.result_pool),
+                        LIMIT,
+                    )
+                    .unwrap();
+                    let scope =
+                        Scope::new(Arc::clone(&connection.native.result_pool), LIMIT).unwrap();
+                    let mut flow = Flow::new(
+                        py,
+                        &connection,
+                        &mut lease,
+                        native,
+                        Arc::clone(&output),
+                        Policy {
+                            multi_statements: true,
+                            streaming,
+                            send_limit: limit,
+                        },
+                        &scope,
+                        &operation,
+                    )
+                    .unwrap();
+                    assert!(flow.inner().layout == Layout::Split);
+                    assert_eq!(
+                        drain(
+                            py,
+                            &connection,
+                            &mut lease,
+                            &mut flow,
+                            &mut operation,
+                            streaming,
+                            false
+                        )
+                        .unwrap(),
+                        [None]
+                    );
+                    assert_eq!(numbers(output.rows.get().unwrap()), [vec![5, 11]]);
+                    assert_eq!(
+                        connection.native.facts.lock().unwrap().multi_statements,
+                        Some(true)
+                    );
+                    // Both private SQL SET statements share this server counter
+                    // with wire COM_SET_OPTION. The exact +2 excludes a hidden
+                    // capability toggle in addition to init and cleanup.
+                    assert_eq!(
+                        option_counter(py, &connection, &mut lease),
+                        options_before + 2
+                    );
+                    sql(
+                        py,
+                        &connection,
+                        &mut lease,
+                        "DROP PROCEDURE c_flow_capacity",
+                    );
+                    drop(lease);
+                    drop(connection);
+                    owner.bind(py).call_method0("close").unwrap();
+                }
+            }
+        });
+    }
+
+    #[test]
+    #[ignore = "requires C's two owned MySQL fixtures"]
+    fn private_codec_changes_do_not_reinterpret_the_public_header() {
+        Python::initialize();
+        Python::attach(|py| {
+            for label in ["84", "97"] {
+                for multi in [false, true] {
+                    for streaming in [false, true] {
+                        let owner = connected(py, label, multi);
+                        let connection = owner.borrow(py);
+                        let mut operation = budget();
+                        let mut lease = connection.acquire(py, &mut operation).unwrap();
+                        sql(
+                            py,
+                            &connection,
+                            &mut lease,
+                            "DROP PROCEDURE IF EXISTS c_flow_codec",
+                        );
+                        sql(
+                            py,
+                            &connection,
+                            &mut lease,
+                            "CREATE PROCEDURE c_flow_codec(OUT b TEXT) BEGIN SELECT 'é' AS `é`; SET SESSION character_set_results='latin1'; SET b='ö'; END",
+                        );
+                        let prefix = super::super::slot_prefix(py, &connection).unwrap();
+                        let name = PyString::new(py, "c_flow_codec");
+                        let args = py.eval(c"(None,)", None, None).unwrap();
+                        let modes = py.eval(c"('OUT',)", None, None).unwrap();
+                        let (context, ansi, _) = connection.context(py).unwrap();
+                        let native = NativeCall::new(
+                            &name,
+                            Some(&args),
+                            None,
+                            Some(&modes),
+                            prefix,
+                            PlanMode::Text,
+                            &connection.types.borrow(py),
+                            &context,
+                            ansi,
+                            &operation,
+                        )
+                        .unwrap();
+                        let output = Output::new(
+                            py,
+                            &native.output_positions,
+                            Options::default(),
+                            Arc::clone(&connection.native.result_pool),
+                            LIMIT,
+                        )
+                        .unwrap();
+                        let scope =
+                            Scope::new(Arc::clone(&connection.native.result_pool), LIMIT).unwrap();
+                        let mut flow = Flow::new(
+                            py,
+                            &connection,
+                            &mut lease,
+                            native,
+                            Arc::clone(&output),
+                            Policy {
+                                multi_statements: multi,
+                                streaming,
+                                send_limit: LIMIT,
+                            },
+                            &scope,
+                            &operation,
+                        )
+                        .unwrap();
+                        assert_eq!(
+                            drain(
+                                py,
+                                &connection,
+                                &mut lease,
+                                &mut flow,
+                                &mut operation,
+                                streaming,
+                                false
+                            )
+                            .unwrap(),
+                            [Some(1), None]
+                        );
+                        assert_eq!(flow.metadata_codec().unwrap().name(), "utf8mb4");
+                        assert_eq!(output.codec.get().unwrap().name(), "latin1");
+                        let rows = output.rows.get().unwrap();
+                        assert_eq!(
+                            rows.row(0).unwrap()[0].get(&rows.bytes).unwrap().unwrap(),
+                            b"\xf6"
+                        );
+                        assert!(output.is_ready());
+                        sql(py, &connection, &mut lease, "DROP PROCEDURE c_flow_codec");
+                        drop(lease);
+                        drop(connection);
+                        owner.bind(py).call_method0("close").unwrap();
+                    }
+                }
+            }
+        });
     }
 }
