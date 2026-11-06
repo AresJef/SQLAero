@@ -4,7 +4,7 @@
 //! callback or lock guard, and releases its wire token only at real command end.
 
 use crate::{
-    connection::{CommandRole, Connection},
+    connection::{CommandRole, Connection, ResourcePause},
     errors,
     reader::StreamRows,
 };
@@ -75,6 +75,7 @@ pub(crate) struct Stream {
     recorded: bool,
     pub(crate) batch: Option<u128>,
     pub(crate) failed: bool,
+    pub(crate) resource_paused: bool,
     pub(crate) statement_invalidated: bool,
     pub(crate) call_output: Option<std::sync::Arc<crate::call::Output>>,
 }
@@ -116,6 +117,7 @@ impl Stream {
             recorded: false,
             batch: None,
             failed: false,
+            resource_paused: false,
             statement_invalidated: false,
             call_output: None,
         })
@@ -152,12 +154,51 @@ impl Stream {
     /// Reserve the next accumulation slot before Query starts another message.
     /// This local failure leaves all cached rows and the synchronized message
     /// boundary intact for a smaller subsequent fetch to consume and release.
-    pub(crate) fn reserve(&mut self, py: Python<'_>) -> PyResult<()> {
-        if let Some(rows) = &mut self.rows {
-            rows.reserve_batch()
-                .map_err(|error| crate::output::memory(py, error))?;
+    pub(crate) fn reserve(&mut self, py: Python<'_>, connection: &Connection) -> PyResult<()> {
+        self.resource_paused = false;
+        let result = self.rows.as_mut().map_or(Ok(()), StreamRows::reserve_batch);
+        if let Err(error) = result {
+            let kind = ResourcePause::from_memory(&error);
+            let error = crate::output::memory(py, &error);
+            self.resource_failure(py, connection, kind, &error);
+            return Err(error);
         }
         Ok(())
+    }
+
+    fn resource_failure(
+        &mut self,
+        py: Python<'_>,
+        connection: &Connection,
+        kind: ResourcePause,
+        error: &PyErr,
+    ) {
+        if kind == ResourcePause::Result
+            && self.rows.as_ref().is_none_or(|rows| rows.available() == 0)
+        {
+            self.abort(connection);
+            errors::note(
+                py,
+                error,
+                "The minimum current row and required native structures cannot fit this result's memory limit even without a retained row prefix. The incomplete response cannot continue; its Connection was retired. No query was replayed.",
+            );
+        } else {
+            self.resource_paused = true;
+            errors::note(
+                py,
+                error,
+                "This resource failure preserved the native streaming response and its public read position. No partial Python result was returned. Explicitly use a smaller fetch to consume retained rows, or release other result owners when the total limit is binding; continuation is not guaranteed until enough capacity is available. The original operation budget and no-replay rule still apply.",
+            );
+        }
+        errors::note_format(
+            py,
+            error,
+            format_args!(
+                "while receiving streaming request {}, result set {}; source rows {}..{}; no request was replayed",
+                self.request_index, self.set_index, self.source_rows.start, self.source_rows.end
+            ),
+        );
+        errors::note(py, error, self.prefix.diagnostic());
     }
 
     pub(crate) fn advance(
@@ -184,6 +225,7 @@ impl Stream {
         connection: &Connection,
         count: usize,
     ) -> PyResult<Option<Event>> {
+        self.resource_paused = false;
         if let Some(event) = self.pending.take() {
             return Ok(Some(event));
         }
@@ -202,7 +244,7 @@ impl Stream {
             )
         })?;
         let mut lease = owner.resume().map_err(|error| errors::access(py, error))?;
-        let (result, synchronized, confirmation) = match &mut self.job {
+        let (result, synchronized, confirmation, resource_pause) = match &mut self.job {
             Job::Query(query) => {
                 let result = connection.drive_stream(
                     py,
@@ -219,6 +261,10 @@ impl Stream {
                     .as_ref()
                     .err()
                     .and_then(|failure| failure.confirmation());
+                let resource_pause = result
+                    .as_ref()
+                    .err()
+                    .and_then(|failure| failure.resource_pause());
                 if let Err(failure) = &result {
                     self.statement_invalidated |= failure
                         .native_failure()
@@ -228,13 +274,19 @@ impl Stream {
                     result.map(Some).map_err(PyErr::from),
                     synchronized,
                     confirmation,
+                    resource_pause,
                 )
             }
             Job::Call(flow) => {
                 let result =
                     flow.advance_stream(py, connection, &mut lease, &mut self.budget, limit);
                 self.statement_invalidated |= flow.invalidates_statement();
-                (result, flow.synchronized(), flow.call_confirmation())
+                (
+                    result,
+                    flow.synchronized(),
+                    flow.call_confirmation(),
+                    flow.resource_pause(),
+                )
             }
         };
         let released = if synchronized && !connection.native.is_closed() {
@@ -254,6 +306,10 @@ impl Stream {
                 event
             }
             Err(error) => {
+                if let Some(kind) = resource_pause {
+                    self.resource_failure(py, connection, kind, &error);
+                    return Err(error);
+                }
                 self.failed = true;
                 if let Some(output) = &self.call_output {
                     output.fail();

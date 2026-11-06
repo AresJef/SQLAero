@@ -1503,7 +1503,9 @@ pub(crate) fn query_with_codec(
         }
         QueryError::Wire(error) | QueryError::Result(ResultError::Wire(error)) => wire(py, error),
         QueryError::Channel(error) => channel(py, error),
-        QueryError::Result(ResultError::Memory(error)) => crate::output::memory(py, error),
+        QueryError::Result(ResultError::Memory(error)) | QueryError::Paused(error) => {
+            crate::output::memory(py, error)
+        }
         QueryError::Result(ResultError::Server(error)) => server_with_codec(
             py,
             error.error_code(),

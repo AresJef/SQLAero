@@ -2,7 +2,7 @@
 
 use super::Output;
 use crate::binding::call::{Direction, NativeCall};
-use crate::connection::{CommandRole, Connection, DriveFailure};
+use crate::connection::{CommandRole, Connection, DriveFailure, ResourcePause};
 use crate::{errors, input};
 use pyo3::prelude::*;
 use sqlaero_core::charset::output::OutputCodec;
@@ -93,6 +93,7 @@ struct State {
     last_synchronized: bool,
     failure: Option<Failure>,
     statement_invalidated: bool,
+    resource_pause: Option<ResourcePause>,
 }
 
 fn internal(py: Python<'_>, message: &'static str) -> PyErr {
@@ -310,6 +311,7 @@ impl Flow {
             last_synchronized: true,
             failure: None,
             statement_invalidated: false,
+            resource_pause: None,
         });
         Ok(Self {
             state,
@@ -335,6 +337,9 @@ impl Flow {
     pub(crate) fn invalidates_statement(&self) -> bool {
         self.inner().statement_invalidated
     }
+    pub(crate) fn resource_pause(&self) -> Option<ResourcePause> {
+        self.inner().resource_pause
+    }
     pub(crate) fn synchronized(&self) -> bool {
         let state = self.inner();
         self.is_finished()
@@ -346,7 +351,9 @@ impl Flow {
     }
     pub(crate) fn at_stream_boundary(&self) -> bool {
         let state = self.inner();
-        state.phase == Phase::Call && state.boundary && state.current.at_stream_boundary()
+        state.phase == Phase::Call
+            && ((state.boundary && state.current.at_stream_boundary())
+                || state.current.resource_paused())
     }
     pub(crate) fn take_native_failure(&mut self) -> Option<Failure> {
         self.inner_mut().failure.take()
@@ -391,12 +398,17 @@ impl Flow {
             return Err(internal(py, "Buffered CALL requires buffered delivery"));
         }
         self.inner_mut().boundary = false;
+        self.inner_mut().resource_pause = None;
         let result = self
             .inner_mut()
             .stream(py, connection, lease, budget, row_limit);
         result.map_err(|error| {
-            self.inner_mut()
-                .failed(py, connection, lease, budget, error)
+            if self.inner().resource_pause.is_some() {
+                error
+            } else {
+                self.inner_mut()
+                    .failed(py, connection, lease, budget, error)
+            }
         })
     }
 }
@@ -421,6 +433,12 @@ impl State {
             }
             Err(failure) => {
                 self.last_synchronized = failure.synchronized();
+                if let Some(pause) = failure.resource_pause() {
+                    self.resource_pause = Some(pause);
+                    // The current Query and private CALL stages remain owned;
+                    // a resource pause is not a failed CALL or ready output.
+                    return Err(failure.into());
+                }
                 if self.phase == Phase::Call
                     && let Some(confirmation) = failure
                         .command_set_confirmation()

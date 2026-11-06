@@ -704,16 +704,27 @@ impl CursorCore {
                 ));
             }
             let remaining = target.saturating_sub(rows.position());
-            stream.reserve(py)?;
-            let event = match stream.advance(py, &connection, remaining) {
-                Ok(event) => event,
-                Err(error) => {
-                    self.save_stream_failure(py, &error, stream.statement_invalidated)?;
-                    return Err(error);
-                }
-            };
+            let event = self.receive_stream_event(py, &connection, stream, remaining)?;
             self.stream_event(py, stream, event)?;
         }
+    }
+
+    fn receive_stream_event(
+        &self,
+        py: Python<'_>,
+        connection: &Connection,
+        stream: &mut crate::stream::Stream,
+        remaining: usize,
+    ) -> PyResult<crate::stream::Event> {
+        let result = stream
+            .reserve(py, connection)
+            .and_then(|()| stream.advance(py, connection, remaining));
+        if let Err(error) = &result
+            && !stream.resource_paused
+        {
+            self.save_stream_failure(py, error, stream.statement_invalidated)?;
+        }
+        result
     }
 
     fn stream_fetch<'py>(
@@ -773,14 +784,7 @@ impl CursorCore {
             }
             let remaining =
                 count.map_or(usize::MAX, |count| count.saturating_sub(rows.available()));
-            stream.reserve(py)?;
-            let event = match stream.advance(py, &connection, remaining) {
-                Ok(event) => event,
-                Err(error) => {
-                    self.save_stream_failure(py, &error, stream.statement_invalidated)?;
-                    return Err(error);
-                }
-            };
+            let event = self.receive_stream_event(py, &connection, stream, remaining)?;
             self.stream_event(py, stream, event)?;
         }
         let rows = stream.rows.as_mut().ok_or_else(|| {
@@ -1736,7 +1740,8 @@ macro_rules! cursor_api {
                 let _operation=self.reader.operation(py)?;self.modifying(py,stringify!($name))?;
                 self.settings(py)?.options.$name=value;Ok(())
             })*
-            /// Execute one SQL operation, returning its actual total row count.
+            /// Execute one SQL operation. SS returns None while a required
+            /// first-result count is unknown; this is not execution failure.
             /// Omitted args sends original SQL; explicit None binds one NULL.
             /// many/itemize are exact bool and keyword-only. All request chunks
             /// share one deadline. Confirmed prefixes never imply a commit.
@@ -1849,23 +1854,31 @@ macro_rules! cursor_api {
             }
             /// Return the next row in this Cursor format, or None when a valid result is exhausted.
             /// Buffered fetching remains valid after its Connection is closed,
-            /// as long as this Cursor stays open. This sends no network request.
+            /// as long as this Cursor stays open, and needs no network access.
+            /// SS may continue its original response; no SQL is reissued.
             fn fetchone<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {
                 if $streaming {self.stream_fetch(py,Some(1),true).map_err(|error|errors::at(py,error,"cursor.fetchone"))} else {self.reader.fetchone(py)}
             }
             /// Return at most size rows in this Cursor format atomically; None uses arraysize.
             /// Zero preserves the position but still requires a current result.
             /// Failed conversion leaves the complete original position unchanged.
+            /// An SS resource error states whether its native response was
+            /// safely retained for an explicit smaller fetch or release of
+            /// other result owners. No partial batch or fresh deadline is given.
+            /// Unsafe receive failures instead retire the incomplete Connection.
             #[pyo3(signature=(size=None))]
             fn fetchmany<'py>(&self,py:Python<'py>,size:Option<&Bound<'py,PyAny>>)->PyResult<Bound<'py,PyAny>> {
                 if $streaming {let count=self.reader.fetch_size(py,size)?;self.stream_fetch(py,Some(count),false).map_err(|error|errors::at(py,error,"cursor.fetchmany"))} else {self.reader.fetchmany(py,size)}
             }
-            /// Return all remaining tuple rows atomically, without re-querying.
+            /// Return all remaining rows in this Cursor format atomically.
+            /// No SQL is reissued. SS follows fetchmany's explicit safe-resource
+            /// continuation rule; failures never return a partial batch.
             fn fetchall<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {
                 if $streaming {self.stream_fetch(py,None,false).map_err(|error|errors::at(py,error,"cursor.fetchall"))} else {self.reader.fetchall(py)}
             }
             /// Close only this Cursor, retaining readable local metadata,
-            /// counters and configuration. Its Connection remains usable.
+            /// counters and configuration. SS drains unread data under the
+            /// original budget; unsafe cleanup retires its Connection.
             pub(crate) fn close(&self,py:Python<'_>)->PyResult<()> {
                 self.close_cursor(py).map_err(|error|errors::at(py,error,"cursor.close"))
             }

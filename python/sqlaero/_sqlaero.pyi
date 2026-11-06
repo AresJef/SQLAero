@@ -1187,10 +1187,22 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
         A supplied size is an exact built-in nonnegative int; bool, subclasses
         and index-only objects raise TypeError. Failed output does not publish
         a partial batch or advance the successful-delivery position.
+
+        For SS, a resource error explicitly states whether the native response
+        is retained. Only that safe state permits an explicit smaller fetch or
+        releasing other result owners before continuing the same response.
+        No SQL is replayed and the original operation allowance is not reset.
+        A packet/minimum row which cannot fit, or an unsafe receive failure,
+        instead retires the incomplete Connection.
         """
         ...
     def fetchall(self) -> tuple[_RowT, ...]:
-        """Materialize every remaining row of this set; exhaustion returns ()."""
+        """Materialize every remaining row of this set; exhaustion returns ().
+
+        No partial batch is returned on failure. SS uses fetchmany's documented
+        resource-continuation rules; use an explicitly smaller fetch only when
+        the error confirms that the native response was safely retained.
+        """
         ...
     def close(self) -> None:
         """Retire this Cursor; SS safely drains its unread response when permitted.

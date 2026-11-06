@@ -117,6 +117,7 @@ enum FailureOutcome {
     AwaitingResponse,
     ServerErr,
     Confirmed,
+    Paused(ResourcePause),
 }
 impl FailureOutcome {
     fn unknown(self) -> bool {
@@ -137,6 +138,9 @@ impl FailureOutcome {
             Self::Confirmed => {
                 "The final server response was fully confirmed before the later local failure; execution is not unknown. Command confirmation alone does not imply transaction commit."
             }
+            Self::Paused(_) => {
+                "The current request was sent and its incomplete response is retained at a verified native resource boundary. This is not a full-command or commit confirmation. No request was replayed."
+            }
         }
     }
 }
@@ -147,6 +151,24 @@ pub(crate) struct DriveFailure {
     unavailable: bool,
     facts: FailureFacts,
     outcome: FailureOutcome,
+}
+
+/// Only a typed, complete-message preflight pause can retain the response.
+/// These categories preserve the common resource error mapping at the host.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ResourcePause {
+    Result,
+    Total,
+    Allocation,
+}
+impl ResourcePause {
+    pub(crate) fn from_memory(error: &sqlaero_core::memory::MemoryError) -> Self {
+        match error {
+            sqlaero_core::memory::MemoryError::Result { .. } => Self::Result,
+            sqlaero_core::memory::MemoryError::Total { .. } => Self::Total,
+            sqlaero_core::memory::MemoryError::Allocation(_) => Self::Allocation,
+        }
+    }
 }
 enum FailureFacts {
     None,
@@ -175,6 +197,12 @@ impl DriveFailure {
             unavailable,
             facts: confirmed.map_or(FailureFacts::None, FailureFacts::Completion),
             outcome,
+        }
+    }
+    pub(crate) fn resource_pause(&self) -> Option<ResourcePause> {
+        match self.outcome {
+            FailureOutcome::Paused(kind) => Some(kind),
+            _ => None,
         }
     }
     fn with_command_set_confirmation(mut self, value: Option<CommandConfirmation>) -> Self {
@@ -685,6 +713,23 @@ impl Connection {
                     return Err(self.query_failure(py, lease, job, error, false, false));
                 }
                 Err(error) => {
+                    if let QueryError::Paused(memory) = &error
+                        && job.resource_paused()
+                    {
+                        // This exact core state owns the complete unconsumed
+                        // row packet. No transport/parser failure is forgiven,
+                        // and no session facts or wire lease are invalidated.
+                        let kind = ResourcePause::from_memory(memory);
+                        let mapped = errors::query_with_codec(py, &error, error_codec);
+                        let failure = DriveFailure::new(
+                            py,
+                            mapped,
+                            FailureOutcome::Paused(kind),
+                            false,
+                            None,
+                        );
+                        return Err(failure);
+                    }
                     // A post-End managed shape error still owns a real set
                     // completion. Publish it before retiring the unfinished
                     // exchange; it does not confirm the complete CALL.
