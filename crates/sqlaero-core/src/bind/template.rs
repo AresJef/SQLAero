@@ -87,6 +87,12 @@ impl Template {
         self.slots
     }
 
+    /// Whether the completed lexical scan found slot-specific UTC restrictions.
+    #[must_use]
+    pub fn has_utc_overrides(&self) -> bool {
+        !self.utc_overrides.is_empty()
+    }
+
     /// Encoded byte offset of a SET_VAR hint whose effective statement time
     /// zone cannot be proven UTC for this slot. This independent fact applies
     /// to text, native PREPARE and prepared display alike; it does not assert

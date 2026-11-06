@@ -1241,6 +1241,33 @@ impl Row<'_, '_> {
         reason = "One traversal shares projection, text and CALL framing; the optional template supplies per-slot facts without another visitor or allocation."
     )]
     fn walk<const TRACK_ROLE: bool>(
+        self,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &IoBudget,
+        output: &mut Vec<u8>,
+        template: Option<&Template>,
+        before: impl FnMut(usize, &mut Vec<u8>) -> PyResult<bool>,
+        after: impl FnMut(usize, &mut Vec<u8>, FragmentRole) -> PyResult<()>,
+    ) -> PyResult<FragmentRole> {
+        // Completed template facts are immutable during this traversal. Keep
+        // the common base context without refining it again for every value.
+        if context.utc_confirmed && template.is_some_and(Template::has_utc_overrides) {
+            self.walk_context::<TRACK_ROLE, true>(
+                types, context, budget, output, template, before, after,
+            )
+        } else {
+            self.walk_context::<TRACK_ROLE, false>(
+                types, context, budget, output, template, before, after,
+            )
+        }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "One traversal retains framing and diagnostics while its immutable UTC policy is selected once."
+    )]
+    fn walk_context<const TRACK_ROLE: bool, const REFINE_UTC: bool>(
         mut self,
         types: &ScalarTypes,
         context: &Context,
@@ -1299,8 +1326,14 @@ impl Row<'_, '_> {
         }
         let mut role = FragmentRole::Scalar;
         for index in 0..width {
-            let effective = slot_context(template, index, context);
-            visit.context = effective;
+            let effective = if REFINE_UTC {
+                slot_context(template, index, context)
+            } else {
+                *context
+            };
+            if REFINE_UTC {
+                visit.context = effective;
+            }
             let source = if let Some(row) = row {
                 row.row_item(index).inspect_err(|error| {
                     errors::note_format(
