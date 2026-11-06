@@ -622,6 +622,7 @@ pub struct Receiver {
     set_option_ack: bool,
     frozen_columns: Option<Arc<Columns>>,
     batch_rows: usize,
+    row_owner: Option<Reservation>,
     metadata_status: Option<StatusFlags>,
     scope: Arc<Scope>,
     _owner: Reservation,
@@ -673,6 +674,7 @@ impl Receiver {
             set_option_ack: false,
             frozen_columns: None,
             batch_rows: 0,
+            row_owner: None,
             metadata_status: None,
             scope,
             _owner: owner,
@@ -729,11 +731,76 @@ impl Receiver {
             );
         }
         self.discard = true;
+        self.row_owner = None;
+        self.fields = Buffer::tracked(&self.scope);
+        self.bytes = Buffer::tracked(&self.scope);
         Ok(())
     }
 
     pub(crate) fn enable_set_option_ack(&mut self) {
         self.set_option_ack = true;
+    }
+
+    /// Reserve the exact storage of one completely owned row before parsing
+    /// can change fields or counters. Failure preserves all initialized data.
+    /// Only valid row packets may acquire the resumable capacity classification.
+    pub(crate) fn preflight_stream_row(&mut self, data: &[u8]) -> Result<(), ResultError> {
+        if !self.streaming
+            || self.discard
+            || !matches!(self.phase, Phase::Rows)
+            || data.first() == Some(&0xff)
+            || self.row_end(data)
+        {
+            return Ok(());
+        }
+        let result = (|| {
+            if self.row_owner.is_none() {
+                self.row_owner = Some(self.scope.charge(size_of::<RowBatch>())?);
+            }
+            self.fields.reserve(self.column_count)?;
+            self.bytes.reserve(data.len())
+        })();
+        if let Err(error) = result {
+            // This failure-only scan shares the wire decoders, not Python
+            // values. A malformed row remains terminal even under pressure.
+            if self.encoding == super::value::RowEncoding::Binary {
+                crate::protocol::binary::scan_row(
+                    data,
+                    self.frozen_columns
+                        .as_deref()
+                        .map_or(self.columns.as_slice(), |columns| &columns[..]),
+                    self.bytes.len(),
+                    None,
+                )?;
+            } else {
+                let mut position = 0;
+                for _ in 0..self.column_count {
+                    if let Some(size) = length(data, &mut position)? {
+                        position = position
+                            .checked_add(size)
+                            .filter(|end| *end <= data.len())
+                            .ok_or(WireError::Malformed("truncated text field"))?;
+                    }
+                }
+                if position != data.len() {
+                    return Err(WireError::Malformed("text row has trailing fields").into());
+                }
+            }
+            return Err(ResultError::Memory(error));
+        }
+        Ok(())
+    }
+
+    fn row_end(&self, data: &[u8]) -> bool {
+        data.first() == Some(&0xfe)
+            && if self
+                .capabilities
+                .contains(CapabilityFlags::CLIENT_DEPRECATE_EOF)
+            {
+                data.len() < MAX_FRAME_PAYLOAD
+            } else {
+                data.len() < 9
+            }
     }
 
     pub(crate) fn push_stream(
@@ -783,7 +850,13 @@ impl Receiver {
         if self.discard {
             return Err(WireError::Malformed("discarded rows have no publishable storage").into());
         }
-        let owner = self.scope.charge(size_of::<RowBatch>())?;
+        let owner = if self.streaming {
+            self.row_owner.take().ok_or(WireError::Malformed(
+                "streaming row batch has no prepaid owner",
+            ))?
+        } else {
+            self.scope.charge(size_of::<RowBatch>())?
+        };
         let columns = self.freeze_columns()?;
         Ok(RowBatch {
             encoding: self.encoding,
@@ -959,15 +1032,7 @@ impl Receiver {
             Phase::Rows => {
                 // Canonical 0xFE field lengths need at least 2^24 data bytes.
                 // Only a shorter negotiated end packet can terminate rows.
-                let end = data.first() == Some(&0xfe)
-                    && if self
-                        .capabilities
-                        .contains(CapabilityFlags::CLIENT_DEPRECATE_EOF)
-                    {
-                        data.len() < MAX_FRAME_PAYLOAD
-                    } else {
-                        data.len() < 9
-                    };
+                let end = self.row_end(data);
                 if end {
                     let kind = if self
                         .capabilities

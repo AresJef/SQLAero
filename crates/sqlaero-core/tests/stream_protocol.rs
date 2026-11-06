@@ -416,3 +416,145 @@ fn large_fetch_all_yields_complete_rows_at_the_existing_work_quantum() {
     }
     server.join().unwrap();
 }
+
+#[test]
+fn row_storage_exhaustion_keeps_complete_pending_for_explicit_smaller_fetch() {
+    use std::io::Write;
+    use std::sync::Arc;
+    eprintln!(
+        "native sizes Query={}, Receiver={}",
+        std::mem::size_of::<Query>(),
+        std::mem::size_of::<sqlaero_core::result::text::Receiver>()
+    );
+    for binary in [false, true] {
+        for fragmented in [false, true] {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+            let address = listener.local_addr().unwrap();
+            let server = std::thread::spawn(move || {
+                let (mut socket, _) = listener.accept().unwrap();
+                socket
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let mut sequence = Sequence::default();
+                assert_eq!(
+                    framing::read_message(&mut socket, &mut sequence, 8192).unwrap(),
+                    request(binary)
+                );
+                framing::write_message(&mut socket, &[1], &mut sequence, 8192).unwrap();
+                let mut column = Vec::new();
+                mysql_common::packets::Column::new(ColumnType::MYSQL_TYPE_VAR_STRING)
+                    .with_name(b"value")
+                    .with_column_length(4096)
+                    .serialize(&mut column);
+                framing::write_message(&mut socket, &column, &mut sequence, 8192).unwrap();
+                for value in 1..=8_u8 {
+                    let mut row = if binary { vec![0, 0] } else { Vec::new() };
+                    row.extend_from_slice(&[0xfc, 0, 16]);
+                    row.resize(row.len() + 4096, value);
+                    let mut wire = Vec::new();
+                    framing::write_message(&mut wire, &row, &mut sequence, 8192).unwrap();
+                    if fragmented {
+                        for fragment in wire.chunks(97) {
+                            socket.write_all(fragment).unwrap();
+                        }
+                    } else {
+                        socket.write_all(&wire).unwrap();
+                    }
+                }
+                framing::write_message(&mut socket, &[0xfe, 0, 0, 2, 0, 0, 0], &mut sequence, 8192)
+                    .unwrap();
+                // A resume consumes this same response, never another command.
+                let mut byte = [0];
+                use std::io::Read;
+                assert_eq!(socket.read(&mut byte).unwrap(), 0);
+            });
+            let mut channel = Channel::new(Transport::tcp(address).unwrap(), false);
+            let mut budget = IoBudget::new(
+                TimeoutKind::Operation,
+                Some(Duration::from_secs(5)),
+                None,
+                None,
+            );
+            while !channel.connected().unwrap() {
+                channel.wait(Direction::Write, &mut budget).unwrap();
+            }
+            let pool = sqlaero_core::memory::Pool::new(1_000_000);
+            let mut query = Query::with_pool(
+                request(binary),
+                CapabilityFlags::CLIENT_PROTOCOL_41 | CapabilityFlags::CLIENT_DEPRECATE_EOF,
+                8192,
+                8192,
+                20_000,
+                Arc::clone(&pool),
+                false,
+            )
+            .unwrap()
+            .with_streaming()
+            .unwrap();
+            let StreamEvent::Header(header) = next(&mut query, &mut channel, &mut budget).unwrap()
+            else {
+                panic!("header");
+            };
+            let mut prefix = Vec::new();
+            let large = NonZeroUsize::new(usize::MAX).unwrap();
+            let error = loop {
+                match query.advance_stream(&mut channel, &mut budget, large) {
+                    Ok(Step::Control) => (),
+                    Ok(Step::Ready(StreamEvent::Rows(rows))) => prefix.push(rows),
+                    Ok(_) => panic!("resource refusal must precede the end"),
+                    Err(error) => break error,
+                }
+            };
+            assert!(
+                !query.is_finished(),
+                "row storage refusal must preserve a complete pending message: {error}"
+            );
+            assert!(matches!(error, QueryError::Paused(_)));
+            assert!(query.resource_paused());
+            assert!(header.columns.scope().used() <= 20_000);
+            assert!(
+                !prefix.is_empty(),
+                "a complete prefix must be flushed before refusal"
+            );
+            assert!(query.take_confirmation().is_none());
+            let mut expected = 1_u8;
+            for rows in prefix.drain(..) {
+                for index in 0..rows.row_count {
+                    let value = rows.row(index).unwrap()[0]
+                        .get(&rows.bytes)
+                        .unwrap()
+                        .unwrap();
+                    assert_eq!(value, vec![expected; 4096]);
+                    expected += 1;
+                }
+            }
+            loop {
+                match next(&mut query, &mut channel, &mut budget).unwrap() {
+                    StreamEvent::Rows(rows) => {
+                        for index in 0..rows.row_count {
+                            let value = rows.row(index).unwrap()[0]
+                                .get(&rows.bytes)
+                                .unwrap()
+                                .unwrap();
+                            assert_eq!(value, vec![expected; 4096]);
+                            expected += 1;
+                        }
+                    }
+                    StreamEvent::End { total_rows, .. } => {
+                        assert_eq!(total_rows, Some(8));
+                        break;
+                    }
+                    _ => panic!("no duplicate header"),
+                }
+            }
+            assert_eq!(expected, 9);
+            assert!(!query.resource_paused());
+            assert!(query.is_finished() && query.take_confirmation().is_some());
+            drop(header);
+            drop(query);
+            drop(channel);
+            assert_eq!(pool.used(), 0);
+            server.join().unwrap();
+        }
+    }
+}

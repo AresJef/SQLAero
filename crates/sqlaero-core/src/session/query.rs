@@ -1,6 +1,6 @@
 //! One native command exchange over the existing channel and original budget.
 
-use crate::memory::{Pool, Reservation, Scope};
+use crate::memory::{Buffer, MemoryError, Pool, Reservation, Scope};
 use crate::protocol::framing::{MessageReader, MessageWriter, WireError};
 use crate::protocol::local_infile::{LocalError, Source, Upload, UploadProgress};
 use crate::result::text::{
@@ -18,6 +18,10 @@ use std::sync::Arc;
 /// A command failure whose server/transport/resource origin remains explicit.
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
+    /// A complete valid row is still owned and unconsumed. The caller may
+    /// release its cached prefix and explicitly resume this same response.
+    #[error(transparent)]
+    Paused(MemoryError),
     /// The explicitly authorized LOCAL source or upload failed.
     #[error(transparent)]
     Local(#[from] LocalError),
@@ -276,6 +280,9 @@ pub struct Query {
     request: Vec<u8>,
     sender: MessageWriter,
     incoming: MessageReader,
+    pending_message: Option<Buffer<u8>>,
+    deferred_pause: Option<MemoryError>,
+    resource_paused: bool,
     collector: Receiver,
     capabilities: CapabilityFlags,
     encoding: RowEncoding,
@@ -306,6 +313,21 @@ impl Query {
                 .managed
                 .as_ref()
                 .is_some_and(|managed| managed.pending())
+    }
+
+    /// True only after returning `QueryError::Paused` with the same complete
+    /// row still owned. This is not an EOF, ACK or permission to replay SQL.
+    #[must_use]
+    pub const fn resource_paused(&self) -> bool {
+        self.resource_paused
+    }
+
+    fn can_pause_rows(&self) -> bool {
+        self.streaming
+            && self
+                .managed
+                .as_ref()
+                .is_none_or(|managed| managed.business && managed.header.is_none())
     }
 
     /// Read existing framing facts only when needed for failure handling.
@@ -390,6 +412,9 @@ impl Query {
             request,
             sender,
             incoming: MessageReader::tracked(max_receive, &scope),
+            pending_message: None,
+            deferred_pause: None,
+            resource_paused: false,
             collector,
             capabilities,
             encoding,
@@ -511,7 +536,7 @@ impl Query {
     /// Rejects calls outside a delivered Header/Rows boundary, including an
     /// already ended set. This local rejection does not advance the exchange.
     pub fn discard_current_rows(&mut self) -> Result<(), QueryError> {
-        if !self.at_stream_boundary() {
+        if !self.at_stream_boundary() && !self.resource_paused() {
             return Err(
                 WireError::Malformed("discard requires a streaming result boundary").into(),
             );
@@ -530,6 +555,10 @@ impl Query {
             }
         }
         self.collector.discard_current_rows()?;
+        // Explicit discard may clear an unreported reservation failure, but
+        // the complete row remains pending for normal validation/counting.
+        self.deferred_pause = None;
+        self.resource_paused = false;
         Ok(())
     }
 
@@ -600,6 +629,7 @@ impl Query {
         let result = self.advance_managed_stream_inner(channel, budget, row_limit);
         match &result {
             Ok(Step::Ready(Managed::Public(_))) => self.stream_boundary = true,
+            Err(QueryError::Paused(_)) => self.stream_boundary = false,
             Err(_) => {
                 self.finished = true;
                 self.managed
@@ -717,8 +747,9 @@ impl Query {
     /// Completion and remains owned for conversion retry before the next call.
     ///
     /// # Errors
-    /// Native framing/required storage/parser failure is terminal. Host-side
-    /// batch-slot reservation before this call is the controlled retry branch.
+    /// Framing, metadata and parser failures remain terminal. Only the typed
+    /// Paused error preserves a complete valid row before storage consumption;
+    /// the host must keep this Query, its original budget and command owner.
     pub fn advance_stream(
         &mut self,
         channel: &mut Channel,
@@ -751,8 +782,14 @@ impl Query {
         } else {
             Err(WireError::Malformed("query is not streaming").into())
         };
-        if result.is_err() {
+        if result
+            .as_ref()
+            .is_err_and(|error| !matches!(error, QueryError::Paused(_)))
+        {
             self.finished = true;
+            self.pending_message = None;
+            self.deferred_pause = None;
+            self.resource_paused = false;
         }
         result
     }
@@ -815,6 +852,14 @@ impl Query {
         if self.finished {
             return Err(WireError::Malformed("command exchange already ended").into());
         }
+        if let Some(error) = self.deferred_pause.take() {
+            self.resource_paused = true;
+            return Err(QueryError::Paused(error));
+        }
+        self.resource_paused = false;
+        if self.pending_message.is_some() {
+            budget.check().map_err(ChannelError::from)?;
+        }
         if self.next_set {
             // Every set retains its own per-result quota; earlier owners stay
             // charged to the same connection pool. Prepare the next collector
@@ -875,17 +920,23 @@ impl Query {
                     }
                 }
             }
-            let data = match channel.receive_step(&mut self.incoming, budget, Some(&self.scope))? {
-                Step::Ready(data) => data,
-                Step::Wait(direction) => {
-                    if channel.wait(direction, budget)? == WaitStatus::Control {
-                        return Ok(Step::Control);
-                    }
-                    continue;
-                }
-                Step::Control => return Ok(Step::Control),
+            let data = if let Some(data) = self.pending_message.take() {
+                data
+            } else {
+                let data =
+                    match channel.receive_step(&mut self.incoming, budget, Some(&self.scope))? {
+                        Step::Ready(data) => data,
+                        Step::Wait(direction) => {
+                            if channel.wait(direction, budget)? == WaitStatus::Control {
+                                return Ok(Step::Control);
+                            }
+                            continue;
+                        }
+                        Step::Control => return Ok(Step::Control),
+                    };
+                self.incoming = MessageReader::tracked(self.max_receive, &self.scope);
+                data
             };
-            self.incoming = MessageReader::tracked(self.max_receive, &self.scope);
             // An unused permission belongs only to this command's first
             // response. Drop it on any other packet, before row parsing, so a
             // later text row beginning with a NULL byte cannot trigger upload.
@@ -896,6 +947,25 @@ impl Query {
                     return Ok(Step::Control);
                 }
                 self.local_progress = Some(upload.progress());
+            }
+            if row_limit.is_some()
+                && let Err(error) = self.collector.preflight_stream_row(&data)
+            {
+                match error {
+                    ResultError::Memory(error) if self.can_pause_rows() => {
+                        self.pending_message = Some(data);
+                        if let Some(rows) = self.collector.take_stream_rows()? {
+                            // This exact failure must be reported on the next
+                            // advance even if another owner releases capacity.
+                            self.deferred_pause = Some(error);
+                            self.stream_boundary = true;
+                            return Ok(Step::Ready(Delivery::Streaming(StreamEvent::Rows(rows))));
+                        }
+                        self.resource_paused = true;
+                        return Err(QueryError::Paused(error));
+                    }
+                    error => return Err(error.into()),
+                }
             }
             processed = processed.saturating_add(data.len());
             let delivery = if let Some(limit) = row_limit {
