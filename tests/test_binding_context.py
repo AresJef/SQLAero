@@ -99,3 +99,14 @@ def test_mogrify_uses_the_same_local_context_precondition(label: str) -> None:
             assert cursor.nextset() is True
             assert cursor.fetchone() == (8,)
             assert cursor.nextset() is None
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
+def test_prepared_preview_keeps_the_marker_guard_after_a_context_change(label: str) -> None:
+    with live(label, multi_statements=True) as connection:
+        with connection.cursor(prepared=True) as cursor:
+            with pytest.raises(ProgrammingError, match="cannot safely bind") as caught:
+                cursor.mogrify("SET NAMES latin1; SELECT ?", ())
+            assert caught.value.code == 65541
+            assert caught.value.is_server_error is False

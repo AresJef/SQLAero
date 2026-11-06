@@ -644,11 +644,12 @@ impl Compiler {
                 // The old lexer/codec can no longer prove which later bytes
                 // are protected. Inspect the bounded suffix conservatively,
                 // without rewriting it or guessing the new server context.
-                if byte == b'%'
-                    && self
-                        .source
-                        .get(position + 1)
-                        .is_some_and(|next| matches!(next, b's' | b'%' | b'('))
+                if (self.native_markers && byte == b'?')
+                    || (byte == b'%'
+                        && self
+                            .source
+                            .get(position + 1)
+                            .is_some_and(|next| matches!(next, b's' | b'%' | b'(')))
                 {
                     return Err(TemplateError::ContextChange {
                         offset: self.source_position(position)?,
@@ -1109,6 +1110,20 @@ mod tests {
         let native = native.advance().unwrap().unwrap();
         assert_eq!(native.slots(), 1);
         let mut preview = Compiler::for_prepared_display(source, codec(), false, false);
+        assert!(matches!(
+            preview.advance(),
+            Err(TemplateError::ContextChange { .. })
+        ));
+    }
+
+    #[test]
+    fn prepared_preview_cannot_lose_its_raw_marker_guard_after_a_context_barrier() {
+        let mut preview = Compiler::for_prepared_display(
+            b"SET NAMES latin1; SELECT ?".to_vec(),
+            codec(),
+            false,
+            false,
+        );
         assert!(matches!(
             preview.advance(),
             Err(TemplateError::ContextChange { .. })
