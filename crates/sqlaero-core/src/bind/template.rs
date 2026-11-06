@@ -74,6 +74,45 @@ impl Template {
         self.slots
     }
 
+    /// Recognize one ordinary `LOAD DATA ... LOCAL INFILE` request using the
+    /// retained lexical tokens. Call before `prepare_merge` consumes them.
+    /// Missing or unsafe lexical metadata returns false; quoted/commented
+    /// semicolons do not delimit a statement. This neither validates the rest
+    /// of MySQL's LOAD grammar nor authorizes any local filesystem source.
+    #[must_use]
+    pub fn is_single_local_infile(&self) -> bool {
+        let Some(tokens) = &self.merge_tokens else {
+            return false;
+        };
+        let word = |index: usize, expected: &[u8]| {
+            tokens.get(index).is_some_and(|token| {
+                self.source
+                    .get(token.start..token.end)
+                    .is_some_and(|source| source.eq_ignore_ascii_case(expected))
+            })
+        };
+        if !word(0, b"LOAD") || !word(1, b"DATA") {
+            return false;
+        }
+        let local = if word(2, b"LOW_PRIORITY") || word(2, b"CONCURRENT") {
+            3
+        } else {
+            2
+        };
+        word(local, b"LOCAL")
+            && word(local + 1, b"INFILE")
+            && tokens
+                .iter()
+                .enumerate()
+                .all(|(index, token)| token.symbol != b';' || index + 1 == tokens.len())
+    }
+
+    /// Return the same encoded allocation after a read-only lexical check.
+    #[must_use]
+    pub fn into_source(self) -> Vec<u8> {
+        self.source
+    }
+
     /// Consume optional lexical metadata and recognize the approved repeated
     /// VALUES row. This preparation happens once, never once per input row.
     pub fn prepare_merge(&mut self) -> Option<super::batch::Layout> {
@@ -317,6 +356,26 @@ impl Compiler {
         compiler.tokens = Some(Vec::new());
         compiler
     }
+
+    /// Inspect an already assembled COM_QUERY without activating binding or
+    /// changing its bytes. The command prefix is retained in the allocation
+    /// but excluded from SQL tokens. A different/missing prefix is unreliable
+    /// for LOCAL authorization and can never produce a positive classification.
+    #[must_use]
+    pub fn for_local_query(
+        request: Vec<u8>,
+        codec: Codec,
+        no_backslash: bool,
+        ansi_quotes: bool,
+    ) -> Self {
+        let valid = request.first() == Some(&0x03);
+        let mut compiler = Self::for_batch(request, codec, no_backslash, ansi_quotes);
+        compiler.binding = false;
+        compiler.merge_safe = valid;
+        compiler.position = usize::from(valid);
+        compiler
+    }
+
     /// Share the ordinary lexer while rejecting active raw native markers.
     /// Public positional directives remain %s and retain their exact ranges.
     #[must_use]

@@ -9,6 +9,7 @@ mod diagnostics;
 mod errors;
 mod input;
 mod json;
+mod local;
 mod metadata;
 mod output;
 mod reader;
