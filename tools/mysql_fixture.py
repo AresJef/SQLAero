@@ -96,15 +96,30 @@ def write_private(path: Path, content: str) -> None:
         output.write(content)
 
 
+def openssl_program() -> str:
+    """Resolve an already provisioned OpenSSL; never install a fallback tool."""
+    selected = os.environ.get('SQLAERO_OPENSSL') or 'openssl'
+    executable = shutil.which(selected)
+    if executable is None:
+        raise RuntimeError('Set SQLAERO_OPENSSL or provide OpenSSL on PATH')
+    return str(Path(executable).resolve())
+
+
+def feature_environment(output: Path) -> None:
+    """Opt in only this owned fixture to mutable TLS tests in the Actions job."""
+    openssl = openssl_program()
+    with output.open('a', encoding='utf-8') as stream:
+        stream.write(f'SQLAERO_OPENSSL={openssl}\n')
+        stream.write(f'SQLAERO_TEST_MUTABLE_TLS_ROOT={ROOT}\n')
+
+
 def certificates() -> Path:
     """Create a private CA, server certificate and encrypted client key once."""
     directory = ROOT / 'tls'
     directory.mkdir(mode=0o700, exist_ok=True)
     if (directory / 'complete').exists():
         return directory
-    openssl = os.environ.get('SQLAERO_OPENSSL') or shutil.which('openssl')
-    if not openssl:
-        raise RuntimeError('Set SQLAERO_OPENSSL or provide OpenSSL on PATH')
+    openssl = openssl_program()
     configuration = directory / 'openssl.cnf'
     write_private(configuration, '[req]\ndistinguished_name=dn\nprompt=no\n'
                   '[dn]\nCN=SQLAero isolated test CA\n'
@@ -190,6 +205,29 @@ def ready_endpoint(port: int, unix_socket: Path | None) -> bool:
         return False
 
 
+def feature_grants(prefix: str | None, partial_revokes: bool) -> str:
+    """Grant only the owned CALL schema and two diagnostic tables, never global CREATE.
+
+    Database-level GRANT names are patterns when partial_revokes is disabled;
+    literal underscores must then be escaped even inside identifier quotes.
+    """
+    if prefix is not None and (not 1 <= len(prefix) <= 32
+            or not all(char.isascii() and (char.isalnum() or char == '_') for char in prefix)):
+        raise ValueError('SQLAERO_TEST_CALLPROC_PREFIX must contain 1..32 ASCII letters, digits or underscores')
+    statements: list[str] = []
+    for host in ('localhost', '127.0.0.1'):
+        account = f"'sqlaero'@'{host}'"
+        if prefix is not None:
+            database = prefix + '`database'
+            if not partial_revokes:
+                database = database.replace('_', r'\_')
+            quoted = '`' + database.replace('`', '``') + '`'
+            statements.append(f'GRANT CREATE, DROP, CREATE ROUTINE, ALTER ROUTINE, EXECUTE ON {quoted}.* TO {account};')
+        for table in ('user_variables_by_thread', 'threads'):
+            statements.append(f'GRANT SELECT ON `performance_schema`.`{table}` TO {account};')
+    return '\n'.join(statements) + '\n'
+
+
 def prepare(label: str, tls: Path) -> dict[str, Any]:
     """Initialize, launch and verify one independent native MySQL instance."""
     version, port = VERSIONS[label]
@@ -262,6 +300,11 @@ def prepare(label: str, tls: Path) -> dict[str, Any]:
                   'transport': 'tcp' if os.name == 'nt' else 'unix'})
     write_private(state_path, json.dumps(state))
     actual = run(mysql_command(label), data='SELECT VERSION(), @@port, @@socket;').strip()
+    partial_revokes = run(mysql_command(label), data='SELECT @@GLOBAL.partial_revokes;').strip()
+    if partial_revokes not in ('0', '1'):
+        raise RuntimeError('Unexpected partial_revokes value from the owned fixture')
+    run(mysql_command(label), data=feature_grants(
+        os.environ.get('SQLAERO_TEST_CALLPROC_PREFIX'), partial_revokes == '1'))
     if fresh:
         bootstrap.unlink()
     run(mysql_command(label, 'test'), data='SELECT 1;')
@@ -293,7 +336,7 @@ def stop(label: str) -> None:
 def main() -> None:
     """Run the explicitly selected fixture operation."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('action', choices=['prepare', 'stop', 'diagnostics', 'clients'])
+    parser.add_argument('action', choices=['prepare', 'stop', 'diagnostics', 'clients', 'environment'])
     parser.add_argument('--output', type=Path)
     parser.add_argument('--client84', type=Path)
     parser.add_argument('--client97', type=Path)
@@ -307,6 +350,11 @@ def main() -> None:
     if ROOT.is_symlink() or (os.name == 'posix' and ROOT.stat().st_uid != os.getuid()):
         raise RuntimeError('Fixture root must be owned by the current user and not be a symlink')
     ROOT.chmod(0o700)
+    if arguments.action == 'environment':
+        if arguments.output is None:
+            parser.error('environment requires --output')
+        feature_environment(arguments.output)
+        return
     if arguments.action == 'clients':
         if arguments.client84 is None or arguments.client97 is None:
             parser.error('clients requires --client84 and --client97')

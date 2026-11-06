@@ -307,3 +307,116 @@ def test_joint_provider_observation_gap_is_limited_to_its_five_real_cases(tmp_pa
     tree.write(report)
     with pytest.raises(AssertionError):
         release_artifacts.test_totals(report, 'windows-arm64', capabilities)
+
+
+def feature_report(
+    tmp_path: Path, target: str, free: bool,
+    cases: list[tuple[str, str, str]], unavailable: dict[str, str] | None = None,
+) -> tuple[Path, Path]:
+    """Add exact new cases to the independently frozen baseline observations."""
+    from xml.etree import ElementTree
+    report = tmp_path / 'features.xml'
+    if target.startswith('windows-'):
+        write_skips(report, PARALLEL_NAMES, 'tests.test_benchmark_parallel', PARALLEL_REASON)
+    else:
+        write_skips(report, (UNIX_NAME,), 'tests.test_public_connection', UNIX_REASON)
+    tree = ElementTree.parse(report)
+    suite = tree.getroot()
+    for classname, name, reason in cases:
+        case = ElementTree.SubElement(suite, 'testcase', classname=classname, name=name)
+        ElementTree.SubElement(case, 'skipped', message=reason)
+    count = len(suite.findall('testcase'))
+    suite.set('tests', str(count))
+    suite.set('skipped', str(count))
+    tree.write(report)
+    capabilities = tmp_path / 'providers.json'
+    capabilities.write_text(json.dumps({'platform': target, 'free_threaded': free,
+                                        'unavailable': unavailable or {}}))
+    return report, capabilities
+
+
+@pytest.mark.parametrize('free', [False, True])
+def test_nogil_observations_are_na_only_for_a_confirmed_ordinary_abi(tmp_path: Path, free: bool) -> None:
+    names = ['test_native_identity_retains_a_disabled_gil']
+    names += [f'test_nogil_real_materialization_and_ownership_overlap[{mode}-{label}]'
+              for mode in ('atomic', 'busy', 'independent', 'closed-complete', 'closed-incomplete')
+              for label in ('84', '97')]
+    names += [f'test_nogil_cross_batch_dict_keys_release_native_cache_and_keep_delivered_owners[{label}]'
+              for label in ('84', '97')]
+    report, capabilities = feature_report(tmp_path, 'macos-arm64', free,
+        [('tests.test_streaming_nogil', name, 'requires a verified GIL-disabled package') for name in names])
+    if free:
+        with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+            release_artifacts.test_totals(report, 'macos-arm64', capabilities)
+    else:
+        assert release_artifacts.test_totals(report, 'macos-arm64', capabilities)['skipped'] == 14
+
+
+@pytest.mark.parametrize('free', [False, True])
+@pytest.mark.parametrize('target', ['windows-x86_64', 'windows-arm64'])
+def test_tls_unix_na_is_exact_on_both_windows_abis(tmp_path: Path, target: str, free: bool) -> None:
+    names = [f'test_unix_tls_diagnostic_identity_follows_explicit_name_only[{mode}]'
+             for mode in ('REQUIRED', 'VERIFY_CA', 'VERIFY_IDENTITY')]
+    names.append('test_default_plain_unix_connection_retains_no_tls_snapshot')
+    report, capabilities = feature_report(tmp_path, target, free,
+        [('tests.test_tls_expansion', name, 'Unix socket transport is unavailable') for name in names])
+    assert release_artifacts.test_totals(report, target, capabilities)['skipped'] == 28
+
+
+@pytest.mark.parametrize(('classname', 'name', 'reason'), [
+    ('tests.test_callproc_cursor', 'test_database_identifier_with_backtick_when_fixture_privilege_allows[84]', 'CREATE DATABASE unavailable: OperationalError code=1044'),
+    ('tests.test_callproc_cursor', 'test_server_slot_values_are_cleared_and_names_reused_without_touching_user_vars[False-84]', 'performance_schema variable inspection unavailable: OperationalError code=1142'),
+    ('tests.test_callproc_cursor', 'test_pure_in', 'pre-API installed build: callproc/output property not registered'),
+    ('tests.test_streaming_nogil', 'test_unapproved_nogil_case', 'requires a verified GIL-disabled package'),
+    ('tests.test_streaming_nogil', 'test_native_identity_retains_a_disabled_gil', 'requires a verified GIL-disabled package changed'),
+    ('tests.test_callproc_concurrency', 'test_parallel_call', 'requires a verified GIL-disabled package'),
+])
+def test_feature_na_never_hides_permissions_missing_api_or_unrelated_concurrency(
+    tmp_path: Path, classname: str, name: str, reason: str,
+) -> None:
+    report, capabilities = feature_report(tmp_path, 'windows-arm64', False, [(classname, name, reason)])
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, 'windows-arm64', capabilities)
+
+
+@pytest.mark.parametrize('missing', [False, True])
+def test_new_arrow_cases_require_the_existing_windows_arm64_provider_declaration(tmp_path: Path, missing: bool) -> None:
+    cases = [
+        ('tests.test_feature_expansion_a_planner', 'test_arrow_natural_table_keeps_the_shared_row_role'),
+        ('tests.test_feature_expansion_a_planner', 'test_nested_arrow_cells_publish_actual_writer_roles'),
+        ('tests.test_feature_expansion_a_planner', 'test_prepared_display_rejects_nested_arrow_parameters'),
+        ('tests.test_feature_expansion_a_escape', 'test_arrow_natural_table_projection_uses_shared_shapes'),
+        ('tests.test_feature_expansion_a', 'test_native_rows_consume_provider_columns_directly[pyarrow]'),
+        ('tests.test_feature_expansion_a', 'test_native_rows_keep_dictionary_labels_as_values_and_reject_nested_cells'),
+        ('tests.test_feature_expansion_a', 'test_native_provider_text_and_binary_keep_bounded_fragments_and_error_offsets[pyarrow]'),
+    ]
+    unavailable = {'pyarrow': 'NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64'} if missing else {}
+    report, capabilities = feature_report(tmp_path, 'windows-arm64', False,
+        [(module, name, "could not import 'pyarrow': No module named 'pyarrow'") for module, name in cases], unavailable)
+    if missing:
+        assert release_artifacts.test_totals(report, 'windows-arm64', capabilities)['skipped'] == 31
+    else:
+        with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+            release_artifacts.test_totals(report, 'windows-arm64', capabilities)
+
+
+def test_feature_na_needs_its_platform_and_real_abi_evidence(tmp_path: Path) -> None:
+    case = ('tests.test_tls_expansion', 'test_default_plain_unix_connection_retains_no_tls_snapshot',
+            'Unix socket transport is unavailable')
+    report, capabilities = feature_report(tmp_path, 'macos-arm64', False, [case])
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, 'macos-arm64', capabilities)
+    report, _ = feature_report(tmp_path, 'windows-arm64', False, [case])
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, 'windows-arm64')
+
+
+def test_new_polars_case_is_na_only_for_the_declared_free_threaded_gap(tmp_path: Path) -> None:
+    case = ('tests.test_feature_expansion_a', 'test_native_rows_consume_provider_columns_directly[polars]',
+            "could not import 'polars': No module named 'polars'")
+    report, capabilities = feature_report(tmp_path, 'macos-arm64', True, [case],
+        {'polars': 'NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI'})
+    assert release_artifacts.test_totals(report, 'macos-arm64', capabilities)['skipped'] == 2
+    report, capabilities = feature_report(tmp_path, 'macos-arm64', False, [case])
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, 'macos-arm64', capabilities)

@@ -68,6 +68,33 @@ WINDOWS_PARALLEL_NA = frozenset({
     'test_cold_first_observation_precedes_checks_and_default_stays_hot_only',
     'test_cold_first_guards_and_original_creation_error_are_preserved',
 })
+NOGIL_ONLY_NA = frozenset({
+    'test_native_identity_retains_a_disabled_gil',
+    *(f'test_nogil_real_materialization_and_ownership_overlap[{case}-{label}]'
+      for case in ('atomic', 'busy', 'independent', 'closed-complete', 'closed-incomplete')
+      for label in ('84', '97')),
+    *(f'test_nogil_cross_batch_dict_keys_release_native_cache_and_keep_delivered_owners[{label}]'
+      for label in ('84', '97')),
+})
+WINDOWS_TLS_UNIX_NA = frozenset({
+    *(f'test_unix_tls_diagnostic_identity_follows_explicit_name_only[{mode}]'
+      for mode in ('REQUIRED', 'VERIFY_CA', 'VERIFY_IDENTITY')),
+    'test_default_plain_unix_connection_retains_no_tls_snapshot',
+})
+FEATURE_PROVIDER_NA = {
+    'pyarrow': frozenset({
+        ('tests.test_feature_expansion_a_planner', 'test_arrow_natural_table_keeps_the_shared_row_role'),
+        ('tests.test_feature_expansion_a_planner', 'test_nested_arrow_cells_publish_actual_writer_roles'),
+        ('tests.test_feature_expansion_a_planner', 'test_prepared_display_rejects_nested_arrow_parameters'),
+        ('tests.test_feature_expansion_a_escape', 'test_arrow_natural_table_projection_uses_shared_shapes'),
+        ('tests.test_feature_expansion_a', 'test_native_rows_consume_provider_columns_directly[pyarrow]'),
+        ('tests.test_feature_expansion_a', 'test_native_rows_keep_dictionary_labels_as_values_and_reject_nested_cells'),
+        ('tests.test_feature_expansion_a', 'test_native_provider_text_and_binary_keep_bounded_fragments_and_error_offsets[pyarrow]'),
+    }),
+    'polars': frozenset({
+        ('tests.test_feature_expansion_a', 'test_native_rows_consume_provider_columns_directly[polars]'),
+    }),
+}
 
 
 def digest(path: Path) -> str:
@@ -237,10 +264,14 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
               for name in ('tests', 'failures', 'errors', 'skipped')}
     assert totals['tests'] > 0 and totals['failures'] == totals['errors'] == 0, (path, totals)
     windows = target in ('windows-x86_64', 'windows-arm64')
+    free: bool | None = None
     unavailable: dict[str, str] = {}
     if providers is not None:
         capabilities: dict[str, Any] = json.loads(providers.read_text(encoding='utf-8'))
         assert target is None or capabilities['platform'] == target
+        assert capabilities['platform'] in PLATFORMS
+        assert type(capabilities['free_threaded']) is bool
+        free = capabilities['free_threaded']
         unavailable = capabilities['unavailable']
         assert set(unavailable) <= {'polars', 'pyarrow'}
         if 'polars' in unavailable:
@@ -282,8 +313,20 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
                                  'test_c_array_consumption_owns_both_releases_on_every_exit[cached-dictionary-encoding-failure]',
                              }
                              and skipped.get('message') == 'C Array release observation needs both optional providers')
+            nogil_only = (free is False and identity[0] == 'tests.test_streaming_nogil'
+                          and identity[1] in NOGIL_ONLY_NA
+                          and skipped.get('message') == 'requires a verified GIL-disabled package')
+            tls_unix = (free is not None and windows and identity[0] == 'tests.test_tls_expansion'
+                        and identity[1] in WINDOWS_TLS_UNIX_NA
+                        and skipped.get('message') == 'Unix socket transport is unavailable')
+            feature_provider = any(
+                provider in unavailable and identity in cases
+                and skipped.get('message', '').startswith(f"could not import '{provider}':")
+                for provider, cases in FEATURE_PROVIDER_NA.items()
+            )
             baseline_skips += int(unix_socket or parallel)
-            assert unix_socket or parallel or module_skip or arrow_case or polars_case or joint_release, (
+            assert (unix_socket or parallel or module_skip or arrow_case or polars_case
+                    or joint_release or nogil_only or tls_unix or feature_provider), (
                         'Unexpected skipped requirement', path, case.attrib, skipped.attrib)
             assert identity not in seen, ('Duplicate skipped requirement', path, identity)
             seen.add(identity)
