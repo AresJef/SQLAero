@@ -39,7 +39,7 @@ def test_nextset_reader_quota_failure_keeps_an_explicit_failure_boundary(
     # The second set's real metadata/one row fits native reception; preparing
     # its per-column Reader plans needs additional result-owned capacity.
     wide = ",".join(f"{value} AS c{value}" for value in range(256))
-    sql = f"SELECT %s AS a_first;SELECT {wide};SELECT 99 AS a_third"
+    sql = f"SELECT %s AS a_first UNION ALL SELECT 70;SELECT {wide};SELECT 99 AS a_third"
     with live(label, result_memory_limit=READER_LIMIT,
               total_result_memory_limit=4 * 1024 * 1024) as connection:
         current = (connection.cursor(dict, streaming=streaming) if dictionary
@@ -50,7 +50,7 @@ def test_nextset_reader_quota_failure_keeps_an_explicit_failure_boundary(
                 # already buffered prefix and must not steal its wire owner.
                 current.executemany(sql, [(7,), (8,)])
             else:
-                assert current.execute(sql, (7,)) == 1
+                assert current.execute(sql, (7,)) == 2
             assert current.fetchone() == ({"a_first": 7} if dictionary else (7,))
             with pytest.raises(OperationalError) as immediate:
                 current.nextset()
@@ -58,6 +58,10 @@ def test_nextset_reader_quota_failure_keeps_an_explicit_failure_boundary(
             assert immediate.value.is_server_error is False
             assert "native result requires" in immediate.value.message
             assert str(READER_LIMIT) in immediate.value.message
+            # Entering nextset explicitly abandons the unread old row even
+            # when the next set's local Reader preparation cannot finish.
+            assert current.fetchone() is None
+            assert current.fetchall() == ()
             # A permanent saved boundary is sufficient; recovery of the old
             # rows or the rejected set is not required. Neither EOF nor the
             # third result may silently replace the failed switch.
@@ -275,6 +279,35 @@ def test_first_and_final_ack_copy_failure_preserves_the_reliable_batch_count(
             assert current.batch_row_count == 5
             # Receipt of a count does not invent a readable row owner, metadata
             # for an unpublished result, or a transaction-commit confirmation.
+            assert connection.closed is True
+        finally:
+            current.close()
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
+@pytest.mark.parametrize("close", [False, True], ids=["nextset", "close"])
+def test_discard_ack_copy_failure_preserves_the_reliable_batch_count(
+    label: str, close: bool,
+) -> None:
+    with _completion_copy_failure(label, FINAL_SQL) as (connection, trace):
+        current = connection.cursor(streaming=True)
+        try:
+            assert current.execute(FINAL_SQL) is None
+            assert current.columns.names == ("a_final",)
+            # No fetch precedes the drain. Both exits count and validate the
+            # real five rows without converting the discarded public values.
+            with pytest.raises(OperationalError) as caught:
+                if close:
+                    current.close()
+                else:
+                    current.nextset()
+            notes = _trusted_copy_error(caught.value, trace, FINAL_SQL)
+            assert trace.rows == [b"\x02" + str(value).encode("ascii") for value in range(20, 25)]
+            assert "confirmed 1 commands" in notes
+            assert "actual cumulative row count 5," in notes
+            assert current.batch_row_count == 5
+            assert current.closed is close
             assert connection.closed is True
         finally:
             current.close()
