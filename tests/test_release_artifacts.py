@@ -476,3 +476,66 @@ def test_resource_nogil_na_requires_an_exact_boolean_abi_declaration(
     capabilities.write_text(json.dumps(payload))
     with pytest.raises(AssertionError):
         release_artifacts.test_totals(report, 'macos-arm64', capabilities)
+
+
+@pytest.mark.parametrize(('provider', 'name'), [
+    ('pyarrow', 'test_optional_aware_cells_reject_non_utc_hint_before_target_send[arrow_array-False-84]'),
+    ('pyarrow', 'test_optional_all_null_timezone_columns_still_write_sql_null[arrow_batch-True-97]'),
+    ('pyarrow', 'test_optional_aware_cells_reject_an_unconfirmed_system_timezone_hint[arrow_table-True-84]'),
+    ('pyarrow', 'test_optional_naive_or_unrelated_hint_does_not_create_a_timezone_refusal[aware_non_timezone-pandas_arrow-False-97]'),
+    ('pyarrow', 'test_optional_naive_or_unrelated_hint_does_not_create_a_timezone_refusal[naive_non_utc-arrow_table-True-84]'),
+    ('polars', 'test_optional_aware_cells_reject_non_utc_hint_before_target_send[polars_series-False-84]'),
+    ('polars', 'test_optional_all_null_timezone_columns_still_write_sql_null[polars_table-True-97]'),
+    ('polars', 'test_optional_naive_or_unrelated_hint_does_not_create_a_timezone_refusal[naive_non_utc-polars_table-True-84]'),
+])
+@pytest.mark.parametrize('declared', [False, True])
+def test_optional_time_context_na_requires_the_real_provider_gap(
+    tmp_path: Path, provider: str, name: str, declared: bool,
+) -> None:
+    target = 'windows-arm64' if provider == 'pyarrow' else 'macos-arm64'
+    free = provider == 'polars'
+    gap = ('NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64' if provider == 'pyarrow'
+           else 'NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI')
+    reason = f"could not import '{provider}': No module named '{provider}'"
+    report, capabilities = feature_report(tmp_path, target, free,
+        [('tests.test_binding_time_context_optional', name, reason)],
+        {provider: gap} if declared else {})
+    if declared:
+        expected = len(PARALLEL_NAMES) + 1 if target.startswith('windows-') else 2
+        assert release_artifacts.test_totals(report, target, capabilities)['skipped'] == expected
+    else:
+        with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+            release_artifacts.test_totals(report, target, capabilities)
+
+
+@pytest.mark.parametrize(('module', 'name', 'reason'), [
+    ('tests.test_binding_time_context_optional',
+     'test_optional_all_null_timezone_columns_still_write_sql_null[arrow_table-False-84]',
+     'pre-API installed build: UTC guard unavailable'),
+    ('tests.test_binding_time_context_optional',
+     'test_optional_aware_cells_reject_non_utc_hint_before_target_send[arrow_scalar-True-84]',
+     "could not import 'pyarrow': No module named 'pyarrow'"),
+    ('tests.test_other_optional_module',
+     'test_optional_aware_cells_reject_non_utc_hint_before_target_send[arrow_array-False-84]',
+     "could not import 'pyarrow': No module named 'pyarrow'"),
+    ('tests.test_binding_time_context_optional',
+     'test_optional_all_null_timezone_columns_still_write_sql_null[arrow_table-False-84]',
+     "could not import 'polars': No module named 'polars'"),
+])
+def test_optional_time_context_na_rejects_unknown_cases_or_non_import_failures(
+    tmp_path: Path, module: str, name: str, reason: str,
+) -> None:
+    report, capabilities = feature_report(tmp_path, 'windows-arm64', False, [(module, name, reason)],
+        {'pyarrow': 'NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64'})
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, 'windows-arm64', capabilities)
+
+
+def test_optional_time_context_polars_gap_cannot_apply_to_an_ordinary_abi(tmp_path: Path) -> None:
+    case = ('tests.test_binding_time_context_optional',
+            'test_optional_aware_cells_reject_non_utc_hint_before_target_send[polars_table-False-84]',
+            "could not import 'polars': No module named 'polars'")
+    report, capabilities = feature_report(tmp_path, 'macos-arm64', False, [case],
+        {'polars': 'NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI'})
+    with pytest.raises(AssertionError):
+        release_artifacts.test_totals(report, 'macos-arm64', capabilities)

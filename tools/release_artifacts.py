@@ -95,9 +95,30 @@ FEATURE_PROVIDER_NA = {
         ('tests.test_feature_expansion_a', 'test_native_rows_consume_provider_columns_directly[pyarrow]'),
         ('tests.test_feature_expansion_a', 'test_native_rows_keep_dictionary_labels_as_values_and_reject_nested_cells'),
         ('tests.test_feature_expansion_a', 'test_native_provider_text_and_binary_keep_bounded_fragments_and_error_offsets[pyarrow]'),
+        *(('tests.test_binding_time_context_optional', f'{function}[{kind}-{prepared}-{label}]')
+          for function in ('test_optional_aware_cells_reject_non_utc_hint_before_target_send',
+                           'test_optional_all_null_timezone_columns_still_write_sql_null')
+          for kind in ('pandas_arrow', 'arrow_array', 'arrow_batch', 'arrow_table')
+          for prepared in (False, True) for label in ('84', '97')),
+        *(('tests.test_binding_time_context_optional',
+           f'test_optional_aware_cells_reject_an_unconfirmed_system_timezone_hint[arrow_table-{prepared}-{label}]')
+          for prepared in (False, True) for label in ('84', '97')),
+        *(('tests.test_binding_time_context_optional',
+           f'test_optional_naive_or_unrelated_hint_does_not_create_a_timezone_refusal[{scenario}-{kind}-{prepared}-{label}]')
+          for scenario in ('naive_non_utc', 'aware_non_timezone') for kind in ('pandas_arrow', 'arrow_table')
+          for prepared in (False, True) for label in ('84', '97')),
     }),
     'polars': frozenset({
         ('tests.test_feature_expansion_a', 'test_native_rows_consume_provider_columns_directly[polars]'),
+        *(('tests.test_binding_time_context_optional', f'{function}[{kind}-{prepared}-{label}]')
+          for function in ('test_optional_aware_cells_reject_non_utc_hint_before_target_send',
+                           'test_optional_all_null_timezone_columns_still_write_sql_null')
+          for kind in ('polars_series', 'polars_table')
+          for prepared in (False, True) for label in ('84', '97')),
+        *(('tests.test_binding_time_context_optional',
+           f'test_optional_naive_or_unrelated_hint_does_not_create_a_timezone_refusal[{scenario}-polars_table-{prepared}-{label}]')
+          for scenario in ('naive_non_utc', 'aware_non_timezone')
+          for prepared in (False, True) for label in ('84', '97')),
     }),
 }
 
