@@ -3,12 +3,34 @@
 use crate::{errors, input::ScalarTypes, json};
 use pyo3::exceptions::{PyOverflowError, PyUnicodeDecodeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDate, PyDateTime, PyDelta, PyString, PyTime, PyTuple};
+use pyo3::types::{PyDate, PyDateTime, PyDelta, PyList, PyString, PyTime, PyTuple};
 use sqlaero_core::charset::{codec::CodecError, output::OutputCodec};
 use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::memory::{Buffer, MemoryError, Scope};
 use sqlaero_core::result::decode::{self, ContentError, Integer, Kind, Plan};
 use std::sync::Arc;
+
+/// Publish a small final list while preserving the original allocation error.
+/// The private list cannot escape before all owned items have been installed.
+pub(crate) fn list<'py, const N: usize>(
+    py: Python<'py>,
+    items: [Bound<'py, PyAny>; N],
+) -> PyResult<Bound<'py, PyList>> {
+    let length = isize::try_from(N).map_err(|_| errors::memory_error(py))?;
+    // SAFETY: PyList_New returns a new exact list or NULL with an exception.
+    // Each SetItem steals its one owned reference, including on failure. The
+    // attached caller exclusively owns the list until every slot is filled.
+    unsafe {
+        let result = Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyList_New(length))?
+            .cast_into_unchecked::<PyList>();
+        for (index, item) in items.into_iter().enumerate() {
+            if pyo3::ffi::PyList_SetItem(result.as_ptr(), index as isize, item.into_ptr()) < 0 {
+                return Err(PyErr::fetch(py));
+            }
+        }
+        Ok(result)
+    }
+}
 
 /// Publish an exact native count without an infallible host conversion. The
 /// common range uses one scalar constructor; larger sums use a stack buffer.

@@ -572,7 +572,7 @@ pub(crate) fn escape<'py>(
     let budget = IoBudget::new(TimeoutKind::Operation, None, None, None);
     let mut rows = Rows::new(data, many, itemize, types, &budget)?;
     if rows.public_batch() {
-        let output = pyo3::types::PyList::new(py, std::iter::empty::<Bound<'py, PyAny>>())?;
+        let output = crate::output::list(py, [])?;
         while let Some(row) = rows.next(types, &budget)? {
             output.append(row.project(py, types, &context, &budget)?)?;
         }
