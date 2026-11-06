@@ -1,7 +1,7 @@
 //! Strict boundary configuration, shared path parsing and reusable TLS material.
 
 use num_bigint::BigUint;
-use pyo3::exceptions::{PyTypeError, PyValueError};
+use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyFloat, PyInt, PyString};
 use rustls::sign::CertifiedKey;
@@ -236,6 +236,22 @@ pub(crate) fn public_key(
 
 fn provided(value: Option<&Bound<'_, PyAny>>) -> bool {
     value.is_some_and(|value| !value.is_none())
+}
+
+/// Protect secret text only where Unicode errors come from native extraction.
+fn secret_utf8<T>(py: Python<'_>, name: &str, result: PyResult<T>) -> PyResult<T> {
+    result.map_err(|error| {
+        if error.is_instance_of::<PyUnicodeEncodeError>(py) {
+            // UnicodeEncodeError owns the original string. Do not retain it as
+            // a cause: even its repr/args would expose the secret input.
+            crate::errors::builtin_format::<PyValueError>(
+                py,
+                format_args!("{name} must contain valid UTF-8 text"),
+            )
+        } else {
+            error
+        }
+    })
 }
 
 fn pem_data(value: Option<&Bound<'_, PyAny>>, name: &str) -> PyResult<Option<Zeroizing<Vec<u8>>>> {
@@ -637,15 +653,19 @@ impl Ssl {
         let cert_file = optional_path(cert_file, "cert_file")?;
         let cert_data = pem_data(cert_data, "cert_data")?;
         let key_file = optional_path(key_file, "key_file")?;
-        let key_data = pem_data(key_data, "key_data")?;
+        let key_data = secret_utf8(py, "key_data", pem_data(key_data, "key_data"))?;
         if cert_present != key_present {
             return Err(crate::errors::builtin_message::<PyValueError>(
                 py,
                 "client certificate (cert_file/cert_data) and private key (key_file/key_data) must be provided together",
             ));
         }
-        let password = optional_text(key_password, "key_password", false)?
-            .map(|value| Zeroizing::new(value.into_bytes()));
+        let password = secret_utf8(
+            py,
+            "key_password",
+            optional_text(key_password, "key_password", false),
+        )?
+        .map(|value| Zeroizing::new(value.into_bytes()));
         if password.is_some() && !key_present {
             return Err(crate::errors::builtin_message::<PyValueError>(
                 py,
