@@ -312,6 +312,7 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
 ) -> None:
     gil_before = getattr(sys, '_is_gil_enabled', lambda: True)()
     import tracemalloc
+    from time import perf_counter_ns
 
     certificate = _large_san_peer(tmp_path)
     original_der = certificate.to_der()
@@ -361,6 +362,7 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
     try:
         captured: KeyboardInterrupt | None = None
         completed_names: tuple[str, ...] | None = None
+        getter_elapsed_ns: int | None = None
         try:
             if not was_tracing:
                 # Standard allocation tracing broadens the same real output work;
@@ -370,11 +372,16 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
             record_property('signal_traceback_frames', tracemalloc.get_traceback_limit())
             baseline = sys.getallocatedblocks()
             alarm.start(0.00005, 0.00005, wait_ready=True)
+            getter_started_ns: int = perf_counter_ns()
             try:
                 _ = read_names()
                 completed_names = _
             except KeyboardInterrupt as error:
                 captured = error
+            finally:
+                # Includes the read_names wrapper, signal handler and exception
+                # handling; this is diagnostic elapsed time, not a benchmark.
+                getter_elapsed_ns = perf_counter_ns() - getter_started_ns
         finally:
             alarm.close()
         # Sample before diagnostic properties or identity sets allocate. This
@@ -385,6 +392,8 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
         record_property('signal_diagnostic_reads', sorted(reads))
         record_property('signal_diagnostic_samples', samples)
         record_property('signal_diagnostic_returned', returned)
+        record_property('signal_diagnostic_getter_elapsed_ns_including_wrapper_handler_and_exception_handling',
+                        getter_elapsed_ns)
         record_property('signal_diagnostic_normal_completion_net_blocks_after_return_and_alarm_cleanup',
                         normal_completion_delta)
         if captured is None and completed_names is not None:
