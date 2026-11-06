@@ -332,6 +332,20 @@ impl CursorCore {
                 total_rows,
                 ..
             } => {
+                let count = total_rows.map_or_else(
+                    || u128::from(completion.affected_rows()),
+                    |count| count as u128,
+                );
+                *self.counters(py)? = Some(Counts {
+                    rows: count,
+                    last_id: completion.last_insert_id(),
+                    warnings: u128::from(completion.warnings()),
+                });
+                self.results(py)?.batch = stream.batch;
+                if let Some((before, after)) = event.charset_change {
+                    let connection = self.connection.borrow(py);
+                    return Err(stream.charset_failure(py, &connection, before, after));
+                }
                 if let Some(rows) = &mut stream.rows {
                     if let Some(tail) = tail {
                         rows.push(tail).map_err(|error| output::memory(py, error))?;
@@ -346,16 +360,6 @@ impl CursorCore {
                 } else {
                     self.reader.clear_result(py)?;
                 }
-                let count = total_rows.map_or_else(
-                    || u128::from(completion.affected_rows()),
-                    |count| count as u128,
-                );
-                *self.counters(py)? = Some(Counts {
-                    rows: count,
-                    last_id: completion.last_insert_id(),
-                    warnings: u128::from(completion.warnings()),
-                });
-                self.results(py)?.batch = stream.batch;
             }
         }
         Ok(())
@@ -427,6 +431,7 @@ impl CursorCore {
                             metadata_status,
                         },
                         codec: None,
+                        charset_change: event.charset_change,
                     },
                 )?;
                 Ok(())
@@ -704,8 +709,7 @@ impl CursorCore {
                 ));
             }
             let remaining = target.saturating_sub(rows.position());
-            let event = self.receive_stream_event(py, &connection, stream, remaining)?;
-            self.stream_event(py, stream, event)?;
+            self.receive_stream_event(py, &connection, stream, remaining)?;
         }
     }
 
@@ -715,10 +719,11 @@ impl CursorCore {
         connection: &Connection,
         stream: &mut crate::stream::Stream,
         remaining: usize,
-    ) -> PyResult<crate::stream::Event> {
+    ) -> PyResult<()> {
         let result = stream
             .reserve(py, connection)
-            .and_then(|()| stream.advance(py, connection, remaining));
+            .and_then(|()| stream.advance(py, connection, remaining))
+            .and_then(|event| self.stream_event(py, stream, event));
         if let Err(error) = &result
             && !stream.resource_paused
         {
@@ -784,8 +789,7 @@ impl CursorCore {
             }
             let remaining =
                 count.map_or(usize::MAX, |count| count.saturating_sub(rows.available()));
-            let event = self.receive_stream_event(py, &connection, stream, remaining)?;
-            self.stream_event(py, stream, event)?;
+            self.receive_stream_event(py, &connection, stream, remaining)?;
         }
         let rows = stream.rows.as_mut().ok_or_else(|| {
             errors::client(
@@ -1742,6 +1746,12 @@ macro_rules! cursor_api {
             })*
             /// Execute one SQL operation. SS returns None while a required
             /// first-result count is unknown; this is not execution failure.
+            /// SS server routines must keep character_set_results stable within
+            /// an unread row result. A detected change raises NotSupportedError
+            /// at its real terminator with received count facts preserved;
+            /// an unfinished response is retired. Use buffered Cursor/DictCursor
+            /// for internal charset changes. Header-time detection and withdrawal
+            /// of previously delivered values/metadata cannot be guaranteed.
             /// Omitted args sends original SQL; explicit None binds one NULL.
             /// many/itemize are exact bool and keyword-only. All request chunks
             /// share one deadline. Confirmed prefixes never imply a commit.

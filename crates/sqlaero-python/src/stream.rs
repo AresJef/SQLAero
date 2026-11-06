@@ -29,6 +29,16 @@ use std::{num::NonZeroUsize, ops::Range, time::Instant};
 pub(crate) struct Event {
     pub(crate) value: StreamEvent,
     pub(crate) codec: Option<OutputCodec>,
+    /// A real row terminator disclosed a different results charset after the
+    /// Header had already been returned. Names are static catalog identities.
+    pub(crate) charset_change: Option<(&'static str, &'static str)>,
+}
+
+fn results_charset(facts: &sqlaero_core::session::state::Facts) -> Option<&'static str> {
+    match facts.results_charset.as_ref()? {
+        None => Some("NULL"),
+        Some(name) => sqlaero_core::charset::by_charset_name(name).map(|charset| charset.name),
+    }
 }
 
 /// Only CALL adds staged private work. The ordinary stream keeps its concrete
@@ -73,6 +83,7 @@ pub(crate) struct Stream {
     base_count: u128,
     first: Option<CommandConfirmation>,
     recorded: bool,
+    results_charset: Option<&'static str>,
     pub(crate) batch: Option<u128>,
     pub(crate) failed: bool,
     pub(crate) resource_paused: bool,
@@ -115,6 +126,7 @@ impl Stream {
             base_count,
             first: None,
             recorded: false,
+            results_charset: None,
             batch: None,
             failed: false,
             resource_paused: false,
@@ -149,6 +161,44 @@ impl Stream {
         }
         connection.native.retire();
         self.owner.take();
+    }
+
+    pub(crate) fn charset_failure(
+        &mut self,
+        py: Python<'_>,
+        connection: &Connection,
+        before: &'static str,
+        after: &'static str,
+    ) -> PyErr {
+        let complete = self.finished();
+        if complete {
+            self.failed = true;
+        } else {
+            self.abort(connection);
+        }
+        let error = errors::client_format(
+            py,
+            ClientErrorCode::UnsupportedCapability,
+            format_args!(
+                "character_set_results changed from {before} to {after} inside an unread streaming result. SSCursor and SSDictCursor require this setting to remain stable until that result ends; use buffered Cursor or DictCursor for routines that change it internally."
+            ),
+        );
+        errors::note(
+            py,
+            &error,
+            "The actual current-set terminator and row count were received. This change could not be known when the Header returned; earlier delivered values or metadata cannot be withdrawn. No result encoding was guessed and no request was replayed. A result-set terminator is not a transaction-commit confirmation.",
+        );
+        errors::note(
+            py,
+            &error,
+            if complete {
+                "The whole response is synchronized; its Connection remains available with the newly confirmed session facts."
+            } else {
+                "Later command results or required internal stages remain unread; the Connection was retired rather than claiming that the whole command completed."
+            },
+        );
+        errors::note(py, &error, self.prefix.diagnostic());
+        error
     }
 
     /// Reserve the next accumulation slot before Query starts another message.
@@ -358,28 +408,53 @@ impl Stream {
         {
             self.completed(py, completion, *total_rows)?;
         }
-        let codec = if matches!(event, StreamEvent::Header(_)) {
-            match &self.job {
-                Job::Call(flow) => flow.metadata_codec(),
-                Job::Query(_) => connection
-                    .native
-                    .facts
-                    .lock()
-                    .map_err(|_| {
+        let mut charset_change = None;
+        let codec = match &event {
+            StreamEvent::Header(_) => {
+                let facts = connection.native.facts.lock().map_err(|_| {
+                    errors::client(
+                        py,
+                        ClientErrorCode::InternalState,
+                        "stream metadata facts are unavailable",
+                    )
+                })?;
+                self.results_charset = results_charset(&facts);
+                match &self.job {
+                    Job::Call(flow) => flow.metadata_codec(),
+                    Job::Query(_) => facts.metadata_codec(),
+                }
+            }
+            StreamEvent::End {
+                completion,
+                total_rows: Some(_),
+                ..
+            } if completion
+                .status_flags()
+                .contains(sqlaero_core::protocol::StatusFlags::SERVER_SESSION_STATE_CHANGED) =>
+            {
+                let after = {
+                    let facts = connection.native.facts.lock().map_err(|_| {
                         errors::client(
                             py,
                             ClientErrorCode::InternalState,
-                            "stream metadata facts are unavailable",
+                            "stream terminal charset facts are unavailable",
                         )
-                    })?
-                    .metadata_codec(),
+                    })?;
+                    results_charset(&facts)
+                };
+                if let Some(before) = self.results_charset
+                    && after != Some(before)
+                {
+                    charset_change = Some((before, after.unwrap_or("unconfirmed or unsupported")));
+                }
+                None
             }
-        } else {
-            None
+            _ => None,
         };
         Ok(Some(Event {
             value: event,
             codec,
+            charset_change,
         }))
     }
 

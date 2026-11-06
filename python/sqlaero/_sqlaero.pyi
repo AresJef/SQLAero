@@ -1060,6 +1060,15 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
         batch_row_count are separate. SS fetches do not reset its operation
         budget; user time between calls is excluded from accumulated library time.
 
+        An unread SS row result requires character_set_results to stay stable
+        inside server routines/functions. Use Cursor/DictCursor for internal
+        changes. Explicit settings before CALL or confirmed between sets remain
+        supported. A change may only be reported at the real set terminator;
+        detection raises NotSupportedError with actual received counts, and
+        retires an unfinished response. It cannot detect the change at Header
+        time or withdraw already delivered values/metadata. Early invalid
+        metadata decoding can raise its original UnicodeDecodeError first.
+
         A prepared Cursor sends native scalar parameters at active %s positions,
         does not expand structural fragments or auto-merge VALUES, and does not
         enable public raw ? markers or split multiple SQL into prepared calls.
@@ -1422,6 +1431,8 @@ class SSCursor(_CursorCore[tuple[object, ...], int | None]):
     Unread response ownership prevents
     another command without blocking. Explicit close can drain safely; abandoning
     its last reader retires the connection. Connection close does not drain it.
+    Server routines must keep character_set_results stable within an unread
+    row result; execute documents detection limits and the buffered alternative.
     """
 
 @final
