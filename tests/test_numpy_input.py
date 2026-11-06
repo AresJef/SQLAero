@@ -722,8 +722,13 @@ def test_numpy_record_callback_failure_preserves_the_original_exception_and_rele
 def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(
     kind: str, record_property: Callable[[str, object], None],
 ) -> None:
-    from time import perf_counter_ns
+    import sys
+    import tracemalloc
+    from time import perf_counter_ns, thread_time_ns
     from sqlaero._sqlaero import OperationalTimeoutError
+    record_property("deadline_gil_before", getattr(sys, "_is_gil_enabled", lambda: True)())
+    record_property("deadline_was_tracing", tracemalloc.is_tracing())
+    record_property("deadline_traceback_limit", tracemalloc.get_traceback_limit() if tracemalloc.is_tracing() else 0)
     # Prepare the same provider before starting the tested operation budget.
     _sqlaero._bind_sql("SELECT %s", np.array(["x"], dtype=f"{kind}1"))
     # A larger value separates conversion work from short preparation costs.
@@ -739,11 +744,14 @@ def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(
     encoder = _sqlaero._prepare_encoder()
     observations_ns: list[int] = []
     for index in range(2):
+        started_cpu = thread_time_ns()
         started = perf_counter_ns()
         owner = encoder.encode(args)
         elapsed_ns = perf_counter_ns() - started
+        cpu_ns = thread_time_ns() - started_cpu
         observations_ns.append(elapsed_ns)
         record_property(f"native_observation_{index + 1}_ns", elapsed_ns)
+        record_property(f"native_observation_{index + 1}_cpu_ns", cpu_ns)
         # Both original payloads expand to at least two bytes per source quote.
         # Length checks and owner destruction stay outside the observation.
         assert len(owner) >= 2 * logical_length
@@ -752,23 +760,37 @@ def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(
     record_property("timeout_budget_ns", timeout_ns)
     assert timeout_ns > 0, observations_ns
     actual_elapsed_ns = 0
+    bind = _sqlaero._bind_sql
     with pytest.raises(OperationalTimeoutError) as caught:
+        started_cpu = thread_time_ns()
         started = perf_counter_ns()
         try:
-            _sqlaero._bind_sql("SELECT %s,%s", args, timeout_ns=timeout_ns)
+            requests = bind("SELECT %s,%s", args, timeout_ns=timeout_ns)
         except BaseException as error:
             actual_elapsed_ns = perf_counter_ns() - started
+            cpu_ns = thread_time_ns() - started_cpu
             record_property("bind_elapsed_ns", actual_elapsed_ns)
+            record_property("bind_call_cpu_ns", cpu_ns)
             record_property("bind_outcome", type(error).__name__)
             record_property("bind_error_code", getattr(error, "code", None))
             record_property("bind_location", "\n".join(getattr(error, "__notes__", ())))
             raise
         else:
             actual_elapsed_ns = perf_counter_ns() - started
+            cpu_ns = thread_time_ns() - started_cpu
             record_property("bind_elapsed_ns", actual_elapsed_ns)
+            record_property("bind_call_cpu_ns", cpu_ns)
             record_property("bind_outcome", "success")
             record_property("bind_error_code", None)
             record_property("bind_location", "")
+            record_property("bind_result_requests", len(requests))
+            record_property("bind_result_bytes", sum(len(request) for request in requests))
+            release_cpu = thread_time_ns()
+            release_start = perf_counter_ns()
+            del requests
+            record_property("bind_release_ns", perf_counter_ns() - release_start)
+            record_property("bind_release_cpu_ns", thread_time_ns() - release_cpu)
+            record_property("deadline_gil_after_success", getattr(sys, "_is_gil_enabled", lambda: True)())
     assert caught.value.code == 65544
     notes = "\n".join(getattr(caught.value, "__notes__", ()))
     diagnostics = (observations_ns, timeout_ns, actual_elapsed_ns, notes)
