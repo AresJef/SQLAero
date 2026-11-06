@@ -250,9 +250,10 @@ impl DriveFailure {
         py: Python<'_>,
         prefix: &mut sqlaero_core::session::query::ConfirmedPrefix,
         rows: std::ops::Range<usize>,
+        first: Option<CommandConfirmation>,
     ) -> PyErr {
         if let Some(confirmed) = self.confirmation()
-            && let Err(error) = prefix.record_confirmation(rows.clone(), confirmed)
+            && let Err(error) = prefix.record_confirmation(rows.clone(), first.unwrap_or(confirmed))
         {
             errors::note(
                 py,
@@ -1560,9 +1561,13 @@ pub(crate) fn connect(
     }
     let unix = socket.is_some();
     let password = Zeroizing::new(
-        config::optional_text(password, "password", false)?
-            .unwrap_or_default()
-            .into_bytes(),
+        config::secret_utf8(
+            py,
+            "password",
+            config::optional_text(password, "password", false),
+        )?
+        .unwrap_or_default()
+        .into_bytes(),
     );
     let database = config::optional_text(database, "database", false)?;
     let encoding = charset::resolve(

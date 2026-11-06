@@ -364,11 +364,12 @@ impl Stream {
                 if let Some(output) = &self.call_output {
                     output.fail();
                 }
-                if let Some(confirmation) = confirmation {
-                    self.first.get_or_insert(confirmation);
-                    if let Err(recording) = self.record_command(py) {
-                        errors::additional(py, &error, recording, "cursor.call_confirmation");
-                    }
+                if let Some(confirmation) = confirmation
+                    && let Err(recording) = self
+                        .first_confirmation(py, confirmation)
+                        .and_then(|()| self.record_command(py))
+                {
+                    errors::additional(py, &error, recording, "cursor.call_confirmation");
                 }
                 errors::note_format(
                     py,
@@ -471,20 +472,7 @@ impl Stream {
         {
             output.finish();
         }
-        if self.first.is_none() {
-            self.first = Some(CommandConfirmation::from_completion(completion, rows));
-            let count = rows.map_or_else(
-                || u128::from(completion.affected_rows()),
-                |rows| rows as u128,
-            );
-            self.batch = Some(self.base_count.checked_add(count).ok_or_else(|| {
-                errors::client(
-                    py,
-                    ClientErrorCode::InternalState,
-                    "batch first-result row count overflow",
-                )
-            })?);
-        }
+        self.first_confirmation(py, CommandConfirmation::from_completion(completion, rows))?;
         let confirmed = match &self.job {
             Job::Query(query) => query.is_finished(),
             Job::Call(flow) => flow.call_completed(),
@@ -499,6 +487,28 @@ impl Stream {
                 "stream result index overflow",
             )
         })?;
+        Ok(())
+    }
+
+    fn first_confirmation(
+        &mut self,
+        py: Python<'_>,
+        confirmation: CommandConfirmation,
+    ) -> PyResult<()> {
+        if self.first.is_none() {
+            let count = self
+                .base_count
+                .checked_add(confirmation.count())
+                .ok_or_else(|| {
+                    errors::client(
+                        py,
+                        ClientErrorCode::InternalState,
+                        "batch first-result row count overflow",
+                    )
+                })?;
+            self.first = Some(confirmation);
+            self.batch = Some(count);
+        }
         Ok(())
     }
 

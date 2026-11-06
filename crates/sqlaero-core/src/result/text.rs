@@ -469,6 +469,12 @@ pub struct CommandConfirmation {
     has_rows: bool,
 }
 impl CommandConfirmation {
+    /// Actual rows or affected rows validated in this set's terminator.
+    #[must_use]
+    pub const fn count(self) -> u128 {
+        self.count
+    }
+
     /// Whether the actually parsed terminal response was a row result, even
     /// when its row count is zero. This is not inferred from SQL or counts.
     #[must_use]

@@ -239,7 +239,7 @@ fn provided(value: Option<&Bound<'_, PyAny>>) -> bool {
 }
 
 /// Protect secret text only where Unicode errors come from native extraction.
-fn secret_utf8<T>(py: Python<'_>, name: &str, result: PyResult<T>) -> PyResult<T> {
+pub(crate) fn secret_utf8<T>(py: Python<'_>, name: &str, result: PyResult<T>) -> PyResult<T> {
     result.map_err(|error| {
         if error.is_instance_of::<PyUnicodeEncodeError>(py) {
             // UnicodeEncodeError owns the original string. Do not retain it as

@@ -58,20 +58,29 @@ impl Collected {
         response: &Response,
         final_request: bool,
     ) -> PyResult<CommandConfirmation> {
-        let count = match response {
-            Response::Command(ok) => u128::from(ok.affected_rows()),
-            Response::Rows(rows) => rows.row_count as u128,
-            Response::Counted { rows, .. } => *rows as u128,
-        };
-        self.total = self.total.checked_add(count).ok_or_else(|| {
-            errors::client(
-                py,
-                ClientErrorCode::InternalState,
-                "batch first-result row count overflow",
-            )
-        })?;
+        let confirmation = CommandConfirmation::from_response(response);
+        self.first_confirmation(py, confirmation, final_request)?;
+        Ok(confirmation)
+    }
+
+    fn first_confirmation(
+        &mut self,
+        py: Python<'_>,
+        confirmation: CommandConfirmation,
+        final_request: bool,
+    ) -> PyResult<()> {
+        self.total = self
+            .total
+            .checked_add(confirmation.count())
+            .ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "batch first-result row count overflow",
+                )
+            })?;
         self.final_first_known |= final_request;
-        Ok(CommandConfirmation::from_response(response))
+        Ok(())
     }
 }
 
@@ -388,9 +397,32 @@ impl CursorCore {
         let snapshot = errors::SavedFailure::capture(py, error)
             .ok()
             .map(std::sync::Arc::new);
-        let mut state = self.results(py)?;
-        state.failed = true;
-        state.failure_note = snapshot;
+        let previous = {
+            let mut state = self.results(py)?;
+            state.failed = true;
+            std::mem::replace(&mut state.failure_note, snapshot)
+        };
+        drop(previous);
+        Ok(())
+    }
+
+    /// A failed local set publication is a terminal navigation boundary, not
+    /// permission to skip to a later set. Keep the immediate error unchanged;
+    /// snapshots may fail independently and cannot retain arbitrary traceback.
+    fn save_set_failure(&self, py: Python<'_>, error: &PyErr) -> PyResult<()> {
+        let snapshot = errors::SavedFailure::capture(py, error)
+            .ok()
+            .map(std::sync::Arc::new);
+        let previous = {
+            let mut state = self.results(py)?;
+            state.failed = true;
+            (
+                std::mem::take(&mut state.pending),
+                std::mem::replace(&mut state.failure_note, snapshot),
+            )
+        };
+        // A diagnostic can own Python references. Release them after the lock.
+        drop(previous);
         Ok(())
     }
 
@@ -724,6 +756,11 @@ impl CursorCore {
             .reserve(py, connection)
             .and_then(|()| stream.advance(py, connection, remaining))
             .and_then(|event| self.stream_event(py, stream, event));
+        if result.is_err() && stream.batch.is_some() {
+            // A complete first terminator remains a real contribution even
+            // when saving its response fails before an End can be published.
+            self.results(py)?.batch = stream.batch;
+        }
         if let Err(error) = &result
             && !stream.resource_paused
         {
@@ -988,9 +1025,28 @@ impl CursorCore {
                             crate::statement::invalidates(&native.error);
                         collected.chain.fail(native);
                     }
+                    let recovery_error = match (first, failure.confirmation()) {
+                        (None, Some(confirmation)) => {
+                            match collected.first_confirmation(py, confirmation, final_request) {
+                                Ok(()) => {
+                                    first = Some(confirmation);
+                                    None
+                                }
+                                Err(error) => Some(error),
+                            }
+                        }
+                        _ => None,
+                    };
                     collected.total_unknown |= !final_request || first.is_none();
-                    let error =
-                        failure.record_prefix(py, &mut collected.prefix, source_rows.clone());
+                    let error = failure.record_prefix(
+                        py,
+                        &mut collected.prefix,
+                        source_rows.clone(),
+                        first,
+                    );
+                    if let Some(secondary) = recovery_error {
+                        errors::additional(py, &error, secondary, "cursor.first_confirmation");
+                    }
                     errors::note_format(
                         py,
                         &error,
@@ -1106,6 +1162,15 @@ impl CursorCore {
         loop {
             let response = flow.advance_buffered(py, connection, lease, budget);
             collected.statement_invalidated |= flow.invalidates_statement();
+            let recovery = if first.is_none() && flow.call_completed() {
+                flow.call_confirmation().map_or(Ok(()), |confirmation| {
+                    collected.first_confirmation(py, confirmation, true)?;
+                    first = Some(confirmation);
+                    Ok(())
+                })
+            } else {
+                Ok(())
+            };
             // CALL completion is independent of output SELECT/cleanup. Keep
             // this real fact even if a later private stage or host save fails.
             let recording = if !recorded && flow.call_completed() {
@@ -1123,10 +1188,14 @@ impl CursorCore {
             };
             let response = match response {
                 Ok(response) => {
+                    recovery?;
                     recording?;
                     response
                 }
                 Err(primary) => {
+                    if let Err(secondary) = recovery {
+                        errors::additional(py, &primary, secondary, "cursor.first_confirmation");
+                    }
                     if let Some(native) = flow.take_native_failure() {
                         collected.chain.fail(native);
                     }
@@ -1637,6 +1706,9 @@ impl CursorCore {
             Ok(())
         };
         if let Err(error) = publication {
+            // The first visible set itself could not be published. Later
+            // sets cannot become a substitute for that failed boundary.
+            collected.chain = Chain::default();
             if let Some(stream) = &mut live {
                 stream.abort(connection);
             }
@@ -1826,7 +1898,17 @@ macro_rules! cursor_api {
                 self.reader.open(py)?;
                 if !self.results(py)?.started {return Err(errors::client(py,ClientErrorCode::SessionState,"Cursor has no result sequence; execute a command before nextset"));}
                 let next=self.results(py)?.pending.take_next();
-                if let Some(set)=next { self.publish_set(py,set)?; return Ok(Some(true)); }
+                if let Some(set)=next {
+                    let (request,set_index)=(set.request_index,set.set_index);
+                    if let Err(error)=self.publish_set(py,set) {
+                        errors::note_format(py,&error,format_args!("while publishing request {request}, result set {set_index}; later sets cannot be skipped after this local failure"));
+                        if let Err(recording)=self.save_set_failure(py,&error) {
+                            errors::additional(py,&error,recording,"cursor.nextset.failure_boundary");
+                        }
+                        return Err(errors::at(py,error,"cursor.nextset"));
+                    }
+                    return Ok(Some(true));
+                }
                 if !$streaming {self.reader.end_set(py)?;}
                 let (failed,snapshot)={let state=self.results(py)?;(state.failed,state.failure_note.as_ref().map(std::sync::Arc::clone))};
                 if let Some(snapshot)=snapshot {return Err(errors::at(py,snapshot.restore(py),"cursor.nextset"));}

@@ -447,6 +447,11 @@ pub(crate) fn wire(py: Python<'_>, error: impl std::borrow::Borrow<WireError>) -
         diagnostics::Native::capture(error, Some("sqlaero_core::protocol::framing::WireError"));
     let mapped = match error {
         WireError::Allocation(_) => memory_error(py),
+        WireError::Io(error) | WireError::Decode(error)
+            if error.kind() == std::io::ErrorKind::OutOfMemory =>
+        {
+            memory_error(py)
+        }
         error @ WireError::Io(_) => client(py, ClientErrorCode::Transport, error.to_string()),
         error @ (WireError::Limit { .. } | WireError::Memory(_)) => {
             client(py, ClientErrorCode::ResourceLimit, error.to_string())

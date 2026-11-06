@@ -4,7 +4,7 @@ from os import PathLike
 from typing import Any, Literal, cast
 
 import pytest
-from sqlaero import SSL
+from sqlaero import SSL, connect
 
 
 SecretParameter = Literal['key_data', 'key_password']
@@ -98,6 +98,18 @@ def test_absent_secret_material_remains_optional() -> None:
     policy = SSL(key_data=None, key_password=None)
     assert policy.min_tls_version == 'TLSv1.2'
     assert policy.max_tls_version is None
+
+
+@pytest.mark.parametrize('subclass', [False, True])
+def test_connection_password_encoding_error_does_not_retain_input(subclass: bool) -> None:
+    raw = _MARKER + '\ud800'
+    value = _BaseContents(raw) if subclass else raw
+    # The malformed secret must fail locally before DNS, sockets or auth.
+    with pytest.raises(ValueError) as caught:
+        connect(user='synthetic', password=value)
+    assert type(caught.value) is ValueError
+    assert 'password' in str(caught.value) and 'UTF-8' in str(caught.value)
+    _assert_no_secret(caught.value)
 
 
 @pytest.mark.parametrize('name', ['ca_data', 'cert_data'])
