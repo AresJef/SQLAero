@@ -312,6 +312,7 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
 ) -> None:
     gil_before = getattr(sys, '_is_gil_enabled', lambda: True)()
     import tracemalloc
+    from time import perf_counter_ns
 
     certificate = _large_san_peer(tmp_path)
     original_der = certificate.to_der()
@@ -379,11 +380,13 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
     record_property('allocation_tracing_was_active', was_tracing)
     try:
         captured: KeyboardInterrupt | None = None
+        completed_names: tuple[str, ...] | None = None
+        getter_elapsed_ns: int | None = None
         try:
             if not was_tracing:
-                # Standard allocation tracing broadens the same real output work;
-                # it does not replace the getter position/progress signal gate.
-                tracemalloc.start(1)
+                # Deeper standard allocation traces widen the real output work;
+                # the exact most-recent-frame progress gate remains unchanged.
+                tracemalloc.start(25)
             record_property('signal_allocation_instrumentation', 'tracemalloc')
             record_property('signal_traceback_frames', tracemalloc.get_traceback_limit())
             record_property('signal_progress_kind', 'domain0 live trace blocks at exact getter source line')
@@ -393,12 +396,31 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
             assert before_blocks == 0, 'the getter source line already owns live traced blocks'
             baseline = sys.getallocatedblocks()
             alarm.start(0.00005, 0.00005, wait_ready=True)
+            getter_started_ns: int = perf_counter_ns()
             try:
                 _ = read_names()
+                completed_names = _
             except KeyboardInterrupt as error:
                 captured = error
+            finally:
+                # Includes the wrapper, handler and exception processing; this
+                # is a diagnostic observation, not conversion-only timing.
+                getter_elapsed_ns = perf_counter_ns() - getter_started_ns
         finally:
             alarm.close()
+        uninterrupted_blocks = getter_trace_blocks() if completed_names is not None else None
+        record_property('getter_elapsed_ns_including_wrapper_handler_and_exception_processing',
+                        getter_elapsed_ns)
+        if captured is None and completed_names is not None:
+            record_property('uninterrupted_getter_length', len(completed_names))
+            record_property('getter_trace_blocks_after_uninterrupted_return', uninterrupted_blocks)
+            completed_sources: list[tuple[int, tuple[tuple[str, int], ...] | None]] = []
+            for index in ((0, len(completed_names) - 1) if completed_names else ()):
+                allocation = tracemalloc.get_object_traceback(completed_names[index])
+                completed_sources.append((index, None if allocation is None else tuple(
+                    (source.filename, source.lineno) for source in allocation
+                )))
+            record_property('uninterrupted_first_last_name_allocation_tracebacks', completed_sources)
         assert captured is original, f'no original interruption during conversion; live trace-block samples={samples}'
         assert not returned, 'the diagnostic value was delivered before interruption'
         assert len(observed) == 1, 'no in-progress diagnostic signal was observed'
