@@ -1,6 +1,8 @@
 //! Python input and output boundary for SQLAero's native MySQL core.
 
 mod binding;
+mod call;
+mod call_output;
 mod compression;
 mod config;
 mod connection;

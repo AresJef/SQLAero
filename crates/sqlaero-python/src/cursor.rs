@@ -38,6 +38,7 @@ struct Results {
     started: bool,
     failure_note: Option<std::sync::Arc<errors::SavedFailure>>,
     stream: Option<crate::stream::Stream>,
+    call_output: Option<std::sync::Arc<crate::call::Output>>,
 }
 #[derive(Default)]
 struct Collected {
@@ -47,6 +48,13 @@ struct Collected {
     total_unknown: bool,
     final_first_known: bool,
     statement_invalidated: bool,
+}
+
+struct Publication {
+    collected: Collected,
+    live: Option<crate::stream::Stream>,
+    result: PyResult<()>,
+    call_output: Option<std::sync::Arc<crate::call::Output>>,
 }
 
 /// Restore the native stream at every ordinary exit. Unwinding retires its
@@ -1212,9 +1220,187 @@ impl CursorCore {
         // Release the actual wire guard before returning a persistent owner or
         // constructing final host values. Only the native token crosses calls.
         drop(lease);
+        self.publish_execution(
+            py,
+            &connection,
+            statement.as_mut().map(|statement| &mut statement.value),
+            Publication {
+                collected,
+                live,
+                result,
+                call_output: None,
+            },
+        )
+    }
+    fn run_call<'py>(
+        &self,
+        py: Python<'py>,
+        proc_name: &Bound<'_, PyAny>,
+        args: Argument<'_>,
+        database: Option<&Bound<'_, PyAny>>,
+        parameter_modes: Option<&Bound<'_, PyAny>>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let _operation = self.reader.operation(py)?;
+        self.reader.open(py)?;
+        let connection = self.connection.borrow(py);
+        let mut budget = connection.runtime(py)?.timeouts.operation();
+        let proc_name = proc_name.cast::<PyString>().map_err(|_| {
+            errors::builtin_message::<pyo3::exceptions::PyTypeError>(py, "proc_name must be str")
+        })?;
+        let mut lease = connection.acquire(py, &mut budget)?;
+        connection.ensure_context(py, &mut lease, &mut budget)?;
+        let (context, ansi, names_codec) = connection.context(py)?;
+        let options = self.settings(py)?.options;
+        let prefix = crate::call::slot_prefix(py, &connection)?;
+        let types = connection.types.borrow(py);
+        let mut plan = binding::call::NativeCall::new(
+            proc_name,
+            args.0.as_ref(),
+            database,
+            parameter_modes,
+            prefix,
+            if self.prepared {
+                binding::PlanMode::PreparedNative
+            } else {
+                binding::PlanMode::Text
+            },
+            &types,
+            &context,
+            ansi,
+            &budget,
+        )?;
+        drop(types);
+        // The OUT stage consumer is added after the direct-CALL shared path.
+        // This development slice never silently executes an incomplete plan.
+        if !plan.output_positions.is_empty() {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::UnsupportedCapability,
+                "The managed OUT/INOUT execution consumer is not connected in this development slice",
+            ));
+        }
+        let call_output = crate::call::Output::new(
+            py,
+            &plan.output_positions,
+            options,
+            std::sync::Arc::clone(&connection.native.result_pool),
+            connection.result_limit,
+        )?;
+        let mut statement = if self.prepared {
+            Some(self.hold_statement(py)?)
+        } else {
+            None
+        };
+        if let Some(template) = plan.call.prepared.take() {
+            let slot = &mut statement
+                .as_mut()
+                .ok_or_else(|| {
+                    errors::client(
+                        py,
+                        ClientErrorCode::InternalState,
+                        "A prepared CALL has no current statement slot",
+                    )
+                })?
+                .value;
+            let id = crate::statement::resolve(
+                py,
+                &connection,
+                &mut lease,
+                template,
+                &mut budget,
+                slot,
+            )?;
+            let id_field = plan.call.bytes.get_mut(1..5).ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "The prepared CALL has no statement-ID field",
+                )
+            })?;
+            id_field.copy_from_slice(&id.to_le_bytes());
+        }
+        let job = connection.query_job(py, &mut lease, plan.call.bytes, false)?;
+        let job = if self.streaming {
+            job.with_streaming()
+                .map_err(|error| errors::query(py, error))?
+        } else {
+            job
+        };
+        input::check(py, &budget)?;
+        let mut begun = false;
+        self.handoff(py, &mut begun)?;
+        let mut collected = Collected::default();
+        let mut live = None;
+        let result = if self.streaming {
+            crate::stream::Stream::start(
+                py,
+                &connection,
+                &mut lease,
+                job,
+                budget,
+                options,
+                plan.call.source_rows,
+                ConfirmedPrefix::default(),
+                0,
+            )
+            .map(|mut stream| {
+                stream.call_output = Some(std::sync::Arc::clone(&call_output));
+                live = Some(stream);
+            })
+        } else {
+            self.receive_request(
+                py,
+                &connection,
+                &mut lease,
+                job,
+                &mut budget,
+                plan.call.source_rows,
+                true,
+                names_codec,
+                options,
+                &mut collected,
+            )
+        };
+        if !self.streaming && result.is_ok() {
+            call_output.finish();
+        }
+        if collected.statement_invalidated || connection.native.is_closed() {
+            drop(
+                statement
+                    .as_mut()
+                    .and_then(|statement| statement.value.take()),
+            );
+        }
+        drop(lease);
+        self.publish_execution(
+            py,
+            &connection,
+            statement.as_mut().map(|statement| &mut statement.value),
+            Publication {
+                collected,
+                live,
+                result,
+                call_output: Some(call_output),
+            },
+        )
+    }
+
+    fn publish_execution<'py>(
+        &self,
+        py: Python<'py>,
+        connection: &Connection,
+        statement: Option<&mut Option<crate::statement::Cached>>,
+        publication: Publication,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let Publication {
+            mut collected,
+            mut live,
+            result,
+            call_output,
+        } = publication;
         let mut result = result.and_then(|()| {
             if let Some(stream) = &mut live {
-                let event = stream.advance(py, &connection, 1)?;
+                let event = stream.advance(py, connection, 1)?;
                 stream.pending = Some(event);
             }
             Ok(())
@@ -1224,11 +1410,9 @@ impl CursorCore {
             .is_some_and(|stream| stream.statement_invalidated)
             || connection.native.is_closed()
         {
-            drop(
-                statement
-                    .as_mut()
-                    .and_then(|statement| statement.value.take()),
-            );
+            if let Some(statement) = statement {
+                drop(statement.take());
+            }
         }
         let first = collected.chain.take_next();
         let publication = if let Some(set) = first {
@@ -1236,7 +1420,7 @@ impl CursorCore {
         } else if result.is_ok()
             && let Some(stream) = &mut live
         {
-            match stream.advance(py, &connection, 1) {
+            match stream.advance(py, connection, 1) {
                 Ok(event) => self.stream_event(py, stream, event),
                 Err(error) => Err(error),
             }
@@ -1245,7 +1429,7 @@ impl CursorCore {
         };
         if let Err(error) = publication {
             if let Some(stream) = &mut live {
-                stream.abort(&connection);
+                stream.abort(connection);
             }
             match &result {
                 Err(primary) => errors::additional(py, primary, error, "cursor.publish_prefix"),
@@ -1282,6 +1466,7 @@ impl CursorCore {
             failed: result.is_err(),
             started: true,
             failure_note,
+            call_output,
             stream: if self.reader.is_closed() {
                 None
             } else {
@@ -1378,6 +1563,15 @@ macro_rules! cursor_api {
             #[pyo3(signature=(sql,args=Argument::default(),*,many=Argument::default(),itemize=Argument::default(),local_file=None))]
             #[pyo3(text_signature="($self, sql, args=..., *, many=False, itemize=True, local_file=None)")]
             fn execute<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:Argument<'_>,many:Argument<'_>,itemize:Argument<'_>,local_file:Option<&Bound<'_,PyAny>>)->PyResult<Bound<'py,PyAny>> {self.run(py,sql,args,&many,&itemize,local_file).map_err(|error|errors::at(py,error,"cursor.execute"))}
+            /// Call one safely quoted procedure using one positional argument
+            /// row. Omitted args means zero positions; explicit None is NULL.
+            /// parameter_modes explicitly declares IN/OUT/INOUT, never inferred
+            /// from values. Results use this Cursor's normal nextset/fetch path.
+            #[pyo3(signature=(proc_name,args=Argument::default(),*,database=None,parameter_modes=None))]
+            #[pyo3(text_signature="($self, proc_name, args=(), *, database=None, parameter_modes=None)")]
+            fn callproc<'py>(&self,py:Python<'py>,proc_name:&Bound<'_,PyAny>,args:Argument<'_>,database:Option<&Bound<'_,PyAny>>,parameter_modes:Option<&Bound<'_,PyAny>>)->PyResult<Bound<'py,PyAny>> {
+                self.run_call(py,proc_name,args,database,parameter_modes).map_err(|error|errors::at(py,error,"cursor.callproc"))
+            }
             /// Execute using the same native many=True,itemize=True operation.
             /// Input value and timezone rules are the same as execute().
             /// Keep args and all nested mutable values unchanged until this
@@ -1414,6 +1608,19 @@ macro_rules! cursor_api {
             /// Sum only the first result count of each actual request. None
             /// means a contribution or an unattempted request remains unknown.
             #[getter] fn batch_row_count<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {let count=self.results(py)?.batch;output::optional_count(py,count)}
+            /// Confirmed callproc OUT/INOUT values by original argument index,
+            /// or None while unready. Reading sends no SQL. Successful values
+            /// are reused; output Decode follows this operation's frozen policy.
+            /// Confirmed output stays readable after close and failed cleanup.
+            #[getter] fn call_output_params<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {
+                let output=self.results(py)?.call_output.as_ref().map(std::sync::Arc::clone);
+                let Some(output)=output else{return Ok(py.None().into_bound(py));};
+                if !output.is_ready(){return Ok(py.None().into_bound(py));}
+                if let Some(cached)=output.cached(py){return Ok(cached);}
+                let _operation=self.reader.operation(py)?;
+                let connection=self.connection.borrow(py);
+                output.get(py,&connection.types).map_err(|error|errors::at(py,error,"cursor.call_output_params"))
+            }
             /// Move within the current result. Buffered results allow both
             /// directions, including EOF. Invalid positions raise IndexError.
             #[pyo3(signature=(value,mode="relative"))]
@@ -1484,11 +1691,13 @@ macro_rules! cursor_api {
                 visit.call(&self.connection)?;
                 let state=self.results.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                 if let Some(snapshot)=&state.failure_note {snapshot.traverse(&visit)?;}
+                if let Some(output)=&state.call_output {output.traverse(&visit)?;}
                 Ok(())
             }
             fn __clear__(&self){
-                let snapshot={self.results.lock().unwrap_or_else(std::sync::PoisonError::into_inner).failure_note.take()};
-                drop(snapshot);
+                let old={let mut state=self.results.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                    (state.failure_note.take(),state.call_output.take(),state.stream.take())};
+                drop(old);
             }
             fn __iter__(slf:PyRef<'_,Self>)->PyRef<'_,Self>{slf}
             fn __next__<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {

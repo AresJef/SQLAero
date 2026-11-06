@@ -22,7 +22,7 @@ use sqlaero_core::{
     session::{
         connect::{ConnectParams, Endpoint, Establish},
         initialize::{Initialize, Options as InitOptions},
-        query::{CommandConfirmation, Query, QueryError, RequestProgress},
+        query::{CommandConfirmation, Managed, Query, QueryError, RequestProgress},
         shared::{Close as NativeClose, CloseError, CommandLease, Connection as NativeConnection},
     },
     transport::{
@@ -63,14 +63,10 @@ pub(crate) enum CommandRole {
 /// acknowledgement path. A header or row batch carries no completion claim.
 trait Received {
     fn completion(&self) -> Option<&sqlaero_core::protocol::OkPacket<'static>>;
-    fn confirmation(&self) -> Option<CommandConfirmation>;
 }
 impl Received for Response {
     fn completion(&self) -> Option<&sqlaero_core::protocol::OkPacket<'static>> {
         Some(Response::completion(self))
-    }
-    fn confirmation(&self) -> Option<CommandConfirmation> {
-        Some(CommandConfirmation::from_response(self))
     }
 }
 impl Received for sqlaero_core::result::text::StreamEvent {
@@ -80,17 +76,12 @@ impl Received for sqlaero_core::result::text::StreamEvent {
             _ => None,
         }
     }
-    fn confirmation(&self) -> Option<CommandConfirmation> {
+}
+impl<T: Received> Received for Managed<T> {
+    fn completion(&self) -> Option<&sqlaero_core::protocol::OkPacket<'static>> {
         match self {
-            Self::End {
-                completion,
-                total_rows,
-                ..
-            } => Some(CommandConfirmation::from_completion(
-                completion,
-                *total_rows,
-            )),
-            _ => None,
+            Self::Public(response) => response.completion(),
+            Self::InternalOutput { completion, .. } => Some(completion),
         }
     }
 }
@@ -261,6 +252,7 @@ pub(crate) struct Connection {
     compression_snapshot: Option<sqlaero_core::transport::compression::Options>,
     compression_value: OnceLock<Py<crate::compression::Compression>>,
     pub(crate) local_infile: bool,
+    pub(crate) call_slots: OnceLock<String>,
     pub(crate) transaction_scope: Arc<AtomicBool>,
 }
 impl Connection {
@@ -558,6 +550,29 @@ impl Connection {
             job.advance_stream(channel, budget, row_limit)
         })
     }
+    pub(crate) fn drive_managed_set(
+        &self,
+        py: Python<'_>,
+        lease: &mut CommandLease<'_>,
+        job: &mut Query,
+        budget: &mut IoBudget,
+        role: CommandRole,
+    ) -> Result<Managed<Response>, DriveFailure> {
+        self.drive_next(py, lease, job, budget, role, Query::advance_managed)
+    }
+    pub(crate) fn drive_managed_stream(
+        &self,
+        py: Python<'_>,
+        lease: &mut CommandLease<'_>,
+        job: &mut Query,
+        budget: &mut IoBudget,
+        role: CommandRole,
+        row_limit: std::num::NonZeroUsize,
+    ) -> Result<Managed<sqlaero_core::result::text::StreamEvent>, DriveFailure> {
+        self.drive_next(py, lease, job, budget, role, move |job, channel, budget| {
+            job.advance_managed_stream(channel, budget, row_limit)
+        })
+    }
     fn drive_next<T: Received + Send>(
         &self,
         py: Python<'_>,
@@ -606,16 +621,10 @@ impl Connection {
                     if let Some(completion) = response.completion()
                         && let Err(error) = self.publish(py, lease, completion)
                     {
-                        if !job.is_finished() {
-                            return Err(self.query_failure(py, lease, job, error, false, false));
-                        }
-                        return Err(DriveFailure::new(
-                            py,
-                            error,
-                            FailureOutcome::Confirmed,
-                            false,
-                            response.confirmation(),
-                        ));
+                        // Only Query's actual whole-command facts certify a
+                        // final response. A public set or managed OUT may still
+                        // have MORE/unread data, or queued business delivery.
+                        return Err(self.query_failure(py, lease, job, error, false, false));
                     }
                     return Ok(response);
                 }
@@ -633,6 +642,14 @@ impl Connection {
                     return Err(self.query_failure(py, lease, job, error, false, false));
                 }
                 Err(error) => {
+                    // A post-End managed shape error still owns a real set
+                    // completion. Publish it before retiring the unfinished
+                    // exchange; it does not confirm the complete CALL.
+                    let managed_publication_error =
+                        job.take_managed_completion()
+                            .and_then(|(completion, _metadata_status)| {
+                                self.publish(py, lease, &completion).err()
+                            });
                     if let QueryError::Result(ResultError::Server(_)) = &error {
                         if let Ok(mut facts) = self.native.facts.lock() {
                             facts.invalidate_status();
@@ -646,6 +663,14 @@ impl Connection {
                         }
                         let error = Arc::new(error);
                         let mapped = errors::query_with_codec(py, error.as_ref(), error_codec);
+                        if let Some(secondary) = managed_publication_error {
+                            errors::additional(
+                                py,
+                                &mapped,
+                                secondary,
+                                "publishing managed output state",
+                            );
+                        }
                         return Err(DriveFailure::new(
                             py,
                             mapped,
@@ -666,15 +691,17 @@ impl Connection {
                         )
                     );
                     let error = Arc::new(error);
-                    return Err(self
-                        .query_failure(
+                    let mapped = errors::query_with_codec(py, error.as_ref(), error_codec);
+                    if let Some(secondary) = managed_publication_error {
+                        errors::additional(
                             py,
-                            lease,
-                            job,
-                            errors::query_with_codec(py, error.as_ref(), error_codec),
-                            unavailable,
-                            keep_unsent,
-                        )
+                            &mapped,
+                            secondary,
+                            "publishing managed output state",
+                        );
+                    }
+                    return Err(self
+                        .query_failure(py, lease, job, mapped, unavailable, keep_unsent)
                         .with_native(error, error_codec));
                 }
             }
@@ -1636,6 +1663,7 @@ pub(crate) fn connect(
         compression_snapshot,
         compression_value: OnceLock::new(),
         local_infile,
+        call_slots: OnceLock::new(),
         transaction_scope: Arc::new(AtomicBool::new(false)),
     };
     if !user_initialization.is_empty()

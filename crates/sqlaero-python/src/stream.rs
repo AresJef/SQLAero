@@ -48,6 +48,7 @@ pub(crate) struct Stream {
     pub(crate) batch: Option<u128>,
     pub(crate) failed: bool,
     pub(crate) statement_invalidated: bool,
+    pub(crate) call_output: Option<std::sync::Arc<crate::call::Output>>,
 }
 
 impl Stream {
@@ -87,6 +88,7 @@ impl Stream {
             batch: None,
             failed: false,
             statement_invalidated: false,
+            call_output: None,
         })
     }
 
@@ -113,6 +115,9 @@ impl Stream {
     }
     pub(crate) fn abort(&mut self, connection: &Connection) {
         self.failed = true;
+        if let Some(output) = &self.call_output {
+            output.fail();
+        }
         connection.native.retire();
         self.owner.take();
     }
@@ -181,6 +186,9 @@ impl Stream {
             }
             Err(failure) => {
                 self.failed = true;
+                if let Some(output) = &self.call_output {
+                    output.fail();
+                }
                 self.statement_invalidated |= failure
                     .native_failure()
                     .is_some_and(|failure| crate::statement::invalidates(&failure.error));
@@ -238,6 +246,11 @@ impl Stream {
         completion: &Completion,
         rows: Option<usize>,
     ) -> PyResult<()> {
+        if self.job.is_finished()
+            && let Some(output) = &self.call_output
+        {
+            output.finish();
+        }
         if self.first.is_none() {
             self.first = Some(CommandConfirmation::from_completion(completion, rows));
             let count = rows.map_or_else(
