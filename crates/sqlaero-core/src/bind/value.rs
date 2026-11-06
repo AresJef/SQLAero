@@ -156,6 +156,9 @@ impl<'a> TextSink<'a> {
 impl ValueSink for TextSink<'_> {
     type Error = ValueError;
 
+    // Let direct callers fold an already known native value kind in this
+    // shared implementation instead of materializing a generic dispatch.
+    #[inline(always)]
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
         let output = &mut *self.output;
         let limit = context.limit;

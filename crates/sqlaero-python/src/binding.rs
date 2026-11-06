@@ -1547,7 +1547,7 @@ impl Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<()> {
-        self.value_role(value, output, child).map(|_| ())
+        self.value_with(value, output, child, |_| ())
     }
     fn value_role(
         &mut self,
@@ -1555,6 +1555,18 @@ impl Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<FragmentRole> {
+        self.value_with(value, output, child, std::convert::identity)
+    }
+
+    /// Keep ordinary traversal unit-returning while shape consumers receive
+    /// the role from the same visitor. The projection is static native code.
+    fn value_with<T>(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+        project: impl FnOnce(FragmentRole) -> T,
+    ) -> PyResult<T> {
         let py = value.py();
         self.work += 1;
         if self.work >= 16384 {
@@ -1581,7 +1593,7 @@ impl Visit<'_> {
                 .types
                 .try_write(value, output, &self.context, Some(self.budget))
             {
-                Ok(true) => return Ok(FragmentRole::Scalar),
+                Ok(true) => return Ok(project(FragmentRole::Scalar)),
                 Err(error) => {
                     self.failed_value(value, child, &error);
                     return Err(error);
@@ -1598,10 +1610,10 @@ impl Visit<'_> {
         };
         if let Some(sequence) = sequence {
             self.sequence(&sequence, output, child)
-                .map(|()| FragmentRole::Row)
+                .map(|()| project(FragmentRole::Row))
         } else {
             self.native_or_unsupported(value, output, child)
-                .map(|()| FragmentRole::Row)
+                .map(|()| project(FragmentRole::Row))
         }
     }
 

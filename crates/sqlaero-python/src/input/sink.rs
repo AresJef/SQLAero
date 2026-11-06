@@ -67,7 +67,7 @@ pub(crate) trait Destination {
 }
 
 impl Destination for Vec<u8> {
-    #[inline]
+    #[inline(always)]
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
         TextSink::new(self).write(value, context)
     }
@@ -299,7 +299,9 @@ pub(crate) fn fragment_error(py: Python<'_>) -> PyErr {
     )
 }
 
-#[inline]
+// Keep this thin error bridge visible together with the destination so a
+// statically known value does not regain a generic dispatch at its caller.
+#[inline(always)]
 pub(crate) fn emit(
     destination: &mut (impl Destination + ?Sized),
     py: Python<'_>,
