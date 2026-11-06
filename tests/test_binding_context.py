@@ -42,6 +42,7 @@ def test_text_compiler_reports_the_original_context_change(prefix: str) -> None:
 def test_public_rejection_sends_nothing_and_preserves_the_old_result(
     label: str, dictionary: bool, streaming: bool, change: str,
 ) -> None:
+    before: tuple[object, ...] | None = None
     with live(label, multi_statements=True) as connection:
         with connection.cursor() as setup:
             setup.execute("SET @r03_sent=0")
