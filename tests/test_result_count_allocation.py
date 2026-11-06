@@ -25,7 +25,11 @@ root = Path(os.environ['SQLAERO_TEST_MYSQL_ROOT'])
 state = json.loads((root / '84/state.json').read_text())
 enable = _testcapi.set_nomemory
 disable = _testcapi.remove_mem_hooks
-sql = 'WITH RECURSIVE n AS (SELECT 1 AS i UNION ALL SELECT i+1 FROM n WHERE i<300) SELECT i FROM n'
+# Keep recursion below MySQL's default depth while producing 1200 real rows,
+# above CPython 3.15's preallocated positive integers (0 through 1024).
+sql = ('WITH RECURSIVE n AS (SELECT 1 AS i UNION ALL SELECT i+1 FROM n WHERE i<300) '
+       'SELECT n.i FROM n CROSS JOIN (SELECT 1 AS copy_number UNION ALL SELECT 2 '
+       'UNION ALL SELECT 3 UNION ALL SELECT 4) AS copies ORDER BY n.i')
 with sqlaero.connect(host='127.0.0.1', port=int(state['port']), user='sqlaero',
                      password=state['test_password'], database='sqlaero_test',
                      ssl=sqlaero.SSL(ca_file=root / 'tls/ca.pem')) as connection:
@@ -33,11 +37,11 @@ with sqlaero.connect(host='127.0.0.1', port=int(state['port']), user='sqlaero',
         if kind == 'execute':
             operation = partial(cursor.execute, sql)
         else:
-            assert cursor.execute(sql) == 300
+            assert cursor.execute(sql) == 1200
             operation = partial(getattr, cursor, kind)
-        # CPython may satisfy a small integer from a thread-local free list.
-        # Clear preparation leftovers before the one exact allocation fault;
-        # the actual library call and its failures remain fully observed.
+        # Static cached integers cannot be made allocating by gc.collect().
+        # The count above avoids that cache; also clear any thread-local integer
+        # free-list leftovers before the one exact allocation fault.
         gc.collect()
         failure = None
         try:
@@ -49,8 +53,8 @@ with sqlaero.connect(host='127.0.0.1', port=int(state['port']), user='sqlaero',
         except BaseException as error:
             failure = error
         assert type(failure) is MemoryError, type(failure)
-        assert cursor.rowcount == cursor.row_count == cursor.affected_rows == 300
-        assert cursor.batch_row_count == 300
+        assert cursor.rowcount == cursor.row_count == cursor.affected_rows == 1200
+        assert cursor.batch_row_count == 1200
         assert cursor.fetchone() == (1,)
         if kind == 'execute':
             try:
