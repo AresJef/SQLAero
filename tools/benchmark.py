@@ -9,6 +9,7 @@ Timed calls include each provider's actual production reader and preparation.
 from __future__ import annotations
 
 import argparse
+import base64
 from collections import Counter
 from dataclasses import dataclass, replace
 from datetime import date, datetime, time as daytime, timedelta, timezone
@@ -41,7 +42,7 @@ resource: Any = None if os.name == 'nt' else importlib.import_module('resource')
 ROOT = Path(__file__).resolve().parents[1]
 FROZEN = ROOT / "experimental/rust/list_rust.so"
 Call = Callable[[], object]
-CPU_FAMILIES = frozenset({"escape", "bind", "fetch", "decode-json", "diagnostic", "metadata", "retry"})
+CPU_FAMILIES = frozenset({"escape", "bind", "fetch", "decode-json", "diagnostic", "metadata", "retry", "tls"})
 
 
 def digest(path: Path) -> str:
@@ -524,9 +525,11 @@ def load_legacy() -> Any:
 
 
 def target(case: Case, native: Any, legacy: Any | None, sessions: dict[str, Any]) -> Task:
-    if case.family == "feature":
+    if case.family in {"feature", "tls"}:
         if legacy is not None:
             raise ValueError("Feature observations require two implementations of the actual feature, never a legacy no-op")
+        if case.family == "tls":
+            return tls_target(case, native, sessions)
         return feature_target(case, native, sessions)
     if legacy is not None:
         if case.family != "escape" or case.no_backslash:
@@ -792,6 +795,81 @@ def feature_cases() -> list[Case]:
                  "boundary": "hot CALL, all business sets/tail/private cleanup and first output getter+dict; procedure/handle setup and CLOSE untimed"},
                 "feature", "CALL <owned-procedure>(%s,%s,%s)"))
     return result
+
+
+def tls_cases() -> list[Case]:
+    """Six CPU observations, separate from the thirty network feature recipes.
+
+    This fixed fixture uses a verified TLSv1.3 connection outside timing.
+    Construction includes the final config reads and normal local release;
+    diagnostic cases access already materialized public snapshot caches.
+    None of these cases claims a cold observation or an r7 speedup.
+    """
+    return [Case(f"feature/tls/{recipe}",
+                 {"server": "84", "recipe": recipe, "version": "TLSv1.3",
+                  "boundary": ("SSL construction+version reads+normal config release; file open/read included for ca-file"
+                               if recipe.startswith("ssl/") else
+                               "warm public snapshot getter+normal returned-reference release; no connection or first materialization")},
+                 "tls") for recipe in (
+                     "ssl/ca-memory", "ssl/ca-file", "warm/version",
+                     "warm/certificate-dns", "warm/certificate-der", "warm/certificate-sha256")]
+
+
+def tls_target(case: Case, native: Any, sessions: dict[str, Any]) -> Task:
+    """Prepare real TLS facts and independent fixed-fixture oracles untimed."""
+    spec = cast(dict[str, Any], case.value)
+    recipe = str(spec["recipe"])
+    fixture = Path(os.environ.get("SQLAERO_TEST_MYSQL_ROOT", "/private/tmp/sqlaero-mysql-501"))
+    ca = fixture / "tls/ca.pem"
+    memory = recipe == "ssl/ca-memory"
+    policy: dict[str, Any] = {
+        "mode": "VERIFY_IDENTITY", "server_name": "localhost",
+        "min_tls_version": spec["version"], "max_tls_version": spec["version"],
+        "ca_data" if memory else "ca_file": ca.read_bytes() if memory else ca,
+    }
+    key = "tls/data/" + json.dumps([str(fixture.resolve()), spec["server"], "tcp",
+                                     "VERIFY_IDENTITY", spec["version"],
+                                     "memory" if memory else "file", None, False])
+    if key not in sessions:
+        secret = json.loads((fixture / str(spec["server"]) / "state.json").read_text())
+        connection = native.connect(user="sqlaero", password=secret["test_password"],
+                                    host="127.0.0.1", port=int(secret["port"]),
+                                    database="sqlaero_test", operation_timeout=10,
+                                    ssl=native.SSL(**policy))
+        info = connection.tls_info
+        if (info is None or info.mode != "VERIFY_IDENTITY" or info.version != spec["version"]
+                or info.server_name != "localhost"):
+            connection.close()
+            raise AssertionError("TLS fixture did not establish the declared verified protocol")
+        sessions[key] = connection
+    info = sessions[key].tls_info
+    if recipe.startswith("ssl/"):
+        def construct() -> tuple[object, object]:
+            config = native.SSL(**policy)
+            # Do not return SSL: the local config is released inside this call.
+            return config.min_tls_version, config.max_tls_version
+
+        return feature_verified(Task(construct), (spec["version"], spec["version"]))
+    if recipe == "warm/version":
+        return feature_verified(Task(lambda: info.version), spec["version"])
+    if not info.peer_certificates:
+        raise AssertionError("TLS fixture did not supply its leaf certificate")
+    certificate = info.peer_certificates[0]
+    pem = (fixture / "tls/server.pem").read_text(encoding="ascii").splitlines()
+    der = base64.b64decode("".join(pem[1:-1]), validate=True)
+    call: Call
+    expected: object
+    if recipe == "warm/certificate-dns":
+        call, expected = lambda: certificate.dns_names, ("localhost",)
+    elif recipe == "warm/certificate-der":
+        call, expected = certificate.to_der, der
+    elif recipe == "warm/certificate-sha256":
+        call, expected = lambda: certificate.fingerprint_sha256, hashlib.sha256(der).hexdigest()
+    else:
+        raise ValueError(f"Unknown TLS recipe {recipe}")
+    # The independent comparison also materializes the exact cache before the
+    # worker correctness check, ordinary warmup, controls and measured calls.
+    return feature_verified(Task(call), expected)
 
 
 def feature_session_key(spec: dict[str, Any], fixture: Path) -> str:
@@ -1078,7 +1156,7 @@ def measure(call: Call, n: int) -> dict[str, object]:
 def worker(package: str | None, with_legacy: bool, warmup_calls: int = 16) -> None:
     native = load_native(package)
     legacy = load_legacy() if with_legacy else None
-    collection = {case.id: case for case in cases() + feature_cases()}
+    collection = {case.id: case for case in cases() + feature_cases() + tls_cases()}
     calls: dict[tuple[str, str], Task] = {}
     preparations: dict[tuple[str, str], dict[str, int]] = {}
     sessions: dict[str, Any] = {}
@@ -1329,7 +1407,7 @@ def package_identity(package: str | None) -> dict[str, object]:
 
 
 def collect(args: argparse.Namespace) -> None:
-    selected = [case for case in cases() + feature_cases() if case.id in args.case or
+    selected = [case for case in cases() + feature_cases() + tls_cases() if case.id in args.case or
                 any(case.id.startswith(prefix) for prefix in args.prefix)]
     if args.legacy:
         selected = [case for case in selected if case.family == "escape" and not case.no_backslash]
@@ -1931,7 +2009,7 @@ def main() -> None:
     elif args.command == "worker":
         worker(args.package, args.legacy, args.warmup_calls)
     elif args.command == "list":
-        print(json.dumps([case.identity() for case in cases() + feature_cases()], indent=2))
+        print(json.dumps([case.identity() for case in cases() + feature_cases() + tls_cases()], indent=2))
     elif args.command == "summarize":
         summarize(Path(args.output))
     else:

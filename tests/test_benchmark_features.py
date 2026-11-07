@@ -1,6 +1,7 @@
 """Feature recipes reuse the frozen sampler and retain their real call work."""
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import hashlib
@@ -8,6 +9,7 @@ import importlib.util
 import inspect
 import io
 import json
+import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -67,6 +69,140 @@ def test_feature_inputs_have_fifteen_network_recipes_per_server(runner: Any) -> 
     assert len(zlib.compress(payloads["repeated"])) < 262144 // 100
     assert len(zlib.compress(payloads["incompressible"])) > 262144 * 0.99
     assert len([case for case in items if case.value.get("local_infile")]) == 2
+
+
+def test_tls_inputs_are_six_cpu_recipes_without_changing_network_inputs(runner: Any) -> None:
+    items = runner.tls_cases()
+    assert len(items) == len({case.id for case in items}) == 6
+    assert all(case.id.startswith("feature/tls/") and case.family == "tls" for case in items)
+    assert "tls" in runner.CPU_FAMILIES and "feature" not in runner.CPU_FAMILIES
+    assert len(runner.feature_cases()) == 30
+    for case in items:
+        with pytest.raises(ValueError, match="never a legacy no-op"):
+            runner.target(case, None, object(), {})
+
+
+@pytest.mark.skipif('SQLAERO_TEST_MYSQL_ROOT' not in os.environ,
+                    reason='requires explicitly selected owned MySQL fixtures')
+def test_tls_six_recipes_use_installed_native_and_owned_mysql_oracles(
+    runner: Any, record_property: Callable[[str, object], None],
+) -> None:
+    """Exercise real public TLS recipes untimed, separately from the doubles."""
+    from importlib.machinery import EXTENSION_SUFFIXES
+    from importlib.metadata import distribution
+
+    import sqlaero
+
+    package = Path(sqlaero.__file__).resolve().parent
+    source = Path(__file__).resolve().parents[1]
+    assert not package.is_relative_to(source / 'python'), 'select an installed package, not the development extension'
+    installed = Path(str(distribution('sqlaero').locate_file('sqlaero'))).resolve()
+    assert package == installed, 'the imported package differs from the installed distribution'
+    spec = importlib.util.find_spec('sqlaero._sqlaero')
+    assert spec is not None and spec.origin is not None
+    artifact = Path(spec.origin).resolve()
+    assert artifact.parent == installed
+    assert artifact.name.endswith(tuple(EXTENSION_SUFFIXES)), 'the real native extension is required'
+    record_property('tls_recipe_native', str(artifact))
+
+    # mysql_fixture.py creates this one leaf with DNS:localhost. Derive the
+    # expected bytes/fingerprint from its public PEM, independently of TLSInfo.
+    fixture = Path(os.environ['SQLAERO_TEST_MYSQL_ROOT'])
+    pem = (fixture / 'tls/server.pem').read_text(encoding='ascii').splitlines()
+    der = base64.b64decode(''.join(pem[1:-1]), validate=True)
+    expected: dict[str, object] = {
+        'ssl/ca-memory': ('TLSv1.3', 'TLSv1.3'),
+        'ssl/ca-file': ('TLSv1.3', 'TLSv1.3'),
+        'warm/version': 'TLSv1.3',
+        'warm/certificate-dns': ('localhost',),
+        'warm/certificate-der': der,
+        'warm/certificate-sha256': hashlib.sha256(der).hexdigest(),
+    }
+    items = runner.tls_cases()
+    assert [case.value['recipe'] for case in items] == list(expected)
+    sessions: dict[str, Any] = {}
+    completed: list[str] = []
+    try:
+        for case in items:
+            task = runner.target(case, sqlaero, None, sessions)
+            assert task.prepare is None and task.finish is None
+            for _ in range(2):
+                assert task.call() == expected[case.value['recipe']], case.id
+            completed.append(case.id)
+        assert len(completed) == 6
+    finally:
+        for connection in sessions.values():
+            connection.close()
+        record_property('tls_recipe_completed', completed)
+
+
+@pytest.fixture
+def tls_boundary_native(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> tuple[SimpleNamespace, list[str], bytes]:
+    """A public-interface double checks recipe boundaries, not TLS correctness."""
+    (tmp_path / "84").mkdir()
+    (tmp_path / "84/state.json").write_text(json.dumps({"test_password": "fixture-only", "port": 15384}))
+    (tmp_path / "tls").mkdir()
+    (tmp_path / "tls/ca.pem").write_bytes(b"fixture CA input")
+    der = b"independent fixture leaf DER"
+    (tmp_path / "tls/server.pem").write_text(
+        "-----BEGIN CERTIFICATE-----\n" + base64.b64encode(der).decode("ascii")
+        + "\n-----END CERTIFICATE-----\n", encoding="ascii")
+    monkeypatch.setenv("SQLAERO_TEST_MYSQL_ROOT", str(tmp_path))
+    events: list[str] = []
+    certificate = SimpleNamespace(dns_names=("localhost",), to_der=lambda: der,
+                                  fingerprint_sha256=hashlib.sha256(der).hexdigest())
+    info = SimpleNamespace(mode="VERIFY_IDENTITY", version="TLSv1.3", server_name="localhost",
+                           peer_certificates=(certificate,))
+
+    def ssl(**settings: Any) -> SimpleNamespace:
+        events.append("construct")
+        assert settings["min_tls_version"] == settings["max_tls_version"] == "TLSv1.3"
+        return SimpleNamespace(min_tls_version=settings["min_tls_version"],
+                               max_tls_version=settings["max_tls_version"])
+
+    def connect(**settings: Any) -> SimpleNamespace:
+        events.append("connect")
+        assert settings["host"] == "127.0.0.1" and settings["ssl"] is not None
+        return SimpleNamespace(tls_info=info, close=lambda: events.append("close"))
+
+    return SimpleNamespace(SSL=ssl, connect=connect), events, der
+
+
+@pytest.mark.parametrize("recipe", ["ssl/ca-memory", "ssl/ca-file"])
+def test_tls_construction_remains_in_every_call_with_connection_setup_outside(
+    runner: Any, tls_boundary_native: tuple[SimpleNamespace, list[str], bytes], recipe: str,
+) -> None:
+    native, events, _der = tls_boundary_native
+    case = next(case for case in runner.tls_cases() if case.value["recipe"] == recipe)
+    task = runner.target(case, native, None, {})
+    assert events.count("connect") == 1
+    before = events.count("construct")
+    for _ in range(4):
+        assert task.call() == ("TLSv1.3", "TLSv1.3")
+    assert events.count("construct") == before + 4
+    assert events.count("connect") == 1
+    assert task.prepare is None and task.finish is None
+
+
+@pytest.mark.parametrize("recipe", ["warm/version", "warm/certificate-dns",
+                                    "warm/certificate-der", "warm/certificate-sha256"])
+def test_tls_snapshot_calls_use_warmed_public_values_without_network_work(
+    runner: Any, tls_boundary_native: tuple[SimpleNamespace, list[str], bytes], recipe: str,
+) -> None:
+    native, events, der = tls_boundary_native
+    expected: dict[str, object] = {"warm/version": "TLSv1.3",
+                                   "warm/certificate-dns": ("localhost",),
+                                   "warm/certificate-der": der,
+                                   "warm/certificate-sha256": hashlib.sha256(der).hexdigest()}
+    case = next(case for case in runner.tls_cases() if case.value["recipe"] == recipe)
+    task = runner.target(case, native, None, {})
+    before = events[:]
+    for _ in range(4):
+        assert task.call() == expected[recipe]
+    assert events == before, "TLS preparation or connection work entered the getter call"
+    assert task.prepare is None and task.finish is None
 
 
 def test_physical_feature_sessions_include_all_negotiated_context(

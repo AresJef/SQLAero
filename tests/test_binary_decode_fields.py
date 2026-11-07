@@ -157,6 +157,8 @@ def test_binary_native_calendar_and_duration_produce_direct_final_values(
     (12, calendar(2026, 2, 30, 12), {}),
     (7, calendar(2026, 11, 5, 24), {}),
     (11, duration(3_020_400_000_000), {}),
+    (11, duration(2 ** 64), {}),
+    (11, duration(-(2 ** 64)), {}),
     (11, duration(-1), {'use_timedelta': False}),
     (11, duration(86_400_000_000), {'use_timedelta': False}),
 ])
