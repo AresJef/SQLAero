@@ -369,14 +369,30 @@ impl Reader {
     }
     pub(crate) fn open(&self, py: Python<'_>) -> PyResult<()> {
         if self.lifecycle.is_retired() {
-            Err(errors::client(
-                py,
-                ClientErrorCode::SessionState,
-                "Cursor is closed or permanently retired",
-            ))
+            Err(Self::closed_error(py))
         } else {
             Ok(())
         }
+    }
+
+    fn closed_error(py: Python<'_>) -> PyErr {
+        errors::client(
+            py,
+            ClientErrorCode::SessionState,
+            "Cursor is closed or permanently retired",
+        )
+    }
+
+    /// Navigation checks retirement together with its actual position. Build
+    /// any Python error only after releasing the mutex. An already active
+    /// fetch retains its separate, intentionally permitted completion policy.
+    fn navigation_state(&self, py: Python<'_>) -> PyResult<MutexGuard<'_, State>> {
+        let state = self.lock(py)?;
+        if self.lifecycle.is_retired() {
+            drop(state);
+            return Err(Self::closed_error(py));
+        }
+        Ok(state)
     }
     /// Install only a fully consumed, resource-valid final result. The outer
     /// executor owns this Reader's operation guard for the entire user call.
@@ -687,6 +703,7 @@ impl Reader {
         let index = unsafe {
             Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Index(value.as_ptr()))?
         };
+        self.open(py)?;
         let offset = match index.extract::<i128>() {
             Ok(value) => value,
             Err(error) if error.is_instance_of::<PyOverflowError>(py) => {
@@ -698,7 +715,7 @@ impl Reader {
             Err(error) => return Err(error),
         };
         py.check_signals()?;
-        let mut state = self.lock(py)?;
+        let mut state = self.navigation_state(py)?;
         if state.metadata.is_none() || state.abandoned {
             drop(state);
             return Err(errors::client(
@@ -1025,7 +1042,7 @@ impl Reader {
     /// The outer Cursor holds its operation; an out-of-range forward target
     /// keeps the actual consumed EOF rather than inventing a rollback.
     pub(crate) fn forward_to(&self, py: Python<'_>, target: usize) -> PyResult<()> {
-        let mut state = self.lock(py)?;
+        let mut state = self.navigation_state(py)?;
         if state.metadata.is_none() || state.abandoned {
             drop(state);
             return Err(errors::client(

@@ -1,13 +1,16 @@
 """Public stream deadlines and synchronized publication failure boundaries."""
 
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor
 import time
+from typing import Literal
 from uuid import uuid4
 
 import pytest
-from sqlaero import Connection, SSCursor, SSDictCursor
+from sqlaero import Connection, Cursor, DictCursor, SSCursor, SSDictCursor
 from sqlaero.errors import (
-    OperationalError, OperationalTimeoutError, SQLAeroError, SQLAeroErrorCode,
+    InterfaceBusyError, InterfaceError, OperationalError, OperationalTimeoutError,
+    SQLAeroError, SQLAeroErrorCode,
 )
 from test_public_connection import live, requires_mysql
 
@@ -37,6 +40,80 @@ class _SlowIndex:
         time.sleep(_INDEX_SECONDS)
         self.elapsed += time.perf_counter() - start
         return self.value
+
+
+@requires_mysql
+@pytest.mark.parametrize('label', ['84', '97'])
+@pytest.mark.parametrize('kind', [Cursor, DictCursor, SSCursor, SSDictCursor])
+@pytest.mark.parametrize('prepared', [False, True])
+@pytest.mark.parametrize('mode', ['relative', 'absolute'])
+@pytest.mark.parametrize('threaded', [False, True])
+@pytest.mark.parametrize('raise_original', [False, True])
+def test_scroll_rechecks_retirement_after_index_protocol(
+    label: str, kind: type[Cursor] | type[DictCursor] | type[SSCursor] | type[SSDictCursor],
+    prepared: bool, mode: Literal['relative', 'absolute'], threaded: bool, raise_original: bool,
+) -> None:
+    table = 'review_scroll_' + uuid4().hex[:12]
+    original = RuntimeError('original index protocol failure after confirmed COMMIT')
+    with live(label) as connection:
+        with connection.cursor() as setup:
+            setup.execute(f'CREATE TABLE `{table}` (v INT) ENGINE=InnoDB')
+        context = connection.transaction(kind, prepared=prepared)
+        current = context.__enter__()
+        exited = False
+        exits: list[InterfaceBusyError] = []
+        try:
+            current.execute(f'INSERT INTO `{table}` VALUES (73)')
+            current.execute('SELECT 10 AS value UNION ALL SELECT 20')
+            current.fetchall()
+            columns = current.columns
+
+            def finish_transaction() -> None:
+                nonlocal exited
+                try:
+                    context.__exit__(None, None, None)
+                except InterfaceBusyError as error:
+                    exits.append(error)
+                finally:
+                    exited = True
+
+            class Index:
+                def __index__(self) -> int:
+                    if threaded:
+                        # The result wait releases the ordinary GIL too. The
+                        # worker retires this Cursor before the protocol returns,
+                        # so this is ordered evidence rather than a timing race.
+                        with ThreadPoolExecutor(max_workers=1) as executor:
+                            executor.submit(finish_transaction).result(timeout=5)
+                    else:
+                        finish_transaction()
+                    assert current.closed
+                    if raise_original:
+                        raise original
+                    return 0
+
+            if raise_original:
+                with pytest.raises(RuntimeError) as caught:
+                    current.scroll(Index(), mode=mode)
+                assert caught.value is original
+            else:
+                with pytest.raises(InterfaceError, match='closed|retired'):
+                    current.scroll(Index(), mode=mode)
+            assert exited and current.closed and len(exits) == 1
+            assert any('COMMIT was fully confirmed' in note
+                       for note in getattr(exits[0], '__notes__', ()))
+            assert current.columns is columns and not connection.closed
+            with pytest.raises(InterfaceError, match='closed|retired'):
+                current.fetchone()
+            with live(label) as observer, observer.cursor() as check:
+                check.execute(f'SELECT v FROM `{table}`')
+                assert check.fetchall() == ((73,),)
+            assert connection.ping()
+        finally:
+            if not exited:
+                context.__exit__(None, None, None)
+            with connection.cursor() as cleanup:
+                cleanup.execute(f'DROP TABLE `{table}`')
 
 
 @requires_mysql

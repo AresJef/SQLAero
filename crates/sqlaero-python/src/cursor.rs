@@ -677,6 +677,7 @@ impl CursorCore {
         let index = unsafe {
             Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Index(value.as_ptr()))?
         };
+        self.reader.open(py)?;
         let offset=index.extract::<i128>().map_err(|error| {
             if error.is_instance_of::<pyo3::exceptions::PyOverflowError>(py) {errors::builtin_message::<pyo3::exceptions::PyIndexError>(py,"scroll target exceeds the representable native row range; the position is unchanged")} else {error}
         })?;
@@ -725,6 +726,10 @@ impl CursorCore {
             return Err(error);
         }
         loop {
+            // Budget checks and receiving the previous batch can invoke Python.
+            // Revalidate before committing another actual forward skip, without
+            // cancelling an unrelated already-active local fetch.
+            self.reader.open(py)?;
             let rows = stream.rows.as_mut().ok_or_else(|| {
                 errors::client(
                     py,
