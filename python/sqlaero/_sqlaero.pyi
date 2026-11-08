@@ -997,9 +997,14 @@ class Connection:
     @property
     def decode_date_strict(self) -> bool:
         """Default True. True raises DataError for zero or otherwise
-        unrepresentable DATE/DATETIME values. False returns their original
-        calendar text as str. Valid values retain date/datetime output in both
-        modes. SQL NULL remains None.
+        unrepresentable DATE/DATETIME values. False returns str for invalid
+        calendars. Text protocol preserves the received calendar spelling using
+        the result codec. Binary protocol has no original text: it formats the
+        received components with trustworthy fractional-second precision, e.g.
+        zero DATETIME with fsp=6 is '0000-00-00 00:00:00.000000'. Malformed wire
+        values still raise protocol errors; components outside canonical display
+        or untrustworthy/inconsistent precision raise DataError. Valid values retain date/datetime output
+        in both modes. SQL NULL remains None; TIME follows use_timedelta.
 
         This local default is copied only to new Cursors; existing Cursors and
         results do not change. Exact bool assignment only; other types raise
@@ -1047,6 +1052,16 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
         unsafe in-request binding-context changes fail before that request sends.
         No merge switch or execute-time adaptive measurement is provided.
 
+        Merging keeps every original VALUES group together. Five one-group rows
+        become one five-group statement when capacity permits; a capacity of two
+        complete groups produces requests containing 2, 2 and 1 groups. Requests
+        never split an original group. Fixed DEFAULT/expressions are evaluated by
+        MySQL in the actual merged statements. Error/transaction boundaries,
+        result-set counts, warnings and insert IDs follow those statements and
+        server responses: merging is not identical to independent one-row SQL.
+        A reliable count proves neither commit nor all-request success. Fewer
+        requests alone are not a measured performance guarantee.
+
         Text parameter/percent directives after a statement changing sql_mode,
         the input charset/collation, or time_zone are rejected before sending.
         The same conservative boundary follows opaque CALL/EXECUTE statements.
@@ -1083,6 +1098,8 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
     def executemany(self, sql: str, args: EscapeInput) -> _ExecutionCountT:
         """Execute a batch using execute's input and datetime.time rules.
 
+        The same automatic VALUES merging, complete-group limits and actual
+        statement/error/transaction/result semantics as execute apply.
         Keep args and all nested mutable values unchanged until this call
         returns. Each constructed Rust request owns stable bytes; batch
         construction does not provide an atomic snapshot of all inputs.
@@ -1118,10 +1135,11 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
 
         parameter_modes is None (all IN), or a list/tuple of case-insensitive
         IN/OUT/INOUT strings, exactly one per argument. OUT requires a None
-        placeholder. INOUT accepts an initial value including None. A NULL value
+        placeholder: the literal Python None, not any other value which adapts
+        to SQL NULL. INOUT accepts an initial value including None. A NULL value
         never infers a direction. Local direction-count mismatches and invalid
-        OUT placeholders fail before CALL. MySQL defines the actual signature;
-        a detectable disagreement may be discovered after sending and does not
+        OUT placeholders fail before target PREPARE/CALL. MySQL defines the
+        actual signature; a detectable disagreement may be discovered after sending and does not
         cause automatic replay.
 
         Pure IN example: cur.callproc('report', (2026, 11)). For a procedure
@@ -1164,6 +1182,16 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
         Output uses actual server-field decode policy. The text user-variable
         bridge may return dates or JSON as strings. Prepared output can retain
         native date/JSON fields and then uses the corresponding Decode options.
+        A text output field has its actual field type, not its procedure's
+        declaration: a nonbinary text value '2024-02-29' stays str, and binary
+        data stays bytes. decode_json does not infer JSON from ordinary text.
+        Text user-variable assignment may lose declared precision/scale. With
+        use_decimal=True, actual decimal payload '12.5' becomes Decimal('12.5');
+        the driver does not restore a declared Decimal('12.50') or missing scale.
+
+        The _sqlaero_call_ variable namespace is reserved; applications/routines
+        must not read or write it. It is not isolation from deliberate access.
+        Clearing a slot to NULL neither deletes it nor promises secure erasure.
         Text output management may add internal communication; prepared CALL
         uses native output metadata and creates no output user variables.
         Internal cleanup shares the remaining deadline, preserves the primary
@@ -1185,8 +1213,12 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
         positions include exact EOF and position zero for a zero-row SELECT.
         Buffered classes can move backward/forward, including after EOF. SS only
         moves forward; if its target exceeds EOF, actual skipped progress remains.
+        Other failures during a real SS skip also retain consumed progress.
         Failed buffered range checks leave the position unchanged. No SQL replay,
         implicit nextset, extra cursor mode flag or silent clipping is performed.
+        Index-protocol exceptions keep their original cause. If a normally
+        returning protocol retires the Cursor, InterfaceError rejects navigation
+        before committing a new position; it cannot return a false success.
         """
         ...
     def fetchone(self) -> _RowT | None:
@@ -1235,11 +1267,17 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
     def batch_row_count(self) -> int | None:
         """Reliable sum of the first result count of each actual user request.
 
-        Applies to ordinary and batch calls. Unknown required contributions give
-        None; confirmed prefix contributions survive a later failure. Additional
-        sets/internal commands do not contribute. Fetch/nextset never count twice.
-        This is separate from the current-set row_count and remains readable
-        after close; starting a new execution replaces it at the real handoff.
+        Applies to ordinary and batch calls. A required contribution which
+        cannot be confirmed makes the total None; a genuine total of zero is 0.
+        Confirmed prefix contributions are preserved in failure diagnostics.
+        Failure of a later noncontributing set does not erase an already complete
+        total. Additional sets/internal commands do not contribute. Fetch/nextset
+        can finish a contribution, but never count it twice; reading this getter
+        sends no SQL and does not drain results. The count is not proof of overall
+        success or commit. This is separate from current-set row_count and remains
+        readable after close without retaining row buffers. A new execution
+        replaces it only at the real handoff; a pre-handoff local error preserves
+        the previous value.
         """
         ...
     @property
@@ -1392,9 +1430,14 @@ class _CursorCore(Generic[_RowT, _ExecutionCountT]):
     @property
     def decode_date_strict(self) -> bool:
         """Default True. True raises DataError for zero or otherwise
-        unrepresentable DATE/DATETIME values. False returns their original
-        calendar text as str. Valid values retain date/datetime output in both
-        modes. SQL NULL remains None.
+        unrepresentable DATE/DATETIME values. False returns str for invalid
+        calendars. Text protocol preserves the received calendar spelling using
+        the result codec. Binary protocol has no original text: it formats the
+        received components with trustworthy fractional-second precision, e.g.
+        zero DATETIME with fsp=6 is '0000-00-00 00:00:00.000000'. Malformed wire
+        values still raise protocol errors; components outside canonical display
+        or untrustworthy/inconsistent precision raise DataError. Valid values retain date/datetime output
+        in both modes. SQL NULL remains None; TIME follows use_timedelta.
 
         The initial value is copied from Connection. Changes apply only to
         subsequent executions; existing results keep their execution-time

@@ -1858,6 +1858,19 @@ macro_rules! cursor_api {
             /// Omitted args sends original SQL; explicit None binds one NULL.
             /// many/itemize are exact bool and keyword-only. All request chunks
             /// share one deadline. Confirmed prefixes never imply a commit.
+            /// In text mode, an actual batch automatically merges approved
+            /// INSERT/REPLACE VALUES shapes when their complete original groups
+            /// fit the encoded request limit. Other SQL uses the full template
+            /// separately for each input row. There is no public merge switch.
+            /// For example, VALUES (%s) with rows [(1,), (2,)] can become one
+            /// VALUES (1),(2) statement. If capacity permits only two complete
+            /// input groups, five groups require 2+2+1 statements; an original
+            /// multi-group input is not cut into smaller pieces to make it fit.
+            /// Actual grouping determines MySQL's default/expression evaluation,
+            /// statement errors and transaction boundaries, result-set count,
+            /// warnings and insert IDs. It is not universally equivalent to
+            /// executing one statement per source row. Counts do not prove a
+            /// commit, and fewer requests alone do not prove a speedup.
             /// Text directives after a statement changing input charset,
             /// sql_mode or time_zone, or after opaque CALL/EXECUTE, fail locally
             /// before the request sends. Run and confirm that statement first,
@@ -1887,24 +1900,65 @@ macro_rules! cursor_api {
             #[pyo3(signature=(sql,args=Argument::default(),*,many=Argument::default(),itemize=Argument::default(),local_file=None))]
             #[pyo3(text_signature="($self, sql, args=..., *, many=False, itemize=True, local_file=None)")]
             fn execute<'py>(&self,py:Python<'py>,sql:&Bound<'_,PyAny>,args:Argument<'_>,many:Argument<'_>,itemize:Argument<'_>,local_file:Option<&Bound<'_,PyAny>>)->PyResult<Bound<'py,PyAny>> {self.run(py,sql,args,&many,&itemize,local_file).map_err(|error|errors::at(py,error,"cursor.execute"))}
-            /// Call one safely quoted procedure using one positional argument
-            /// row. Omitted args means zero positions; explicit None is NULL.
-            /// parameter_modes explicitly declares IN/OUT/INOUT, never inferred
-            /// from values. Results use this Cursor's normal nextset/fetch path.
-            /// Modes must be an exact list/tuple of direction strings, or None
-            /// for all IN; OUT requires a source NULL placeholder. MySQL still
-            /// decides the actual procedure signature. Detectable disagreement
-            /// may be reported after CALL was sent; the request is not replayed.
-            /// Buffered calls return the first public count. SS returns None
-            /// while that count is unknown. Prepared SS calls with declared
-            /// outputs may read up to two native rows to identify the actual
-            /// output flag, without buffering the full business result.
-            /// Finish all public sets with nextset() until None, or close the
-            /// Cursor within the original remaining budget, to obtain outputs.
-            /// call_output_params is a local read-only original-position mapping.
-            /// Decode uses actual fields and this operation's option snapshot;
-            /// text user-variable output may expose dates and JSON as strings.
-            /// Prepared output can preserve native date/JSON field types.
+            /// Call one stored procedure using one shared-Escape parameter row.
+            /// proc_name and optional database are nonempty raw str identifiers,
+            /// quoted separately; NUL is invalid and a dot is not a separator.
+            /// Omitted args=() has zero positions; explicit None has one NULL.
+            /// Multirow sources are rejected. Keep mutable inputs stable until
+            /// return; the input is not rewritten or made into an atomic snapshot.
+            /// parameter_modes is keyword-only: None means all IN, otherwise
+            /// an exact list/tuple of case-insensitive IN/OUT/INOUT strings has
+            /// one entry per position. OUT requires the literal Python None;
+            /// another value adapting to SQL NULL is not that placeholder.
+            /// INOUT accepts a NULL initial value; None never infers direction.
+            /// Mode/count and OUT-value errors fail before target PREPARE/CALL.
+            /// MySQL defines the actual signature: it is not queried in advance,
+            /// a disagreement may fail after send, and no call is auto-replayed.
+            ///
+            /// Pure IN, for report(IN year_value, IN month_value):
+            ///     cur.callproc('report', (2026, 11))
+            /// Buffered IN/OUT/INOUT, for adjust(IN n, OUT result, INOUT counter):
+            ///     cur.callproc('adjust', (5, None, 10),
+            ///                  parameter_modes=('IN', 'OUT', 'INOUT'))
+            ///     outputs = cur.call_output_params  # original keys 1 and 2
+            /// Invalid: parameter_modes=('IN',) mismatches that three-value row.
+            /// Invalid: (5, 7, 10) with OUT at position 1 must raise ValueError;
+            /// use the literal None, not 7 or a non-None NULL-adapting value.
+            ///
+            /// Buffered calls finish native reception before return and return
+            /// the first public result count. SS returns None while that count
+            /// is unknown, without forcing full result buffering for outputs.
+            /// Only prepared SS callproc declaring OUT/INOUT may look ahead up
+            /// to two native rows or the set terminator to identify real OUT.
+            /// Ordinary queries, direct execute CALL and no-output calls keep
+            /// their header-time return. Finish every public set, including OKs:
+            ///     while True:
+            ///         if ss.description is not None:
+            ///             for row in ss:
+            ///                 consume(row)
+            ///         if ss.nextset() is None:
+            ///             break
+            ///     outputs = ss.call_output_params
+            /// Explicit close/context/transaction exit may also finish within
+            /// the original remaining budget. The getter sends no SQL: None is
+            /// unready, {} is confirmed no OUT, and {1: None} is a real NULL.
+            ///
+            /// Output follows actual server fields and this operation's frozen
+            /// Decode options, not a guessed procedure declaration. For example,
+            /// a reported nonbinary text OUT '2024-02-29' stays str rather than
+            /// date; a binary field stays bytes. decode_json does not parse an
+            /// ordinary text field merely because the procedure declared JSON.
+            /// Text user-variable assignment may lose declared precision/scale.
+            /// With use_decimal=True, an actual decimal payload '12.5' becomes
+            /// Decimal('12.5'), not a reconstructed declared Decimal('12.50').
+            /// Prepared OUT may retain native date/JSON metadata and then uses
+            /// the relevant Decode options. Text output management adds internal
+            /// communication; prepared OUT uses no output user-variable bridge.
+            /// The _sqlaero_call_ variable namespace is reserved: applications
+            /// and routines must not read/write it. This is not isolation from
+            /// deliberate access. Clearing slots to NULL neither deletes them
+            /// nor promises secure erasure. Cleanup keeps the primary failure
+            /// and real execution/transaction facts; it does not replay CALL.
             #[pyo3(signature=(proc_name,args=Argument::default(),*,database=None,parameter_modes=None))]
             #[pyo3(text_signature="($self, proc_name, args=(), *, database=None, parameter_modes=None)")]
             fn callproc<'py>(&self,py:Python<'py>,proc_name:&Bound<'_,PyAny>,args:Argument<'_>,database:Option<&Bound<'_,PyAny>>,parameter_modes:Option<&Bound<'_,PyAny>>)->PyResult<Bound<'py,PyAny>> {
@@ -1912,6 +1966,9 @@ macro_rules! cursor_api {
             }
             /// Execute using the same native many=True,itemize=True operation.
             /// Input value and timezone rules are the same as execute().
+            /// Text VALUES merging is automatic for approved shapes and limits;
+            /// actual grouped/split statements determine defaults, errors,
+            /// transaction boundaries, sets, warnings and IDs as execute explains.
             /// Keep args and all nested mutable values unchanged until this
             /// call returns. Each constructed Rust request owns stable bytes;
             /// batch construction does not provide an atomic snapshot of all inputs.
@@ -1954,8 +2011,19 @@ macro_rules! cursor_api {
                 if $streaming {return self.next_stream(py).map_err(|error|errors::at(py,error,"cursor.nextset"));}
                 Ok(None)
             }
-            /// Sum only the first result count of each actual request. None
-            /// means a contribution or an unattempted request remains unknown.
+            /// Reliable sum of each actual request's first result count in this
+            /// call, not a count per source row or a sum of every nextset().
+            /// Actual zero is 0; None means a required contribution or an
+            /// unattempted request is still unknown, not a known prefix subtotal.
+            /// Before handoff, local failure keeps the old operation's value.
+            /// After handoff, only this call's confirmed contributions count;
+            /// a fully known sum survives a later noncontributing-set failure.
+            /// Failure does not prove that SQL was unexecuted or uncommitted,
+            /// and a count does not prove commit. fetch/nextset may confirm a
+            /// missing contribution once, never double-count it. The getter is
+            /// local and does not drain or refresh a deadline. Reliable saved
+            /// counts remain readable after Cursor/Connection close; unknown
+            /// stays None. Keeping counts does not retain whole row buffers.
             #[getter] fn batch_row_count<'py>(&self,py:Python<'py>)->PyResult<Bound<'py,PyAny>> {let count=self.results(py)?.batch;output::optional_count(py,count)}
             /// Confirmed callproc OUT/INOUT values by original argument index,
             /// or None while unready. Reading sends no SQL. Successful values
@@ -1970,8 +2038,16 @@ macro_rules! cursor_api {
                 let connection=self.connection.borrow(py);
                 output.get(py,&connection.types).map_err(|error|errors::at(py,error,"cursor.call_output_params"))
             }
-            /// Move within the current result. Buffered results allow both
-            /// directions, including EOF. Invalid positions raise IndexError.
+            /// Move within the current set; success returns None. value uses
+            /// __index__ (bool excluded); mode is relative by default or absolute.
+            /// Buffered results allow both directions, including exact EOF;
+            /// position 0 is valid for an empty SELECT. Invalid range raises
+            /// IndexError, with buffered position unchanged. SS only moves
+            /// forward: an unsuccessful skip may already have consumed rows,
+            /// so its actual position is retained rather than rolled back.
+            /// A protocol exception is preserved. If it returns normally after
+            /// retiring this Cursor, navigation raises InterfaceError before a
+            /// new position is committed. No replay, nextset or clipping occurs.
             #[pyo3(signature=(value,mode="relative"))]
             fn scroll(&self,py:Python<'_>,value:&Bound<'_,PyAny>,mode:&str)->PyResult<()> {
                 if $streaming {self.stream_scroll(py,value,mode).map_err(|error|errors::at(py,error,"cursor.scroll"))} else {self.reader.scroll(py,value,mode)}
@@ -2078,5 +2154,5 @@ cursor_api! {
     (use_decimal,set_use_decimal,"Default True. True returns exact decimal.Decimal values for DECIMAL. False uses the native correctly rounded binary64 parser and returns float, potentially losing decimal precision; invalid or non-finite results raise DataError. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
     (use_timedelta,set_use_timedelta,"Default True. True returns datetime.timedelta for MySQL TIME, including negative and multi-day durations. False returns datetime.time and raises DataError for negative values or durations at least 24 hours. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
     (decode_text_strict,set_decode_text_strict,"Default True. True raises UnicodeDecodeError for invalid text bytes. False preserves undecodable bytes through surrogateescape, without replacement characters. Binary fields remain bytes and input encoding is unaffected. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
-    (decode_date_strict,set_decode_date_strict,"Default True. True raises DataError for zero or otherwise unrepresentable DATE/DATETIME values. False returns their original calendar text as str. Valid values retain date/datetime output in both modes. SQL NULL remains None.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
+    (decode_date_strict,set_decode_date_strict,"Default True. True raises DataError for zero or otherwise unrepresentable DATE/DATETIME values. False returns str for unrepresentable calendars: text protocol preserves the received calendar spelling using the result codec; binary protocol has no original text and formats the received components with trustworthy fractional-second precision. For example, a zero binary DATETIME with fsp=6 becomes '0000-00-00 00:00:00.000000'. Malformed wire values still raise protocol errors; components outside the canonical display format or an untrustworthy/inconsistent precision raise DataError. Valid values retain date/datetime output in both modes. SQL NULL remains None; TIME follows use_timedelta.\n\nThe initial value is copied from Connection. Changes apply only to subsequent executions; existing results keep their execution-time snapshot. Exact bool assignment only; other types raise TypeError. Reads and assignments send no SQL. Saved values remain readable after close, but assignment after close raises InterfaceError."),
 }

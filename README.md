@@ -148,13 +148,25 @@ as `'00:30:00'`; unlike aware `datetime`, it is not converted to UTC.
 
 `executemany(sql, rows)` is the same native `many=True, itemize=True` path.
 Approved INSERT/REPLACE VALUES forms merge complete rows within the actual
-encoded request limit; other legal SQL executes per row. A confirmed prefix is
-not a promise that its transaction committed. An entered failed call exposes
-unknown aggregate counters while preserving complete trusted prefix results and
-their execution facts. Current `rowcount`/`row_count`/`affected_rows`, insert ID
+encoded request limit; other legal SQL repeats the complete template per source
+row. Every original VALUES group stays together. With sufficient capacity, five
+one-group rows form one five-group statement; a limit allowing two complete
+groups produces requests of 2, 2 and 1 groups. These are capacity examples, not
+fixed request counts. Defaults and expressions are evaluated by MySQL in those
+actual statements. Errors, transaction boundaries, result sets, warnings and
+insert IDs also follow the actual statements and server responses; merging does
+not promise the full semantics of separate one-row statements. Reduced request
+counts alone are not a measured speedup.
+
+A confirmed prefix is not a promise that its transaction committed. A failed
+call retains complete trusted prefix results and execution facts. An unknown
+required count contribution makes `batch_row_count` unknown (`None`), while a
+failure in a later noncontributing set does not erase an already complete total.
+Current `rowcount`/`row_count`/`affected_rows`, insert ID
 and warning count describe the current result set. `batch_row_count` separately
 retains the reliable sum of each actual request's first result count. A failed
-call does not turn a partial sum into overall success.
+call does not turn a partial sum into overall success. Local validation failures
+before execution handoff retain the old result and counters.
 
 ### Optional typed Escape inputs
 
@@ -221,7 +233,64 @@ None at the normal end. Batch results are retained in the same order. After a
 later failure, complete trusted prefix results remain readable; reaching the
 saved failure boundary raises its recorded cause instead of reporting a normal
 end. Buffered `scroll()` supports relative/absolute navigation; streaming
-Cursors move only forward and raise IndexError on an invalid position.
+Cursors move only forward. Both raise `IndexError` on an invalid position,
+without clipping. Exact EOF is legal, including position zero of an empty row
+result. Buffered range failures keep the position; a real streaming skip may
+already have consumed rows when it fails, so that progress cannot be rolled
+back. Successful navigation returns `None`, never replays SQL or selects the
+next set. Exceptions from an index protocol retain their original cause; a
+Cursor retired by a normally returning protocol is rejected as closed.
+
+### Stored procedure outputs
+
+`callproc` uses the routine's actual MySQL signature. For an existing routine
+`adjust(IN value INT, OUT doubled INT, INOUT running INT)` whose body assigns
+`doubled = value * 2` and `running = running + value`, a buffered call is:
+
+```python
+with connection.cursor() as cursor:
+    cursor.callproc('adjust', (7, None, 10),
+                    parameter_modes=('IN', 'OUT', 'INOUT'))
+    assert cursor.call_output_params == {1: 14, 2: 17}
+    while True:
+        if cursor.description is not None:
+            rows = cursor.fetchall()  # every business result, in order
+        if cursor.nextset() is None:
+            break
+```
+
+A pure-IN routine such as `report(IN year INT, IN month INT)` needs only
+`cursor.callproc('report', (2026, 11))`. An explicit mode list must match the
+argument count. For `adjust`, passing `(7, 8, 10)` with the modes above is rejected
+locally: an OUT placeholder must be the literal Python `None`, not another value
+which adapts to SQL NULL. INOUT accepts its initial value, including `None`.
+
+For a streaming Cursor, consume all business results with fetch and `nextset()`
+before expecting output to be ready. `call_output_params` is a local read-only
+mapping keyed by original zero-based argument positions: `None` means not ready,
+`{}` means ready with no outputs, and `{1: None}` means a ready SQL NULL output.
+Prepared streaming calls with declared OUT/INOUT may use the approved two-row
+native lookahead; they do not buffer a whole business result.
+
+Output decoding follows the field metadata MySQL actually returns. Text
+user-variable output can lose the routine declaration's precision/scale: actual
+decimal text `12.5` becomes `Decimal('12.5')` with `use_decimal=True`, without
+inventing `Decimal('12.50')`. Actual nonbinary text date/JSON values remain `str`;
+binary fields remain `bytes`, and `decode_json` does not guess from ordinary
+text. Prepared output uses native output metadata and its applicable Decode
+policy. The `_sqlaero_call_` user-variable namespace is reserved to the driver;
+applications and routines must not read or write it. It is not an isolation
+boundary against deliberate access. Clearing a slot to NULL does not delete it
+or promise secure erasure. Internal cleanup shares the remaining deadline and
+never replaces the original primary exception or replays a CALL.
+
+`decode_date_strict=False` returns an invalid calendar as a string. Text protocol
+preserves the received calendar spelling using the result codec. Binary protocol
+has no original text: it formats actual components and trustworthy fractional
+precision, for example `0000-00-00 00:00:00.000000` for zero DATETIME with fsp 6.
+Malformed wire values still raise protocol errors, and inconsistent precision
+raises `DataError`; valid date/datetime values and SQL NULL keep their ordinary
+output types.
 
 `connection.escape()` and `cursor.mogrify()` are local helpers. Escape returns
 the documented str/tuple/list shape; mogrify returns str for one planned request
