@@ -1,8 +1,10 @@
 """Deliver real OS signals while the tested extension can hold the Python GIL.
 
-POSIX keeps its existing interval timer. Windows starts the test interpreter in
-a private console before CPython registers its handlers, then uses a prestarted
-sender. No event can reach the Actions runner or a user's console.
+Each alarm owns a prestarted sender process. Waiting for that process to exit
+closes the signal source before restoring the previous disposition; disarming
+a process interval timer alone cannot join an in-flight kernel delivery.
+Windows also starts the target in a private console before CPython registers
+its handlers. No event can reach the Actions runner or a user's console.
 This is a test fixture only; production signal handling remains in CPython.
 """
 
@@ -65,32 +67,34 @@ class NativeAlarm:
         if os.name == 'nt':
             _private_console()
             self.number: int = signal.SIGINT if sigint else signal.SIGBREAK
-            self.sender = subprocess.Popen(
-                [sys.executable, str(Path(__file__).resolve()), '--sender', str(os.getpid()),
-                 '0' if sigint else '1'], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE, text=True, creationflags=subprocess.CREATE_NO_WINDOW,
-            )
-            sender = self.sender
-            assert sender.stdout is not None
-            stream = sender.stdout
-
-            def read_messages() -> None:
-                for line in stream:
-                    self.messages.put(line)
-                self.messages.put('')
-
-            self.reader = Thread(target=read_messages, daemon=True)
-            self.reader.start()
-            try:
-                message = self.messages.get(timeout=5)
-            except Empty:
-                self._stop_sender()
-                raise AssertionError('Windows signal sender did not become ready') from None
-            if message.strip() != 'ready':
-                self._stop_sender()
-                raise AssertionError(f'Windows signal sender failed: {message!r}')
+            event = 0 if sigint else 1
         else:
             self.number = signal.SIGINT if sigint else signal.SIGALRM
+            event = self.number
+        self.sender = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), '--sender', str(os.getpid()), str(event)],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+        )
+        sender = self.sender
+        assert sender.stdout is not None
+        stream = sender.stdout
+
+        def read_messages() -> None:
+            for line in stream:
+                self.messages.put(line)
+            self.messages.put('')
+
+        self.reader = Thread(target=read_messages, daemon=True)
+        self.reader.start()
+        try:
+            message = self.messages.get(timeout=5)
+        except Empty:
+            self._stop_sender()
+            raise AssertionError('Native signal sender did not become ready') from None
+        if message.strip() != 'ready':
+            self._stop_sender()
+            raise AssertionError(f'Native signal sender failed: {message!r}')
         # A periodic OS source can reenter a Python handler while it inspects
         # GC state. Coalesce nested fixture deliveries so one progress probe
         # cannot duplicate its own observation; library reentry remains tested.
@@ -114,19 +118,16 @@ class NativeAlarm:
         Progress-sensitive tests can wait before entering native work; their
         handler ignores pre-work signals. Other tests retain nonblocking arming.
         """
-        if os.name != 'nt':
-            signal.setitimer(signal.ITIMER_REAL, delay, interval)
-        else:
-            assert self.sender is not None
-            assert self.sender.stdin is not None
-            self.sender.stdin.write(f'{delay} {interval} {int(wait_ready)}\n')
-            self.sender.stdin.flush()
-            if wait_ready:
-                try:
-                    message = self.messages.get(timeout=5)
-                except Empty:
-                    raise AssertionError('Windows signal sender did not acknowledge arming') from None
-                assert message.strip() == 'armed', message
+        assert self.sender is not None
+        assert self.sender.stdin is not None
+        self.sender.stdin.write(f'{delay} {interval} {int(wait_ready)}\n')
+        self.sender.stdin.flush()
+        if wait_ready:
+            try:
+                message = self.messages.get(timeout=5)
+            except Empty:
+                raise AssertionError('Native signal sender did not acknowledge arming') from None
+            assert message.strip() == 'armed', message
 
     def cancel(self) -> None:
         """Disarm future signals while leaving the installed handler in place."""
@@ -148,29 +149,29 @@ class NativeAlarm:
         if self.closed:
             return
         self.closed = True
-        # Discard already pending owned alarms as well as stopping future ones.
-        # Disarming a POSIX timer alone does not remove a queued SIGALRM.
+        # Ignore pending deliveries while joining the only source. No sender
+        # can still generate an alarm after its actual process exit. Retired
+        # Python dispatches are also suppressed by the closed flag above.
         signal.signal(self.number, signal.SIG_IGN)
-        if self.sender is not None:
-            self._stop_sender()
-        else:
-            self.cancel()
+        self._stop_sender()
         signal.signal(self.number, self.previous)
 
 
 def _send(parent: int, event: int) -> None:
-    """Send console events from a separate process, independent of target GIL."""
-    kernel = _kernel()
-    kernel.FreeConsole()
-    if not kernel.AttachConsole(parent):
-        raise _win.WinError(_win.get_last_error())
-    callback_type = _win.WINFUNCTYPE(ctypes.c_int, ctypes.c_ulong)
-    def ignore_event(_event: int) -> bool:
-        return True
+    """Send real OS signals independently of the target's GIL and lifetime."""
+    kernel = None
+    if os.name == 'nt':
+        kernel = _kernel()
+        kernel.FreeConsole()
+        if not kernel.AttachConsole(parent):
+            raise _win.WinError(_win.get_last_error())
+        callback_type = _win.WINFUNCTYPE(ctypes.c_int, ctypes.c_ulong)
+        def ignore_event(_event: int) -> bool:
+            return True
 
-    ignore = callback_type(ignore_event)
-    if not kernel.SetConsoleCtrlHandler(ctypes.cast(ignore, ctypes.c_void_p), True):
-        raise _win.WinError(_win.get_last_error())
+        ignore = callback_type(ignore_event)
+        if not kernel.SetConsoleCtrlHandler(ctypes.cast(ignore, ctypes.c_void_p), True):
+            raise _win.WinError(_win.get_last_error())
     commands: Queue[tuple[float, float, bool] | None] = Queue()
 
     def read_commands() -> None:
@@ -198,7 +199,12 @@ def _send(parent: int, event: int) -> None:
                     # waitable timer; poll only while this finite alarm is armed.
                     time.sleep(min(remaining, 0.0001))
                     continue
-                if not kernel.GenerateConsoleCtrlEvent(event, 0):
+                if kernel is None:
+                    # Do not signal a reused PID if the owned target exits.
+                    if os.getppid() != parent:
+                        return
+                    os.kill(parent, event)
+                elif not kernel.GenerateConsoleCtrlEvent(event, 0):
                     raise _win.WinError(_win.get_last_error())
                 deadline = time.perf_counter() + repeat if repeat else None
                 continue
@@ -236,6 +242,7 @@ if __name__ == '__main__':
 import os
 import signal
 import sys
+import time
 sys.path.insert(0, sys.argv[1])
 from _native_signal import NativeAlarm
 hits = []
@@ -243,8 +250,11 @@ def previous_handler(number, frame):
     hits.append(number)
 for previous in (signal.SIG_DFL, signal.SIG_IGN, previous_handler):
     signal.signal(signal.SIGALRM, previous)
-    alarm = NativeAlarm(lambda number, frame: None)
+    # Reader threads inherit this mask; a process-directed signal must stay
+    # pending instead of being consumed by a different unblocked thread.
     old_mask = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGALRM})
+    alarm = NativeAlarm(lambda number, frame: None)
+    alarm.start(0.0001, 0.0001, wait_ready=True)
     os.kill(os.getpid(), signal.SIGALRM)
     assert signal.SIGALRM in signal.sigpending()
     alarm.close()
@@ -252,7 +262,10 @@ for previous in (signal.SIG_DFL, signal.SIG_IGN, previous_handler):
     assert signal.getsignal(signal.SIGALRM) is previous
     assert signal.SIGALRM not in signal.sigpending()
     assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
+    assert alarm.sender is not None and alarm.sender.poll() is not None
+    assert alarm.reader is not None and not alarm.reader.is_alive()
     signal.pthread_sigmask(signal.SIG_SETMASK, old_mask)
+    time.sleep(0.002)
     assert hits == []
 os.kill(os.getpid(), signal.SIGALRM)
 assert hits == [signal.SIGALRM]
