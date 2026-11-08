@@ -32,6 +32,9 @@ are recorded in `third-party/pyo3/SQLAERO_PATCH.md` and `SQLAERO_PATCH.diff`.
 | arrow-buffer | 60.1.0 | Apache-2.0 | [LICENSE.txt](licenses/third-party/arrow-buffer-60.1.0/LICENSE.txt), [NOTICE.txt](licenses/third-party/arrow-buffer-60.1.0/NOTICE.txt) |
 | arrow-data | 60.0.0 | Apache-2.0 | [LICENSE.txt](licenses/third-party/arrow-data-60.0.0/LICENSE.txt), [NOTICE.txt](licenses/third-party/arrow-data-60.0.0/NOTICE.txt) |
 | arrow-schema | 60.0.0 | Apache-2.0 | [LICENSE.txt](licenses/third-party/arrow-schema-60.0.0/LICENSE.txt), [NOTICE.txt](licenses/third-party/arrow-schema-60.0.0/NOTICE.txt) |
+| asn1-rs | 0.7.2 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/asn1-rs-0.7.2/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/asn1-rs-0.7.2/LICENSE-MIT), [SOURCE.json](licenses/third-party/asn1-rs-0.7.2/SOURCE.json) |
+| asn1-rs-derive | 0.6.0 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/asn1-rs-derive-0.6.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/asn1-rs-derive-0.6.0/LICENSE-MIT), [SOURCE.json](licenses/third-party/asn1-rs-derive-0.6.0/SOURCE.json) |
+| asn1-rs-impl | 0.2.0 | MIT/Apache-2.0 | [LICENSE-APACHE](licenses/third-party/asn1-rs-impl-0.2.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/asn1-rs-impl-0.2.0/LICENSE-MIT), [SOURCE.json](licenses/third-party/asn1-rs-impl-0.2.0/SOURCE.json) |
 | autocfg | 1.5.1 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/autocfg-1.5.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/autocfg-1.5.1/LICENSE-MIT) |
 | aws-lc-rs | 1.18.0 | ISC AND (Apache-2.0 OR ISC) | [LICENSE](licenses/third-party/aws-lc-rs-1.18.0/LICENSE) |
 | aws-lc-sys | 0.44.0 | ISC AND (Apache-2.0 OR ISC) AND Apache-2.0 AND MIT AND BSD-3-Clause AND (Apache-2.0 OR ISC OR MIT) AND (Apache-2.0 OR ISC OR MIT-0) | [LICENSE](licenses/third-party/aws-lc-sys-0.44.0/LICENSE), [LICENSE](licenses/third-party/aws-lc-sys-0.44.0/aws-lc/LICENSE) |
@@ -64,8 +67,12 @@ are recorded in `third-party/pyo3/SQLAERO_PATCH.md` and `SQLAERO_PATCH.diff`.
 | crypto-common | 0.2.2 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/crypto-common-0.2.2/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/crypto-common-0.2.2/LICENSE-MIT) |
 | ctr | 0.10.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/ctr-0.10.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/ctr-0.10.1/LICENSE-MIT) |
 | ctutils | 0.4.5 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/ctutils-0.4.5/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/ctutils-0.4.5/LICENSE-MIT) |
+| data-encoding | 2.11.1 | MIT | [LICENSE](licenses/third-party/data-encoding-2.11.1/LICENSE), [SOURCE.json](licenses/third-party/data-encoding-2.11.1/SOURCE.json) |
 | der | 0.8.2 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/der-0.8.2/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/der-0.8.2/LICENSE-MIT) |
+| der-parser | 10.0.0 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/der-parser-10.0.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/der-parser-10.0.0/LICENSE-MIT), [SOURCE.json](licenses/third-party/der-parser-10.0.0/SOURCE.json) |
+| deranged | 0.5.9 | MIT OR Apache-2.0 | [LICENSE-Apache](licenses/third-party/deranged-0.5.9/LICENSE-Apache), [LICENSE-MIT](licenses/third-party/deranged-0.5.9/LICENSE-MIT), [SOURCE.json](licenses/third-party/deranged-0.5.9/SOURCE.json) |
 | digest | 0.11.3 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/digest-0.11.3/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/digest-0.11.3/LICENSE-MIT) |
+| displaydoc | 0.2.7 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/displaydoc-0.2.7/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/displaydoc-0.2.7/LICENSE-MIT), [SOURCE.json](licenses/third-party/displaydoc-0.2.7/SOURCE.json) |
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 | [LICENSE](licenses/third-party/dunce-1.0.5/LICENSE) |
 | encoding_rs | 0.8.42 | (Apache-2.0 OR MIT) AND BSD-3-Clause | [COPYRIGHT](licenses/third-party/encoding_rs-0.8.42/COPYRIGHT), [LICENSE-APACHE](licenses/third-party/encoding_rs-0.8.42/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/encoding_rs-0.8.42/LICENSE-MIT), [LICENSE-WHATWG](licenses/third-party/encoding_rs-0.8.42/LICENSE-WHATWG) |
 | find-msvc-tools | 0.1.15 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/find-msvc-tools-0.1.15/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/find-msvc-tools-0.1.15/LICENSE-MIT) |
@@ -88,6 +95,7 @@ are recorded in `third-party/pyo3/SQLAERO_PATCH.md` and `SQLAERO_PATCH.diff`.
 | itoa | 1.0.18 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/itoa-1.0.18/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/itoa-1.0.18/LICENSE-MIT) |
 | jiter | 0.17.0 | MIT | [LICENSE](licenses/third-party/jiter-0.17.0/LICENSE) |
 | jobserver | 0.1.35 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/jobserver-0.1.35/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/jobserver-0.1.35/LICENSE-MIT) |
+| lazy_static | 1.5.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/lazy_static-1.5.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/lazy_static-1.5.1/LICENSE-MIT), [SOURCE.json](licenses/third-party/lazy_static-1.5.1/SOURCE.json) |
 | lexical-parse-float | 1.0.6 | MIT/Apache-2.0 | [LICENSE-APACHE](licenses/third-party/lexical-parse-float-1.0.6/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/lexical-parse-float-1.0.6/LICENSE-MIT), [LICENSE.md](licenses/third-party/lexical-parse-float-1.0.6/LICENSE.md) |
 | lexical-parse-integer | 1.0.6 | MIT/Apache-2.0 | [LICENSE-APACHE](licenses/third-party/lexical-parse-integer-1.0.6/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/lexical-parse-integer-1.0.6/LICENSE-MIT), [LICENSE.md](licenses/third-party/lexical-parse-integer-1.0.6/LICENSE.md) |
 | lexical-util | 1.0.7 | MIT/Apache-2.0 | [LICENSE-APACHE](licenses/third-party/lexical-util-1.0.7/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/lexical-util-1.0.7/LICENSE-MIT) |
@@ -95,15 +103,19 @@ are recorded in `third-party/pyo3/SQLAERO_PATCH.md` and `SQLAERO_PATCH.diff`.
 | libm | 0.2.16 | MIT | [LICENSE.txt](licenses/third-party/libm-0.2.16/LICENSE.txt) |
 | log | 0.4.34 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/log-0.4.34/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/log-0.4.34/LICENSE-MIT) |
 | memchr | 2.8.3 | Unlicense OR MIT | [COPYING](licenses/third-party/memchr-2.8.3/COPYING), [LICENSE-MIT](licenses/third-party/memchr-2.8.3/LICENSE-MIT), [UNLICENSE](licenses/third-party/memchr-2.8.3/UNLICENSE) |
+| minimal-lexical | 0.2.1 | MIT/Apache-2.0 | [LICENSE-APACHE](licenses/third-party/minimal-lexical-0.2.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/minimal-lexical-0.2.1/LICENSE-MIT), [LICENSE.md](licenses/third-party/minimal-lexical-0.2.1/LICENSE.md), [SOURCE.json](licenses/third-party/minimal-lexical-0.2.1/SOURCE.json) |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | [LICENSE](licenses/third-party/miniz_oxide-0.9.1/LICENSE), [LICENSE-APACHE.md](licenses/third-party/miniz_oxide-0.9.1/LICENSE-APACHE.md), [LICENSE-MIT.md](licenses/third-party/miniz_oxide-0.9.1/LICENSE-MIT.md), [LICENSE-ZLIB.md](licenses/third-party/miniz_oxide-0.9.1/LICENSE-ZLIB.md) |
 | mio | 1.2.4 | MIT | [LICENSE](licenses/third-party/mio-1.2.4/LICENSE) |
 | multiversion_no_op | 1.0.0 | Apache-2.0 OR MIT | [COPYRIGHT](licenses/third-party/multiversion_no_op-1.0.0/COPYRIGHT), [LICENSE-APACHE](licenses/third-party/multiversion_no_op-1.0.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/multiversion_no_op-1.0.0/LICENSE-MIT) |
 | mysql_common | 0.38.2 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/mysql_common-0.38.2/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/mysql_common-0.38.2/LICENSE-MIT) |
+| nom | 7.1.3 | MIT | [LICENSE](licenses/third-party/nom-7.1.3/LICENSE), [SOURCE.json](licenses/third-party/nom-7.1.3/SOURCE.json) |
 | num-bigint | 0.4.8 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/num-bigint-0.4.8/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/num-bigint-0.4.8/LICENSE-MIT) |
 | num-bigint | 0.5.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/num-bigint-0.5.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/num-bigint-0.5.1/LICENSE-MIT) |
 | num-complex | 0.4.6 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/num-complex-0.4.6/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/num-complex-0.4.6/LICENSE-MIT) |
+| num-conv | 0.2.2 | MIT OR Apache-2.0 | [LICENSE-Apache](licenses/third-party/num-conv-0.2.2/LICENSE-Apache), [LICENSE-MIT](licenses/third-party/num-conv-0.2.2/LICENSE-MIT), [SOURCE.json](licenses/third-party/num-conv-0.2.2/SOURCE.json) |
 | num-integer | 0.1.47 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/num-integer-0.1.47/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/num-integer-0.1.47/LICENSE-MIT) |
 | num-traits | 0.2.19 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/num-traits-0.2.19/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/num-traits-0.2.19/LICENSE-MIT) |
+| oid-registry | 0.8.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/oid-registry-0.8.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/oid-registry-0.8.1/LICENSE-MIT), [SOURCE.json](licenses/third-party/oid-registry-0.8.1/SOURCE.json) |
 | once_cell | 1.21.4 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/once_cell-1.21.4/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/once_cell-1.21.4/LICENSE-MIT) |
 | openssl-probe | 0.2.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/openssl-probe-0.2.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/openssl-probe-0.2.1/LICENSE-MIT) |
 | pbkdf2 | 0.13.0 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/pbkdf2-0.13.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/pbkdf2-0.13.0/LICENSE-MIT) |
@@ -112,6 +124,7 @@ are recorded in `third-party/pyo3/SQLAERO_PATCH.md` and `SQLAERO_PATCH.diff`.
 | pkcs8 | 0.11.0 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/pkcs8-0.11.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/pkcs8-0.11.0/LICENSE-MIT) |
 | pkg-config | 0.3.34 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/pkg-config-0.3.34/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/pkg-config-0.3.34/LICENSE-MIT) |
 | polyval | 0.7.3 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/polyval-0.7.3/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/polyval-0.7.3/LICENSE-MIT) |
+| powerfmt | 0.2.1 | MIT OR Apache-2.0 | [LICENSE-Apache](licenses/third-party/powerfmt-0.2.1/LICENSE-Apache), [LICENSE-MIT](licenses/third-party/powerfmt-0.2.1/LICENSE-MIT), [SOURCE.json](licenses/third-party/powerfmt-0.2.1/SOURCE.json) |
 | proc-macro2 | 1.0.107 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/proc-macro2-1.0.107/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/proc-macro2-1.0.107/LICENSE-MIT) |
 | pyo3 | 0.29.2 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/pyo3-0.29.2/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/pyo3-0.29.2/LICENSE-MIT) |
 | pyo3-build-config | 0.29.2 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/pyo3-build-config-0.29.2/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/pyo3-build-config-0.29.2/LICENSE-MIT) |
@@ -125,6 +138,7 @@ are recorded in `third-party/pyo3/SQLAERO_PATCH.md` and `SQLAERO_PATCH.diff`.
 | regex-automata | 0.4.18 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/regex-automata-0.4.18/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/regex-automata-0.4.18/LICENSE-MIT) |
 | regex-syntax | 0.8.11 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/regex-syntax-0.8.11/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/regex-syntax-0.8.11/LICENSE-MIT) |
 | ring | 0.17.14 | Apache-2.0 AND ISC | [LICENSE](licenses/third-party/ring-0.17.14/LICENSE), [LICENSE-BoringSSL](licenses/third-party/ring-0.17.14/LICENSE-BoringSSL), [LICENSE-other-bits](licenses/third-party/ring-0.17.14/LICENSE-other-bits) |
+| rusticata-macros | 4.1.0 | MIT/Apache-2.0 | [LICENSE-APACHE](licenses/third-party/rusticata-macros-4.1.0/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/rusticata-macros-4.1.0/LICENSE-MIT), [SOURCE.json](licenses/third-party/rusticata-macros-4.1.0/SOURCE.json) |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | [LICENSE-APACHE](licenses/third-party/rustls-0.23.46/LICENSE-APACHE), [LICENSE-ISC](licenses/third-party/rustls-0.23.46/LICENSE-ISC), [LICENSE-MIT](licenses/third-party/rustls-0.23.46/LICENSE-MIT) |
 | rustls-native-certs | 0.8.5 | Apache-2.0 OR ISC OR MIT | [LICENSE-APACHE](licenses/third-party/rustls-native-certs-0.8.5/LICENSE-APACHE), [LICENSE](licenses/third-party/rustls-native-certs-0.8.5/LICENSE), [LICENSE-ISC](licenses/third-party/rustls-native-certs-0.8.5/LICENSE-ISC), [LICENSE-MIT](licenses/third-party/rustls-native-certs-0.8.5/LICENSE-MIT) |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/rustls-pki-types-1.15.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/rustls-pki-types-1.15.1/LICENSE-MIT) |
@@ -152,10 +166,14 @@ are recorded in `third-party/pyo3/SQLAERO_PATCH.md` and `SQLAERO_PATCH.diff`.
 | subtle | 2.6.1 | BSD-3-Clause | [LICENSE](licenses/third-party/subtle-2.6.1/LICENSE) |
 | syn | 2.0.119 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/syn-2.0.119/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/syn-2.0.119/LICENSE-MIT) |
 | syn | 3.0.9 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/syn-3.0.9/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/syn-3.0.9/LICENSE-MIT) |
+| synstructure | 0.13.2 | MIT | [LICENSE](licenses/third-party/synstructure-0.13.2/LICENSE), [SOURCE.json](licenses/third-party/synstructure-0.13.2/SOURCE.json) |
 | tap | 1.0.1 | MIT | [LICENSE.txt](licenses/third-party/tap-1.0.1/LICENSE.txt) |
 | target-lexicon | 0.13.5 | Apache-2.0 WITH LLVM-exception | [LICENSE](licenses/third-party/target-lexicon-0.13.5/LICENSE) |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/thiserror-2.0.21/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/thiserror-2.0.21/LICENSE-MIT) |
 | thiserror-impl | 2.0.21 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/thiserror-impl-2.0.21/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/thiserror-impl-2.0.21/LICENSE-MIT) |
+| time | 0.3.55 | MIT OR Apache-2.0 | [LICENSE-Apache](licenses/third-party/time-0.3.55/LICENSE-Apache), [LICENSE-MIT](licenses/third-party/time-0.3.55/LICENSE-MIT), [SOURCE.json](licenses/third-party/time-0.3.55/SOURCE.json) |
+| time-core | 0.1.9 | MIT OR Apache-2.0 | [LICENSE-Apache](licenses/third-party/time-core-0.1.9/LICENSE-Apache), [LICENSE-MIT](licenses/third-party/time-core-0.1.9/LICENSE-MIT), [SOURCE.json](licenses/third-party/time-core-0.1.9/SOURCE.json) |
+| time-macros | 0.2.32 | MIT OR Apache-2.0 | [LICENSE-Apache](licenses/third-party/time-macros-0.2.32/LICENSE-Apache), [LICENSE-MIT](licenses/third-party/time-macros-0.2.32/LICENSE-MIT), [SOURCE.json](licenses/third-party/time-macros-0.2.32/SOURCE.json) |
 | tiny-keccak | 2.0.2 | CC0-1.0 | [LICENSE](licenses/third-party/tiny-keccak-2.0.2/LICENSE) |
 | typenum | 1.20.1 | MIT OR Apache-2.0 | [LICENSE](licenses/third-party/typenum-1.20.1/LICENSE), [LICENSE-APACHE](licenses/third-party/typenum-1.20.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/typenum-1.20.1/LICENSE-MIT) |
 | unicode-ident | 1.0.27 | (MIT OR Apache-2.0) AND Unicode-3.0 | [LICENSE-APACHE](licenses/third-party/unicode-ident-1.0.27/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/unicode-ident-1.0.27/LICENSE-MIT), [LICENSE-UNICODE](licenses/third-party/unicode-ident-1.0.27/LICENSE-UNICODE) |
@@ -172,6 +190,11 @@ are recorded in `third-party/pyo3/SQLAERO_PATCH.md` and `SQLAERO_PATCH.diff`.
 | windows-strings | 0.5.1 | MIT OR Apache-2.0 | [license-apache-2.0](licenses/third-party/windows-strings-0.5.1/license-apache-2.0), [license-mit](licenses/third-party/windows-strings-0.5.1/license-mit) |
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 | [license-apache-2.0](licenses/third-party/windows-sys-0.61.2/license-apache-2.0), [license-mit](licenses/third-party/windows-sys-0.61.2/license-mit) |
 | wyz | 0.5.1 | MIT | [LICENSE.txt](licenses/third-party/wyz-0.5.1/LICENSE.txt) |
+| x509-parser | 0.18.1 | MIT OR Apache-2.0 | [LICENSE-APACHE](licenses/third-party/x509-parser-0.18.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/x509-parser-0.18.1/LICENSE-MIT), [SOURCE.json](licenses/third-party/x509-parser-0.18.1/SOURCE.json) |
 | zerocopy | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/zerocopy-0.8.63/LICENSE-APACHE), [LICENSE-BSD](licenses/third-party/zerocopy-0.8.63/LICENSE-BSD), [LICENSE-MIT](licenses/third-party/zerocopy-0.8.63/LICENSE-MIT) |
+| zerocopy-derive | 0.8.63 | BSD-2-Clause OR Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/zerocopy-derive-0.8.63/LICENSE-APACHE), [LICENSE-BSD](licenses/third-party/zerocopy-derive-0.8.63/LICENSE-BSD), [LICENSE-MIT](licenses/third-party/zerocopy-derive-0.8.63/LICENSE-MIT), [SOURCE.json](licenses/third-party/zerocopy-derive-0.8.63/SOURCE.json) |
 | zeroize | 1.9.1 | Apache-2.0 OR MIT | [LICENSE-APACHE](licenses/third-party/zeroize-1.9.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/zeroize-1.9.1/LICENSE-MIT) |
 | zmij | 1.0.23 | MIT | [LICENSE-MIT](licenses/third-party/zmij-1.0.23/LICENSE-MIT) |
+| zstd | 0.14.3 | BSD-3-Clause | [LICENSE](licenses/third-party/zstd-0.14.3/LICENSE), [SOURCE.json](licenses/third-party/zstd-0.14.3/SOURCE.json) |
+| zstd-safe | 8.2.0 | BSD-3-Clause | [LICENSE](licenses/third-party/zstd-safe-8.2.0/LICENSE), [SOURCE.json](licenses/third-party/zstd-safe-8.2.0/SOURCE.json) |
+| zstd-sys | 2.1.2+zstd.1.5.7 | BSD-3-Clause | [LICENSE](licenses/third-party/zstd-sys-2.1.2+zstd.1.5.7/LICENSE), [LICENSE.BSD-3-Clause](licenses/third-party/zstd-sys-2.1.2+zstd.1.5.7/LICENSE.BSD-3-Clause), [zstd/COPYING](licenses/third-party/zstd-sys-2.1.2+zstd.1.5.7/zstd/COPYING), [zstd/LICENSE](licenses/third-party/zstd-sys-2.1.2+zstd.1.5.7/zstd/LICENSE), [zstd/lib/common/xxhash.h.LICENSE](licenses/third-party/zstd-sys-2.1.2+zstd.1.5.7/zstd/lib/common/xxhash.h.LICENSE), [SOURCE.json](licenses/third-party/zstd-sys-2.1.2+zstd.1.5.7/SOURCE.json) |

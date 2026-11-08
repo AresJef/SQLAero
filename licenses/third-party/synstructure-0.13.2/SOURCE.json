@@ -1,0 +1,14 @@
+{
+  "package": "synstructure",
+  "version": "0.13.2",
+  "declared_license": "MIT",
+  "registry": "https://crates.io",
+  "crate_sha256": "728a70f3dbaf5bab7f0c4b1ac8d7ae5ea60a4b5549c8a5914361c99147a709d2",
+  "materials": [
+    {
+      "path": "LICENSE",
+      "sha256": "219920e865eee70b7dcfc948a86b099e7f4fe2de01bcca2ca9a20c0a033f2b59",
+      "crate_path": "LICENSE"
+    }
+  ]
+}

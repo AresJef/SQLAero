@@ -1,0 +1,19 @@
+{
+  "package": "num-conv",
+  "version": "0.2.2",
+  "declared_license": "MIT OR Apache-2.0",
+  "registry": "https://crates.io",
+  "crate_sha256": "521739c6d2bac4aa25192232afe6841231376b2b26d4d9fae5ecf8ca5772e441",
+  "materials": [
+    {
+      "path": "LICENSE-Apache",
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "crate_path": "LICENSE-Apache"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "e2e245f2b566d0bfafb0f6a04c16b82d710c4e6e7d799e39bb4ef6e541b85b98",
+      "crate_path": "LICENSE-MIT"
+    }
+  ]
+}

@@ -1,0 +1,14 @@
+{
+  "package": "data-encoding",
+  "version": "2.11.1",
+  "declared_license": "MIT",
+  "registry": "https://crates.io",
+  "crate_sha256": "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06",
+  "materials": [
+    {
+      "path": "LICENSE",
+      "sha256": "b68ad1a3367b825447089e1f8d6829b97f47a89eb78d2f4ebaef4672f5606186",
+      "crate_path": "LICENSE"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "package": "powerfmt",
+  "version": "0.2.1",
+  "declared_license": "MIT OR Apache-2.0",
+  "registry": "https://crates.io",
+  "crate_sha256": "4a6394b9e965e73d0a289ee54f589087e2c676aedf60885baf52c76b771e4958",
+  "materials": [
+    {
+      "path": "LICENSE-Apache",
+      "sha256": "155420c6403d4e0fca34105e3c03fdd6939b64c393c7ec6f95f5b72c5474eab0",
+      "crate_path": "LICENSE-Apache"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "070dbc7dda03a29296f2d58bdb9b7331af90f2abc9f31df22875d1eabaf29852",
+      "crate_path": "LICENSE-MIT"
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "package": "lazy_static",
+  "version": "1.5.1",
+  "declared_license": "MIT OR Apache-2.0",
+  "registry": "https://crates.io",
+  "crate_sha256": "20870f649af7073d53e38067b2a84312175d56ea15217e1b15bc83506ec50afb",
+  "materials": [
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "crate_path": "LICENSE-APACHE"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+      "crate_path": "LICENSE-MIT"
+    }
+  ]
+}

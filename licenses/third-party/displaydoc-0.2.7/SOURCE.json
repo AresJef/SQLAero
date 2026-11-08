@@ -1,0 +1,19 @@
+{
+  "package": "displaydoc",
+  "version": "0.2.7",
+  "declared_license": "MIT OR Apache-2.0",
+  "registry": "https://crates.io",
+  "crate_sha256": "c6232dd377dcc64799954cbd3a9bb882e9cdc1308ccd87b1c098f1fb2eaf82a8",
+  "materials": [
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "crate_path": "LICENSE-APACHE"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3",
+      "crate_path": "LICENSE-MIT"
+    }
+  ]
+}

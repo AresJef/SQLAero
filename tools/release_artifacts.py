@@ -11,11 +11,12 @@ import argparse
 from email.parser import BytesParser
 import hashlib
 from importlib import import_module
-from importlib.metadata import version
+from importlib.metadata import distribution, version
 import json
 import os
 from pathlib import Path
 import platform
+import re
 import socket
 import subprocess
 import sys
@@ -38,6 +39,12 @@ PLATFORM_TAGS = {
     'linux-musl-x86_64': 'musllinux_1_2_x86_64',
     'linux-musl-aarch64': 'musllinux_1_2_aarch64',
 }
+RUST_TARGETS = (
+    'aarch64-apple-darwin', 'x86_64-apple-darwin',
+    'x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc',
+    'x86_64-unknown-linux-gnu', 'aarch64-unknown-linux-gnu',
+    'x86_64-unknown-linux-musl', 'aarch64-unknown-linux-musl',
+)
 PLATFORMS = tuple(PLATFORM_TAGS)
 TAG_PLATFORMS = {tag: target for target, tag in PLATFORM_TAGS.items()}
 PYTHONS = ('cp312', 'cp313', 'cp314', 'cp315')
@@ -109,6 +116,10 @@ FEATURE_PROVIDER_NA = {
            f'test_optional_naive_or_unrelated_hint_does_not_create_a_timezone_refusal[{scenario}-{kind}-{prepared}-{label}]')
           for scenario in ('naive_non_utc', 'aware_non_timezone') for kind in ('pandas_arrow', 'arrow_table')
           for prepared in (False, True) for label in ('84', '97')),
+        *(('tests.test_callproc_cursor',
+           f'test_out_requires_literal_none_before_target_send[{label}-arrow-null-{prepared}-{kind}]')
+          for label in ('84', '97') for prepared in (False, True)
+          for kind in ('Cursor', 'DictCursor', 'SSCursor', 'SSDictCursor')),
     }),
     'polars': frozenset({
         ('tests.test_feature_expansion_a', 'test_native_rows_consume_provider_columns_directly[polars]'),
@@ -121,6 +132,12 @@ FEATURE_PROVIDER_NA = {
            f'test_optional_naive_or_unrelated_hint_does_not_create_a_timezone_refusal[{scenario}-polars_table-{prepared}-{label}]')
           for scenario in ('naive_non_utc', 'aware_non_timezone')
           for prepared in (False, True) for label in ('84', '97')),
+        *(('tests.test_callproc_cursor', f'{function}[{label}-{source}-{prepared}-{kind}]')
+          for function, source in (
+              ('test_out_requires_literal_none_before_target_send', 'polars-null'),
+              ('test_literal_none_out_survives_shared_source_preparation', 'polars-object'))
+          for label in ('84', '97') for prepared in (False, True)
+          for kind in ('Cursor', 'DictCursor', 'SSCursor', 'SSDictCursor')),
     }),
 }
 
@@ -134,6 +151,103 @@ def digest(path: Path) -> str:
 def release_version() -> str:
     """Read the sole Python distribution version from the frozen checkout."""
     return str(tomllib.loads((ROOT / 'pyproject.toml').read_text(encoding='utf-8'))['project']['version'])
+
+
+def license_materials() -> dict[str, str]:
+    """Hash actual source materials and reject broken or empty notice links."""
+    notices = ROOT / 'THIRD_PARTY_NOTICES.md'
+    links = re.findall(r'\]\((licenses/third-party/[^)]+)\)', notices.read_text(encoding='utf-8'))
+    assert links, 'The third-party inventory has no original-text links'
+    for name in links:
+        path = ROOT / name
+        assert path.resolve().is_relative_to((ROOT / 'licenses/third-party').resolve()), name
+        assert path.is_file() and path.stat().st_size > 0, ('Missing license material', name)
+    paths = [ROOT / 'LICENSE', notices,
+             *sorted((ROOT / 'licenses/third-party').rglob('*'))]
+    result: dict[str, str] = {}
+    for path in paths:
+        assert not path.is_symlink(), ('License material must be an owned file', path)
+        if path.is_file():
+            assert path.stat().st_size > 0, path
+            result[path.relative_to(ROOT).as_posix()] = digest(path)
+    return result
+
+
+def source_notices(targets: list[str], output: Path) -> None:
+    """Check the actual locked production graphs against the notice inventory.
+
+    cargo tree normal/build edges use each target's real feature selection.
+    Unfiltered metadata and a diff of newly added packages cannot prove this.
+    Existing extra-target notices are deliberately retained.
+    """
+    materials = license_materials()
+    inventory: dict[tuple[str, str], tuple[str, str]] = {}
+    for line in (ROOT / 'THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8').splitlines():
+        fields = [field.strip() for field in line.split('|')]
+        if len(fields) == 6 and fields[1] not in ('Package', '---'):
+            key = fields[1], fields[2]
+            assert key not in inventory, ('Duplicate third-party entry', key)
+            inventory[key] = fields[3], fields[4]
+    locked = {(item['name'], item['version']): item
+              for item in tomllib.loads((ROOT / 'Cargo.lock').read_text(encoding='utf-8'))['package']}
+    rust_version = str(tomllib.loads((ROOT / 'Cargo.toml').read_text(encoding='utf-8'))
+                       ['workspace']['package']['version'])
+    for path in (ROOT / 'licenses/third-party').glob('*/SOURCE.json'):
+        source = json.loads(path.read_text(encoding='utf-8'))
+        key = source['package'], source['version']
+        assert source['crate_sha256'] == locked[key]['checksum'], ('Crate provenance mismatch', key)
+        assert inventory[key][0] == source['declared_license'], ('License expression mismatch', key)
+        for material in source['materials']:
+            original = path.parent / material['path']
+            assert original.resolve().is_relative_to(path.parent.resolve()), original
+            assert digest(original) == material['sha256'], ('Original text changed', original)
+    graphs: dict[str, list[list[str]]] = {}
+    union: set[tuple[str, str]] = set()
+    for target in targets:
+        assert target in RUST_TARGETS, target
+        process = subprocess.run([
+            os.environ.get('CARGO', 'cargo'), 'tree', '--locked',
+            '-p', 'sqlaero-python', '--target', target, '--edges', 'normal,build',
+            '--prefix', 'none', '--format', '{p}',
+        ], cwd=ROOT, check=True, capture_output=True, text=True)
+        packages = {(match[1], match[2]) for line in process.stdout.splitlines()
+                    if (match := re.match(r'^([\w-]+) v([^\s]+)', line)) is not None}
+        assert ('sqlaero-python', rust_version) in packages, ('No production graph', target)
+        packages -= {('sqlaero-python', rust_version), ('sqlaero-core', rust_version)}
+        assert packages, target
+        for key in packages:
+            assert key in locked, ('Graph package is not locked', target, key)
+            assert key in inventory, ('Missing third-party inventory entry', target, key)
+            prefix = f'licenses/third-party/{key[0]}-{key[1]}/'
+            links = re.findall(r'\]\(([^)]+)\)', inventory[key][1])
+            originals = [name for name in links if name.startswith(prefix) and not name.endswith('/SOURCE.json')]
+            assert originals and all(name in materials for name in originals), (
+                'Missing original license texts', target, key)
+        union.update(packages)
+        graphs[target] = [list(key) for key in sorted(packages)]
+    result = {'cargo_lock_sha256': digest(ROOT / 'Cargo.lock'),
+              'graphs': graphs, 'union_packages': len(union), 'license_files': materials}
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
+    print(f'Validated {len(union)} production dependencies across {len(graphs)} targets')
+
+
+def sdist_record(path: Path) -> dict[str, Any]:
+    """Read original license bytes from the actual canonical source archive."""
+    expected = license_materials()
+    with tarfile.open(path) as archive:
+        prefix = f'sqlaero-{release_version()}/'
+        for name, sha in expected.items():
+            stream = archive.extractfile(prefix + name)
+            assert stream is not None, ('Missing sdist license', name)
+            with stream:
+                hashed = hashlib.sha256()
+                while chunk := stream.read(1024 * 1024):
+                    hashed.update(chunk)
+                assert hashed.hexdigest() == sha, (
+                    'sdist license differs from source', name)
+    return {'file': path.name, 'sha256': digest(path), 'bytes': path.stat().st_size,
+            'license_file_count': len(expected)}
 
 
 def wheel_record(path: Path) -> dict[str, Any]:
@@ -150,10 +264,21 @@ def wheel_record(path: Path) -> dict[str, Any]:
         assert len(native) == len(metadata) == 1, (native, metadata)
         parsed = BytesParser().parsebytes(archive.read(metadata[0]))
         assert parsed['Name'] == 'sqlaero' and parsed['Version'] == package_version
+        materials = license_materials()
+        declared = parsed.get_all('License-File', [])
+        assert len(declared) == len(set(declared)) and set(declared) == set(materials), (
+            'Wheel License-File declarations differ from source', path.name)
+        prefix = metadata[0].rsplit('/', 1)[0] + '/licenses/'
+        for name, sha in materials.items():
+            assert hashlib.sha256(archive.read(prefix + name)).hexdigest() == sha, (
+                'Wheel license differs from source', path.name, name)
         native_hash = hashlib.sha256(archive.read(native[0])).hexdigest()
     return {'file': path.name, 'sha256': digest(path), 'bytes': path.stat().st_size,
             'version': package_version, 'python': python, 'abi': abi, 'platform': target,
-            'native_member': native[0], 'native_sha256': native_hash}
+            'native_member': native[0], 'native_sha256': native_hash,
+            'license_file_count': len(materials),
+            'license_materials_sha256': hashlib.sha256(
+                json.dumps(materials, sort_keys=True).encode('utf-8')).hexdigest()}
 
 
 def installed(wheel: Path, output: Path, kind: str, sdist: Path | None) -> None:
@@ -180,6 +305,12 @@ def installed(wheel: Path, output: Path, kind: str, sdist: Path | None) -> None:
     assert location.is_relative_to(prefix) and package_location.is_relative_to(prefix), location
     assert digest(location) == record['native_sha256'], location
     assert version('sqlaero') == record['version']
+    package_files = distribution('sqlaero')
+    metadata_file = next(file for file in package_files.files or ()
+                         if str(file).endswith('.dist-info/METADATA'))
+    license_root = Path(str(package_files.locate_file(metadata_file))).parent / 'licenses'
+    for name, sha in license_materials().items():
+        assert digest(license_root / name) == sha, ('Installed license differs from source', name)
     assert record['python'] == f'cp{sys.version_info.major}{sys.version_info.minor}'
     machine = platform.machine().lower()
     assert machine in ({'arm64', 'aarch64'} if str(record['platform']).endswith(('arm64', 'aarch64'))
@@ -201,6 +332,7 @@ def installed(wheel: Path, output: Path, kind: str, sdist: Path | None) -> None:
 def extract(path: Path, destination: Path, expected: str) -> None:
     """Extract only the exact canonical sdist into a fresh independent directory."""
     assert digest(path) == expected, 'canonical sdist hash mismatch'
+    sdist_record(path)
     assert not destination.exists(), destination
     destination.mkdir(parents=True)
     with tarfile.open(path) as archive:
@@ -392,6 +524,7 @@ def manifest(directory: Path, identities: Path, output: Path, free_threaded: boo
     sdists = [path for path in files if path.name.endswith('.tar.gz')]
     assert len(files) == len(expected) + 1 and len(wheels) == len(expected) and len(sdists) == 1, [p.name for p in files]
     assert sdists[0].name == f'sqlaero-{release_version()}.tar.gz'
+    source_record = sdist_record(sdists[0])
     assert {(str(row['platform']), str(row['python']), str(row['abi'])) for row in wheels} == expected
     source_hash = digest(sdists[0])
     evidence: list[dict[str, Any]] = []
@@ -423,8 +556,7 @@ def manifest(directory: Path, identities: Path, output: Path, free_threaded: boo
                              'tests': totals, 'providers': json.loads(provider_path.read_text(encoding='utf-8')) if provider_evidence is not None else None})
     assert len(commits) == 1, commits
     result = {'version': release_version(), 'source_commit': next(iter(commits)),
-              'wheels': wheels, 'sdist': {'file': sdists[0].name, 'sha256': source_hash,
-                                        'bytes': sdists[0].stat().st_size}, 'evidence': evidence}
+              'wheels': wheels, 'sdist': source_record, 'evidence': evidence}
     output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
     print(f'Validated {len(expected)} original wheels, one sdist and '
           f'{2 * len(expected)} installed test identities: {output}')
@@ -442,6 +574,9 @@ def main() -> None:
     provider = commands.add_parser('providers')
     provider.add_argument('--identity', type=Path, required=True)
     provider.add_argument('--output', type=Path, required=True)
+    notices = commands.add_parser('notices')
+    notices.add_argument('--target', action='append', choices=RUST_TARGETS)
+    notices.add_argument('--output', type=Path, required=True)
     unpack = commands.add_parser('extract')
     unpack.add_argument('--sdist', type=Path, required=True)
     unpack.add_argument('--destination', type=Path, required=True)
@@ -462,6 +597,8 @@ def main() -> None:
         installed(args.wheel, args.output, args.kind, args.sdist)
     elif args.command == 'providers':
         prepare_providers(args.identity, args.output)
+    elif args.command == 'notices':
+        source_notices(args.target or list(RUST_TARGETS), args.output)
     elif args.command == 'extract':
         extract(args.sdist, args.destination, args.expected_sha)
     elif args.command == 'download':

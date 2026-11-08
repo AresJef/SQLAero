@@ -1,0 +1,19 @@
+{
+  "package": "oid-registry",
+  "version": "0.8.1",
+  "declared_license": "MIT OR Apache-2.0",
+  "registry": "https://crates.io",
+  "crate_sha256": "12f40cff3dde1b6087cc5d5f5d4d65712f34016a03ed60e9c08dcc392736b5b7",
+  "materials": [
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "crate_path": "LICENSE-APACHE"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513",
+      "crate_path": "LICENSE-MIT"
+    }
+  ]
+}

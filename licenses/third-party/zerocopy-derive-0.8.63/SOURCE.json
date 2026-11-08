@@ -1,0 +1,24 @@
+{
+  "package": "zerocopy-derive",
+  "version": "0.8.63",
+  "declared_license": "BSD-2-Clause OR Apache-2.0 OR MIT",
+  "registry": "https://crates.io",
+  "crate_sha256": "863ad3ac83293fb4d740aedbfdc9240dd8d1a50c1099acd76ce80ce7c7230c7f",
+  "materials": [
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "9d185ac6703c4b0453974c0d85e9eee43e6941009296bb1f5eb0b54e2329e9f3",
+      "crate_path": "LICENSE-APACHE"
+    },
+    {
+      "path": "LICENSE-BSD",
+      "sha256": "83c1763356e822adde0a2cae748d938a73fdc263849ccff6b27776dff213bd32",
+      "crate_path": "LICENSE-BSD"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "1a2f5c12ddc934d58956aa5dbdd3255fe55fd957633ab7d0d39e4f0daa73f7df",
+      "crate_path": "LICENSE-MIT"
+    }
+  ]
+}

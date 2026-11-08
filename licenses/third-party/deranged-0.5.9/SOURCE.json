@@ -1,0 +1,19 @@
+{
+  "package": "deranged",
+  "version": "0.5.9",
+  "declared_license": "MIT OR Apache-2.0",
+  "registry": "https://crates.io",
+  "crate_sha256": "9e9de72ce2ad1f90dc62fa25f0f430ef85eb4b0d8fa0be4f30373bc40a21d28e",
+  "materials": [
+    {
+      "path": "LICENSE-Apache",
+      "sha256": "edd65bdd88957a205c47d53fa499eed8865a70320f0f03f6391668cb304ea376",
+      "crate_path": "LICENSE-Apache"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "231c837c45eb53f108fb48929e488965bc4fcc14e9ea21d35f50e6b99d98685b",
+      "crate_path": "LICENSE-MIT"
+    }
+  ]
+}

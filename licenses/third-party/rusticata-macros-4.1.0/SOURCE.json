@@ -1,0 +1,19 @@
+{
+  "package": "rusticata-macros",
+  "version": "4.1.0",
+  "declared_license": "MIT/Apache-2.0",
+  "registry": "https://crates.io",
+  "crate_sha256": "faf0c4a6ece9950b9abdb62b1cfcf2a68b3b67a10ba445b3bb85be2a293d0632",
+  "materials": [
+    {
+      "path": "LICENSE-APACHE",
+      "sha256": "a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2",
+      "crate_path": "LICENSE-APACHE"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "a5c61b93b6ee1d104af9920cf020ff3c7efe818e31fe562c72261847a728f513",
+      "crate_path": "LICENSE-MIT"
+    }
+  ]
+}

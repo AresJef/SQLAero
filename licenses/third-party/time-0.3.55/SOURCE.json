@@ -1,0 +1,19 @@
+{
+  "package": "time",
+  "version": "0.3.55",
+  "declared_license": "MIT OR Apache-2.0",
+  "registry": "https://crates.io",
+  "crate_sha256": "cdb87b95ec50ddfa440816d227a17b2ccbdda963a316a727fda0fc4334f7d134",
+  "materials": [
+    {
+      "path": "LICENSE-Apache",
+      "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+      "crate_path": "LICENSE-Apache"
+    },
+    {
+      "path": "LICENSE-MIT",
+      "sha256": "2537228d9a1b44a5dc595241349cae7090b326c8de165aaf89bfddef4a00d0fc",
+      "crate_path": "LICENSE-MIT"
+    }
+  ]
+}

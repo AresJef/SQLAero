@@ -8,6 +8,8 @@ import hashlib
 import json
 from pathlib import Path
 import subprocess
+import io
+import tarfile
 from zipfile import ZipFile
 
 import pytest
@@ -47,6 +49,17 @@ UNIX_NAME = 'test_windows_unix_socket_is_rejected_without_tcp_fallback'
 UNIX_REASON = 'Windows explicitly rejects the Unix-only transport'
 
 
+@pytest.fixture
+def synthetic_license_materials(monkeypatch: pytest.MonkeyPatch) -> dict[str, bytes]:
+    """Small independent bytes for wheel-format tests, not real legal materials."""
+    materials = {'LICENSE': b'project license fixture\n',
+                 'THIRD_PARTY_NOTICES.md': b'third-party inventory fixture\n',
+                 'licenses/third-party/example-1.0.0/LICENSE': b'upstream copyright fixture\n'}
+    monkeypatch.setattr(release_artifacts, 'license_materials', lambda: {
+        name: hashlib.sha256(raw).hexdigest() for name, raw in materials.items()})
+    return materials
+
+
 def write_skips(path: Path, names: tuple[str, ...], classname: str, reason: str) -> None:
     from xml.etree import ElementTree
 
@@ -74,6 +87,7 @@ def write_skips(path: Path, names: tuple[str, ...], classname: str, reason: str)
 ])
 def test_requested_wheel_tag_maps_to_one_platform(
     tmp_path: Path, python: str, abi: str, tag: str, platform: str,
+    synthetic_license_materials: dict[str, bytes],
 ) -> None:
     version = release_artifacts.release_version()
     wheel = tmp_path / f'sqlaero-{version}-{python}-{abi}-{tag}.whl'
@@ -81,7 +95,10 @@ def test_requested_wheel_tag_maps_to_one_platform(
         archive.writestr('sqlaero/_sqlaero.pyd' if tag.startswith('win_')
                          else 'sqlaero/_sqlaero.so', b'metadata fixture, not executable code')
         archive.writestr(f'sqlaero-{version}.dist-info/METADATA',
-                         f'Metadata-Version: 2.4\nName: sqlaero\nVersion: {version}\n')
+                         f'Metadata-Version: 2.4\nName: sqlaero\nVersion: {version}\n'
+                         + ''.join(f'License-File: {name}\n' for name in synthetic_license_materials))
+        for name, raw in synthetic_license_materials.items():
+            archive.writestr(f'sqlaero-{version}.dist-info/licenses/{name}', raw)
     record = release_artifacts.wheel_record(wheel)
     assert (record['platform'], record['python'], record['abi']) == (platform, python, abi)
 
@@ -233,7 +250,12 @@ def test_manifest_requires_platform_specific_na_counts(
     def wheel_record(path: Path) -> dict[str, object]:
         return records[path.name]
 
+    def sdist_record(path: Path) -> dict[str, object]:
+        return {'file': path.name, 'sha256': release_artifacts.digest(path),
+                'bytes': path.stat().st_size, 'license_file_count': 3}
+
     monkeypatch.setattr(release_artifacts, 'wheel_record', wheel_record)
+    monkeypatch.setattr(release_artifacts, 'sdist_record', sdist_record)
     output = tmp_path / 'manifest.json'
     if accepted:
         release_artifacts.manifest(distribution, identities, output)
@@ -672,3 +694,114 @@ def test_ca_primitive_na_requires_an_actual_runtime_report(tmp_path: Path) -> No
     report, _ = feature_report(tmp_path, 'windows-arm64', False, [case])
     with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
         release_artifacts.test_totals(report, 'windows-arm64')
+
+
+@pytest.mark.parametrize('damage', ['missing', 'changed', 'undeclared'])
+def test_actual_wheel_members_cannot_omit_change_or_hide_license_material(
+    tmp_path: Path, synthetic_license_materials: dict[str, bytes], damage: str,
+) -> None:
+    version = release_artifacts.release_version()
+    wheel = tmp_path / f'sqlaero-{version}-cp313-cp313-macosx_11_0_arm64.whl'
+    missing = 'licenses/third-party/example-1.0.0/LICENSE'
+    with ZipFile(wheel, 'w') as archive:
+        archive.writestr('sqlaero/_sqlaero.so', b'non-executable format fixture')
+        archive.writestr(f'sqlaero-{version}.dist-info/METADATA',
+            f'Metadata-Version: 2.4\nName: sqlaero\nVersion: {version}\n'
+            + ''.join(f'License-File: {name}\n' for name in synthetic_license_materials
+                      if not (damage == 'undeclared' and name == missing)))
+        for name, raw in synthetic_license_materials.items():
+            if damage == 'missing' and name == missing:
+                continue
+            archive.writestr(f'sqlaero-{version}.dist-info/licenses/{name}',
+                             b'wrong original text' if damage == 'changed' and name == missing else raw)
+    with pytest.raises((AssertionError, KeyError)):
+        release_artifacts.wheel_record(wheel)
+
+
+@pytest.mark.parametrize('damage', ['none', 'missing', 'changed'])
+def test_canonical_sdist_contains_the_same_original_license_bytes(
+    tmp_path: Path, synthetic_license_materials: dict[str, bytes], damage: str,
+) -> None:
+    version = release_artifacts.release_version()
+    package = tmp_path / f'sqlaero-{version}.tar.gz'
+    missing = 'licenses/third-party/example-1.0.0/LICENSE'
+    with tarfile.open(package, 'w:gz') as archive:
+        for name, raw in synthetic_license_materials.items():
+            if damage == 'missing' and name == missing:
+                continue
+            payload = b'changed copyright' if damage == 'changed' and name == missing else raw
+            member = tarfile.TarInfo(f'sqlaero-{version}/{name}')
+            member.size = len(payload)
+            archive.addfile(member, io.BytesIO(payload))
+    if damage == 'none':
+        assert release_artifacts.sdist_record(package)['license_file_count'] == 3
+    else:
+        with pytest.raises((AssertionError, KeyError)):
+            release_artifacts.sdist_record(package)
+
+
+@pytest.mark.parametrize('damage', ['none', 'missing-entry', 'missing-text'])
+def test_current_production_graph_catches_old_as_well_as_new_notice_omissions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, damage: str,
+) -> None:
+    """The prior zerocopy-derive omission must fail without a dependency diff."""
+    (tmp_path / 'LICENSE').write_text('project license\n')
+    (tmp_path / 'Cargo.toml').write_text('[workspace.package]\nversion="0.2.0-beta.4"\n')
+    (tmp_path / 'Cargo.lock').write_text('[[package]]\nname="zerocopy-derive"\nversion="0.8.63"\n')
+    notices = ('| Package | Version | Declared license | Original texts |\n'
+               '| --- | --- | --- | --- |\n'
+               '| example | 1.0.0 | MIT | [LICENSE](licenses/third-party/example-1.0.0/LICENSE) |\n')
+    if damage != 'missing-entry':
+        notices += ('| zerocopy-derive | 0.8.63 | MIT | '
+                    '[LICENSE](licenses/third-party/zerocopy-derive-0.8.63/LICENSE) |\n')
+    (tmp_path / 'THIRD_PARTY_NOTICES.md').write_text(notices)
+    for name in ('example-1.0.0', 'zerocopy-derive-0.8.63'):
+        directory = tmp_path / 'licenses/third-party' / name
+        directory.mkdir(parents=True)
+        if not (damage == 'missing-text' and name.startswith('zerocopy')):
+            (directory / 'LICENSE').write_text('original copyright fixture\n')
+    (tmp_path / 'pyproject.toml').write_text('[project]\nversion="0.2.0b4"\n')
+    monkeypatch.setattr(release_artifacts, 'ROOT', tmp_path)
+
+    def graph(command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        assert command[1:3] == ['tree', '--locked']
+        assert command[command.index('--edges') + 1] == 'normal,build'
+        return subprocess.CompletedProcess(command, 0,
+            'sqlaero-python v0.2.0-beta.4 (/source)\nzerocopy-derive v0.8.63\n', '')
+
+    monkeypatch.setattr(release_artifacts.subprocess, 'run', graph)
+    output = tmp_path / 'notices.json'
+    if damage == 'none':
+        release_artifacts.source_notices(['aarch64-apple-darwin'], output)
+        assert json.loads(output.read_text())['union_packages'] == 1
+    else:
+        with pytest.raises(AssertionError, match='Missing'):
+            release_artifacts.source_notices(['aarch64-apple-darwin'], output)
+        assert not output.exists()
+
+
+@pytest.mark.parametrize(('provider', 'function', 'source'), [
+    ('pyarrow', 'test_out_requires_literal_none_before_target_send', 'arrow-null'),
+    ('polars', 'test_out_requires_literal_none_before_target_send', 'polars-null'),
+    ('polars', 'test_literal_none_out_survives_shared_source_preparation', 'polars-object'),
+])
+@pytest.mark.parametrize('declared', [False, True])
+def test_out_source_cases_can_skip_only_for_the_exact_known_provider_gap(
+    tmp_path: Path, provider: str, function: str, source: str, declared: bool,
+) -> None:
+    target = 'windows-arm64' if provider == 'pyarrow' else 'macos-arm64'
+    free = provider == 'polars'
+    gap = ('NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64' if provider == 'pyarrow'
+           else 'NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI')
+    cases = [('tests.test_callproc_cursor', f'{function}[{label}-{source}-{prepared}-{kind}]',
+              f"could not import '{provider}': No module named '{provider}'")
+             for label in ('84', '97') for prepared in (False, True)
+             for kind in ('Cursor', 'DictCursor', 'SSCursor', 'SSDictCursor')]
+    report, capabilities = feature_report(tmp_path, target, free, cases,
+                                         {provider: gap} if declared else {})
+    if declared:
+        baseline = len(PARALLEL_NAMES) if target.startswith('windows-') else 1
+        assert release_artifacts.test_totals(report, target, capabilities)['skipped'] == baseline + 16
+    else:
+        with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+            release_artifacts.test_totals(report, target, capabilities)
