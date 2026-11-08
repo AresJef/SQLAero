@@ -1215,7 +1215,7 @@ impl<'py> Multi<'py> {
         // The original MultiIndex getter obtains every label before its tuple
         // reaches Visit. Keep that order, without constructing a Python tuple.
         visitor.checkpoint(py, 1)?;
-        visitor.enter_native(py)?;
+        output.enter_sequence(py, visitor)?;
         let result = (|| {
             output.fragment(py, b"(", context)?;
             for (index, label) in labels.iter().enumerate() {

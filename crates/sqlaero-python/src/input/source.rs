@@ -101,6 +101,12 @@ pub(crate) trait CellWriter {
     /// Account for a native nested sequence under the common depth limit.
     fn enter_native(&mut self, py: Python<'_>) -> PyResult<()>;
 
+    /// Check the scalar-parameter source policy before entering its structure.
+    /// Text destinations keep their ordinary nesting path entirely separate.
+    fn enter_parameter_sequence(&mut self, py: Python<'_>) -> PyResult<()> {
+        self.enter_native(py)
+    }
+
     /// Leave a successfully entered native sequence.
     fn leave_native(&mut self);
 
@@ -149,6 +155,8 @@ pub(crate) trait PreparedSource<'py> {
 
     /// Read the same actual logical cell into a prepared parameter sink.
     /// No escaped SQL bytes or per-value Python SQL strings are involved.
+    /// Python leaves use CellWriter::native_python; native structures enter
+    /// through Destination::enter_sequence before emitting any child value.
     fn write_parameter_cell(
         &mut self,
         row: usize,

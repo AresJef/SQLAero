@@ -1488,7 +1488,7 @@ fn write_sequence<D: Destination + ?Sized>(
     visitor: &mut dyn CellWriter,
     mut value: impl FnMut(usize, &mut D, &mut dyn CellWriter) -> PyResult<()>,
 ) -> PyResult<()> {
-    visitor.enter_native(py)?;
+    output.enter_sequence(py, visitor)?;
     let result = (|| {
         output.fragment(py, b"(", context)?;
         for index in 0..width {

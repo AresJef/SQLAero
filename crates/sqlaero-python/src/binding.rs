@@ -1926,7 +1926,6 @@ impl CellWriter for Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<FragmentRole> {
-        self.observe_literal_none(value)?;
         self.value_role(value, output, child)
     }
 
@@ -1967,13 +1966,15 @@ impl CellWriter for Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<()> {
-        self.observe_literal_none(value)?;
         self.value(value, output, child)
     }
-    fn enter_native(&mut self, py: Python<'_>) -> PyResult<()> {
+    fn enter_parameter_sequence(&mut self, py: Python<'_>) -> PyResult<()> {
         if let Some(source) = &self.literal_none {
             return Err(source.native_error(py));
         }
+        self.enter_native(py)
+    }
+    fn enter_native(&mut self, py: Python<'_>) -> PyResult<()> {
         if self.active_depth + self.native_depth >= 64 {
             return Err(errors::client_format(
                 py,
