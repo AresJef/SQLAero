@@ -109,6 +109,7 @@ def test_prepared_compressed_pause_resumes_or_drains_without_reexecution(
 
 @requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
+@pytest.mark.parametrize("multi_statements", [False, True], ids=["split", "combined"])
 @pytest.mark.parametrize(("prepared", "compression", "dictionary", "finish"), [
     pytest.param(False, None, False, "read", id="text-raw-read"),
     pytest.param(True, "zstd", True, "read", id="binary-zstd-dict-read"),
@@ -117,10 +118,12 @@ def test_prepared_compressed_pause_resumes_or_drains_without_reexecution(
 ])
 def test_call_resource_pause_keeps_outputs_pending_and_private_stages_ordered(
     label: str, prepared: bool, compression: str | None, dictionary: bool, finish: str,
+    multi_statements: bool,
 ) -> None:
     with owned_resource_routine(label) as name, live(
         label, compression=compression, result_memory_limit=RESULT_LIMIT,
         total_result_memory_limit=512 * 1024, max_received_packet=PACKET_LIMIT,
+        multi_statements=multi_statements,
     ) as connection, live(label) as observer:
         with connection.cursor() as setup:
             setup.execute("SET @a_resource_visits=0,@a_combo_calls=0")
@@ -143,7 +146,14 @@ def test_call_resource_pause_keeps_outputs_pending_and_private_stages_ordered(
         if prepared:
             assert paused == before
         else:
-            assert paused and any(null is False for null in paused.values())
+            assert len(paused) == 2
+            # A combined text request already contains initialization, CALL,
+            # output SELECT and cleanup in that order. The server can complete
+            # all four while the client retains unread packets. NULL private
+            # slots do not imply ready public output or a released wire lease.
+            # A split request has not sent its output SELECT/cleanup yet.
+            if not multi_statements:
+                assert any(null is False for null in paused.values())
         assert cursor.columns is columns and cursor.scroll(0, mode="absolute") is None
         if finish == "read":
             consume_small_batches(cursor, dictionary)

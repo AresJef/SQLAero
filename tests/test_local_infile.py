@@ -138,16 +138,22 @@ def test_capability_defaults_strict_bool_and_read_only_snapshot(local_server: st
     choices: tuple[tuple[dict[str, bool], bool], ...] = (
         ({}, False), ({'local_infile': False}, False), ({'local_infile': True}, True),
     )
-    for options, expected in choices:
-        before = admin(local_server, 'SELECT @@GLOBAL.local_infile')
-        with live(local_server, **options) as connection:
+    # The independent administration fixture explicitly enabled this server
+    # global. Observe the known value through a separate real connection, not
+    # an unchecked CLI stdout string which can be empty on Windows.
+    with live(local_server) as observer, observer.cursor() as state:
+        for options, expected in choices:
+            state.execute('SELECT @@GLOBAL.local_infile')
+            assert state.fetchone() == (1,)
+            with live(local_server, **options) as connection:
+                assert connection.local_infile is expected
+                with pytest.raises(AttributeError):
+                    setattr(connection, 'local_infile', not expected)
             assert connection.local_infile is expected
             with pytest.raises(AttributeError):
                 setattr(connection, 'local_infile', not expected)
-        assert connection.local_infile is expected
-        with pytest.raises(AttributeError):
-            setattr(connection, 'local_infile', not expected)
-        assert admin(local_server, 'SELECT @@GLOBAL.local_infile') == before
+            state.execute('SELECT @@GLOBAL.local_infile')
+            assert state.fetchone() == (1,)
     invalid_flags: tuple[object, ...] = (
         None, 0, 1, -1, 1.0, 'true', [], {}, IntegerFlag.ONE, IntegerSubclass(1), BooleanTrap(),
     )
