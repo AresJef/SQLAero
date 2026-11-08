@@ -436,22 +436,21 @@ fn append_chunks(
 
 /// Preserve a typed cell's Python source identity during its existing read.
 /// Native NULL validity bits are not evidence of a literal Python None. This
-/// decorator is used only for explicit OUT positions, never ordinary values.
-pub(super) struct LiteralNone<'a> {
-    visitor: &'a mut dyn input::source::CellWriter,
+/// state is enabled only for an explicit OUT position in the common visitor;
+/// it does not add another implementation of the shared cell-writing trait.
+pub(super) struct LiteralNone {
     index: usize,
     observed: bool,
 }
-impl<'a> LiteralNone<'a> {
-    pub(super) fn new(visitor: &'a mut dyn input::source::CellWriter, index: usize) -> Self {
+impl LiteralNone {
+    pub(super) fn new(index: usize) -> Self {
         Self {
-            visitor,
             index,
             observed: false,
         }
     }
 
-    fn observe(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    pub(super) fn observe(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
         require_none(value, self.index)?;
         self.observed = true;
         Ok(())
@@ -463,59 +462,10 @@ impl<'a> LiteralNone<'a> {
         }
         Ok(())
     }
-}
-
-impl input::source::CellWriter for LiteralNone<'_> {
-    fn python(
-        &mut self,
-        value: &Bound<'_, PyAny>,
-        output: &mut Vec<u8>,
-        child: Option<usize>,
-    ) -> PyResult<()> {
-        self.observe(value)?;
-        self.visitor.python(value, output, child)
-    }
-
-    fn python_role(
-        &mut self,
-        value: &Bound<'_, PyAny>,
-        output: &mut Vec<u8>,
-        child: Option<usize>,
-    ) -> PyResult<input::source::FragmentRole> {
-        self.observe(value)?;
-        self.visitor.python_role(value, output, child)
-    }
-
-    fn native_python(
-        &mut self,
-        value: &Bound<'_, PyAny>,
-        sink: &mut dyn ValueSink<Error = ValueError>,
-        child: Option<usize>,
-    ) -> PyResult<()> {
-        self.observe(value)?;
-        self.visitor.native_python(value, sink, child)
-    }
-
-    fn enter_native(&mut self, py: Python<'_>) -> PyResult<()> {
+    pub(super) fn native_error(&self, py: Python<'_>) -> PyErr {
         // A nested native container cannot itself be the None placeholder,
         // even if one of its children later visits a Python None.
-        Err(placeholder_error(py, self.index))
-    }
-
-    fn leave_native(&mut self) {
-        self.visitor.leave_native();
-    }
-
-    fn push_index(&mut self, py: Python<'_>, index: usize) -> PyResult<()> {
-        self.visitor.push_index(py, index)
-    }
-
-    fn pop_index(&mut self) {
-        self.visitor.pop_index();
-    }
-
-    fn checkpoint(&mut self, py: Python<'_>, work: usize) -> PyResult<()> {
-        self.visitor.checkpoint(py, work)
+        placeholder_error(py, self.index)
     }
 }
 

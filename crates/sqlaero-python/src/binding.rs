@@ -964,6 +964,7 @@ impl Row<'_, '_> {
             work: 0,
             native_depth: 0,
             active_depth: 0,
+            literal_none: None,
         };
         if let Some(identity) = self.outer {
             visit.enter(py, identity)?;
@@ -1012,26 +1013,18 @@ impl Row<'_, '_> {
                     if positional {
                         visit.push_index(py, index)?;
                     }
-                    let result = if require_none {
-                        let mut source = call::LiteralNone::new(&mut visit, index);
-                        native
-                            .source
-                            .source()
-                            .write_parameter_cell(
-                                row,
-                                column,
-                                sink,
-                                &effective,
-                                budget,
-                                &mut source,
+                    let result =
+                        if require_none {
+                            visit.with_literal_none(py, index, |visit| {
+                                native.source.source().write_parameter_cell(
+                                    row, column, sink, &effective, budget, visit,
+                                )
+                            })
+                        } else {
+                            native.source.source().write_parameter_cell(
+                                row, column, sink, &effective, budget, &mut visit,
                             )
-                            .and_then(|()| source.validate(py))
-                    } else {
-                        native
-                            .source
-                            .source()
-                            .write_parameter_cell(row, column, sink, &effective, budget, &mut visit)
-                    };
+                        };
                     if result.is_ok() && positional {
                         visit.pop_index();
                     }
@@ -1304,6 +1297,7 @@ impl Row<'_, '_> {
             work: 0,
             native_depth: 0,
             active_depth: 0,
+            literal_none: None,
         };
         if let Some(identity) = self.outer {
             visit.enter(py, identity)?;
@@ -1376,16 +1370,11 @@ impl Row<'_, '_> {
                         _ => return Err(crate::input::sink::fragment_error(py)),
                     };
                     visit.push_index(py, index)?;
-                    let mut source = call::LiteralNone::new(&mut visit, index);
-                    native.source.source().write_parameter_cell(
-                        source_row,
-                        column,
-                        &mut sink,
-                        &effective,
-                        budget,
-                        &mut source,
-                    )?;
-                    source.validate(py)?;
+                    visit.with_literal_none(py, index, |visit| {
+                        native.source.source().write_parameter_cell(
+                            source_row, column, &mut sink, &effective, budget, visit,
+                        )
+                    })?;
                     visit.pop_index();
                 } else {
                     call::require_none(&source, index)?;
@@ -1529,6 +1518,7 @@ struct Visit<'a> {
     work: usize,
     native_depth: usize,
     active_depth: usize,
+    literal_none: Option<call::LiteralNone>,
 }
 
 /// Measure the production value visitor without copying its bytes into Python.
@@ -1552,6 +1542,7 @@ pub(crate) fn encode_value(
         work: 0,
         native_depth: 0,
         active_depth: 0,
+        literal_none: None,
     }
     .value(value, &mut output, None)?;
     check(value.py(), budget)?;
@@ -1559,6 +1550,36 @@ pub(crate) fn encode_value(
 }
 
 impl Visit<'_> {
+    /// Keep source validation in the existing writer. Always clear the local
+    /// mode, including on failure, before validating or propagating the result.
+    fn with_literal_none(
+        &mut self,
+        py: Python<'_>,
+        index: usize,
+        write: impl FnOnce(&mut Self) -> PyResult<()>,
+    ) -> PyResult<()> {
+        self.literal_none = Some(call::LiteralNone::new(index));
+        let result = write(self);
+        let source = self.literal_none.take();
+        result?;
+        source
+            .ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "OUT source validation state is unavailable",
+                )
+            })?
+            .validate(py)
+    }
+
+    fn observe_literal_none(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        if let Some(source) = &mut self.literal_none {
+            source.observe(value)?;
+        }
+        Ok(())
+    }
+
     fn native_cell<const TRACK_ROLE: bool>(
         &mut self,
         source: &mut dyn PreparedSource<'_>,
@@ -1905,6 +1926,7 @@ impl CellWriter for Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<FragmentRole> {
+        self.observe_literal_none(value)?;
         self.value_role(value, output, child)
     }
 
@@ -1914,6 +1936,7 @@ impl CellWriter for Visit<'_> {
         sink: &mut dyn sqlaero_core::bind::value::ValueSink<Error = sqlaero_core::bind::value::ValueError>,
         child: Option<usize>,
     ) -> PyResult<()> {
+        self.observe_literal_none(value)?;
         let py = value.py();
         let result = (|| {
             self.checkpoint(py, 1)?;
@@ -1944,9 +1967,13 @@ impl CellWriter for Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<()> {
+        self.observe_literal_none(value)?;
         self.value(value, output, child)
     }
     fn enter_native(&mut self, py: Python<'_>) -> PyResult<()> {
+        if let Some(source) = &self.literal_none {
+            return Err(source.native_error(py));
+        }
         if self.active_depth + self.native_depth >= 64 {
             return Err(errors::client_format(
                 py,
