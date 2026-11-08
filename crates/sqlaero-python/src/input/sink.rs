@@ -42,12 +42,6 @@ pub(crate) trait Destination {
     /// cannot contain nested rows, sequence syntax or cached SQL literals.
     fn fragment(&mut self, py: Python<'_>, bytes: &[u8], context: &Context) -> PyResult<()>;
 
-    /// Preserve destination-specific source checks without adding work to the
-    /// ordinary text visitor. Concrete destinations remain monomorphized.
-    fn enter_sequence(&mut self, py: Python<'_>, visitor: &mut dyn CellWriter) -> PyResult<()> {
-        visitor.enter_native(py)
-    }
-
     fn python(
         &mut self,
         visitor: &mut dyn CellWriter,
@@ -156,10 +150,6 @@ impl Destination for Vec<u8> {
 pub(crate) struct Native<'a>(pub(crate) &'a mut dyn ValueSink<Error = ValueError>);
 
 impl Destination for Native<'_> {
-    fn enter_sequence(&mut self, py: Python<'_>, visitor: &mut dyn CellWriter) -> PyResult<()> {
-        visitor.enter_parameter_sequence(py)
-    }
-
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
         self.0.write(value, context)
     }
