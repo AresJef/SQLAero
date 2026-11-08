@@ -12,6 +12,7 @@ from pathlib import Path
 import socket
 import subprocess
 import sys
+import time
 from tempfile import TemporaryDirectory
 from types import FrameType
 from typing import Literal, cast
@@ -283,7 +284,9 @@ def test_actual_peer_chain_order_is_original_material_not_a_completed_trust_path
     assert tuple(certificate.to_der() for certificate in certificates) == expected
 
 
-def _large_san_peer(tmp_path: Path, *, dns_count: int = _DNS_COUNT, ip_count: int = 0) -> TLSCertificate:
+def _large_san_peers(
+    tmp_path: Path, *, dns_count: int = _DNS_COUNT, ip_count: int = 0, copies: int = 1,
+) -> list[TLSCertificate]:
     extensions = tmp_path / 'many-names.ext'
     extensions.write_text('basicConstraints=CA:FALSE\nextendedKeyUsage=serverAuth\n'
                           'keyUsage=digitalSignature,keyEncipherment\n'
@@ -296,13 +299,19 @@ def _large_san_peer(tmp_path: Path, *, dns_count: int = _DNS_COUNT, ip_count: in
     run([_openssl(), 'x509', '-req', '-in', str(ROOT / 'tls/server.csr'),
          '-CA', str(ROOT / 'tls/ca.pem'), '-CAkey', str(ROOT / 'tls/ca-key.pem'),
          '-set_serial', '35', '-days', '2', '-extfile', str(extensions), '-out', str(leaf)])
+    certificates: list[TLSCertificate] = []
     with _reloaded_peer('84', leaf.read_bytes()):
-        connection = live('84', ssl=SSL(mode='REQUIRED'))
-        connection.close()
-        info = connection.tls_info
-        assert info is not None
-        certificate = info.peer_certificates[0]
-    return certificate
+        for _ in range(copies):
+            connection = live('84', ssl=SSL(mode='REQUIRED'))
+            connection.close()
+            info = connection.tls_info
+            assert info is not None
+            certificates.append(info.peer_certificates[0])
+    return certificates
+
+
+def _large_san_peer(tmp_path: Path, *, dns_count: int = _DNS_COUNT, ip_count: int = 0) -> TLSCertificate:
+    return _large_san_peers(tmp_path, dns_count=dns_count, ip_count=ip_count)[0]
 
 
 @requires_mysql
@@ -463,13 +472,23 @@ def test_real_signal_during_cold_tls_names_preserves_original_exception_and_retr
 def test_real_signal_during_cold_certificate_str_preserves_original_exception_and_retry(
     tmp_path: Path, record_property: Callable[[str, object], None],
 ) -> None:
-    certificate = _large_san_peer(tmp_path)
-    original_der = certificate.to_der()
+    # The compact display can finish before Windows dispatches its first OS
+    # event. Use a fixed, finite pool of distinct cold objects after confirming
+    # a real delivery, rather than requiring a 50us producer to hit one call.
+    certificates = _large_san_peers(tmp_path, copies=128)
+    assert len({id(item) for item in certificates}) == len(certificates)
+    original_der = {id(item): item.to_der() for item in certificates}
+    certificate = certificates[0]
     original = KeyboardInterrupt('D TLS display interruption')
     observed: list[int] = []
+    deliveries = 0
+    completed = 0
 
-    def render() -> str:
-        return str(certificate)
+    def render() -> None:
+        nonlocal certificate, completed
+        for certificate in certificates:
+            str(certificate)
+            completed += 1
 
     calls: set[int] = set()
     reading = False
@@ -480,6 +499,8 @@ def test_real_signal_during_cold_certificate_str_preserves_original_exception_an
             calls.add(instruction.offset)
 
     def interrupt(_number: int, frame: FrameType | None) -> None:
+        nonlocal deliveries
+        deliveries += 1
         # The summary no longer constructs one Python object per name. Count
         # only a real delivery in the cold native str call, without claiming a
         # particular point inside its native parsing or summary preparation.
@@ -492,19 +513,28 @@ def test_real_signal_during_cold_certificate_str_preserves_original_exception_an
     alarm = NativeAlarm(interrupt)
     try:
         alarm.start(0.00005, 0.00005, wait_ready=True)
+        deadline = time.monotonic() + 5
+        while deliveries == 0:
+            assert time.monotonic() < deadline, 'real OS alarm did not deliver its readiness control'
+            time.sleep(0.001)
+        ready_deliveries = deliveries
         with pytest.raises(KeyboardInterrupt) as caught:
             render()
         assert caught.value is original
     finally:
         alarm.close()
     assert len(observed) == 1, 'no real signal reached the cold native display call'
+    assert completed < len(certificates)
     assert not hasattr(original, 'error_info')
     record_property('actual_gil', getattr(sys, '_is_gil_enabled', lambda: True)())
     record_property('native_call_offset_at_signal', observed)
-    rendered = render()
-    assert render() is rendered
+    record_property('real_alarm_deliveries_before_cold_work', ready_deliveries)
+    record_property('cold_certificate_pool_size', len(certificates))
+    record_property('completed_cold_displays_before_signal', completed)
+    rendered = str(certificate)
+    assert str(certificate) is rendered
     assert len(certificate.dns_names) == _DNS_COUNT
-    assert certificate.to_der() is original_der
+    assert certificate.to_der() is original_der[id(certificate)]
 
 
 @requires_mysql
