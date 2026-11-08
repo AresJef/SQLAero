@@ -46,6 +46,7 @@ RUST_TARGETS = (
     'x86_64-unknown-linux-musl', 'aarch64-unknown-linux-musl',
 )
 PLATFORMS = tuple(PLATFORM_TAGS)
+RUST_TARGET_FOR_PLATFORM = dict(zip(PLATFORMS, RUST_TARGETS, strict=True))
 TAG_PLATFORMS = {tag: target for target, tag in PLATFORM_TAGS.items()}
 PYTHONS = ('cp312', 'cp313', 'cp314', 'cp315')
 RUNTIMES = tuple((python, python) for python in PYTHONS) + (
@@ -173,7 +174,7 @@ def license_materials() -> dict[str, str]:
     return result
 
 
-def source_notices(targets: list[str], output: Path) -> None:
+def source_notices(targets: list[str], output: Path, *, quiet: bool = False) -> None:
     """Check the actual locked production graphs against the notice inventory.
 
     cargo tree normal/build edges use each target's real feature selection.
@@ -229,7 +230,8 @@ def source_notices(targets: list[str], output: Path) -> None:
               'graphs': graphs, 'union_packages': len(union), 'license_files': materials}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
-    print(f'Validated {len(union)} production dependencies across {len(graphs)} targets')
+    if not quiet:
+        print(f'Validated {len(union)} production dependencies across {len(graphs)} targets')
 
 
 def sdist_record(path: Path) -> dict[str, Any]:
@@ -322,6 +324,12 @@ def installed(wheel: Path, output: Path, kind: str, sdist: Path | None) -> None:
                   free_threaded=free_threaded, gil_enabled=bool(gil_enabled()),
                   source_commit=subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                   cargo_lock_sha256=digest(ROOT / 'Cargo.lock'))
+    # Build dependencies follow the actual compiler host as well as the target.
+    # The canonical source job's cross-target graphs alone cannot establish
+    # every native host graph. Reuse this same gate at each real installation.
+    notices = output.with_name(f'{kind}-notices.json')
+    source_notices([RUST_TARGET_FOR_PLATFORM[str(record['platform'])]], notices, quiet=True)
+    record['production_notices_sha256'] = digest(notices)
     if sdist is not None:
         record['sdist_sha256'] = digest(sdist)
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -540,6 +548,13 @@ def manifest(directory: Path, identities: Path, output: Path, free_threaded: boo
             seen.add(key)
             commits.add(str(record['source_commit']))
             assert record['sdist_sha256'] == source_hash, path
+            notices_path = path.with_name(f'{kind}-notices.json')
+            assert notices_path.is_file(), ('Missing native production-dependency evidence', notices_path)
+            assert digest(notices_path) == record['production_notices_sha256'], notices_path
+            notices = json.loads(notices_path.read_text(encoding='utf-8'))
+            assert set(notices['graphs']) == {RUST_TARGET_FOR_PLATFORM[key[0]]}, notices_path
+            assert notices['cargo_lock_sha256'] == record['cargo_lock_sha256'], notices_path
+            assert notices['license_files'] == license_materials(), notices_path
             if kind == 'original':
                 match = next(row for row in wheels if (row['platform'], row['python'], row['abi']) == key)
                 assert match['sha256'] == record['sha256'] and match['native_sha256'] == record['native_sha256']

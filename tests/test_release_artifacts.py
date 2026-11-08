@@ -215,9 +215,13 @@ def test_exact_unix_socket_na_remains_accepted(tmp_path: Path, target: str | Non
 @pytest.mark.parametrize(('windows_count', 'unix_count', 'accepted'), [
     (24, 1, True), (23, 1, False), (24, 0, False),
 ])
+@pytest.mark.parametrize('native_evidence', [
+    'valid', 'missing', 'wrong-target', 'wrong-material', 'wrong-lock', 'changed-after-recording',
+])
 def test_manifest_requires_platform_specific_na_counts(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     windows_count: int, unix_count: int, accepted: bool,
+    native_evidence: str,
 ) -> None:
     version = release_artifacts.release_version()
     distribution = tmp_path / 'dist'
@@ -240,6 +244,31 @@ def test_manifest_requires_platform_specific_na_counts(
             identity = {**row, 'kind': kind, 'source_commit': 'frozen-source',
                         'sdist_sha256': release_artifacts.digest(sdist),
                         'free_threaded': False, 'gil_enabled': True}
+            native_notices = folder / f'{kind}-notices.json'
+            # This test independently fixes the two native targets, not a
+            # production-table lookup used to generate its own expectation.
+            rust_target = ('x86_64-pc-windows-msvc' if target.startswith('windows-')
+                           else 'aarch64-apple-darwin')
+            native_record: dict[str, object] = {
+                'graphs': {rust_target: [['example', '1.0.0']]},
+                'cargo_lock_sha256': 'frozen-lock',
+                'license_files': release_artifacts.license_materials()}
+            if target == 'macos-arm64' and kind == 'original':
+                if native_evidence == 'wrong-target':
+                    native_record['graphs'] = {'x86_64-apple-darwin': [['example', '1.0.0']]}
+                elif native_evidence == 'wrong-material':
+                    native_record['license_files'] = {}
+                elif native_evidence == 'wrong-lock':
+                    native_record['cargo_lock_sha256'] = 'another-lock'
+            native_notices.write_text(json.dumps(native_record))
+            identity.update(cargo_lock_sha256='frozen-lock',
+                            production_notices_sha256=release_artifacts.digest(native_notices))
+            if target == 'macos-arm64' and kind == 'original':
+                if native_evidence == 'missing':
+                    native_notices.unlink()
+                elif native_evidence == 'changed-after-recording':
+                    with native_notices.open('a') as stream:
+                        stream.write(' ')
             (folder / f'{kind}-wheel-identity.json').write_text(json.dumps(identity))
             names = PARALLEL_NAMES[:windows_count] if target.startswith('windows-') else (UNIX_NAME,)[:unix_count]
             write_skips(folder / f'python-{kind}.xml', names,
@@ -257,7 +286,7 @@ def test_manifest_requires_platform_specific_na_counts(
     monkeypatch.setattr(release_artifacts, 'wheel_record', wheel_record)
     monkeypatch.setattr(release_artifacts, 'sdist_record', sdist_record)
     output = tmp_path / 'manifest.json'
-    if accepted:
+    if accepted and native_evidence == 'valid':
         release_artifacts.manifest(distribution, identities, output)
         result = json.loads(output.read_text())
         assert {row['platform']: row['tests']['skipped'] for row in result['evidence']} == {
