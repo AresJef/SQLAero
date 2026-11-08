@@ -505,6 +505,115 @@ def test_multirow_table_is_rejected_before_call(routines: Routines) -> None:
         assert cur.columns is columns and cur.fetchone() == (91,)
 
 
+def out_placeholder_arguments(source: str, receipt: int) -> object:
+    """Build independent source-level NULL cases; none is a literal None slot."""
+    if source.startswith('decimal-'):
+        return (receipt, Decimal(source.removeprefix('decimal-')))
+    if source == 'float-nan':
+        return (receipt, float('nan'))
+    if source == 'integer':
+        return (receipt, 7)
+    if source.startswith('numpy-'):
+        np = pytest.importorskip('numpy')
+        if source == 'numpy-NaT':
+            return (receipt, np.datetime64('NaT', 'ns'))
+        if source == 'numpy-timedelta-NaT':
+            return (receipt, np.timedelta64('NaT', 'ns'))
+        if source == 'numpy-object-NaT':
+            return np.array([receipt, np.datetime64('NaT', 'ns')], dtype=object)
+        return np.array((receipt, 'NaT'), dtype=[('receipt', 'i8'), ('out', 'M8[ns]')])[()]
+    if source.startswith('pandas-'):
+        pd = pytest.importorskip('pandas')
+        if source == 'pandas-NA':
+            return (receipt, pd.NA)
+        if source == 'pandas-NaT':
+            return (receipt, pd.NaT)
+        return pd.DataFrame({'receipt': [receipt], 'out': pd.array([None], dtype='Float64')})
+    if source == 'arrow-null':
+        pa = pytest.importorskip('pyarrow')
+        return pa.table({'receipt': [receipt], 'out': pa.array([None], type=pa.int64())})
+    if source == 'polars-null':
+        pl = pytest.importorskip('polars')
+        return pl.DataFrame({'receipt': [receipt], 'out': pl.Series([None], dtype=pl.Int64)})
+    raise AssertionError(f'Unknown test source: {source}')
+
+
+def target_command_counts(connection: Any) -> dict[str, int]:
+    """Observe real target commands using a separate ordinary text Cursor."""
+    with connection.cursor() as observer:
+        observer.execute("SHOW SESSION STATUS WHERE Variable_name IN "
+                         "('Com_stmt_prepare','Com_call_procedure')")
+        result = {name: int(value) for name, value in observer.fetchall()}
+        assert set(result) == {'Com_stmt_prepare', 'Com_call_procedure'}
+        return result
+
+
+@requires_mysql
+@requires_callproc
+@pytest.mark.parametrize('kind', KINDS)
+@pytest.mark.parametrize('prepared', [False, True])
+@pytest.mark.parametrize('source', [
+    'decimal-NaN', 'decimal-Infinity', 'decimal--Infinity', 'decimal-sNaN',
+    'float-nan', 'integer', 'numpy-NaT', 'numpy-timedelta-NaT', 'numpy-object-NaT',
+    'numpy-record-NaT', 'pandas-NA', 'pandas-NaT', 'pandas-nullable',
+    'arrow-null', 'polars-null',
+])
+def test_out_requires_literal_none_before_target_send(
+    routines: Routines, kind: CursorType, prepared: bool, source: str,
+) -> None:
+    receipt = next(IDS)
+    args = out_placeholder_arguments(source, receipt)
+    with live(routines.label) as connection, connection.cursor(kind, prepared=prepared) as cur:
+        cur.callproc(routines.names['zero'])
+        drain(cur)
+        saved_output = readonly_outputs(cur, {})
+        columns = cur.columns
+        commands = target_command_counts(connection)
+        variables = session_variables(connection)
+        with pytest.raises(ValueError, match=r'args\[1\].*must be None'):
+            cast(Any, cur).callproc(routines.names['receipt'], args,
+                                   parameter_modes=('IN', 'OUT'))
+        assert target_command_counts(connection) == commands
+        assert session_variables(connection) == variables
+        assert scalar(connection, f'SELECT COUNT(*) FROM {quote(routines.table)} '
+                      f'WHERE v={receipt}') == 0
+        assert cur.columns is columns and cur.call_output_params is saved_output
+        assert cur.nextset() is None
+        assert connection.ping()
+
+
+@requires_mysql
+@requires_callproc
+@pytest.mark.parametrize('kind', KINDS)
+@pytest.mark.parametrize('prepared', [False, True])
+@pytest.mark.parametrize('source', [
+    'tuple', 'list', 'numpy-object', 'numpy-record', 'pandas-object', 'polars-object',
+])
+def test_literal_none_out_survives_shared_source_preparation(
+    routines: Routines, kind: CursorType, prepared: bool, source: str,
+) -> None:
+    receipt = next(IDS)
+    args: object = (receipt, None)
+    if source == 'list':
+        args = [receipt, None]
+    elif source.startswith('numpy-'):
+        np = pytest.importorskip('numpy')
+        args = (np.array([receipt, None], dtype=object) if source == 'numpy-object'
+                else np.array((receipt, None), dtype=[('receipt', 'i8'), ('out', object)])[()])
+    elif source == 'pandas-object':
+        pd = pytest.importorskip('pandas')
+        args = pd.DataFrame({'receipt': [receipt], 'out': pd.Series([None], dtype=object)})
+    elif source == 'polars-object':
+        pl = pytest.importorskip('polars')
+        args = pl.DataFrame({'receipt': [receipt], 'out': pl.Series([None], dtype=pl.Object)})
+    with live(routines.label) as connection, connection.cursor(kind, prepared=prepared) as cur:
+        cur.callproc(routines.names['receipt'], args, parameter_modes=('IN', 'OUT'))
+        drain(cur)
+        readonly_outputs(cur, {1: receipt * 2})
+        assert scalar(connection, f'SELECT COUNT(*) FROM {quote(routines.table)} '
+                      f'WHERE v={receipt}') == 1
+
+
 @requires_mysql
 @requires_callproc
 def test_output_mapping_allocation_failure_is_atomic_and_retryable(routines: Routines) -> None:

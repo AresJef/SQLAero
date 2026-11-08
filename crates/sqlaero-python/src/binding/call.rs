@@ -104,32 +104,21 @@ impl NativeCall {
         let source_rows = 0..usize::from(args.is_some());
         if mode == PlanMode::PreparedNative {
             let parameters = super::prepared_count(py, width)?;
-            let mut sink = Tracked {
-                inner: Parameters::new(0, parameters, context.limit)
-                    .map_err(|error| input::sink::failure(py, error))?,
-                null: false,
-            };
+            let mut sink = Parameters::new(0, parameters, context.limit)
+                .map_err(|error| input::sink::failure(py, error))?;
             if let Some(row) = row {
-                row.write_parameters_checked(
-                    types,
-                    context,
-                    budget,
-                    &mut sink,
-                    None,
-                    |index, sink| {
-                        let direction = directions.get(index).ok_or_else(|| {
-                            errors::client(
-                                py,
-                                ClientErrorCode::ParameterCount,
-                                "CALL parameter row changed width during preparation",
-                            )
-                        })?;
-                        validate_out(py, index, *direction, sink.null)
-                    },
-                )?;
+                row.write_parameters_checked(types, context, budget, &mut sink, None, |index| {
+                    let direction = directions.get(index).ok_or_else(|| {
+                        errors::client(
+                            py,
+                            ClientErrorCode::ParameterCount,
+                            "CALL parameter row changed width during preparation",
+                        )
+                    })?;
+                    Ok(*direction == Direction::Out)
+                })?;
             }
             let bytes = sink
-                .inner
                 .finish()
                 .map_err(|error| input::sink::failure(py, error))?;
             let mut request = Vec::new();
@@ -382,12 +371,16 @@ fn modes(
     }
     Ok(modes)
 }
-fn validate_out(py: Python<'_>, index: usize, direction: Direction, null: bool) -> PyResult<()> {
-    if direction == Direction::Out && !null {
-        return Err(errors::builtin_format::<PyValueError>(
-            py,
-            format_args!("args[{index}] is OUT and must be None (a source NULL)"),
-        ));
+fn placeholder_error(py: Python<'_>, index: usize) -> PyErr {
+    errors::builtin_format::<PyValueError>(
+        py,
+        format_args!("args[{index}] is OUT and must be None (the literal Python placeholder)"),
+    )
+}
+
+pub(super) fn require_none(value: &Bound<'_, PyAny>, index: usize) -> PyResult<()> {
+    if !value.is_none() {
+        return Err(placeholder_error(value.py(), index));
     }
     Ok(())
 }
@@ -441,23 +434,100 @@ fn append_chunks(
     Ok(())
 }
 
-#[derive(Default)]
-pub(super) struct NullGuard {
-    null: bool,
+/// Preserve a typed cell's Python source identity during its existing read.
+/// Native NULL validity bits are not evidence of a literal Python None. This
+/// decorator is used only for explicit OUT positions, never ordinary values.
+pub(super) struct LiteralNone<'a> {
+    visitor: &'a mut dyn input::source::CellWriter,
+    index: usize,
+    observed: bool,
 }
-impl NullGuard {
-    pub(super) fn validate(&self, py: Python<'_>, index: usize) -> PyResult<()> {
-        validate_out(py, index, Direction::Out, self.null)
+impl<'a> LiteralNone<'a> {
+    pub(super) fn new(visitor: &'a mut dyn input::source::CellWriter, index: usize) -> Self {
+        Self {
+            visitor,
+            index,
+            observed: false,
+        }
+    }
+
+    fn observe(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+        require_none(value, self.index)?;
+        self.observed = true;
+        Ok(())
+    }
+
+    pub(super) fn validate(&self, py: Python<'_>) -> PyResult<()> {
+        if !self.observed {
+            return Err(placeholder_error(py, self.index));
+        }
+        Ok(())
     }
 }
-impl ValueSink for NullGuard {
+
+impl input::source::CellWriter for LiteralNone<'_> {
+    fn python(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
+        self.observe(value)?;
+        self.visitor.python(value, output, child)
+    }
+
+    fn python_role(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<input::source::FragmentRole> {
+        self.observe(value)?;
+        self.visitor.python_role(value, output, child)
+    }
+
+    fn native_python(
+        &mut self,
+        value: &Bound<'_, PyAny>,
+        sink: &mut dyn ValueSink<Error = ValueError>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
+        self.observe(value)?;
+        self.visitor.native_python(value, sink, child)
+    }
+
+    fn enter_native(&mut self, py: Python<'_>) -> PyResult<()> {
+        // A nested native container cannot itself be the None placeholder,
+        // even if one of its children later visits a Python None.
+        Err(placeholder_error(py, self.index))
+    }
+
+    fn leave_native(&mut self) {
+        self.visitor.leave_native();
+    }
+
+    fn push_index(&mut self, py: Python<'_>, index: usize) -> PyResult<()> {
+        self.visitor.push_index(py, index)
+    }
+
+    fn pop_index(&mut self) {
+        self.visitor.pop_index();
+    }
+
+    fn checkpoint(&mut self, py: Python<'_>, work: usize) -> PyResult<()> {
+        self.visitor.checkpoint(py, work)
+    }
+}
+
+/// Text CALL substitutes its own NULL after the source check. Consume the
+/// existing cell read without formatting or treating an adapted NULL as proof.
+pub(super) struct DiscardValue;
+impl ValueSink for DiscardValue {
     type Error = ValueError;
-    fn write(&mut self, value: ValueRef<'_>, _: &Context) -> Result<(), ValueError> {
-        self.null = matches!(value, ValueRef::Null);
+    fn write(&mut self, _: ValueRef<'_>, _: &Context) -> Result<(), ValueError> {
         Ok(())
     }
     fn text_start(&mut self, _: usize, _: &Context) -> Result<(), ValueError> {
-        self.null = false;
         Ok(())
     }
     fn text_fragment(&mut self, _: &str, _: &Context) -> Result<(), ValueError> {
@@ -467,7 +537,6 @@ impl ValueSink for NullGuard {
         Ok(())
     }
     fn bytes_start(&mut self, _: usize, _: &Context) -> Result<(), ValueError> {
-        self.null = false;
         Ok(())
     }
     fn bytes_fragment(&mut self, _: &[u8], _: &Context) -> Result<(), ValueError> {
@@ -477,38 +546,6 @@ impl ValueSink for NullGuard {
         Ok(())
     }
 }
-struct Tracked<S> {
-    inner: S,
-    null: bool,
-}
-impl<S: ValueSink<Error = ValueError>> ValueSink for Tracked<S> {
-    type Error = ValueError;
-    fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
-        self.null = matches!(value, ValueRef::Null);
-        self.inner.write(value, context)
-    }
-    fn text_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError> {
-        self.null = false;
-        self.inner.text_start(length, context)
-    }
-    fn text_fragment(&mut self, text: &str, context: &Context) -> Result<(), ValueError> {
-        self.inner.text_fragment(text, context)
-    }
-    fn text_end(&mut self, context: &Context) -> Result<(), ValueError> {
-        self.inner.text_end(context)
-    }
-    fn bytes_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError> {
-        self.null = false;
-        self.inner.bytes_start(length, context)
-    }
-    fn bytes_fragment(&mut self, bytes: &[u8], context: &Context) -> Result<(), ValueError> {
-        self.inner.bytes_fragment(bytes, context)
-    }
-    fn bytes_end(&mut self, context: &Context) -> Result<(), ValueError> {
-        self.inner.bytes_end(context)
-    }
-}
-
 #[cfg(test)]
 #[path = "call_tests.rs"]
 mod tests;

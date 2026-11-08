@@ -938,7 +938,7 @@ impl Row<'_, '_> {
         budget: &IoBudget,
         sink: &mut S,
     ) -> PyResult<()> {
-        self.write_parameters_checked(types, context, budget, sink, None, |_, _| Ok(()))
+        self.write_parameters_checked(types, context, budget, sink, None, |_| Ok(false))
     }
 
     fn write_parameters_checked<
@@ -950,7 +950,7 @@ impl Row<'_, '_> {
         budget: &IoBudget,
         sink: &mut S,
         template: Option<&Template>,
-        mut after: impl FnMut(usize, &S) -> PyResult<()>,
+        mut out: impl FnMut(usize) -> PyResult<bool>,
     ) -> PyResult<()> {
         let py = self.value.py();
         check(py, budget)?;
@@ -998,6 +998,7 @@ impl Row<'_, '_> {
         for index in 0..width {
             let effective = slot_context(template, index, context);
             visit.context = effective;
+            let require_none = out(index)?;
             let result = if let Some(native) = native.as_deref_mut() {
                 let shape = native.source.shape();
                 let coordinates = match (self.itemize, shape, native.row) {
@@ -1011,10 +1012,26 @@ impl Row<'_, '_> {
                     if positional {
                         visit.push_index(py, index)?;
                     }
-                    let result = native
-                        .source
-                        .source()
-                        .write_parameter_cell(row, column, sink, &effective, budget, &mut visit);
+                    let result = if require_none {
+                        let mut source = call::LiteralNone::new(&mut visit, index);
+                        native
+                            .source
+                            .source()
+                            .write_parameter_cell(
+                                row,
+                                column,
+                                sink,
+                                &effective,
+                                budget,
+                                &mut source,
+                            )
+                            .and_then(|()| source.validate(py))
+                    } else {
+                        native
+                            .source
+                            .source()
+                            .write_parameter_cell(row, column, sink, &effective, budget, &mut visit)
+                    };
                     if result.is_ok() && positional {
                         visit.pop_index();
                     }
@@ -1036,7 +1053,12 @@ impl Row<'_, '_> {
                     })?,
                     None => self.value.clone(),
                 };
-                visit.native_python(&value, sink, sequence.map(|_| index))
+                if require_none {
+                    call::require_none(&value, index)
+                        .and_then(|()| visit.native_python(&value, sink, sequence.map(|_| index)))
+                } else {
+                    visit.native_python(&value, sink, sequence.map(|_| index))
+                }
             };
             if let Err(error) = result {
                 note_slot_context(py, &error, template, index, context);
@@ -1050,7 +1072,6 @@ impl Row<'_, '_> {
                 );
                 return Err(error);
             }
-            after(index, sink)?;
         }
         check(py, budget)
     }
@@ -1083,14 +1104,9 @@ impl Row<'_, '_> {
         let mut sink =
             sqlaero_core::protocol::prepared::Parameters::new(0, expected, context.limit)
                 .map_err(|error| crate::input::sink::failure(py, error))?;
-        self.write_parameters_checked(
-            types,
-            context,
-            budget,
-            &mut sink,
-            Some(template),
-            |_, _| Ok(()),
-        )?;
+        self.write_parameters_checked(types, context, budget, &mut sink, Some(template), |_| {
+            Ok(false)
+        })?;
         sink.finish()
             .map_err(|error| crate::input::sink::failure(py, error))
     }
@@ -1115,7 +1131,7 @@ impl Row<'_, '_> {
             budget,
             &mut sink,
             Some(template),
-            |_, _| Ok(()),
+            |_| Ok(false),
         )?;
         sink.finish()
             .map_err(|error| crate::input::sink::failure(py, error))
@@ -1350,7 +1366,7 @@ impl Row<'_, '_> {
             };
             let out = before(index, output)?;
             let result = if out {
-                let mut guard = call::NullGuard::default();
+                let mut sink = call::DiscardValue;
                 if let Some(native) = native.as_deref_mut() {
                     let (source_row, column) = match (native.source.shape(), native.row) {
                         (Shape::Vector { .. }, Some(row)) => (row, 0),
@@ -1360,14 +1376,21 @@ impl Row<'_, '_> {
                         _ => return Err(crate::input::sink::fragment_error(py)),
                     };
                     visit.push_index(py, index)?;
+                    let mut source = call::LiteralNone::new(&mut visit, index);
                     native.source.source().write_parameter_cell(
-                        source_row, column, &mut guard, &effective, budget, &mut visit,
+                        source_row,
+                        column,
+                        &mut sink,
+                        &effective,
+                        budget,
+                        &mut source,
                     )?;
+                    source.validate(py)?;
                     visit.pop_index();
                 } else {
-                    visit.native_python(&source, &mut guard, row.map(|_| index))?;
+                    call::require_none(&source, index)?;
+                    visit.native_python(&source, &mut sink, row.map(|_| index))?;
                 }
-                guard.validate(py, index)?;
                 writer::append(output, b"NULL", context.limit)
                     .map_err(|error| errors::wire(py, error))?;
                 Ok(FragmentRole::Scalar)
