@@ -10,6 +10,7 @@ This is a test fixture only; production signal handling remains in CPython.
 
 from collections.abc import Callable
 import ctypes
+import dis
 import os
 from pathlib import Path
 from queue import Empty, Queue
@@ -18,10 +19,23 @@ import subprocess
 import sys
 from threading import Thread
 import time
-from types import FrameType
+from types import CodeType, FrameType
 from typing import Any
 
 _win: Any = ctypes  # Windows-only ctypes exports are absent from non-Windows stubs.
+
+
+def native_call_offsets(code: CodeType) -> frozenset[int]:
+    """Locate CALL and its inline caches for a fixed native-work probe frame."""
+    offsets: set[int] = set()
+    reading = False
+    for instruction in dis.get_instructions(code, show_caches=True):
+        if instruction.opname != 'CACHE':
+            reading = instruction.opname == 'CALL'
+        if reading:
+            offsets.add(instruction.offset)
+    assert offsets, 'native-work probe has no CALL instruction'
+    return frozenset(offsets)
 
 
 def _kernel() -> Any:
@@ -63,6 +77,7 @@ class NativeAlarm:
         self.sender: subprocess.Popen[str] | None = None
         self.reader: Thread | None = None
         self.closed: bool = False
+        self.armed: bool = False
         self.messages: Queue[str] = Queue()
         if os.name == 'nt':
             _private_console()
@@ -102,7 +117,7 @@ class NativeAlarm:
 
         def dispatch(number: int, frame: FrameType | None) -> None:
             nonlocal handling
-            if handling or self.closed:
+            if handling or self.closed or not self.armed:
                 return
             handling = True
             try:
@@ -120,6 +135,10 @@ class NativeAlarm:
         """
         assert self.sender is not None
         assert self.sender.stdin is not None
+        # The remote cancellation command is asynchronous. Retire Python
+        # dispatch immediately so an already queued delivery cannot repeat an
+        # interruption while the original exception is still unwinding.
+        self.armed = bool(delay)
         self.sender.stdin.write(f'{delay} {interval} {int(wait_ready)}\n')
         self.sender.stdin.flush()
         if wait_ready:
@@ -130,7 +149,7 @@ class NativeAlarm:
             assert message.strip() == 'armed', message
 
     def cancel(self) -> None:
-        """Disarm future signals while leaving the installed handler in place."""
+        """Ignore queued deliveries immediately, then disarm the owned source."""
         self.start(0)
 
     def _stop_sender(self) -> None:
@@ -293,8 +312,19 @@ print('pending owned alarm discarded; original handler restored')
                     time.sleep(0.01)
                 assert hits == [alarm.number], hits
                 print(f'real native signal received: {hits[0]}')
+                # Simulate a Python dispatch that was already queued when the
+                # remote cancellation command was sent. Cancellation must
+                # silence it immediately, without retiring the reusable alarm.
+                alarm.cancel()
+                installed(alarm.number, None)
+                assert hits == [alarm.number], hits
+                alarm.start(0.02)
+                end = time.monotonic() + 3
+                while len(hits) < 2 and time.monotonic() < end:
+                    time.sleep(0.01)
+                assert hits == [alarm.number, alarm.number], hits
             finally:
                 alarm.close()
             # A Python dispatch already queued during close must stay retired.
             installed(alarm.number, None)
-            assert hits == [alarm.number], hits
+            assert hits == [alarm.number, alarm.number], hits

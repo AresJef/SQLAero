@@ -1,13 +1,14 @@
 """Public auxiliary projections retain their own session and operation context."""
 
 from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
 from threading import Event
 from types import FrameType
 from typing import Any
 from uuid import uuid4
 
 import pytest
-from _native_signal import NativeAlarm
+from _native_signal import NativeAlarm, native_call_offsets
 from sqlaero import Connection
 from sqlaero.errors import OperationalTimeoutError
 from test_public_connection import live, requires_mysql
@@ -119,38 +120,78 @@ def test_auxiliary_input_failure_does_not_claim_sql_or_destroy_the_saved_referen
 
 @requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
-def test_actual_signal_interrupts_only_the_auxiliary_conversion(label: str) -> None:
+def test_actual_signal_interrupts_only_the_auxiliary_conversion(
+    label: str, record_property: Callable[[str, object], None],
+) -> None:
+    import time
+
     original = KeyboardInterrupt("actual auxiliary OS signal")
     source = "x'\\" * (4 * 1024 * 1024)
+    with live(label) as connection, connection.cursor(streaming=True) as business:
+        business.execute("SELECT 41 AS v UNION ALL SELECT 42")
+        columns = business.columns
+        deliveries = 0
+        converted = False
+        completed = 0
+        observed: list[int] = []
 
-    def interrupt(_number: int, _frame: FrameType | None) -> None:
-        raise original
+        class AdaptedInt(int):
+            def __int__(self) -> int:
+                nonlocal converted
+                converted = True
+                return 7
 
-    alarm = NativeAlarm(interrupt)
+        parameters = (AdaptedInt(7), source)
+        # A fixed finite exposure follows the existing cold TLS-display probe;
+        # this is not an assumed 2ms OS-dispatch SLA or an unbounded retry.
+        attempts = range(64)
 
-    class ArmedInt(int):
-        def __int__(self) -> int:
-            alarm.start(0.002)
-            return 7
+        def convert() -> None:
+            nonlocal converted, completed
+            for _ in attempts:
+                converted = False
+                connection.escape(parameters)
+                completed += 1
 
-    try:
-        with live(label) as connection, connection.cursor(streaming=True) as business:
-            business.execute("SELECT 41 AS v UNION ALL SELECT 42")
-            columns = business.columns
-            try:
-                with pytest.raises(KeyboardInterrupt) as failure:
-                    connection.escape((ArmedInt(7), source))
-                assert failure.value is original
-            finally:
-                alarm.close()
-            assert not connection.closed and business.columns is columns
-            assert business.fetchall() == ((41,), (42,))
-            assert connection.escape(12) == "12"
-            with connection.cursor() as command:
-                assert command.execute("SELECT 56") == 1
-                assert command.fetchone() == (56,)
-    finally:
-        alarm.close()
+        calls = native_call_offsets(convert.__code__)
+
+        def interrupt(_number: int, frame: FrameType | None) -> None:
+            nonlocal deliveries
+            deliveries += 1
+            # The Python input callback must already have returned. Count only
+            # the actual native escape CALL, not readiness or later SQL/fetch.
+            if (not converted or frame is None or frame.f_code is not convert.__code__
+                    or frame.f_lasti not in calls):
+                return
+            observed.append(frame.f_lasti)
+            alarm.cancel()
+            raise original
+
+        alarm = NativeAlarm(interrupt)
+        try:
+            alarm.start(0.0001, 0.0001, wait_ready=True)
+            deadline = time.monotonic() + 5
+            while deliveries == 0:
+                assert time.monotonic() < deadline, 'real OS source did not deliver its readiness control'
+                time.sleep(0.001)
+            ready_deliveries = deliveries
+            with pytest.raises(KeyboardInterrupt) as failure:
+                convert()
+            assert failure.value is original
+        finally:
+            alarm.close()
+        assert len(observed) == 1 and completed < len(attempts)
+        assert not hasattr(original, 'error_info')
+        record_property('native_call_offset_at_signal', observed)
+        record_property('real_deliveries_before_auxiliary_work', ready_deliveries)
+        record_property('fixed_auxiliary_exposure_calls', len(attempts))
+        record_property('completed_auxiliary_calls_before_signal', completed)
+        assert not connection.closed and business.columns is columns
+        assert business.fetchall() == ((41,), (42,))
+        assert connection.escape(12) == "12"
+        with connection.cursor() as command:
+            assert command.execute("SELECT 56") == 1
+            assert command.fetchone() == (56,)
 
 
 @requires_mysql

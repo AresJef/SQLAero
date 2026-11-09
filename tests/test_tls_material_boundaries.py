@@ -18,7 +18,7 @@ from types import FrameType
 from typing import Literal, cast
 
 import pytest
-from _native_signal import NativeAlarm
+from _native_signal import NativeAlarm, native_call_offsets
 from sqlaero import SSL, TLSCertificate
 from test_tls_expansion import ROOT, live, requires_mysql
 from tools.mysql_fixture import mysql_command, run
@@ -490,13 +490,7 @@ def test_real_signal_during_cold_certificate_str_preserves_original_exception_an
             str(certificate)
             completed += 1
 
-    calls: set[int] = set()
-    reading = False
-    for instruction in dis.get_instructions(render, show_caches=True):
-        if instruction.opname != 'CACHE':
-            reading = instruction.opname == 'CALL'
-        if reading:
-            calls.add(instruction.offset)
+    calls = native_call_offsets(render.__code__)
 
     def interrupt(_number: int, frame: FrameType | None) -> None:
         nonlocal deliveries
