@@ -168,11 +168,11 @@ class NativeAlarm:
         if self.closed:
             return
         self.closed = True
-        # Ignore pending deliveries while joining the only source. No sender
-        # can still generate an alarm after its actual process exit. Retired
-        # Python dispatches are also suppressed by the closed flag above.
-        signal.signal(self.number, signal.SIG_IGN)
+        # The installed Python dispatch is already retired by closed above.
+        # Quiesce the only source before the final OS pending-state discard:
+        # a disposition change before joining is not our cleanup boundary.
         self._stop_sender()
+        signal.signal(self.number, signal.SIG_IGN)
         signal.signal(self.number, self.previous)
 
 
@@ -267,7 +267,7 @@ from _native_signal import NativeAlarm
 hits = []
 def previous_handler(number, frame):
     hits.append(number)
-for previous in (signal.SIG_DFL, signal.SIG_IGN, previous_handler):
+for previous in (signal.SIG_DFL, signal.SIG_IGN, previous_handler) * 16:
     signal.signal(signal.SIGALRM, previous)
     # Reader threads inherit this mask; a process-directed signal must stay
     # pending instead of being consumed by a different unblocked thread.
@@ -279,7 +279,7 @@ for previous in (signal.SIG_DFL, signal.SIG_IGN, previous_handler):
     alarm.close()
     alarm.close()
     assert signal.getsignal(signal.SIGALRM) is previous
-    assert signal.SIGALRM not in signal.sigpending()
+    assert signal.SIGALRM not in signal.sigpending(), (previous, signal.sigpending())
     assert signal.getitimer(signal.ITIMER_REAL) == (0.0, 0.0)
     assert alarm.sender is not None and alarm.sender.poll() is not None
     assert alarm.reader is not None and not alarm.reader.is_alive()
@@ -291,7 +291,7 @@ assert hits == [signal.SIGALRM]
 print('pending owned alarm discarded; original handler restored')
 '''
             subprocess.run([sys.executable, '-c', pending_close,
-                            str(Path(__file__).resolve().parent)], check=True, timeout=10)
+                            str(Path(__file__).resolve().parent)], check=True, timeout=30)
         for sigint in ((False, True) if os.name == 'nt' else (False,)):
             hits: list[int] = []
 
