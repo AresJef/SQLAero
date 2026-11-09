@@ -213,7 +213,9 @@ def test_single_large_json_checks_signals_before_finishing_the_field(shape: str,
 
 @pytest.mark.parametrize('width', [1, 4, 32], ids=['scalar-row', 'narrow-row', 'wide-row'])
 def test_interrupted_output_releases_temporaries_and_does_not_commit(width: int) -> None:
+    """Require real in-fetch allocation progress, not a timer or GC timing SLA."""
     import gc
+    import time as clock
 
     marker = 1472853690
     value = _rows_from_packets(packets(
@@ -222,29 +224,59 @@ def test_interrupted_output_releases_temporaries_and_does_not_commit(width: int)
     ))
     original = Interrupted("stop this fetch")
     observed: list[bool] = []
+    progress: list[int] = []
+    delivered = False
+    in_fetch = False
+    baseline = 0
 
-    def interrupt(signum: int, frame: FrameType | None) -> None:
-        alarm.start(0)
-        # Observe an actual output tuple, rather than accepting an exception
-        # delivered before fetch entry or after the result has committed.
+    def inspect_visible_tuples() -> None:
+        # CPython may untrack completed tuples of atomic values before a GC
+        # enumeration. Every visible tuple must nevertheless be initialized.
+        # Finish this frame before raising so its GC list cannot be retained
+        # by the expected exception's traceback.
         for temporary in gc.get_objects():
             if type(temporary) is tuple:
                 candidate = cast(tuple[object, ...], temporary)
-                if len(candidate) == width and type(candidate[0]) is int and candidate[0] == marker:
-                    observed.append(True)
-                    del candidate, temporary
-                    raise original
-        alarm.start(0.0001)
+                if len(candidate) == width:
+                    _ = candidate[0]
+
+    def interrupt(signum: int, frame: FrameType | None) -> None:
+        nonlocal delivered
+        delivered = True
+        if not in_fetch or observed:
+            return
+        allocated = sys.getallocatedblocks() - baseline
+        # Noncached integers and their output rows prove partial Python output.
+        # A pre-entry or fetch-end-only signal check cannot meet this window.
+        if not 1024 <= allocated < _SIGNAL_FETCH_ROWS // 2:
+            return
+        alarm.start(0)
+        inspect_visible_tuples()
+        progress.append(allocated)
+        observed.append(True)
+        raise original
 
     alarm = NativeAlarm(interrupt)
     try:
-        alarm.start(0.0001)
+        # Previous tests can leave unreachable output/traceback cycles. Clear
+        # that preparation state before using an allocated-block baseline;
+        # automatic GC stays enabled throughout the actual fetch.
+        gc.collect()
+        alarm.start(0.0001, 0.0001, wait_ready=True)
+        deadline = clock.monotonic() + 5
+        while not delivered and clock.monotonic() < deadline:
+            clock.sleep(0.001)
+        assert delivered, 'no real OS signal reached the prepared handler'
+        baseline = sys.getallocatedblocks()
+        in_fetch = True
         with pytest.raises(Interrupted) as caught:
             value.fetchall()
         assert caught.value is original
     finally:
+        in_fetch = False
         alarm.close()
     assert observed == [True]
+    assert len(progress) == 1 and 1024 <= progress[0] < _SIGNAL_FETCH_ROWS // 2
     assert value.position == 0
     assert value.fetchone() == (marker,) * width
 
