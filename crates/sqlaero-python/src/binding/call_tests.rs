@@ -298,7 +298,7 @@ fn names_are_separate_quoted_identifiers_and_share_savepoint_validation() {
 }
 
 #[test]
-fn prepared_sources_use_real_nulls_and_reject_only_actual_multirow_inputs() {
+fn prepared_sources_distinguish_literal_none_from_native_null_and_reject_multirow_inputs() {
     Python::initialize();
     Python::attach(|py| {
         let numpy = PyModule::import(py, "numpy").unwrap();
@@ -310,7 +310,6 @@ fn prepared_sources_use_real_nulls_and_reject_only_actual_multirow_inputs() {
         for source in [
             c"np.array([[5,None]],dtype=object)",
             c"np.array((5,None),dtype=[('a','i8'),('b',object)])[()]",
-            c"pa.table({'a':[5],'b':[None]})",
         ] {
             for mode in [PlanMode::Text, PlanMode::PreparedNative] {
                 let args = py.eval(source, Some(&scope), None).unwrap();
@@ -319,6 +318,25 @@ fn prepared_sources_use_real_nulls_and_reject_only_actual_multirow_inputs() {
                 if mode == PlanMode::Text {
                     assert_eq!(plan.call.bytes, b"\x03CALL `adjust`(5,@_sqlaero_call_7_0)");
                 }
+            }
+        }
+        let args = py
+            .eval(c"pa.table({'a':[5],'b':[None]})", Some(&scope), None)
+            .unwrap();
+        for mode in [PlanMode::Text, PlanMode::PreparedNative] {
+            let error = call(py, Some(&args), Some(&modes), mode, 4096)
+                .err()
+                .unwrap();
+            assert!(error.is_instance_of::<PyValueError>(py));
+            assert!(
+                error
+                    .to_string()
+                    .contains("args[1] is OUT and must be None")
+            );
+            let input = call(py, Some(&args), None, mode, 4096).unwrap();
+            assert!(input.output_positions.is_empty());
+            if mode == PlanMode::Text {
+                assert_eq!(input.call.bytes, b"\x03CALL `adjust`(5,NULL)");
             }
         }
         for source in [c"np.array([[1,2],[3,4]])", c"pa.table({'a':[1,2]})"] {

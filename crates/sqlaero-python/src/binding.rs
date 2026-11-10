@@ -964,7 +964,6 @@ impl Row<'_, '_> {
             work: 0,
             native_depth: 0,
             active_depth: 0,
-            literal_none: None,
         };
         if let Some(identity) = self.outer {
             visit.enter(py, identity)?;
@@ -1015,9 +1014,9 @@ impl Row<'_, '_> {
                     }
                     let result =
                         if require_none {
-                            visit.with_literal_none(py, index, |visit| {
+                            visit.with_literal_none(py, index, |writer| {
                                 native.source.source().write_parameter_cell(
-                                    row, column, sink, &effective, budget, visit,
+                                    row, column, sink, &effective, budget, writer,
                                 )
                             })
                         } else {
@@ -1297,7 +1296,6 @@ impl Row<'_, '_> {
             work: 0,
             native_depth: 0,
             active_depth: 0,
-            literal_none: None,
         };
         if let Some(identity) = self.outer {
             visit.enter(py, identity)?;
@@ -1370,9 +1368,9 @@ impl Row<'_, '_> {
                         _ => return Err(crate::input::sink::fragment_error(py)),
                     };
                     visit.push_index(py, index)?;
-                    visit.with_literal_none(py, index, |visit| {
+                    visit.with_literal_none(py, index, |writer| {
                         native.source.source().write_parameter_cell(
-                            source_row, column, &mut sink, &effective, budget, visit,
+                            source_row, column, &mut sink, &effective, budget, writer,
                         )
                     })?;
                     visit.pop_index();
@@ -1518,7 +1516,6 @@ struct Visit<'a> {
     work: usize,
     native_depth: usize,
     active_depth: usize,
-    literal_none: Option<call::LiteralNone>,
 }
 
 /// Measure the production value visitor without copying its bytes into Python.
@@ -1542,7 +1539,6 @@ pub(crate) fn encode_value(
         work: 0,
         native_depth: 0,
         active_depth: 0,
-        literal_none: None,
     }
     .value(value, &mut output, None)?;
     check(value.py(), budget)?;
@@ -1550,34 +1546,16 @@ pub(crate) fn encode_value(
 }
 
 impl Visit<'_> {
-    /// Keep source validation in the existing writer. Always clear the local
-    /// mode, including on failure, before validating or propagating the result.
+    /// Check source identity only for an explicit OUT cell.
     fn with_literal_none(
         &mut self,
         py: Python<'_>,
         index: usize,
-        write: impl FnOnce(&mut Self) -> PyResult<()>,
+        write: impl FnOnce(&mut dyn CellWriter) -> PyResult<()>,
     ) -> PyResult<()> {
-        self.literal_none = Some(call::LiteralNone::new(index));
-        let result = write(self);
-        let source = self.literal_none.take();
-        result?;
-        source
-            .ok_or_else(|| {
-                errors::client(
-                    py,
-                    ClientErrorCode::InternalState,
-                    "OUT source validation state is unavailable",
-                )
-            })?
-            .validate(py)
-    }
-
-    fn observe_literal_none(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
-        if let Some(source) = &mut self.literal_none {
-            source.observe(value)?;
-        }
-        Ok(())
+        let mut writer = call::LiteralNoneWriter::new(self, index);
+        write(&mut writer)?;
+        writer.validate(py)
     }
 
     fn native_cell<const TRACK_ROLE: bool>(
@@ -1926,7 +1904,6 @@ impl CellWriter for Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<FragmentRole> {
-        self.observe_literal_none(value)?;
         self.value_role(value, output, child)
     }
 
@@ -1936,7 +1913,6 @@ impl CellWriter for Visit<'_> {
         sink: &mut dyn sqlaero_core::bind::value::ValueSink<Error = sqlaero_core::bind::value::ValueError>,
         child: Option<usize>,
     ) -> PyResult<()> {
-        self.observe_literal_none(value)?;
         let py = value.py();
         let result = (|| {
             self.checkpoint(py, 1)?;
@@ -1967,13 +1943,9 @@ impl CellWriter for Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<()> {
-        self.observe_literal_none(value)?;
         self.value(value, output, child)
     }
     fn enter_native(&mut self, py: Python<'_>) -> PyResult<()> {
-        if let Some(source) = &self.literal_none {
-            return Err(source.native_error(py));
-        }
         if self.active_depth + self.native_depth >= 64 {
             return Err(errors::client_format(
                 py,

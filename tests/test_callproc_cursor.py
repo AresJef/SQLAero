@@ -529,9 +529,11 @@ def out_placeholder_arguments(source: str, receipt: int) -> object:
         if source == 'pandas-NaT':
             return (receipt, pd.NaT)
         return pd.DataFrame({'receipt': [receipt], 'out': pd.array([None], dtype='Float64')})
-    if source == 'arrow-null':
+    if source in ('arrow-null', 'arrow-list-containing-null'):
         pa = pytest.importorskip('pyarrow')
-        return pa.table({'receipt': [receipt], 'out': pa.array([None], type=pa.int64())})
+        out = (pa.array([None], type=pa.int64()) if source == 'arrow-null'
+               else pa.array([[None]], type=pa.list_(pa.int64())))
+        return pa.table({'receipt': [receipt], 'out': out})
     if source == 'polars-null':
         pl = pytest.importorskip('polars')
         return pl.DataFrame({'receipt': [receipt], 'out': pl.Series([None], dtype=pl.Int64)})
@@ -556,7 +558,7 @@ def target_command_counts(connection: Any) -> dict[str, int]:
     'decimal-NaN', 'decimal-Infinity', 'decimal--Infinity', 'decimal-sNaN',
     'float-nan', 'integer', 'numpy-NaT', 'numpy-timedelta-NaT', 'numpy-object-NaT',
     'numpy-record-NaT', 'pandas-NA', 'pandas-NaT', 'pandas-nullable',
-    'arrow-null', 'polars-null',
+    'arrow-null', 'arrow-list-containing-null', 'polars-null',
 ])
 def test_out_requires_literal_none_before_target_send(
     routines: Routines, kind: CursorType, prepared: bool, source: str,
