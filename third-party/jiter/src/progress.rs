@@ -179,9 +179,8 @@ where
         return Ok((unsafe { StringOutput::data(value, ascii) }, index + 1));
     }
     tape.clear();
-    let mut chunk_start = start;
+    copy(tape, &data[start..index], progress)?;
     loop {
-        copy(tape, &data[chunk_start..index], progress)?;
         let escape_start = index;
         index += 1;
         let next = *data
@@ -218,15 +217,18 @@ where
         };
         progress.charge(index - escape_start + 1 + decoded_len)?;
         index += 1;
+        // Adjacent escapes have no raw span to scan or copy.
+        if data.get(index) == Some(&b'\\') {
+            continue;
+        }
         let (kind, ascii_next, end) = scan(data, index, ascii, partial, progress)?;
         ascii = ascii_next;
+        copy(tape, &data[index..end], progress)?;
         if matches!(kind, StringChunk::StringEnd) {
-            copy(tape, &data[index..end], progress)?;
             let value = text(tape, ascii, start, partial, progress)?;
             // SAFETY: text validated the decoded tape; escapes preserve ascii.
             return Ok((unsafe { StringOutput::tape(value, ascii) }, end + 1));
         }
-        chunk_start = index;
         index = end;
     }
 }

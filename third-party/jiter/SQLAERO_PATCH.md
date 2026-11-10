@@ -17,8 +17,9 @@ points accept complete strict JSON only.
 Object-start, object-separator and key-colon grammar are shared with the original
 methods. The platform SIMD implementations and number parser are unchanged.
 The byte budget counts down between callbacks, and ASCII escaped scalars are
-written directly after fallible reservation. These shortcuts preserve the
-cumulative checkpoint positions and the decoded string's proven ASCII status.
+written directly after fallible reservation. Adjacent escapes reuse the same
+decoder without scanning or copying an empty raw span. These shortcuts preserve
+the cumulative checkpoint positions and the decoded string's proven ASCII status.
 Allocator operations and CPython's internal dictionary hashing remain indivisible
 calls; the callback is cooperative and does not promise a wall-clock deadline.
 

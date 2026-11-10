@@ -35,6 +35,20 @@ fn cancellation_is_typed_and_precedes_completion_of_one_string() {
 }
 
 #[test]
+fn adjacent_escapes_retain_the_first_cancellation_boundary() {
+    let escape = "\\u0001";
+    let data = format!("\"{}\"", escape.repeat(WORK_WINDOW));
+    let mut parser = Jiter::new(data.as_bytes());
+    let mut progress = Progress::new(Err::<(), usize>);
+    let work_per_escape = escape.len() + 1;
+    let expected = WORK_WINDOW.div_ceil(work_per_escape) * work_per_escape;
+    assert!(matches!(
+        parser.known_str_checked(&mut progress),
+        Err(CheckedError::Interrupted(work)) if work == expected
+    ));
+}
+
+#[test]
 fn first_and_later_keys_share_checked_string_work() {
     for first in [true, false] {
         let key = "é中😀".repeat(WORK_WINDOW);
