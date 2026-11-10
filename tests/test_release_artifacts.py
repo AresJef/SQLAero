@@ -811,6 +811,7 @@ def test_current_production_graph_catches_old_as_well_as_new_notice_omissions(
 
 @pytest.mark.parametrize(('provider', 'function', 'source'), [
     ('pyarrow', 'test_out_requires_literal_none_before_target_send', 'arrow-null'),
+    ('pyarrow', 'test_out_requires_literal_none_before_target_send', 'arrow-list-containing-null'),
     ('polars', 'test_out_requires_literal_none_before_target_send', 'polars-null'),
     ('polars', 'test_literal_none_out_survives_shared_source_preparation', 'polars-object'),
 ])
@@ -834,3 +835,25 @@ def test_out_source_cases_can_skip_only_for_the_exact_known_provider_gap(
     else:
         with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
             release_artifacts.test_totals(report, target, capabilities)
+
+
+@pytest.mark.parametrize('defect', ['platform', 'reason', 'node', 'duplicate'])
+def test_nested_arrow_out_skip_rejects_invalid_evidence(tmp_path: Path, defect: str) -> None:
+    target = 'windows-x86_64' if defect == 'platform' else 'windows-arm64'
+    kind = 'UnknownCursor' if defect == 'node' else 'Cursor'
+    name = f'test_out_requires_literal_none_before_target_send[84-arrow-list-containing-null-False-{kind}]'
+    reason = ("could not import 'pyarrow': No module named 'pyarrow'"
+              if defect != 'reason' else 'A different skip reason')
+    cases = [('tests.test_callproc_cursor', name, reason)]
+    if defect == 'duplicate':
+        cases.append(cases[0])
+    report, capabilities = feature_report(tmp_path, target, False, cases,
+                                         {'pyarrow': 'NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64'})
+    expected = {
+        'platform': None,
+        'reason': 'Unexpected skipped requirement',
+        'node': 'Unexpected skipped requirement',
+        'duplicate': 'Duplicate skipped requirement',
+    }[defect]
+    with pytest.raises(AssertionError, match=expected):
+        release_artifacts.test_totals(report, target, capabilities)

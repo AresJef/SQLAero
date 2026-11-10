@@ -118,7 +118,8 @@ FEATURE_PROVIDER_NA = {
           for scenario in ('naive_non_utc', 'aware_non_timezone') for kind in ('pandas_arrow', 'arrow_table')
           for prepared in (False, True) for label in ('84', '97')),
         *(('tests.test_callproc_cursor',
-           f'test_out_requires_literal_none_before_target_send[{label}-arrow-null-{prepared}-{kind}]')
+           f'test_out_requires_literal_none_before_target_send[{label}-{source}-{prepared}-{kind}]')
+          for source in ('arrow-null', 'arrow-list-containing-null')
           for label in ('84', '97') for prepared in (False, True)
           for kind in ('Cursor', 'DictCursor', 'SSCursor', 'SSDictCursor')),
     }),
