@@ -1,6 +1,6 @@
 //! One CALL's attached input preparation and owned native target requests.
 
-use super::{PlanMode, PreparedKey, PreparedTemplate, Request, Rows, ScalarTypes, Visit};
+use super::{PlanMode, PreparedKey, PreparedTemplate, Request, Rows, ScalarTypes};
 use crate::input::source::{CellWriter, FragmentRole};
 use crate::{errors, input};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -437,13 +437,13 @@ fn append_chunks(
 
 /// Check the source of one OUT cell during the provider's existing read.
 /// Only a literal Python None qualifies. The ordinary visitor stays neutral.
-pub(super) struct LiteralNoneWriter<'v, 'a> {
-    visitor: &'v mut Visit<'a>,
+pub(super) struct LiteralNoneWriter<'a> {
+    visitor: &'a mut dyn CellWriter,
     index: usize,
     observed: bool,
 }
-impl<'v, 'a> LiteralNoneWriter<'v, 'a> {
-    pub(super) fn new(visitor: &'v mut Visit<'a>, index: usize) -> Self {
+impl<'a> LiteralNoneWriter<'a> {
+    pub(super) fn new(visitor: &'a mut dyn CellWriter, index: usize) -> Self {
         Self {
             visitor,
             index,
@@ -465,7 +465,7 @@ impl<'v, 'a> LiteralNoneWriter<'v, 'a> {
     }
 }
 
-impl CellWriter for LiteralNoneWriter<'_, '_> {
+impl CellWriter for LiteralNoneWriter<'_> {
     fn python(
         &mut self,
         value: &Bound<'_, PyAny>,
