@@ -17,7 +17,7 @@ pub(crate) enum Source<'a, 'py> {
 
 /// Inspect actual base storage, never a replacement conversion protocol.
 /// Wider integers retain their owner for the target's checked native transfer.
-#[inline]
+#[inline(always)]
 pub(crate) fn read<'a, 'py>(value: &'a Bound<'py, PyAny>) -> PyResult<Option<Source<'a, 'py>>> {
     let scalar = if value.is_none() {
         ScalarRef::Null

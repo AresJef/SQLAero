@@ -1,0 +1,10 @@
+{
+  "repository": "https://github.com/python/pythoncapi-compat",
+  "commit": "d3ebabff3a4b43e40f7b3db5f55b8a54f84b0091",
+  "license": "0BSD",
+  "scope": "unmodified compatibility header; only PyLong export API used by a narrow boundary shim; no JSON serializer",
+  "files": {
+    "pythoncapi_compat.h": "f4a3d08a7d9c611266b8eb05fe8c1dd4e3d1b66da176c03351411661a795a4cb",
+    "COPYING": "3f2c1ffa76383a55ae0aac01c9737cd70050dff63e1f026694fbe9d662573c98"
+  }
+}

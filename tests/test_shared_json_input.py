@@ -4,6 +4,11 @@ import gc
 import inspect
 import json
 import math
+import os
+from pathlib import Path
+import subprocess
+import sys
+import textwrap
 import weakref
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
@@ -27,6 +32,91 @@ from test_public_connection import live, requires_mysql
 def test_minimal_public_json_values(value: object, expected: bytes) -> None:
     actual = json_dumps(value)
     assert type(actual) is bytes and actual == expected
+
+
+@pytest.mark.parametrize("digits", [21, 65, 66, 1000, 6000])
+@pytest.mark.parametrize("negative", [False, True])
+def test_json_integer_precision_has_no_sql_or_python_string_limit(digits: int, negative: bool) -> None:
+    # The expected decimal is constructed independently, without int->str or
+    # changing Python's process-global maximum decimal conversion setting.
+    value = 10**digits + 123
+    expected = b"1" + b"0" * (digits - 3) + b"123"
+    if negative:
+        value = -value
+        expected = b"-" + expected
+    assert json_dumps(value) == expected
+    assert json_dumps([value]) == b"[" + expected + b"]"
+
+
+def test_json_wide_integer_subclass_reads_only_base_storage() -> None:
+    class Integer(int):
+        def __int__(self) -> int:
+            raise AssertionError("must read actual int base storage")
+        def __index__(self) -> int:
+            raise AssertionError("must read actual int base storage")
+        def __str__(self) -> str:
+            raise AssertionError("must not create a Python decimal string")
+        def bit_length(self) -> int:
+            raise AssertionError("must not call an overridden size method")
+
+    value = Integer(10**100 + 7)
+    assert json_dumps(value) == b"1" + b"0" * 99 + b"7"
+
+
+def test_concurrent_integer_exports_keep_independent_native_owners() -> None:
+    value = 10**6000 + 123
+    expected = b"1" + b"0" * 5997 + b"123"
+    def read(index: int) -> bytes:
+        return json_dumps(value if index % 2 == 0 else -value)
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        results = list(pool.map(read, range(16)))
+    assert results == [expected if index % 2 == 0 else b"-" + expected for index in range(16)]
+
+
+def test_large_integer_returns_to_signal_control_during_native_work() -> None:
+    # An isolated process makes a missing checkpoint a bounded test failure.
+    # Three deliveries inside a frame containing only the json_dumps call
+    # distinguish growing native work from one entry/final signal check.
+    script = textwrap.dedent("""
+        import sys
+        from _native_signal import NativeAlarm, native_call_offsets
+        from sqlaero import json_dumps
+        value = 1 << 2_000_000
+        original = RuntimeError('original integer signal')
+        count = 0
+        def serialize():
+            return json_dumps(value)
+        offsets = native_call_offsets(serialize.__code__)
+        def interrupt(number, frame):
+            global count
+            if frame is None or frame.f_code is not serialize.__code__ or frame.f_lasti not in offsets:
+                return
+            count += 1
+            if count == 3:
+                alarm.cancel()
+                raise original
+        alarm = NativeAlarm(interrupt)
+        try:
+            alarm.start(0.001, 0.001, wait_ready=True)
+            try:
+                serialize()
+            except RuntimeError as error:
+                assert error is original and count == 3
+                assert 'while serializing JSON at data' in '\\n'.join(error.__notes__)
+            else:
+                raise AssertionError('large integer never observed growing-work signals')
+        finally:
+            alarm.close()
+        assert not hasattr(sys, '_is_gil_enabled') or sys._is_gil_enabled() == (not sysconfig_free)
+    """)
+    # Import mode must stay unchanged; do not turn the GIL on to pass the probe.
+    free = hasattr(sys, "_is_gil_enabled") and not sys._is_gil_enabled()
+    script = "sysconfig_free = " + repr(free) + "\n" + script
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).parent) + os.pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run([sys.executable, "-c", script], env=env,
+                            capture_output=True, text=True, timeout=15)
+    assert result.returncode == 0, (result.stdout, result.stderr)
 
 
 @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])

@@ -1,14 +1,14 @@
 //! JSON wrapper and native serialization at the single input boundary.
 
-use super::ScalarTypes;
 use super::primitive::{self, Source};
 use super::sequence::Sequence;
 use super::sink::Destination;
+use super::{ScalarTypes, integer};
 use crate::{config, errors};
 use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::PyBytes;
+use pyo3::types::{PyBytes, PyInt};
 use sqlaero_core::bind::Context;
 use sqlaero_core::json::{Error, Options, Writer};
 use sqlaero_core::transport::deadline::IoBudget;
@@ -120,18 +120,12 @@ impl Serialize<'_> {
                             .write(ScalarRef::Unsigned(value), &self.options)
                             .map_err(|error| failure(py, error)),
                         Err(error) if error.is_instance_of::<PyOverflowError>(py) => {
-                            Err(errors::builtin_message::<PyTypeError>(
-                                py,
-                                "arbitrary-precision JSON integers are not connected yet",
-                            ))
+                            self.integer(value)
                         }
                         Err(error) => Err(error),
                     }
                 }
-                Source::WideInteger { .. } => Err(errors::builtin_message::<PyTypeError>(
-                    py,
-                    "arbitrary-precision JSON integers are not connected yet",
-                )),
+                Source::WideInteger { value, .. } => self.integer(value),
             };
         }
         if let Some(sequence) = Sequence::plain(value)? {
@@ -171,6 +165,61 @@ impl Serialize<'_> {
             py,
             format_args!("unsupported JSON input: {detail}"),
         ))
+    }
+
+    fn integer(&mut self, source: &Bound<'_, PyInt>) -> PyResult<()> {
+        let py = source.py();
+        super::checkpoint(py, self.budget)?;
+        let owner = integer::Export::new(source)?;
+        let (negative, source) = match owner.value()? {
+            integer::Value::Compact(value) => {
+                return self
+                    .writer
+                    .write(ScalarRef::Signed(value), &self.options)
+                    .map_err(|error| failure(py, error));
+            }
+            integer::Value::Digits { negative, source } => (negative, source),
+        };
+        let mut decimal = sqlaero_transcode::integer::DecimalDigits::new(source)
+            .map_err(|error| integer::failure(py, error))?;
+        // Copy, arithmetic and output all return to the same original control
+        // boundary; no Python decimal string or unbounded bigint conversion.
+        while !decimal
+            .step(4096)
+            .map_err(|error| integer::failure(py, error))?
+        {
+            super::checkpoint(py, self.budget)?;
+        }
+        super::checkpoint(py, self.budget)?;
+        let groups = decimal.groups().ok_or_else(|| {
+            errors::client(
+                py,
+                sqlaero_core::error::ClientErrorCode::InternalState,
+                "native integer conversion finished without complete decimal digits",
+            )
+        })?;
+        self.writer
+            .integer_start(negative)
+            .map_err(|error| failure(py, error))?;
+        for (index, group) in groups.iter().rev().enumerate() {
+            if index.is_multiple_of(1024) {
+                super::checkpoint(py, self.budget)?;
+            }
+            let mut format = itoa::Buffer::new();
+            let digits = format.format(*group).as_bytes();
+            if index != 0 && digits.len() < 9 {
+                self.writer
+                    .integer_fragment(&b"000000000"[..9 - digits.len()])
+                    .map_err(|error| failure(py, error))?;
+            }
+            self.writer
+                .integer_fragment(digits)
+                .map_err(|error| failure(py, error))?;
+        }
+        self.writer
+            .integer_end()
+            .map_err(|error| failure(py, error))?;
+        super::checkpoint(py, self.budget)
     }
 }
 

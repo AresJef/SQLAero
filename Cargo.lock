@@ -1570,6 +1570,7 @@ dependencies = [
  "arrow-buffer",
  "arrow-data",
  "arrow-schema",
+ "cc",
  "getrandom 0.3.4",
  "itoa",
  "jiter",

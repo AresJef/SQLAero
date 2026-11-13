@@ -23,6 +23,7 @@ pub enum CapacityError {
 /// # Errors
 /// Returns the actual length bound or allocation failure. Existing capacity
 /// never bypasses the logical bound, and failure preserves initialized bytes.
+#[inline]
 pub fn reserve(output: &mut Vec<u8>, additional: usize, limit: usize) -> Result<(), CapacityError> {
     let required = output
         .len()
@@ -42,6 +43,7 @@ pub fn reserve(output: &mut Vec<u8>, additional: usize, limit: usize) -> Result<
 ///
 /// # Errors
 /// Returns a length bound or allocation failure before changing the content.
+#[inline]
 pub fn append(output: &mut Vec<u8>, bytes: &[u8], limit: usize) -> Result<(), CapacityError> {
     reserve(output, bytes.len(), limit)?;
     output.extend_from_slice(bytes);

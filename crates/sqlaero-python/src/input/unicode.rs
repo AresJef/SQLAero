@@ -7,7 +7,7 @@ use sqlaero_core::transport::deadline::IoBudget;
 use sqlaero_transcode::utf8::{self, EncodeError};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
-/// Read immutable codepoints without first allocating a Python UTF-8 cache.
+/// Read immutable base storage, reusing bounded cached UTF-8 when suitable.
 /// A target error is translated at the boundary with exact source coordinates.
 pub(crate) fn write<C: Consumer + ?Sized>(
     source: &Bound<'_, PyString>,
@@ -18,7 +18,6 @@ pub(crate) fn write<C: Consumer + ?Sized>(
     mut failure: impl FnMut(C::Error, usize, &str) -> PyErr,
 ) -> PyResult<()> {
     let py = source.py();
-    super::checkpoint(py, budget)?;
     // SAFETY: this is an owned true str or subclass; its canonical codepoint
     // storage is immutable and remains owned for every borrowed slice and
     // signal checkpoint. Supported CPython >=3.12 needs no legacy readiness
@@ -26,26 +25,52 @@ pub(crate) fn write<C: Consumer + ?Sized>(
     // targets are little-endian x86_64/aarch64 and must be covered by CI. No raw
     // view is detached, stored globally or retained by the native consumer.
     let data = unsafe { source.data()? };
-    if let PyStringData::Ucs1(bytes) = data
-        && bytes.len() <= super::WORK_BYTES
-        && bytes.is_ascii()
-    {
-        // SAFETY: is_ascii proved this immutable, owner-backed slice valid
-        // UTF-8; no callback or mutation can change the string's codepoints.
-        let value = unsafe { std::str::from_utf8_unchecked(bytes) };
-        target
-            .write(ScalarRef::Text(value), context)
-            .map_err(|error| failure(error, 0, value))?;
-        return super::checkpoint(py, budget);
+    // A bounded short conversion may reuse CPython's immutable UTF-8 cache.
+    // The caller checks aggregate work at its traversal/root boundary; adding
+    // two signal/deadline calls to every tiny leaf would duplicate that work.
+    // Long *first* conversions never pass through to_str before checkpointing.
+    const CHARACTERS: usize = super::WORK_BYTES / 4;
+    let length = match data {
+        PyStringData::Ucs1(values) => values.len(),
+        PyStringData::Ucs2(values) => values.len(),
+        PyStringData::Ucs4(values) => values.len(),
+    };
+    if length <= CHARACTERS {
+        let text = source.to_str().map_err(|original| {
+            if !original.is_instance_of::<pyo3::exceptions::PyUnicodeEncodeError>(py) {
+                return original;
+            }
+            let invalid = match data {
+                PyStringData::Ucs1(_) => None,
+                PyStringData::Ucs2(values) => values
+                    .iter()
+                    .position(|value| (0xD800..=0xDFFF).contains(value)),
+                PyStringData::Ucs4(values) => values
+                    .iter()
+                    .position(|value| (0xD800..=0xDFFF).contains(value)),
+            };
+            invalid.map_or(original, |index| {
+                super::encode_error(
+                    source,
+                    encoding_label,
+                    index,
+                    index + 1,
+                    "surrogates are not valid input characters",
+                )
+            })
+        })?;
+        return target
+            .write(ScalarRef::Text(text), context)
+            .map_err(|error| failure(error, 0, text));
     }
 
+    super::checkpoint(py, budget)?;
     target
         .text_start(None, context)
         .map_err(|error| failure(error, 0, ""))?;
     let mut buffer = String::new();
     let mut position = 0;
     // Four UTF-8 bytes per source codepoint prove the bounded scratch size.
-    const CHARACTERS: usize = super::WORK_BYTES / 4;
     macro_rules! chunks {
         ($values:expr) => {
             for values in $values.chunks(CHARACTERS) {

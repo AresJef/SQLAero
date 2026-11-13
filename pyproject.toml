@@ -38,6 +38,7 @@ include = [
     { path = "data/error-catalog.json", format = "sdist" },
     { path = "third-party/jiter/**/*", format = "sdist" },
     { path = "third-party/pyo3/**/*", format = "sdist" },
+    { path = "third-party/pythoncapi-compat/**/*", format = "sdist" },
 ]
 
 [tool.pyright]

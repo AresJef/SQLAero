@@ -49,6 +49,11 @@ struct Text {
     key: bool,
 }
 
+struct Integer {
+    populated: bool,
+    zero: bool,
+}
+
 /// One privately owned final JSON document, with fallible growth.
 /// Bounded text fragments return control to the caller between writes.
 #[derive(Default)]
@@ -56,6 +61,7 @@ pub struct Writer {
     output: Vec<u8>,
     frames: Vec<Frame>,
     text: Option<Text>,
+    integer: Option<Integer>,
     root: bool,
     failed: bool,
 }
@@ -70,10 +76,14 @@ impl Writer {
     /// # Errors
     /// Rejects an empty, incomplete or previously failed document.
     pub fn finish(self) -> Result<Vec<u8>, Error> {
-        if self.failed || !self.root || !self.frames.is_empty() || self.text.is_some() {
+        if self.failed || !self.root || !self.frames.is_empty() || self.fragment_open() {
             return Err(Error::State("document is incomplete or failed"));
         }
         Ok(self.output)
+    }
+
+    fn fragment_open(&self) -> bool {
+        self.text.is_some() || self.integer.is_some()
     }
 
     fn perform<T>(
@@ -94,8 +104,8 @@ impl Writer {
     }
 
     fn value(&mut self) -> Result<(), Error> {
-        if self.text.is_some() {
-            return Err(Error::State("a text value is still open"));
+        if self.fragment_open() {
+            return Err(Error::State("a scalar fragment is still open"));
         }
         match self.frames.last_mut() {
             Some(Frame::Array { populated }) => {
@@ -138,7 +148,8 @@ impl Writer {
     /// Rejects mismatched containers or an unfinished string.
     pub fn array_end(&mut self) -> Result<(), Error> {
         self.perform(|writer| {
-            if writer.text.is_some() || !matches!(writer.frames.last(), Some(Frame::Array { .. })) {
+            if writer.fragment_open() || !matches!(writer.frames.last(), Some(Frame::Array { .. }))
+            {
                 return Err(Error::State("array end does not match the current value"));
             }
             writer.append(b"]")?;
@@ -167,7 +178,7 @@ impl Writer {
     /// Rejects mismatched containers, missing values or unfinished strings.
     pub fn object_end(&mut self) -> Result<(), Error> {
         self.perform(|writer| {
-            if writer.text.is_some()
+            if writer.fragment_open()
                 || !matches!(
                     writer.frames.last(),
                     Some(Frame::Object { waiting: false, .. })
@@ -185,8 +196,8 @@ impl Writer {
 
     fn string_start(&mut self, length: Option<usize>, key: bool) -> Result<(), Error> {
         if key {
-            if self.text.is_some() {
-                return Err(Error::State("a text value is still open"));
+            if self.fragment_open() {
+                return Err(Error::State("a scalar fragment is still open"));
             }
             let Some(Frame::Object { populated, waiting }) = self.frames.last_mut() else {
                 return Err(Error::State("a key requires an object"));
@@ -292,6 +303,67 @@ impl Writer {
             writer.string_start(Some(value.len()), true)?;
             writer.string_fragment(value)?;
             writer.string_end()
+        })
+    }
+
+    /// Start one exact integer; callers may return control between digit blocks.
+    /// # Errors
+    /// Propagates an actual writer-state or output-capacity error.
+    pub fn integer_start(&mut self, negative: bool) -> Result<(), Error> {
+        self.perform(|writer| {
+            writer.value()?;
+            if negative {
+                writer.append(b"-")?;
+            }
+            writer.integer = Some(Integer {
+                populated: false,
+                zero: false,
+            });
+            Ok(())
+        })
+    }
+
+    /// Append admitted ASCII decimal digits without a whole-value string.
+    /// # Errors
+    /// Rejects non-digits, empty blocks and leading zero spellings.
+    pub fn integer_fragment(&mut self, digits: &[u8]) -> Result<(), Error> {
+        self.perform(|writer| {
+            let Some(integer) = writer.integer.as_ref() else {
+                return Err(Error::State("integer fragment has no active integer"));
+            };
+            if digits.is_empty()
+                || !digits.iter().all(u8::is_ascii_digit)
+                || (integer.populated && integer.zero)
+                || (!integer.populated && digits[0] == b'0' && digits.len() != 1)
+            {
+                return Err(Error::State("invalid integer digit fragment"));
+            }
+            let zero = !integer.populated && digits == b"0";
+            writer.append(digits)?;
+            writer.integer = Some(Integer {
+                populated: true,
+                zero,
+            });
+            Ok(())
+        })
+    }
+
+    /// Finish a nonempty exact integer before another value or publication.
+    /// # Errors
+    /// Rejects an empty or mismatched integer boundary.
+    pub fn integer_end(&mut self) -> Result<(), Error> {
+        self.perform(|writer| {
+            if !matches!(
+                writer.integer,
+                Some(Integer {
+                    populated: true,
+                    ..
+                })
+            ) {
+                return Err(Error::State("integer end has no complete integer"));
+            }
+            writer.integer = None;
+            Ok(())
         })
     }
 }

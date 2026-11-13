@@ -6,6 +6,7 @@ use crate::protocol::framing::WireError;
 ///
 /// # Errors
 /// Returns a size or native reservation failure before modifying the buffer.
+#[inline]
 pub fn append(output: &mut Vec<u8>, bytes: &[u8], limit: usize) -> Result<(), WireError> {
     sqlaero_transcode::buffer::append(output, bytes, limit).map_err(Into::into)
 }
@@ -114,6 +115,7 @@ pub fn binary_end(output: &mut Vec<u8>, limit: usize) -> Result<(), WireError> {
     append(output, b"' AS BINARY)", limit)
 }
 
+#[inline]
 pub(crate) fn reserve(output: &mut Vec<u8>, length: usize, limit: usize) -> Result<(), WireError> {
     sqlaero_transcode::buffer::reserve(output, length, limit).map_err(Into::into)
 }

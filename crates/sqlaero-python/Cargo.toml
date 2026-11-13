@@ -30,6 +30,7 @@ arrow-data.workspace = true
 
 [build-dependencies]
 pyo3-build-config = { version = "=0.29.2", features = ["resolve-config"] }
+cc = "=1.10.0"
 
 [lints]
 workspace = true

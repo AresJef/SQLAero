@@ -19,6 +19,7 @@ pub(crate) mod arrow;
 pub(crate) mod control;
 mod decimal;
 mod diagnostic;
+pub(crate) mod integer;
 pub(crate) mod json;
 pub(crate) mod sink;
 pub(crate) use diagnostic::binary_diagnostic;
@@ -167,6 +168,7 @@ impl ScalarTypes {
         }
     }
 
+    #[inline(always)]
     pub(crate) fn try_write_to<D: Destination + ?Sized>(
         &self,
         value: &Bound<'_, PyAny>,

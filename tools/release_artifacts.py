@@ -183,6 +183,21 @@ def source_notices(targets: list[str], output: Path, *, quiet: bool = False) -> 
     Existing extra-target notices are deliberately retained.
     """
     materials = license_materials()
+    vendored_headers: dict[str, object] = {}
+    if (ROOT / 'crates/sqlaero-python/src/input/long_export.c').is_file():
+        vendor = ROOT / 'third-party/pythoncapi-compat'
+        source = json.loads((vendor / 'SOURCE.json').read_text(encoding='utf-8'))
+        assert source['repository'] == 'https://github.com/python/pythoncapi-compat', source
+        assert re.fullmatch(r'[0-9a-f]{40}', source['commit']), source
+        assert source['license'] == '0BSD', source
+        for name, expected in source['files'].items():
+            original = vendor / name
+            assert original.resolve().is_relative_to(vendor.resolve()), original
+            assert digest(original) == expected, ('Vendored header provenance mismatch', original)
+        shipped = ROOT / 'licenses/third-party/pythoncapi-compat-d3ebabf'
+        assert json.loads((shipped / 'PROVENANCE.json').read_text(encoding='utf-8')) == source
+        assert digest(shipped / 'COPYING') == digest(vendor / 'COPYING')
+        vendored_headers['pythoncapi-compat'] = source
     inventory: dict[tuple[str, str], tuple[str, str]] = {}
     for line in (ROOT / 'THIRD_PARTY_NOTICES.md').read_text(encoding='utf-8').splitlines():
         fields = [field.strip() for field in line.split('|')]
@@ -215,7 +230,8 @@ def source_notices(targets: list[str], output: Path, *, quiet: bool = False) -> 
         packages = {(match[1], match[2]) for line in process.stdout.splitlines()
                     if (match := re.match(r'^([\w-]+) v([^\s]+)', line)) is not None}
         assert ('sqlaero-python', rust_version) in packages, ('No production graph', target)
-        packages -= {('sqlaero-python', rust_version), ('sqlaero-core', rust_version)}
+        packages -= {('sqlaero-python', rust_version), ('sqlaero-core', rust_version),
+                     ('sqlaero-transcode', rust_version)}
         assert packages, target
         for key in packages:
             assert key in locked, ('Graph package is not locked', target, key)
@@ -228,7 +244,8 @@ def source_notices(targets: list[str], output: Path, *, quiet: bool = False) -> 
         union.update(packages)
         graphs[target] = [list(key) for key in sorted(packages)]
     result = {'cargo_lock_sha256': digest(ROOT / 'Cargo.lock'),
-              'graphs': graphs, 'union_packages': len(union), 'license_files': materials}
+              'graphs': graphs, 'union_packages': len(union), 'license_files': materials,
+              'vendored_headers': vendored_headers}
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(result, indent=2) + '\n', encoding='utf-8')
     if not quiet:

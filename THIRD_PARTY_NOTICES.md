@@ -19,6 +19,15 @@ instead of panicking before a library constructor can handle the failure. The
 version and public API are unchanged. Provenance and the complete minimal diff
 are recorded in `third-party/pyo3/SQLAERO_PATCH.md` and `SQLAERO_PATCH.diff`.
 
+The attached-Python integer export shim uses the unmodified pythoncapi-compat
+header at commit `d3ebabff3a4b43e40f7b3db5f55b8a54f84b0091` (0BSD).
+It provides CPython's public integer-export contract on older supported Python
+versions; integer conversion and JSON output remain native SQLAero code.
+The pinned header and provenance are under `third-party/pythoncapi-compat/`;
+original [COPYING](licenses/third-party/pythoncapi-compat-d3ebabf/COPYING) and
+[PROVENANCE.json](licenses/third-party/pythoncapi-compat-d3ebabf/PROVENANCE.json) ship
+with both distributions.
+
 | Package | Version | Declared license | Original texts |
 | --- | --- | --- | --- |
 | adler2 | 2.0.1 | 0BSD OR MIT OR Apache-2.0 | [LICENSE-0BSD](licenses/third-party/adler2-2.0.1/LICENSE-0BSD), [LICENSE-APACHE](licenses/third-party/adler2-2.0.1/LICENSE-APACHE), [LICENSE-MIT](licenses/third-party/adler2-2.0.1/LICENSE-MIT) |

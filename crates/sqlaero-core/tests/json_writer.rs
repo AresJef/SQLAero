@@ -4,6 +4,46 @@ use sqlaero_core::json::{Error, Options, Writer};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
 #[test]
+fn bounded_integer_blocks_remain_one_exact_number() {
+    let mut writer = Writer::new();
+    writer.array_start().unwrap();
+    writer.integer_start(true).unwrap();
+    writer.integer_fragment(b"123").unwrap();
+    writer.integer_fragment(b"000000007").unwrap();
+    writer.integer_end().unwrap();
+    writer
+        .write(ScalarRef::Signed(8), &Options::default())
+        .unwrap();
+    writer.array_end().unwrap();
+    assert_eq!(writer.finish().unwrap(), b"[-123000000007,8]");
+}
+
+#[test]
+fn incomplete_or_invalid_integer_cannot_publish_or_close_an_array() {
+    let mut writer = Writer::new();
+    writer.integer_start(false).unwrap();
+    assert!(writer.integer_end().is_err());
+    assert!(writer.finish().is_err());
+    for digits in [b"".as_slice(), b"01", b"1e9", b"1_0", b"+7"] {
+        let mut writer = Writer::new();
+        writer.integer_start(false).unwrap();
+        assert!(writer.integer_fragment(digits).is_err());
+        assert!(writer.finish().is_err());
+    }
+    let mut writer = Writer::new();
+    writer.array_start().unwrap();
+    writer.integer_start(false).unwrap();
+    writer.integer_fragment(b"7").unwrap();
+    assert!(writer.array_end().is_err());
+    assert!(writer.finish().is_err());
+    let mut writer = Writer::new();
+    writer.integer_start(false).unwrap();
+    writer.integer_fragment(b"0").unwrap();
+    assert!(writer.integer_fragment(b"0").is_err());
+    assert!(writer.finish().is_err());
+}
+
+#[test]
 fn scalar_values_keep_numeric_bits_and_json_categories() {
     let options = Options::default();
     let mut writer = Writer::new();
