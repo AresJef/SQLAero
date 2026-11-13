@@ -49,3 +49,24 @@ pub fn append(output: &mut Vec<u8>, bytes: &[u8], limit: usize) -> Result<(), Ca
     output.extend_from_slice(bytes);
     Ok(())
 }
+
+/// Append already valid UTF-8 while preserving a typed native text owner.
+/// No whole-document UTF-8 validation is needed when the owner is completed.
+/// # Errors
+/// Returns the actual byte bound or allocation failure before changing text.
+#[inline]
+pub fn append_text(output: &mut String, text: &str, limit: usize) -> Result<(), CapacityError> {
+    let required = output
+        .len()
+        .checked_add(text.len())
+        .ok_or(CapacityError::Limit {
+            required: usize::MAX,
+            limit,
+        })?;
+    if required > limit {
+        return Err(CapacityError::Limit { required, limit });
+    }
+    output.try_reserve(text.len())?;
+    output.push_str(text);
+    Ok(())
+}

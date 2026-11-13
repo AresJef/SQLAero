@@ -15,7 +15,7 @@ fn bounded_integer_blocks_remain_one_exact_number() {
         .write(ScalarRef::Signed(8), &Options::default())
         .unwrap();
     writer.array_end().unwrap();
-    assert_eq!(writer.finish().unwrap(), b"[-123000000007,8]");
+    assert_eq!(writer.finish().unwrap().as_bytes(), b"[-123000000007,8]");
 }
 
 #[test]
@@ -61,7 +61,7 @@ fn scalar_values_keep_numeric_bits_and_json_categories() {
     }
     writer.array_end().unwrap();
     assert_eq!(
-        writer.finish().unwrap(),
+        writer.finish().unwrap().as_bytes(),
         b"[null,true,false,-9223372036854775808,18446744073709551615,-0.0,1.5]"
     );
 }
@@ -76,9 +76,30 @@ fn unicode_and_controls_are_escaped_without_ascii_replacement() {
         )
         .unwrap();
     assert_eq!(
-        writer.finish().unwrap(),
+        writer.finish().unwrap().as_bytes(),
         "\"\\\"\\\\\\u0000\\b\\t\\n\\f\\r\\u001f/é😀\"".as_bytes()
     );
+}
+
+#[test]
+fn every_control_codepoint_and_adjacent_unicode_keep_exact_boundaries() {
+    let mut input = String::from("é");
+    for value in 0_u8..32 {
+        input.push(char::from(value));
+        input.push('😀');
+    }
+    let mut writer = Writer::new();
+    writer
+        .write(ScalarRef::Text(&input), &Options::default())
+        .unwrap();
+    let expected = concat!(
+        "\"é",
+        "\\u0000😀\\u0001😀\\u0002😀\\u0003😀\\u0004😀\\u0005😀\\u0006😀\\u0007😀",
+        "\\b😀\\t😀\\n😀\\u000b😀\\f😀\\r😀\\u000e😀\\u000f😀",
+        "\\u0010😀\\u0011😀\\u0012😀\\u0013😀\\u0014😀\\u0015😀\\u0016😀\\u0017😀",
+        "\\u0018😀\\u0019😀\\u001a😀\\u001b😀\\u001c😀\\u001d😀\\u001e😀\\u001f😀\""
+    );
+    assert_eq!(writer.finish().unwrap(), expected);
 }
 
 #[test]
@@ -89,7 +110,10 @@ fn bounded_fragments_form_exactly_one_string() {
     writer.text_fragment("a", &options).unwrap();
     writer.text_fragment("😀\0", &options).unwrap();
     writer.text_end(&options).unwrap();
-    assert_eq!(writer.finish().unwrap(), "\"a😀\\u0000\"".as_bytes());
+    assert_eq!(
+        writer.finish().unwrap().as_bytes(),
+        "\"a😀\\u0000\"".as_bytes()
+    );
 }
 
 #[test]
@@ -100,7 +124,7 @@ fn unmeasured_utf8_fragments_keep_one_pass_source_conversion() {
     writer.text_fragment("é", &options).unwrap();
     writer.text_fragment("😀", &options).unwrap();
     writer.text_end(&options).unwrap();
-    assert_eq!(writer.finish().unwrap(), "\"é😀\"".as_bytes());
+    assert_eq!(writer.finish().unwrap().as_bytes(), "\"é😀\"".as_bytes());
 }
 
 #[test]
@@ -110,7 +134,7 @@ fn all_nonfinite_floats_share_the_explicit_option() {
         writer
             .write(ScalarRef::Float(value), &Options::default())
             .unwrap();
-        assert_eq!(writer.finish().unwrap(), b"null");
+        assert_eq!(writer.finish().unwrap().as_bytes(), b"null");
         let mut writer = Writer::new();
         assert!(matches!(
             writer.write(ScalarRef::Float(value), &Options { allow_nan: false }),
@@ -151,7 +175,7 @@ fn actual_output_container_depth_is_64() {
     for _ in 0..64 {
         writer.array_end().unwrap();
     }
-    let bytes = writer.finish().unwrap();
+    let bytes = writer.finish().unwrap().into_bytes();
     assert_eq!(bytes.len(), 132);
     assert_eq!(&bytes[64..68], b"null");
     let mut writer = Writer::new();
@@ -180,7 +204,7 @@ fn object_names_keep_full_nul_suffixes_and_nested_empty_shapes() {
     writer.array_end().unwrap();
     writer.object_end().unwrap();
     assert_eq!(
-        writer.finish().unwrap(),
+        writer.finish().unwrap().as_bytes(),
         br#"{"a\u0000x":7,"a\u0000y":8,"rows":[{},[]]}"#
     );
 }

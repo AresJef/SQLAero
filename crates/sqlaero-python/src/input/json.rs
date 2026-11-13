@@ -239,7 +239,7 @@ pub(crate) fn serialize(
     types: &ScalarTypes,
     allow_nan: bool,
     budget: Option<&dyn Checkpoint>,
-) -> PyResult<Vec<u8>> {
+) -> PyResult<String> {
     let py = value.py();
     let local = super::control::Control::unlimited();
     let budget = Some(budget.unwrap_or(&local as &dyn Checkpoint));
@@ -277,17 +277,10 @@ pub(crate) fn mysql<D: Destination + ?Sized>(
         let value = value.try_borrow()?;
         (value.data(py), value.allow_nan)
     };
-    let bytes = serialize(data.bind(py), types, allow_nan, budget)?;
-    // The writer only emits valid UTF-8. Keep validation fallible rather than
-    // widening the unsafe boundary; no Python JSON str/bytes is created here.
-    let text = std::str::from_utf8(&bytes).map_err(|_| {
-        errors::client(
-            py,
-            sqlaero_core::error::ClientErrorCode::InternalState,
-            "native JSON writer produced invalid UTF-8",
-        )
-    })?;
-    super::text_utf8(py, text, output, context, budget)
+    let text = serialize(data.bind(py), types, allow_nan, budget)?;
+    // A native String is valid UTF-8 by construction. No whole-document scan
+    // or Python JSON str/bytes is introduced before the target encodes it.
+    super::text_utf8(py, &text, output, context, budget)
 }
 
 /// Serialize obj as compact UTF-8 JSON and return built-in bytes. allow_nan
@@ -303,6 +296,6 @@ pub(crate) fn json_dumps<'py>(
     let py = module.py();
     let owner = module.getattr(c"_scalar_types")?;
     let types = owner.extract::<PyRef<'_, ScalarTypes>>()?;
-    let bytes = serialize(obj, &types, option(allow_nan)?, None)?;
-    Ok(crate::output::bytes_bounded(py, &bytes, None)?.cast_into::<PyBytes>()?)
+    let text = serialize(obj, &types, option(allow_nan)?, None)?;
+    Ok(crate::output::bytes_bounded(py, text.as_bytes(), None)?.cast_into::<PyBytes>()?)
 }

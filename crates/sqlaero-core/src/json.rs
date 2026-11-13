@@ -59,7 +59,7 @@ struct Integer {
 /// Bounded text fragments return control to the caller between writes.
 #[derive(Default)]
 pub struct Writer {
-    output: Vec<u8>,
+    output: String,
     frames: Vec<Frame>,
     text: Option<Text>,
     integer: Option<Integer>,
@@ -76,7 +76,7 @@ impl Writer {
     /// Return only a complete, successful, independently owned document.
     /// # Errors
     /// Rejects an empty, incomplete or previously failed document.
-    pub fn finish(self) -> Result<Vec<u8>, Error> {
+    pub fn finish(self) -> Result<String, Error> {
         if self.failed || !self.root || !self.frames.is_empty() || self.fragment_open() {
             return Err(Error::State("document is incomplete or failed"));
         }
@@ -99,8 +99,8 @@ impl Writer {
         result
     }
 
-    fn append(&mut self, bytes: &[u8]) -> Result<(), Error> {
-        buffer::append(&mut self.output, bytes, usize::MAX)?;
+    fn append(&mut self, text: &str) -> Result<(), Error> {
+        buffer::append_text(&mut self.output, text, usize::MAX)?;
         Ok(())
     }
 
@@ -113,7 +113,7 @@ impl Writer {
                 let comma = *populated;
                 *populated = true;
                 if comma {
-                    self.append(b",")?;
+                    self.append(",")?;
                 }
             }
             Some(Frame::Object { waiting, .. }) if *waiting => *waiting = false,
@@ -124,7 +124,7 @@ impl Writer {
         Ok(())
     }
 
-    fn begin(&mut self, frame: Frame, opening: &[u8]) -> Result<(), Error> {
+    fn begin(&mut self, frame: Frame, opening: &str) -> Result<(), Error> {
         if self.frames.len() >= 64 {
             return Err(Error::Depth);
         }
@@ -141,7 +141,7 @@ impl Writer {
     /// # Errors
     /// Returns a depth, structural or allocation failure.
     pub fn array_start(&mut self) -> Result<(), Error> {
-        self.perform(|writer| writer.begin(Frame::Array { populated: false }, b"["))
+        self.perform(|writer| writer.begin(Frame::Array { populated: false }, "["))
     }
 
     /// Finish the current output array.
@@ -153,7 +153,7 @@ impl Writer {
             {
                 return Err(Error::State("array end does not match the current value"));
             }
-            writer.append(b"]")?;
+            writer.append("]")?;
             writer.frames.pop();
             Ok(())
         })
@@ -169,7 +169,7 @@ impl Writer {
                     populated: false,
                     waiting: false,
                 },
-                b"{",
+                "{",
             )
         })
     }
@@ -189,7 +189,7 @@ impl Writer {
                     "object end has a missing value or mismatched container",
                 ));
             }
-            writer.append(b"}")?;
+            writer.append("}")?;
             writer.frames.pop();
             Ok(())
         })
@@ -210,12 +210,12 @@ impl Writer {
             *populated = true;
             *waiting = true;
             if comma {
-                self.append(b",")?;
+                self.append(",")?;
             }
         } else {
             self.value()?;
         }
-        self.append(b"\"")?;
+        self.append("\"")?;
         self.text = Some(Text {
             remaining: length,
             key,
@@ -237,37 +237,27 @@ impl Writer {
             ),
             None => None,
         };
-        const HEX: &[u8; 16] = b"0123456789abcdef";
+        const CONTROLS: [&str; 32] = [
+            "\\u0000", "\\u0001", "\\u0002", "\\u0003", "\\u0004", "\\u0005", "\\u0006", "\\u0007",
+            "\\b", "\\t", "\\n", "\\u000b", "\\f", "\\r", "\\u000e", "\\u000f", "\\u0010",
+            "\\u0011", "\\u0012", "\\u0013", "\\u0014", "\\u0015", "\\u0016", "\\u0017", "\\u0018",
+            "\\u0019", "\\u001a", "\\u001b", "\\u001c", "\\u001d", "\\u001e", "\\u001f",
+        ];
         let mut start = 0;
         for (index, &byte) in value.as_bytes().iter().enumerate() {
             let escape = match byte {
-                b'"' => b"\\\"".as_slice(),
-                b'\\' => b"\\\\",
-                8 => b"\\b",
-                9 => b"\\t",
-                10 => b"\\n",
-                12 => b"\\f",
-                13 => b"\\r",
-                0..=31 => {
-                    self.append(&value.as_bytes()[start..index])?;
-                    self.append(&[
-                        b'\\',
-                        b'u',
-                        b'0',
-                        b'0',
-                        HEX[usize::from(byte >> 4)],
-                        HEX[usize::from(byte & 15)],
-                    ])?;
-                    start = index + 1;
-                    continue;
-                }
+                b'"' => "\\\"",
+                b'\\' => "\\\\",
+                0..=31 => CONTROLS[usize::from(byte)],
                 _ => continue,
             };
-            self.append(&value.as_bytes()[start..index])?;
+            // Every split is at an ASCII escape character, hence a valid UTF-8
+            // boundary. Native text ownership stays valid without unsafe casts.
+            self.append(&value[start..index])?;
             self.append(escape)?;
             start = index + 1;
         }
-        self.append(&value.as_bytes()[start..])?;
+        self.append(&value[start..])?;
         // No callback or borrow of external mutable storage occurs above.
         if let Some(text) = &mut self.text {
             text.remaining = remaining;
@@ -282,7 +272,7 @@ impl Writer {
         if remaining.is_some_and(|remaining| remaining != 0) {
             return Err(Error::State("text source is incomplete"));
         }
-        self.append(if key { b"\":" } else { b"\"" })?;
+        self.append(if key { "\":" } else { "\"" })?;
         self.text = None;
         Ok(())
     }
@@ -314,7 +304,7 @@ impl Writer {
         self.perform(|writer| {
             writer.value()?;
             if negative {
-                writer.append(b"-")?;
+                writer.append("-")?;
             }
             writer.integer = Some(Integer {
                 populated: false,
@@ -340,7 +330,10 @@ impl Writer {
                 return Err(Error::State("invalid integer digit fragment"));
             }
             let zero = !integer.populated && digits == b"0";
-            writer.append(digits)?;
+            writer.append(
+                std::str::from_utf8(digits)
+                    .map_err(|_| Error::State("integer digits were not ASCII"))?,
+            )?;
             writer.integer = Some(Integer {
                 populated: true,
                 zero,
@@ -386,19 +379,19 @@ impl Consumer for Writer {
             }
             writer.value()?;
             match value {
-                ScalarRef::Null => writer.append(b"null"),
-                ScalarRef::Boolean(value) => writer.append(if value { b"true" } else { b"false" }),
+                ScalarRef::Null => writer.append("null"),
+                ScalarRef::Boolean(value) => writer.append(if value { "true" } else { "false" }),
                 ScalarRef::Signed(value) => {
-                    writer.append(number::IntegerBuffer::new().format(value).as_bytes())
+                    writer.append(number::IntegerBuffer::new().format(value))
                 }
                 ScalarRef::Unsigned(value) => {
-                    writer.append(number::IntegerBuffer::new().format(value).as_bytes())
+                    writer.append(number::IntegerBuffer::new().format(value))
                 }
                 ScalarRef::Float(value) => {
                     let mut buffer = number::FloatBuffer::new();
                     match buffer.format(value) {
-                        Some(text) => writer.append(text.as_bytes()),
-                        None if options.allow_nan => writer.append(b"null"),
+                        Some(text) => writer.append(text),
+                        None if options.allow_nan => writer.append("null"),
                         None => Err(Error::NonFinite),
                     }
                 }
