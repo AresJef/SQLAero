@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+sqlaero-transcode.workspace = true
 mysql_common.workspace = true
 flate2.workspace = true
 zstd.workspace = true

@@ -55,6 +55,17 @@ impl From<MemoryError> for WireError {
     }
 }
 
+impl From<sqlaero_transcode::buffer::CapacityError> for WireError {
+    fn from(error: sqlaero_transcode::buffer::CapacityError) -> Self {
+        match error {
+            sqlaero_transcode::buffer::CapacityError::Limit { required, limit } => {
+                Self::Limit { required, limit }
+            }
+            sqlaero_transcode::buffer::CapacityError::Allocation(error) => Self::Allocation(error),
+        }
+    }
+}
+
 /// The next shared sequence number in a handshake or command exchange.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Sequence(u8);

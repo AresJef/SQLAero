@@ -1553,6 +1553,7 @@ dependencies = [
  "rustls-platform-verifier",
  "security-framework",
  "socket2",
+ "sqlaero-transcode",
  "thiserror",
  "windows-sys 0.61.2",
  "x509-parser",
@@ -1580,6 +1581,13 @@ dependencies = [
  "smallvec",
  "sqlaero-core",
  "zeroize",
+]
+
+[[package]]
+name = "sqlaero-transcode"
+version = "0.2.0-beta.4"
+dependencies = [
+ "thiserror",
 ]
 
 [[package]]

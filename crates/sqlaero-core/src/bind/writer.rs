@@ -7,9 +7,7 @@ use crate::protocol::framing::WireError;
 /// # Errors
 /// Returns a size or native reservation failure before modifying the buffer.
 pub fn append(output: &mut Vec<u8>, bytes: &[u8], limit: usize) -> Result<(), WireError> {
-    reserve(output, bytes.len(), limit)?;
-    output.extend_from_slice(bytes);
-    Ok(())
+    sqlaero_transcode::buffer::append(output, bytes, limit).map_err(Into::into)
 }
 
 /// Append an ordinary binary SQL string using CAST(X'...' AS BINARY).
@@ -117,15 +115,7 @@ pub fn binary_end(output: &mut Vec<u8>, limit: usize) -> Result<(), WireError> {
 }
 
 pub(crate) fn reserve(output: &mut Vec<u8>, length: usize, limit: usize) -> Result<(), WireError> {
-    let required = output.len().checked_add(length).ok_or(WireError::Limit {
-        required: usize::MAX,
-        limit,
-    })?;
-    if required > limit {
-        return Err(WireError::Limit { required, limit });
-    }
-    output.try_reserve(length)?;
-    Ok(())
+    sqlaero_transcode::buffer::reserve(output, length, limit).map_err(Into::into)
 }
 
 #[cfg(test)]
