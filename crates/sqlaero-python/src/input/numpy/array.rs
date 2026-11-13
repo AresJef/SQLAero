@@ -10,6 +10,7 @@
 use super::allocation::{Allocation, Export};
 use super::{Kind, half_to_f64};
 use crate::errors;
+use crate::input::control::Checkpoint;
 use crate::input::sink::{self, Destination};
 use crate::input::source::{CellWriter, PreparedSource, Shape};
 use crate::input::temporal::{self, TimeKind, TimeUnit};
@@ -17,7 +18,6 @@ use pyo3::exceptions::{PyBufferError, PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple, PyType};
 use sqlaero_core::bind::Context;
-use sqlaero_core::transport::deadline::IoBudget;
 
 const RAW_BLOCK_ITEMS: usize = 1024;
 const RAW_BLOCK_BYTES: usize = 8192;
@@ -112,7 +112,7 @@ impl<'py> NumpySource<'py> {
         value: &Bound<'py, PyAny>,
         array_type: &Py<PyType>,
         datetime_data: &Py<PyAny>,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
         let py = value.py();
         let allocation = Allocation::new(value, array_type, budget)?;
@@ -203,7 +203,12 @@ impl<'py> NumpySource<'py> {
         })
     }
 
-    fn cell_bytes(&mut self, row: usize, column: usize, budget: &IoBudget) -> PyResult<[u8; 8]> {
+    fn cell_bytes(
+        &mut self,
+        row: usize,
+        column: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<[u8; 8]> {
         let mut bytes = [0u8; 8];
         let (rows, columns) = match self.shape {
             Shape::Vector { length } => (length, 1),
@@ -241,7 +246,7 @@ impl<'py> NumpySource<'py> {
     }
 
     /// Read a signed native mask/code/time value without Python number boxing.
-    pub(crate) fn signed_at(&mut self, row: usize, budget: &IoBudget) -> PyResult<i64> {
+    pub(crate) fn signed_at(&mut self, row: usize, budget: &dyn Checkpoint) -> PyResult<i64> {
         let read = match self.kind {
             ArrayKind::Scalar(Kind::I8) => 1,
             ArrayKind::Scalar(Kind::I16) => 2,
@@ -270,7 +275,7 @@ impl<'py> NumpySource<'py> {
     }
 
     /// A nullable mask must be byte-per-element NumPy bool, never Arrow bits.
-    pub(crate) fn bool_at(&mut self, row: usize, budget: &IoBudget) -> PyResult<bool> {
+    pub(crate) fn bool_at(&mut self, row: usize, budget: &dyn Checkpoint) -> PyResult<bool> {
         if !matches!(self.kind, ArrayKind::Scalar(Kind::Bool))
             || !matches!(self.shape, Shape::Vector { .. })
         {
@@ -414,7 +419,7 @@ impl<'py> NumpySource<'py> {
         start: usize,
         total: usize,
         columns: usize,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         let py = self.owner.py();
         crate::input::check(py, budget)?;
@@ -488,7 +493,7 @@ impl<'py> NumpySource<'py> {
         &mut self,
         row: usize,
         column: usize,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<&[u8]>> {
         let eligible = matches!(self.kind, ArrayKind::Bytes | ArrayKind::Unicode)
             && (1..=RAW_BLOCK_BYTES).contains(&self.width);
@@ -527,7 +532,7 @@ impl<'py> NumpySource<'py> {
         column: usize,
         start: usize,
         destination: &mut [u8],
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         if let Some(end) = start.checked_add(destination.len())
             && end <= self.width
@@ -563,7 +568,12 @@ impl<'py> NumpySource<'py> {
 
     /// NumPy removes only terminal all-zero storage padding, preserving NULs
     /// inside the logical element. Unicode padding is counted in UCS4 units.
-    fn content_width(&mut self, row: usize, column: usize, budget: &IoBudget) -> PyResult<usize> {
+    fn content_width(
+        &mut self,
+        row: usize,
+        column: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<usize> {
         let py = self.owner.py();
         let mut end = self.width;
         let mut chunk = [0u8; 4096];
@@ -591,7 +601,7 @@ impl<'py> NumpySource<'py> {
         column: usize,
         output: &mut (impl Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         let py = self.owner.py();
         if let Some(cell) = self.owned_cell(row, column, budget)? {
@@ -647,7 +657,7 @@ impl<'py> NumpySource<'py> {
         column: usize,
         output: &mut (impl Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         let py = self.owner.py();
         let swap = self.swap;
@@ -717,7 +727,7 @@ impl<'py> NumpySource<'py> {
         swap: bool,
         output: &(impl Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         scratch: &mut Option<Box<UnicodeScratch>>,
     ) -> PyResult<bool> {
         let mut length = 0;
@@ -800,7 +810,7 @@ impl<'py> NumpySource<'py> {
         column: usize,
         output: &mut (impl Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         let py = self.owner.py();

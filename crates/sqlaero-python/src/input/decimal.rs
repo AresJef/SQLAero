@@ -7,13 +7,13 @@
 
 use super::sink::{self, Destination, emit};
 use crate::errors;
+use crate::input::control::Checkpoint;
 use pyo3::exceptions::PyAttributeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyInt, PyString, PyTuple, PyType};
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::scalar::ScalarError;
 use sqlaero_core::bind::value::{ValueError, ValueRef};
-use sqlaero_core::transport::deadline::IoBudget;
 use std::ffi::CStr;
 
 const COEFFICIENT_CAPACITY: usize = 65;
@@ -66,7 +66,7 @@ pub(super) fn write<D: Destination + ?Sized>(
     native: bool,
     output: &mut D,
     context: &Context,
-    budget: Option<&IoBudget>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     let py = value.py();
     if native {
@@ -209,7 +209,7 @@ fn failure(
 
 /// Parse only the native ASCII grammar. All storage is fixed size even when
 /// an input has many insignificant zeros or an enormous compact exponent.
-fn parse(py: Python<'_>, text: &[u8], budget: Option<&IoBudget>) -> PyResult<Option<Parsed>> {
+fn parse(py: Python<'_>, text: &[u8], budget: Option<&dyn Checkpoint>) -> PyResult<Option<Parsed>> {
     let mut at = 0;
     let negative = text.first() == Some(&b'-');
     if negative || text.first() == Some(&b'+') {

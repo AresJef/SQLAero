@@ -1,6 +1,7 @@
 //! Exact Python scalar readers; no Python objects cross into the native core.
 
 use crate::errors;
+use crate::input::control::Checkpoint;
 use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
 use pyo3::types::{
@@ -13,7 +14,6 @@ use sqlaero_core::bind::value::{ValueError, ValueRef, ValueSink};
 use sqlaero_core::bind::{Context, scalar, writer};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
-use sqlaero_core::transport::deadline::IoBudget;
 
 pub(crate) mod arrow;
 pub(crate) mod control;
@@ -130,7 +130,7 @@ impl ScalarTypes {
         value: &Bound<'_, PyAny>,
         output: &mut Vec<u8>,
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()> {
         if self.try_write(value, output, context, budget)? {
             Ok(())
@@ -146,7 +146,7 @@ impl ScalarTypes {
         value: &Bound<'_, PyAny>,
         output: &mut Vec<u8>,
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<bool> {
         self.try_write_to(value, output, context, budget)
     }
@@ -159,7 +159,7 @@ impl ScalarTypes {
         value: &Bound<'_, PyAny>,
         sink: &mut S,
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()> {
         if self.try_write_to(value, &mut sink::Native(sink), context, budget)? {
             Ok(())
@@ -174,7 +174,7 @@ impl ScalarTypes {
         value: &Bound<'_, PyAny>,
         output: &mut D,
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<bool> {
         let py = value.py();
         if let Some(source) = primitive::read(value)? {
@@ -200,7 +200,7 @@ impl ScalarTypes {
         value: &Bound<'_, PyAny>,
         output: &mut D,
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<bool> {
         let py = value.py();
         if let Ok(wrapper) = value.cast::<json::Json>() {
@@ -208,7 +208,7 @@ impl ScalarTypes {
         }
         if value.is_exact_instance_of::<PyDateTime>() {
             return self
-                .write_datetime_to(value.cast::<PyDateTime>()?, output, context)
+                .write_datetime_to(value.cast::<PyDateTime>()?, output, context, budget)
                 .map(|()| true);
         }
         if value.is_exact_instance_of::<PyDate>() {
@@ -256,6 +256,7 @@ impl ScalarTypes {
         datetime: &Bound<'_, PyDateTime>,
         output: &mut D,
         context: &Context,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()> {
         let py = datetime.py();
         let mut date = date(datetime);
@@ -266,7 +267,9 @@ impl ScalarTypes {
             Some(_) => {
                 // Invoke the cached base descriptor so datetime subclass
                 // overrides cannot bypass the approved tzinfo protocol.
-                let offset = self.datetime_offset.bind(py).call1((datetime,))?;
+                let offset = control::callback(py, budget, || {
+                    self.datetime_offset.bind(py).call1((datetime,))
+                })?;
                 if offset.is_none() {
                     None
                 } else {
@@ -321,7 +324,7 @@ impl ScalarTypes {
     pub(crate) fn polars_types(
         &self,
         py: Python<'_>,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<&polars::PolarsTypes>> {
         if let Some(types) = self.polars.get() {
             return Ok(Some(types));
@@ -339,7 +342,7 @@ impl ScalarTypes {
         value: &Bound<'_, PyAny>,
         output: &mut D,
         context: &Context,
-        _budget: Option<&IoBudget>,
+        _budget: Option<&dyn Checkpoint>,
     ) -> PyResult<bool> {
         let py = value.py();
         let Some(types) = self.pandas_types(py)? else {
@@ -378,7 +381,7 @@ impl ScalarTypes {
         value: &Bound<'_, PyAny>,
         output: &mut D,
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<bool> {
         let py = value.py();
         let Some(types) = self.numpy_types(py)? else {
@@ -609,9 +612,10 @@ pub(crate) fn binary(
     source: &[u8],
     output: &mut Vec<u8>,
     limit: usize,
-    budget: Option<&IoBudget>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     if source.len() <= WORK_BYTES {
+        control::bytes(py, budget, source.len().saturating_mul(2))?;
         return writer::binary(output, source, limit).map_err(|error| errors::wire(py, error));
     }
     binary_long(py, source, output, limit, budget)
@@ -623,7 +627,7 @@ fn binary_long(
     source: &[u8],
     output: &mut Vec<u8>,
     limit: usize,
-    budget: Option<&IoBudget>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     checkpoint(py, budget)?;
     writer::binary_start(output, source.len(), limit).map_err(|error| errors::wire(py, error))?;
@@ -638,11 +642,10 @@ fn binary_long(
 // Keep the Python-error path out of the recursive value visitor's stack frame.
 // This boundary remains checked at every existing signal/deadline checkpoint.
 #[inline(never)]
-pub(crate) fn check(py: Python<'_>, budget: &IoBudget) -> PyResult<()> {
-    py.check_signals()?;
-    budget.check().map_err(|error| errors::timeout(py, error))
+pub(crate) fn check(py: Python<'_>, budget: &dyn Checkpoint) -> PyResult<()> {
+    budget.checkpoint(py)
 }
-pub(crate) fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
+pub(crate) fn checkpoint(py: Python<'_>, budget: Option<&dyn Checkpoint>) -> PyResult<()> {
     match budget {
         Some(budget) => check(py, budget),
         None => py.check_signals(),
@@ -657,7 +660,7 @@ pub(crate) fn sql_utf8(
     source: &str,
     request: &mut Vec<u8>,
     context: &Context,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     check(py, budget)?;
     let mut start = 0;
@@ -714,7 +717,7 @@ pub(crate) fn text_utf8(
     source: &str,
     output: &mut (impl Destination + ?Sized),
     context: &Context,
-    budget: Option<&IoBudget>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     let convert_error = |error: ValueError, start: usize| -> PyErr {
         match error {
@@ -723,6 +726,7 @@ pub(crate) fn text_utf8(
         }
     };
     if source.len() <= WORK_BYTES {
+        control::bytes(py, budget, source.len())?;
         return output
             .write(ValueRef::Text(source), context)
             .map_err(|error| convert_error(error, 0));
@@ -894,7 +898,7 @@ pub(crate) fn text(
     output: &mut Vec<u8>,
     context: &Context,
     quoted: bool,
-    budget: Option<&IoBudget>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     let py = source.py();
     let text = unicode(source, context)?;

@@ -1,4 +1,5 @@
-//! Strict thin-control inputs; execution and session facts remain with Connection.
+//! Shared attached input checks and strict thin command inputs.
+//! Execution, deadlines and session facts retain their existing authority.
 
 use crate::errors;
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -7,6 +8,115 @@ use pyo3::types::{PyBytes, PyList, PyString, PyTuple};
 use sqlaero_core::bind::{Context, writer};
 use sqlaero_core::charset::codec::{Codec, CodecError};
 use sqlaero_core::transport::deadline::{IoBudget, TimeoutKind};
+use std::cell::Cell;
+
+/// A borrowed input-control boundary, never another clock or state registry.
+/// It stays at the attached Python boundary and is not sent to a native worker.
+pub(crate) trait Checkpoint {
+    fn checkpoint(&self, py: Python<'_>) -> PyResult<()>;
+
+    /// Legacy single-value callers remain safe without an aggregate view.
+    fn bytes(&self, py: Python<'_>, _amount: usize) -> PyResult<()> {
+        self.checkpoint(py)
+    }
+}
+
+impl Checkpoint for IoBudget {
+    fn checkpoint(&self, py: Python<'_>) -> PyResult<()> {
+        py.check_signals()?;
+        self.check().map_err(|error| errors::timeout(py, error))
+    }
+}
+
+/// A view of the original budget and the calling operation's actual owners.
+/// The validator only reads existing authority; no cached open-state is kept.
+pub(crate) struct Control<'a> {
+    parent: Option<&'a dyn Checkpoint>,
+    validate: Option<&'a dyn Fn() -> PyResult<()>>,
+    bytes: Cell<usize>,
+}
+
+impl<'a> Control<'a> {
+    pub(crate) fn new(budget: &'a IoBudget, validate: &'a dyn Fn() -> PyResult<()>) -> Self {
+        Self {
+            parent: Some(budget),
+            validate: Some(validate),
+            bytes: Cell::new(0),
+        }
+    }
+
+    /// Local traversal accounting borrows the same authority and never starts
+    /// another deadline, including when the parent already validates owners.
+    pub(crate) fn local(parent: &'a dyn Checkpoint) -> Self {
+        Self {
+            parent: Some(parent),
+            validate: None,
+            bytes: Cell::new(0),
+        }
+    }
+
+    /// Standalone JSON has signal/work control without a connection or clock.
+    pub(crate) fn unlimited() -> Self {
+        Self {
+            parent: None,
+            validate: None,
+            bytes: Cell::new(0),
+        }
+    }
+}
+
+impl Checkpoint for Control<'_> {
+    fn checkpoint(&self, py: Python<'_>) -> PyResult<()> {
+        self.bytes.set(0);
+        match self.parent {
+            Some(parent) => parent.checkpoint(py)?,
+            None => py.check_signals()?,
+        }
+        if let Some(validate) = self.validate {
+            validate()?;
+        }
+        Ok(())
+    }
+
+    fn bytes(&self, py: Python<'_>, amount: usize) -> PyResult<()> {
+        let used = self.bytes.get().saturating_add(amount);
+        self.bytes.set(used);
+        if used >= 16 * 1024 {
+            self.checkpoint(py)?;
+        }
+        Ok(())
+    }
+}
+
+/// Tiny leaves retain the caller's existing node-work bound. Medium leaves
+/// additionally charge bytes, preventing many sub-window values from hiding a
+/// large scan/copy interval. Long leaves retain their own fragment checkpoints.
+pub(crate) fn bytes(
+    py: Python<'_>,
+    control: Option<&dyn Checkpoint>,
+    amount: usize,
+) -> PyResult<()> {
+    if amount < 256 {
+        return Ok(());
+    }
+    match control {
+        Some(control) => control.bytes(py, amount),
+        None => py.check_signals(),
+    }
+}
+
+/// Run one approved source protocol and recheck before consuming its result.
+/// The actual callback exception wins and is propagated unchanged; a success
+/// cannot hide a retired owner or an expired original operation deadline.
+pub(crate) fn callback<T>(
+    py: Python<'_>,
+    control: Option<&dyn Checkpoint>,
+    invoke: impl FnOnce() -> PyResult<T>,
+) -> PyResult<T> {
+    let value = invoke()?;
+    super::checkpoint(py, control)?;
+    Ok(value)
+}
 
 /// The three explicitly selected native savepoint operations.
 #[derive(Clone, Copy)]
@@ -22,7 +132,7 @@ pub(crate) fn savepoint(
     name: &Bound<'_, PyAny>,
     action: SavepointAction,
     context: &Context,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Vec<u8>> {
     let py = name.py();
     super::check(py, budget)?;
@@ -46,7 +156,7 @@ pub(crate) fn identifier(
     name_label: &str,
     output: &mut Vec<u8>,
     context: &Context,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     super::check(name.py(), budget)?;
     let (source, text) = identifier_text(name, name_label, context)?;
@@ -77,7 +187,7 @@ fn identifier_write(
     text: &str,
     output: &mut Vec<u8>,
     context: &Context,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     let py = source.py();
     writer::append(output, b"`", context.limit).map_err(|error| errors::wire(py, error))?;
@@ -113,7 +223,7 @@ fn identifier_write(
 /// involved. The caller later encodes each unit under its actual current state.
 pub(crate) fn init_sql(
     value: Option<&Bound<'_, PyAny>>,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Vec<String>> {
     let Some(value) = value.filter(|value| !value.is_none()) else {
         return Ok(Vec::new());
@@ -169,7 +279,7 @@ pub(crate) fn init_sql(
 fn copy_sql(
     source: &Bound<'_, PyString>,
     index: Option<usize>,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<String> {
     let py = source.py();
     let text = source.to_str()?;

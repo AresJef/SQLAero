@@ -4,6 +4,7 @@
 //! target consumes shared native facts and writes only the final UTF-8 buffer.
 
 use sqlaero_transcode::buffer::{self, CapacityError};
+use sqlaero_transcode::number;
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
 /// JSON policy prepared once for the current serialization.
@@ -381,9 +382,6 @@ impl Consumer for Writer {
                     return writer.string_end();
                 }
                 ScalarRef::Bytes(_) => return Err(Error::Unsupported("binary")),
-                ScalarRef::Float(value) if !value.is_finite() && !options.allow_nan => {
-                    return Err(Error::NonFinite);
-                }
                 _ => (),
             }
             writer.value()?;
@@ -391,14 +389,18 @@ impl Consumer for Writer {
                 ScalarRef::Null => writer.append(b"null"),
                 ScalarRef::Boolean(value) => writer.append(if value { b"true" } else { b"false" }),
                 ScalarRef::Signed(value) => {
-                    writer.append(itoa::Buffer::new().format(value).as_bytes())
+                    writer.append(number::IntegerBuffer::new().format(value).as_bytes())
                 }
                 ScalarRef::Unsigned(value) => {
-                    writer.append(itoa::Buffer::new().format(value).as_bytes())
+                    writer.append(number::IntegerBuffer::new().format(value).as_bytes())
                 }
-                ScalarRef::Float(value) if !value.is_finite() => writer.append(b"null"),
                 ScalarRef::Float(value) => {
-                    writer.append(zmij::Buffer::new().format(value).as_bytes())
+                    let mut buffer = number::FloatBuffer::new();
+                    match buffer.format(value) {
+                        Some(text) => writer.append(text.as_bytes()),
+                        None if options.allow_nan => writer.append(b"null"),
+                        None => Err(Error::NonFinite),
+                    }
                 }
                 _ => Err(Error::Unsupported(
                     "a scalar family not connected to the JSON target yet",

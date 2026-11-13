@@ -1,6 +1,7 @@
 //! One CALL's attached input preparation and owned native target requests.
 
 use super::{PlanMode, PreparedKey, PreparedTemplate, Request, Rows, ScalarTypes};
+use crate::input::control::Checkpoint;
 use crate::input::source::{CellWriter, FragmentRole};
 use crate::{errors, input};
 use pyo3::exceptions::{PyTypeError, PyValueError};
@@ -10,7 +11,6 @@ use sqlaero_core::bind::value::{ValueError, ValueRef, ValueSink};
 use sqlaero_core::bind::{Context, scalar, writer};
 use sqlaero_core::error::ClientErrorCode;
 use sqlaero_core::protocol::prepared::Parameters;
-use sqlaero_core::transport::deadline::IoBudget;
 use std::{cell::Cell, sync::Arc};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,7 +50,7 @@ impl NativeCall {
         types: &ScalarTypes,
         context: &Context,
         ansi: bool,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
         let py = proc_name.py();
         input::check(py, budget)?;
@@ -276,7 +276,7 @@ impl NativeCall {
         &self,
         py: Python<'_>,
         limit: usize,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<Vec<u8>>> {
         input::check(py, budget)?;
         let (Some(initialize), Some(select), Some(cleanup)) =
@@ -312,7 +312,7 @@ fn modes(
     py: Python<'_>,
     value: Option<&Bound<'_, PyAny>>,
     width: usize,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Vec<Direction>> {
     let mut modes = Vec::new();
     modes
@@ -426,7 +426,7 @@ fn append_chunks(
     output: &mut Vec<u8>,
     bytes: &[u8],
     limit: usize,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     for bytes in bytes.chunks(256 * 1024) {
         input::check(py, budget)?;

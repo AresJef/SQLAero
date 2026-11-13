@@ -10,6 +10,8 @@ repository.workspace = true
 [dependencies]
 num-bigint.workspace = true
 thiserror.workspace = true
+itoa.workspace = true
+zmij.workspace = true
 
 [lints]
 workspace = true

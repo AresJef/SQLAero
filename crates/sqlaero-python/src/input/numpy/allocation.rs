@@ -1,10 +1,10 @@
 //! Resolve and retain the physical buffer owner independently of logical shape.
 
+use crate::input::control::Checkpoint;
 use crate::{errors, output};
 use pyo3::exceptions::{PyAttributeError, PyBufferError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyMemoryView, PyType};
-use sqlaero_core::transport::deadline::IoBudget;
 use std::mem::MaybeUninit;
 
 /// Keep an owning buffer or a native producer's valid contiguous interval,
@@ -23,7 +23,7 @@ impl<'py> Allocation<'py> {
     pub(super) fn new(
         value: &Bound<'py, PyAny>,
         array_type: &Py<PyType>,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
         let py = value.py();
         let base_descriptor = errors::attribute(array_type.bind(py).as_any(), c"base")?;

@@ -1,9 +1,9 @@
 //! Bounded, base-storage Unicode reading shared by native output targets.
 
 use crate::errors;
+use crate::input::control::Checkpoint;
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyStringData, PyStringMethods};
-use sqlaero_core::transport::deadline::IoBudget;
 use sqlaero_transcode::utf8::{self, EncodeError};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
@@ -13,7 +13,7 @@ pub(crate) fn write<C: Consumer + ?Sized>(
     source: &Bound<'_, PyString>,
     target: &mut C,
     context: &C::Context,
-    budget: Option<&IoBudget>,
+    budget: Option<&dyn Checkpoint>,
     encoding_label: &str,
     mut failure: impl FnMut(C::Error, usize, &str) -> PyErr,
 ) -> PyResult<()> {
@@ -36,6 +36,7 @@ pub(crate) fn write<C: Consumer + ?Sized>(
         PyStringData::Ucs4(values) => values.len(),
     };
     if length <= CHARACTERS {
+        super::control::bytes(py, budget, length.saturating_mul(4))?;
         let text = source.to_str().map_err(|original| {
             if !original.is_instance_of::<pyo3::exceptions::PyUnicodeEncodeError>(py) {
                 return original;

@@ -1,5 +1,6 @@
 //! Canonical CPU Arrow sources, imported through the public C Data interface.
 
+use crate::input::control::Checkpoint;
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 
@@ -29,7 +30,6 @@ use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::{ValueError, ValueRef};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
-use sqlaero_core::transport::deadline::IoBudget;
 
 use super::source::{CellWriter, PreparedSource, Shape};
 use super::temporal::{self, TimeKind, TimeUnit};
@@ -155,7 +155,7 @@ impl Int64Views {
         py: Python<'_>,
         array: &ArrayRef,
         shape: Shape,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<Self>> {
         // Tiny chunks cannot amortize new strategy/column allocations. This
         // also keeps long sources made of many tiny chunks on the old path.
@@ -330,7 +330,7 @@ fn native_fast_path(
     py: Python<'_>,
     array: &ArrayRef,
     shape: Shape,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Option<FastPath>> {
     if let Some(views) = Int64Views::prepare(py, array, shape, budget)? {
         return Ok(Some(FastPath::Int64(views)));
@@ -421,7 +421,7 @@ fn canonical_array(value: &Bound<'_, PyAny>, module: &Bound<'_, PyAny>) -> PyRes
 pub(crate) fn allocation_buffer<'py>(
     owner: &Bound<'py, PyAny>,
     address: usize,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Option<Bound<'py, PyAny>>> {
     let py = owner.py();
     super::check(py, budget)?;
@@ -474,7 +474,7 @@ pub(crate) fn allocation_buffer<'py>(
 /// Ordinary SQLAero input never imports an optional provider merely to probe it.
 pub(crate) fn prepare<'py>(
     value: &Bound<'py, PyAny>,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Option<Prepared<'py>>> {
     let py = value.py();
     super::check(py, budget)?;
@@ -507,7 +507,7 @@ pub(crate) fn prepare_exported<'py>(
     owner: &Bound<'py, PyAny>,
     exported: &Bound<'py, PyAny>,
     shape: Shape,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Prepared<'py>> {
     let py = owner.py();
     super::check(py, budget)?;
@@ -738,7 +738,11 @@ fn validate_field(py: Python<'_>, field: &Field, depth: usize) -> PyResult<()> {
 }
 
 impl Prepared<'_> {
-    fn current_array(&mut self, row: usize, budget: &IoBudget) -> PyResult<(ArrayRef, usize)> {
+    fn current_array(
+        &mut self,
+        row: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<(ArrayRef, usize)> {
         let py = self.owner.py();
         match &mut self.storage {
             Storage::Single(array) => Ok((array.clone(), row)),
@@ -849,7 +853,7 @@ fn write_value(
     index: usize,
     output: &mut (impl Destination + ?Sized),
     context: &Context,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
     visitor: &mut dyn CellWriter,
 ) -> PyResult<()> {
     visitor.checkpoint(py, 1)?;
@@ -993,7 +997,7 @@ fn write_bytes(
     index: usize,
     output: &mut (impl Destination + ?Sized),
     context: &Context,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     let text = matches!(
         array.data_type(),
@@ -1111,7 +1115,7 @@ fn byte_codec_error(
     start: usize,
     error: CodecError,
     encoding: &str,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyErr {
     let error = match error {
         CodecError::Encode { offset, point } => CodecError::Encode {
@@ -1161,7 +1165,7 @@ fn write_extended(
     index: usize,
     output: &mut (impl Destination + ?Sized),
     context: &Context,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
     visitor: &mut dyn CellWriter,
 ) -> PyResult<()> {
     macro_rules! native {
@@ -1438,7 +1442,7 @@ fn write_list(
     end: usize,
     output: &mut (impl Destination + ?Sized),
     context: &Context,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
     visitor: &mut dyn CellWriter,
 ) -> PyResult<()> {
     if start > end || end > values.len() {
@@ -1512,7 +1516,7 @@ impl<'py> Prepared<'py> {
         column: usize,
         output: &mut (impl Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         let py = self.owner.py();

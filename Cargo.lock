@@ -1589,8 +1589,10 @@ dependencies = [
 name = "sqlaero-transcode"
 version = "0.2.0-beta.4"
 dependencies = [
+ "itoa",
  "num-bigint 0.4.8",
  "thiserror",
+ "zmij",
 ]
 
 [[package]]

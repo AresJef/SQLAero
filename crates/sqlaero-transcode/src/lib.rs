@@ -5,6 +5,7 @@
 
 pub mod buffer;
 pub mod integer;
+pub mod number;
 pub mod structure;
 pub mod temporal;
 pub mod utf8;

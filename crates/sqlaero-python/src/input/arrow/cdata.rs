@@ -5,13 +5,13 @@
 //! storage, so ignoring that empty slot preserves every logical value. We never
 //! alter a buffer pointer, schema, producer value or shared provider object.
 
+use crate::input::control::Checkpoint;
 use std::ffi::c_void;
 use std::ptr;
 
 use arrow_array::ffi::FFI_ArrowArray;
 use arrow_schema::DataType;
 use pyo3::prelude::*;
-use sqlaero_core::transport::deadline::IoBudget;
 
 use crate::errors;
 
@@ -66,7 +66,7 @@ pub(super) fn normalize_nulls(
     py: Python<'_>,
     array: &mut FFI_ArrowArray,
     dtype: &DataType,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     if !contains_null(dtype) {
         return Ok(());
@@ -120,7 +120,7 @@ fn collect(
     root: bool,
     root_null: &mut bool,
     changes: &mut Vec<Change>,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     if !contains_null(dtype) {
         return Ok(());

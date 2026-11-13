@@ -3,6 +3,7 @@
 use super::writer::{append, reserve};
 use crate::protocol::framing::WireError;
 use num_bigint::BigInt;
+use sqlaero_transcode::number;
 
 /// Necessary bit bound before formatting a signed value with at most 65 digits.
 /// Values at this bit width still undergo the exact decimal-length check.
@@ -24,12 +25,16 @@ pub enum ScalarError {
 /// # Errors
 /// Returns the actual request limit or reservation failure.
 #[inline(always)]
-pub fn integer<T: itoa::Integer>(
+pub fn integer<T: number::Integer>(
     output: &mut Vec<u8>,
     value: T,
     limit: usize,
 ) -> Result<(), WireError> {
-    append(output, itoa::Buffer::new().format(value).as_bytes(), limit)
+    append(
+        output,
+        number::IntegerBuffer::new().format(value).as_bytes(),
+        limit,
+    )
 }
 
 /// Write a large exact integer, rejecting more than 65 decimal digits before
@@ -64,11 +69,11 @@ pub fn large_integer(
 /// # Errors
 /// Returns a request-buffer error.
 pub fn float(output: &mut Vec<u8>, value: f64, limit: usize) -> Result<(), WireError> {
-    if !value.is_finite() {
+    let mut buffer = number::FloatBuffer::new();
+    let Some(text) = buffer.format(value) else {
         return append(output, b"NULL", limit);
-    }
-    let mut buffer = zmij::Buffer::new();
-    let text = buffer.format_finite(value).as_bytes();
+    };
+    let text = text.as_bytes();
     let suffix = memchr::memchr2(b'e', b'E', text).is_none();
     reserve(output, text.len() + if suffix { 2 } else { 0 }, limit)?;
     output.extend_from_slice(text);

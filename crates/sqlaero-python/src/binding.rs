@@ -1,6 +1,7 @@
 //! Incremental input-row adaptation and native positional request assembly.
 
 use crate::errors;
+use crate::input::control::Checkpoint;
 use crate::input::sequence::Sequence;
 use crate::input::source::{self, CellWriter, FragmentRole, PreparedSource, Shape};
 use crate::input::{ScalarTypes, check};
@@ -103,7 +104,7 @@ impl Prepared {
         ansi: bool,
         merge: bool,
         mode: PlanMode,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
         let py = sql.py();
         let mut encoded = Vec::new();
@@ -205,7 +206,7 @@ impl<'types, 'py> Planner<'types, 'py> {
         itemize: bool,
         mode: PlanMode,
         types: &'types ScalarTypes,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
         check(sql.py(), budget)?;
         let rows = args
@@ -230,7 +231,7 @@ impl<'types, 'py> Planner<'types, 'py> {
         py: Python<'py>,
         context: &Context,
         ansi: bool,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<Request>> {
         if self.finished {
             return Ok(None);
@@ -462,7 +463,7 @@ fn validate_prepared_template(
     template: &Template,
     limit: usize,
     unbound: bool,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Vec<u8>> {
     let mut writer = if unbound {
         template.prepare_unbound_request(limit)
@@ -635,7 +636,7 @@ impl<'py> Rows<'py> {
         many: bool,
         itemize: bool,
         types: &ScalarTypes,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
         Self::prepare(root, many, itemize, types, budget)
             .inspect_err(|error| note_preparation(root.py(), error, None))
@@ -645,7 +646,7 @@ impl<'py> Rows<'py> {
         many: bool,
         itemize: bool,
         types: &ScalarTypes,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
         let sequence = Sequence::from(root, types, &[])?;
         let native = if sequence.is_none() {
@@ -682,7 +683,7 @@ impl<'py> Rows<'py> {
     pub(crate) fn next<'r>(
         &'r mut self,
         types: &ScalarTypes,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<Row<'r, 'py>>> {
         if self.position >= self.count {
             return Ok(None);
@@ -696,7 +697,7 @@ impl<'py> Rows<'py> {
         &'r mut self,
         index: usize,
         types: &ScalarTypes,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Row<'r, 'py>> {
         let py = self.root.py();
         let path = (self.outer.is_some() && !self.empty).then_some(index);
@@ -707,7 +708,7 @@ impl<'py> Rows<'py> {
         &'r mut self,
         index: usize,
         types: &ScalarTypes,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Row<'r, 'py>> {
         if let Some(native) = self.native.as_mut() {
             let shape = native.shape();
@@ -866,7 +867,7 @@ impl Row<'_, '_> {
         py: Python<'py>,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Bound<'py, PyAny>> {
         let row = self.public_row();
         let mut values = Vec::new();
@@ -938,7 +939,7 @@ impl Row<'_, '_> {
         self,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         sink: &mut S,
     ) -> PyResult<()> {
         self.write_parameters_checked(types, context, budget, sink, None, |_| Ok(false))
@@ -953,7 +954,7 @@ impl Row<'_, '_> {
         mut self,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         sink: &mut S,
         template: Option<&Template>,
         mut out: impl FnMut(usize) -> PyResult<bool>,
@@ -961,10 +962,11 @@ impl Row<'_, '_> {
         let py = self.value.py();
         check(py, budget)?;
         let width = self.width();
+        let progress = crate::input::control::Control::local(budget);
         let mut visit = Visit {
             types,
             context: *context,
-            budget,
+            budget: &progress,
             active: SmallVec::new(),
             path: self.path,
             work: 0,
@@ -1095,7 +1097,7 @@ impl Row<'_, '_> {
         expected: u16,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Vec<u8>> {
         let py = self.value.py();
         self.parameter_count(usize::from(expected))?;
@@ -1114,7 +1116,7 @@ impl Row<'_, '_> {
         template: &Template,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Vec<u8>> {
         let py = self.value.py();
         let expected = self.parameter_count(template.slots())?;
@@ -1140,7 +1142,7 @@ impl Row<'_, '_> {
         template: &Template,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Vec<u8>> {
         let py = self.value.py();
         let end = template.len();
@@ -1157,7 +1159,7 @@ impl Row<'_, '_> {
         template: &Template,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         range: Range<usize>,
         output: &mut Vec<u8>,
     ) -> PyResult<()> {
@@ -1172,7 +1174,7 @@ impl Row<'_, '_> {
         template: &Template,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         layout: &Layout,
         output: &mut Vec<u8>,
     ) -> PyResult<FragmentRole> {
@@ -1190,7 +1192,7 @@ impl Row<'_, '_> {
         template: &Template,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         range: Range<usize>,
         output: &mut Vec<u8>,
     ) -> PyResult<FragmentRole> {
@@ -1258,7 +1260,7 @@ impl Row<'_, '_> {
         self,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         output: &mut Vec<u8>,
         template: Option<&Template>,
         before: impl FnMut(usize, &mut Vec<u8>) -> PyResult<bool>,
@@ -1285,7 +1287,7 @@ impl Row<'_, '_> {
         mut self,
         types: &ScalarTypes,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         output: &mut Vec<u8>,
         template: Option<&Template>,
         mut before: impl FnMut(usize, &mut Vec<u8>) -> PyResult<bool>,
@@ -1293,10 +1295,11 @@ impl Row<'_, '_> {
     ) -> PyResult<FragmentRole> {
         let py = self.value.py();
         let width = self.width();
+        let progress = crate::input::control::Control::local(budget);
         let mut visit = Visit {
             types,
             context: *context,
-            budget,
+            budget: &progress,
             active: SmallVec::new(),
             path: self.path,
             work: 0,
@@ -1514,7 +1517,7 @@ struct Visit<'a> {
     // Copy only the native policy, so one SQL position can refine its temporal
     // precondition without mutating session facts or another position.
     context: Context,
-    budget: &'a IoBudget,
+    budget: &'a dyn Checkpoint,
     // Common shallow ancestry stays inline. This is an allocation hint, not
     // the nesting limit: deeper valid paths spill with checked reservation.
     active: SmallVec<[usize; 4]>,
@@ -1532,14 +1535,15 @@ pub(crate) fn encode_value(
     value: &Bound<'_, PyAny>,
     types: &ScalarTypes,
     context: &Context,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Vec<u8>> {
     check(value.py(), budget)?;
     let mut output = Vec::new();
+    let progress = crate::input::control::Control::local(budget);
     Visit {
         types,
         context: *context,
-        budget,
+        budget: &progress,
         active: SmallVec::new(),
         path: SmallVec::new(),
         work: 0,

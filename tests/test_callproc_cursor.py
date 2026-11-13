@@ -513,6 +513,11 @@ def out_placeholder_arguments(source: str, receipt: int) -> object:
         return (receipt, float('nan'))
     if source == 'integer':
         return (receipt, 7)
+    if source == 'json-null':
+        return (receipt, sqlaero.JSON(None))
+    if source == 'json-invalid-payload':
+        # The source-level OUT rejection must precede JSON serialization.
+        return (receipt, sqlaero.JSON(object()))
     if source.startswith('numpy-'):
         np = pytest.importorskip('numpy')
         if source == 'numpy-NaT':
@@ -556,7 +561,8 @@ def target_command_counts(connection: Any) -> dict[str, int]:
 @pytest.mark.parametrize('prepared', [False, True])
 @pytest.mark.parametrize('source', [
     'decimal-NaN', 'decimal-Infinity', 'decimal--Infinity', 'decimal-sNaN',
-    'float-nan', 'integer', 'numpy-NaT', 'numpy-timedelta-NaT', 'numpy-object-NaT',
+    'float-nan', 'integer', 'json-null', 'json-invalid-payload',
+    'numpy-NaT', 'numpy-timedelta-NaT', 'numpy-object-NaT',
     'numpy-record-NaT', 'pandas-NA', 'pandas-NaT', 'pandas-nullable',
     'arrow-null', 'arrow-list-containing-null', 'polars-null',
 ])

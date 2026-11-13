@@ -1,10 +1,10 @@
 //! Attached error and source-null boundaries around the shared native writer.
 
 use super::sink::{Destination, emit};
+use crate::input::control::Checkpoint;
 use pyo3::prelude::*;
 use sqlaero_core::bind::value::ValueRef;
 use sqlaero_core::bind::{Context, temporal};
-use sqlaero_core::transport::deadline::IoBudget;
 
 pub(crate) use temporal::{TimeKind, TimeUnit};
 
@@ -20,7 +20,7 @@ pub(crate) fn write(
     kind: TimeKind,
     output: &mut (impl Destination + ?Sized),
     context: &Context,
-    budget: Option<&IoBudget>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     if ticks == i64::MIN {
         return emit(output, py, ValueRef::Null, context);
@@ -47,7 +47,7 @@ pub(crate) fn write_valid(
     kind: TimeKind,
     output: &mut (impl Destination + ?Sized),
     context: &Context,
-    _budget: Option<&IoBudget>,
+    _budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     emit(
         output,
@@ -69,7 +69,7 @@ pub(crate) fn write_clock(
     multiplier: u64,
     output: &mut (impl Destination + ?Sized),
     context: &Context,
-    _budget: Option<&IoBudget>,
+    _budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     emit(
         output,
@@ -88,7 +88,7 @@ pub(crate) fn write_date(
     days: i64,
     output: &mut (impl Destination + ?Sized),
     context: &Context,
-    _budget: Option<&IoBudget>,
+    _budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     emit(output, py, ValueRef::DateDays(days), context)
 }

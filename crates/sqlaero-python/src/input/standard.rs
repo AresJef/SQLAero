@@ -2,13 +2,13 @@
 
 use super::sink::{Destination, emit};
 use super::{ScalarTypes, clock, date, delta, integer_to};
+use crate::input::control::Checkpoint;
 use crate::{errors, output};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDate, PyDateTime, PyDelta, PyTime, PyTuple};
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::ValueRef;
-use sqlaero_core::transport::deadline::IoBudget;
 
 /// Invoke only protocols belonging to a confirmed actual base-type family.
 /// Conversion results are written once and never interpreted as SQL source.
@@ -17,15 +17,15 @@ pub(super) fn write<D: Destination + ?Sized>(
     value: &Bound<'_, PyAny>,
     result: &mut D,
     context: &Context,
-    budget: Option<&IoBudget>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<bool> {
     let py = value.py();
     if value.get_type().is(types.struct_time.bind(py)) {
-        struct_time(value.cast::<PyTuple>()?, result, context)?;
+        struct_time(value.cast::<PyTuple>()?, result, context, budget)?;
         return Ok(true);
     }
     if value.is_instance_of::<PyDateTime>() {
-        types.write_datetime_to(value.cast::<PyDateTime>()?, result, context)?;
+        types.write_datetime_to(value.cast::<PyDateTime>()?, result, context, budget)?;
     } else if value.is_instance_of::<PyDate>() {
         emit(
             result,
@@ -48,9 +48,11 @@ pub(super) fn write<D: Destination + ?Sized>(
             context,
         )?;
     } else if super::actual_instance(value, types.decimal_type(py)) {
-        let converted = types
-            .decimal_type(py)
-            .call1(output::tuple_from_ready(py, [value.clone()])?)?;
+        let converted = super::control::callback(py, budget, || {
+            types
+                .decimal_type(py)
+                .call1(output::tuple_from_ready(py, [value.clone()])?)
+        })?;
         types.try_write_to(&converted, result, context, budget)?;
     } else {
         return Ok(false);
@@ -62,6 +64,7 @@ fn struct_time<D: Destination + ?Sized>(
     value: &Bound<'_, PyTuple>,
     result: &mut D,
     context: &Context,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     let py = value.py();
     let mut parts: [Vec<u8>; 6] = std::array::from_fn(|_| Vec::new());
@@ -69,7 +72,11 @@ fn struct_time<D: Destination + ?Sized>(
         let value = value.get_item(index)?;
         // SAFETY: the checked public integer protocol deliberately rejects
         // float truncation and numeric strings. It returns an owned exact int.
-        let converted = unsafe { Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Index(value.as_ptr())) }.inspect_err(|error| {
+        let converted = super::control::callback(py, budget, || {
+            // SAFETY: Python is attached and the actual field owner is live.
+            // The public protocol returns a new owned int or its actual error.
+            unsafe { Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Index(value.as_ptr())) }
+        }).inspect_err(|error| {
             errors::note_format(py, error, format_args!("while reading struct_time component [{index}]; an integer or __index__ result is required"));
         })?;
         let mut overflow = 0;

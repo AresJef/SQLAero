@@ -5,6 +5,7 @@
 //! Only successful native string encodings are retained; Python/Object hooks,
 //! unreferenced labels and arbitrary nested values never enter this cache.
 
+use crate::input::control::Checkpoint;
 use std::sync::Arc;
 
 use arrow_array::types::{
@@ -15,7 +16,6 @@ use arrow_buffer::ScalarBuffer;
 use arrow_schema::{DataType, Field};
 use pyo3::prelude::*;
 use sqlaero_core::bind::{Context, writer};
-use sqlaero_core::transport::deadline::IoBudget;
 
 use super::{CellWriter, Shape, dictionary_label, errors, invalid, write_value};
 
@@ -113,7 +113,7 @@ impl Labels {
         label: usize,
         output: &mut Vec<u8>,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<Option<usize>> {
         if let Some(encoded) = &self.encoded[label] {
@@ -205,7 +205,7 @@ impl Cache {
         index: usize,
         output: &mut Vec<u8>,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         // These are the same parent checks as write_value. Missing dictionary

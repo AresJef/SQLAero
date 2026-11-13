@@ -1,5 +1,6 @@
 //! Public Polars C exports, with Object values separated before any export.
 
+use crate::input::control::Checkpoint;
 use std::ffi::CStr;
 use std::sync::OnceLock;
 
@@ -8,7 +9,6 @@ use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString};
 use sqlaero_core::bind::Context;
 use sqlaero_core::error::ClientErrorCode;
-use sqlaero_core::transport::deadline::IoBudget;
 
 use super::arrow;
 use super::source::{CellWriter, PreparedSource, Shape};
@@ -101,7 +101,7 @@ impl Dtypes {
         dtype: &Bound<'_, PyAny>,
         top: bool,
         depth: usize,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<bool> {
         let py = dtype.py();
         super::check(py, budget)?;
@@ -173,7 +173,7 @@ impl PolarsTypes {
         }))
     }
 
-    fn dtypes(&self, py: Python<'_>, budget: &IoBudget) -> PyResult<&Dtypes> {
+    fn dtypes(&self, py: Python<'_>, budget: &dyn Checkpoint) -> PyResult<&Dtypes> {
         if let Some(types) = self.dtypes.get() {
             return Ok(types);
         }
@@ -193,7 +193,7 @@ impl PolarsTypes {
     pub(crate) fn prepare<'py>(
         &self,
         value: &Bound<'py, PyAny>,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<Prepared<'py>>> {
         let py = value.py();
         super::check(py, budget)?;
@@ -300,7 +300,7 @@ fn write_object(
     series: &Bound<'_, PyAny>,
     row: usize,
     output: &mut (impl crate::input::sink::Destination + ?Sized),
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
     visitor: &mut dyn CellWriter,
 ) -> PyResult<()> {
     super::check(series.py(), budget)?;
@@ -322,7 +322,7 @@ impl<'py> Prepared<'py> {
         column: usize,
         output: &mut (impl crate::input::sink::Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         let py = self.owner.py();

@@ -1,13 +1,13 @@
 //! Pandas public storage adapters; native values reuse the common SQL writers.
 
 use crate::errors;
+use crate::input::control::Checkpoint;
 use crate::input::numpy::{NumpyScalar, NumpyTypes};
 use crate::input::source::PreparedSource;
 use crate::input::temporal::{TimeKind, TimeUnit};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyModule, PyType};
-use sqlaero_core::transport::deadline::IoBudget;
 use std::ffi::CStr;
 
 mod source;
@@ -51,7 +51,7 @@ impl PandasTypes {
         &self,
         value: &Bound<'py, PyAny>,
         numpy: &NumpyTypes,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<Box<dyn PreparedSource<'py> + 'py>>> {
         self.sources.prepare(value, numpy, budget)
     }

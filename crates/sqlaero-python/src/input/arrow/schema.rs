@@ -4,13 +4,13 @@
 //! metadata, so an affected tree is presented through borrowed, metadata-free
 //! headers. The producer headers and their release callbacks remain untouched.
 
+use crate::input::control::Checkpoint;
 use std::ffi::{CStr, c_char, c_void};
 use std::ptr;
 
 use arrow_schema::{Field, ffi::FFI_ArrowSchema};
 use pyo3::prelude::*;
 use sqlaero_core::error::ClientErrorCode;
-use sqlaero_core::transport::deadline::IoBudget;
 
 use crate::errors;
 
@@ -41,7 +41,7 @@ struct Inventory {
 pub(super) fn import(
     py: Python<'_>,
     source: &FFI_ArrowSchema,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Field> {
     // SAFETY: the caller owns a live, standard CPU C Schema export. All of its
     // pointer storage remains valid until that owner invokes its release.
@@ -79,7 +79,7 @@ fn validate(
     node: &Header,
     depth: usize,
     inventory: &mut Inventory,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     if depth >= 64 {
         return Err(errors::client(
@@ -142,7 +142,11 @@ fn validate(
     Ok(())
 }
 
-fn validate_metadata(py: Python<'_>, metadata: *const c_char, budget: &IoBudget) -> PyResult<()> {
+fn validate_metadata(
+    py: Python<'_>,
+    metadata: *const c_char,
+    budget: &dyn Checkpoint,
+) -> PyResult<()> {
     let mut address = metadata as usize;
     let count = metadata_length(py, &mut address)?;
     for index in 0..count {
@@ -189,7 +193,7 @@ fn copy_headers(
     source: &Header,
     headers: &mut Vec<Header>,
     children: &mut Vec<*const Header>,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<usize> {
     let index = headers.len();
     if index.is_multiple_of(1024) {

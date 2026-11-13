@@ -1,5 +1,6 @@
 //! Final Python values from prepared native fields; no Python decoder loops.
 
+use crate::input::control::Checkpoint;
 use crate::{errors, input::ScalarTypes, json};
 use pyo3::exceptions::{PyOverflowError, PyUnicodeDecodeError};
 use pyo3::prelude::*;
@@ -559,7 +560,7 @@ pub(crate) fn bytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, Py
 pub(crate) fn bytes_bounded<'py>(
     py: Python<'py>,
     data: &[u8],
-    budget: Option<&sqlaero_core::transport::deadline::IoBudget>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<Bound<'py, PyAny>> {
     const WINDOW: usize = 256 * 1024;
     crate::input::checkpoint(py, budget)?;

@@ -15,7 +15,6 @@ use smallvec::SmallVec;
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::ValueRef;
 use sqlaero_core::error::ClientErrorCode;
-use sqlaero_core::transport::deadline::IoBudget;
 use std::ffi::CStr;
 use std::fmt::Write;
 
@@ -126,7 +125,7 @@ impl SourceTypes {
         &self,
         value: &Bound<'py, PyAny>,
         numpy: &NumpyTypes,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
     ) -> PyResult<Option<Box<dyn PreparedSource<'py> + 'py>>> {
         let py = value.py();
         let typ = value.get_type();
@@ -254,7 +253,7 @@ impl SourceTypes {
         levels: &[Bound<'py, PyAny>],
         length: usize,
         api: &NumpyArrayApi,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
     ) -> PyResult<Option<Vec<MultiLevel<'py>>>> {
         let py = owner.py();
         if levels.is_empty() {
@@ -338,7 +337,7 @@ impl SourceTypes {
         &self,
         value: &Bound<'py, PyAny>,
         api: &NumpyArrayApi,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
     ) -> PyResult<(Shape, Vec<Column<'py>>)> {
         let py = value.py();
         let shape = errors::attribute(value, c"shape")?.cast_into::<PyTuple>()?;
@@ -413,7 +412,7 @@ impl SourceTypes {
         &self,
         storage: &Bound<'py, PyAny>,
         api: &NumpyArrayApi,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
     ) -> PyResult<Column<'py>> {
         let py = storage.py();
         crate::input::check(py, budget)?;
@@ -608,7 +607,7 @@ impl Column<'_> {
         row: usize,
         output: &mut (impl Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
         visitor: &mut dyn CellWriter,
         api: &NumpyArrayApi,
     ) -> PyResult<()> {
@@ -676,7 +675,7 @@ impl<'py> Category<'py> {
         row: usize,
         output: &mut (impl Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
         visitor: &mut dyn CellWriter,
         api: &NumpyArrayApi,
     ) -> PyResult<()> {
@@ -807,7 +806,7 @@ impl<'py> MultiLevel<'py> {
         position: usize,
         api: &NumpyArrayApi,
         numpy_extension: &Bound<'py, PyType>,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
     ) -> PyResult<OwnedLeaf<'py>> {
         let py = self.owner.py();
         // The caller has checked every code in this actual row. Preparing a
@@ -927,7 +926,7 @@ impl<'py> Masked<'py> {
         row: usize,
         output: &mut (impl Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
         visitor: &mut dyn CellWriter,
         api: &NumpyArrayApi,
     ) -> PyResult<()> {
@@ -1034,7 +1033,7 @@ fn require_vector(source: &NumpySource<'_>) -> PyResult<usize> {
 fn numpy_source<'py>(
     api: &NumpyArrayApi,
     value: &Bound<'py, PyAny>,
-    budget: &IoBudget,
+    budget: &dyn crate::input::control::Checkpoint,
     expected: usize,
 ) -> PyResult<NumpySource<'py>> {
     let source = api.prepare(value, budget)?.ok_or_else(|| {
@@ -1055,7 +1054,7 @@ fn numpy_source<'py>(
 fn converted_numpy_column<'py>(
     storage: &Bound<'py, PyAny>,
     api: &NumpyArrayApi,
-    budget: &IoBudget,
+    budget: &dyn crate::input::control::Checkpoint,
     length: usize,
 ) -> PyResult<Column<'py>> {
     let py = storage.py();
@@ -1138,7 +1137,7 @@ impl<'py> PandasSource<'py> {
         column: usize,
         output: &mut (impl Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         let py = self.owner.py();
@@ -1173,7 +1172,7 @@ impl<'py> Multi<'py> {
         column: usize,
         output: &mut (impl Destination + ?Sized),
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         let py = self.owner.py();

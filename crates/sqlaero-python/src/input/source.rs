@@ -3,7 +3,6 @@
 use pyo3::prelude::*;
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::{ValueError, ValueSink};
-use sqlaero_core::transport::deadline::IoBudget;
 pub(crate) use sqlaero_transcode::structure::Shape;
 
 /// Prepare a recognized typed provider at the Python boundary. The caller
@@ -12,7 +11,7 @@ pub(crate) use sqlaero_transcode::structure::Shape;
 pub(crate) fn prepare<'py>(
     value: &Bound<'py, PyAny>,
     types: &super::ScalarTypes,
-    budget: &IoBudget,
+    budget: &dyn crate::input::control::Checkpoint,
 ) -> PyResult<Option<Box<dyn PreparedSource<'py> + 'py>>> {
     use pyo3::types::{PyBytes, PyDate, PyDelta, PyFloat, PyInt, PyString, PyTime};
     // Scalar shape discovery cannot import or prepare a foreign provider. This
@@ -122,7 +121,7 @@ pub(crate) trait PreparedSource<'py> {
         column: usize,
         output: &mut Vec<u8>,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()>;
 
@@ -133,7 +132,7 @@ pub(crate) trait PreparedSource<'py> {
         column: usize,
         output: &mut Vec<u8>,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<FragmentRole>;
 
@@ -145,7 +144,7 @@ pub(crate) trait PreparedSource<'py> {
         column: usize,
         sink: &mut dyn ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn crate::input::control::Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()>;
 }
@@ -159,7 +158,7 @@ macro_rules! cell_destinations {
             column: usize,
             output: &mut Vec<u8>,
             context: &sqlaero_core::bind::Context,
-            budget: &sqlaero_core::transport::deadline::IoBudget,
+            budget: &dyn crate::input::control::Checkpoint,
             visitor: &mut dyn $crate::input::source::CellWriter,
         ) -> pyo3::PyResult<()> {
             self.write_cell_to(row, column, output, context, budget, visitor)
@@ -170,7 +169,7 @@ macro_rules! cell_destinations {
             column: usize,
             output: &mut Vec<u8>,
             context: &sqlaero_core::bind::Context,
-            budget: &sqlaero_core::transport::deadline::IoBudget,
+            budget: &dyn crate::input::control::Checkpoint,
             visitor: &mut dyn $crate::input::source::CellWriter,
         ) -> pyo3::PyResult<$crate::input::source::FragmentRole> {
             let mut destination = $crate::input::sink::RoleSink::new(output);
@@ -186,7 +185,7 @@ macro_rules! cell_destinations {
                 Error = sqlaero_core::bind::value::ValueError,
             >,
             context: &sqlaero_core::bind::Context,
-            budget: &sqlaero_core::transport::deadline::IoBudget,
+            budget: &dyn crate::input::control::Checkpoint,
             visitor: &mut dyn $crate::input::source::CellWriter,
         ) -> pyo3::PyResult<()> {
             self.write_cell_to(

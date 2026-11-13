@@ -5,10 +5,10 @@
 //! not accepted by the fixed-width reader.
 
 use crate::errors;
+use crate::input::control::Checkpoint;
 use pyo3::exceptions::{PyBufferError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyModule, PyString, PyTuple, PyType};
-use sqlaero_core::transport::deadline::IoBudget;
 use std::ffi::CStr;
 use std::mem::MaybeUninit;
 
@@ -80,7 +80,7 @@ impl NumpyArrayApi {
     pub(crate) fn prepare<'py>(
         &self,
         value: &Bound<'py, PyAny>,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<NumpySource<'py>>> {
         prepare_array(value, &self.array, &self.datetime_data, budget)
     }
@@ -149,7 +149,7 @@ impl NumpyTypes {
     pub(crate) fn prepare_array<'py>(
         &self,
         value: &Bound<'py, PyAny>,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<NumpySource<'py>>> {
         prepare_array(value, &self.array, &self.datetime_data, budget)
     }
@@ -166,7 +166,7 @@ impl NumpyTypes {
     pub(crate) fn prepare_record<'py>(
         &self,
         value: &Bound<'py, PyAny>,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
     ) -> PyResult<Option<RecordSource<'py>>> {
         let exact_void = value.get_type().is(self.void.bind(value.py()));
         if !exact_void && !value.get_type().is(self.record.bind(value.py())) {
@@ -255,7 +255,7 @@ fn prepare_array<'py>(
     value: &Bound<'py, PyAny>,
     array: &Py<PyType>,
     datetime_data: &Py<PyAny>,
-    budget: &IoBudget,
+    budget: &dyn Checkpoint,
 ) -> PyResult<Option<NumpySource<'py>>> {
     if !value.get_type().is(array.bind(value.py())) {
         return Ok(None);

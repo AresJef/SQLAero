@@ -35,12 +35,12 @@ class ExactDecimal(Decimal):
 
 
 @pytest.mark.parametrize("value,expected", [
-    (Integer(1), b"41"), (Floating(2.5), b"-0.0e0"),
-    (Text("ignored"), b"'x\\'\\\\y'"),
-    (Binary(b"ignored"), b"CAST(X'7800FF' AS BINARY)"),
+    (Integer(1), b"1"), (Floating(2.5), b"2.5e0"),
+    (Text("ignored"), b"'ignored'"),
+    (Binary(b"ignored"), b"CAST(X'69676E6F726564' AS BINARY)"),
     (ExactDecimal("1.2300"), b"1.23"),
 ])
-def test_scalar_subclasses_keep_approved_protocol_results(value: object, expected: bytes) -> None:
+def test_scalar_subclasses_read_their_real_base_values(value: object, expected: bytes) -> None:
     assert encoded(value) == expected
 
 
@@ -132,13 +132,15 @@ def test_normalized_container_alias_does_not_add_a_logical_level(child_levels: i
         assert caught.value.code == 65543
 
 
-def test_formal_conversion_original_exception_is_not_replaced() -> None:
+def test_approved_source_protocol_original_exception_is_not_replaced() -> None:
     original = KeyboardInterrupt("actual conversion error")
-    class Child(int):
-        def __int__(self) -> int:
+    class Year:
+        def __index__(self) -> int:
             raise original
+    fields: object = (Year(), 1, 1, 0, 0, 0, 0, 1, 0)
+    value = clock.struct_time(fields)  # type: ignore[arg-type]
     with pytest.raises(KeyboardInterrupt) as caught:
-        encoded([Child(1)])
+        encoded([value])
     assert caught.value is original
 
 

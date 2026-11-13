@@ -3,13 +3,13 @@
 use super::source::{CellWriter, PreparedSource};
 use super::{binary, scalar_error};
 use crate::errors;
+use crate::input::control::Checkpoint;
 use pyo3::prelude::*;
 use pyo3::types::PyString;
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::{TextSink, ValueError, ValueRef, ValueSink};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::protocol::framing::WireError;
-use sqlaero_core::transport::deadline::IoBudget;
 
 /// A destination receives an adapted value immediately. Python-specific text
 /// diagnostics and signal checks remain at this boundary.
@@ -20,7 +20,7 @@ pub(crate) trait Destination {
         &mut self,
         source: &Bound<'_, PyString>,
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()>;
 
     fn binary(
@@ -28,7 +28,7 @@ pub(crate) trait Destination {
         py: Python<'_>,
         source: &[u8],
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()>;
 
     fn text_start(&mut self, length: Option<usize>, context: &Context) -> Result<(), ValueError>;
@@ -54,7 +54,7 @@ pub(crate) trait Destination {
         row: usize,
         column: usize,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()>;
 
@@ -76,7 +76,7 @@ impl Destination for Vec<u8> {
         &mut self,
         source: &Bound<'_, PyString>,
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()> {
         super::unicode::write(
             source,
@@ -93,7 +93,7 @@ impl Destination for Vec<u8> {
         py: Python<'_>,
         source: &[u8],
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()> {
         binary(py, source, self, context.limit, budget)
     }
@@ -133,7 +133,7 @@ impl Destination for Vec<u8> {
         row: usize,
         column: usize,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         source.write_cell(row, column, self, context, budget, visitor)
@@ -167,7 +167,7 @@ impl Destination for Native<'_> {
         &mut self,
         source: &Bound<'_, PyString>,
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()> {
         super::unicode::write(
             source,
@@ -184,7 +184,7 @@ impl Destination for Native<'_> {
         py: Python<'_>,
         source: &[u8],
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()> {
         super::checkpoint(py, budget)?;
         if source.len() <= super::WORK_BYTES {
@@ -242,7 +242,7 @@ impl Destination for Native<'_> {
         row: usize,
         column: usize,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         source.write_parameter_cell(row, column, self.0, context, budget, visitor)
@@ -413,7 +413,7 @@ impl Destination for RoleSink<'_> {
         &mut self,
         source: &Bound<'_, PyString>,
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()> {
         self.scalar();
         self.output.text(source, context, budget)
@@ -423,7 +423,7 @@ impl Destination for RoleSink<'_> {
         py: Python<'_>,
         source: &[u8],
         context: &Context,
-        budget: Option<&IoBudget>,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<()> {
         self.scalar();
         self.output.binary(py, source, context, budget)
@@ -472,7 +472,7 @@ impl Destination for RoleSink<'_> {
         row: usize,
         column: usize,
         context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         let role = source.write_role_cell(row, column, self.output, context, budget, visitor)?;

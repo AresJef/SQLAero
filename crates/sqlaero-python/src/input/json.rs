@@ -4,6 +4,7 @@ use super::primitive::{self, Source};
 use super::sequence::Sequence;
 use super::sink::Destination;
 use super::{ScalarTypes, integer};
+use crate::input::control::Checkpoint;
 use crate::{config, errors};
 use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
@@ -11,7 +12,6 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyInt};
 use sqlaero_core::bind::Context;
 use sqlaero_core::json::{Error, Options, Writer};
-use sqlaero_core::transport::deadline::IoBudget;
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
 /// A lazy JSON text parameter. The payload reference and allow_nan are read-only;
@@ -84,7 +84,7 @@ fn failure(py: Python<'_>, error: Error) -> PyErr {
 struct Serialize<'a> {
     types: &'a ScalarTypes,
     options: Options,
-    budget: Option<&'a IoBudget>,
+    budget: Option<&'a dyn Checkpoint>,
     writer: Writer,
     active: Vec<usize>,
     path: Vec<usize>,
@@ -238,9 +238,11 @@ pub(crate) fn serialize(
     value: &Bound<'_, PyAny>,
     types: &ScalarTypes,
     allow_nan: bool,
-    budget: Option<&IoBudget>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<Vec<u8>> {
     let py = value.py();
+    let local = super::control::Control::unlimited();
+    let budget = Some(budget.unwrap_or(&local as &dyn Checkpoint));
     super::checkpoint(py, budget)?;
     let mut state = Serialize {
         types,
@@ -268,7 +270,7 @@ pub(crate) fn mysql<D: Destination + ?Sized>(
     types: &ScalarTypes,
     output: &mut D,
     context: &Context,
-    budget: Option<&IoBudget>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     let py = value.py();
     let (data, allow_nan) = {

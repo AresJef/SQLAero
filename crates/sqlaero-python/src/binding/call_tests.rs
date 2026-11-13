@@ -3,7 +3,7 @@
 use super::*;
 use pyo3::types::{PyList, PyModule, PyTuple};
 use sqlaero_core::charset::{codec::Codec, resolve};
-use sqlaero_core::transport::deadline::TimeoutKind;
+use sqlaero_core::transport::deadline::{IoBudget, TimeoutKind};
 
 fn budget() -> IoBudget {
     IoBudget::new(TimeoutKind::Operation, None, None, None)

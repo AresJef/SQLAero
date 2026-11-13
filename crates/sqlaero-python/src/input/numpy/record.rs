@@ -2,13 +2,13 @@
 
 use super::allocation::Allocation;
 use crate::errors;
+use crate::input::control::Checkpoint;
 use crate::input::sink::Destination;
 use crate::input::source::{CellWriter, PreparedSource, Shape};
 use pyo3::exceptions::{PyIndexError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple, PyType};
 use sqlaero_core::bind::Context;
-use sqlaero_core::transport::deadline::IoBudget;
 
 /// Public field access owns the current value before any recursive callback.
 pub(crate) struct RecordSource<'py> {
@@ -21,7 +21,7 @@ impl<'py> RecordSource<'py> {
     pub(super) fn new(
         value: &Bound<'py, PyAny>,
         array_type: &Py<PyType>,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         exact_void: bool,
     ) -> PyResult<Option<Self>> {
         let py = value.py();
@@ -69,7 +69,7 @@ impl<'py> RecordSource<'py> {
         column: usize,
         output: &mut (impl Destination + ?Sized),
         _context: &Context,
-        budget: &IoBudget,
+        budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         let py = self.owner.py();

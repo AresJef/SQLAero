@@ -1284,6 +1284,7 @@ impl CursorCore {
     }
 
     fn handoff(&self, py: Python<'_>, begun: &mut bool) -> PyResult<()> {
+        self.reader.open(py)?;
         if !*begun {
             self.reader.clear_result(py)?;
             *self.counters(py)? = None;
@@ -1325,6 +1326,8 @@ impl CursorCore {
         // before acquiring the wire. The same original budget then covers
         // native opening, the upload and its actual final server response.
         let local_path = crate::local::path(py, local_file, &budget)?;
+        self.reader.open(py)?;
+        connection.open(py)?;
         if local_path.is_some() && (many || self.prepared) {
             return Err(errors::client(
                 py,
@@ -1345,6 +1348,10 @@ impl CursorCore {
         let mut live: Option<crate::stream::Stream> = None;
         let result = (|| {
             connection.ensure_context(py, &mut lease, &mut budget)?;
+            let validate = || {
+                self.reader.open(py)?;
+                connection.open(py)
+            };
             let mut planner = binding::Planner::new(
                 sql,
                 args.0.as_ref(),
@@ -1356,7 +1363,7 @@ impl CursorCore {
                     binding::PlanMode::Text
                 },
                 &types,
-                &budget,
+                &input::control::Control::new(&budget, &validate),
             )?;
             if local_path.is_some() && planner.is_batch() {
                 return Err(errors::client(
@@ -1369,7 +1376,13 @@ impl CursorCore {
                 input::check(py, &budget)?;
                 connection.ensure_context(py, &mut lease, &mut budget)?;
                 let (context, ansi, names_codec) = connection.context(py)?;
-                let Some(mut request) = planner.next(py, &context, ansi, &budget)? else {
+                let Some(mut request) = planner.next(
+                    py,
+                    &context,
+                    ansi,
+                    &input::control::Control::new(&budget, &validate),
+                )?
+                else {
                     break;
                 };
                 if let Some(template) = request.prepared.take() {
@@ -1541,6 +1554,10 @@ impl CursorCore {
             crate::call::slot_prefix(py, &connection)?
         };
         let types = connection.types.borrow(py);
+        let validate = || {
+            self.reader.open(py)?;
+            connection.open(py)
+        };
         let mut plan = binding::call::NativeCall::new(
             proc_name,
             args.0.as_ref(),
@@ -1555,7 +1572,7 @@ impl CursorCore {
             &types,
             &context,
             ansi,
-            &budget,
+            &input::control::Control::new(&budget, &validate),
         )?;
         drop(types);
         let multi_statements = if !self.prepared && !plan.output_positions.is_empty() {
