@@ -61,6 +61,7 @@ impl<'template> DisplaySink<'template> {
     }
 }
 impl ValueSink for DisplaySink<'_> {
+    type Context = Context;
     type Error = ValueError;
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
         self.native.write(value, context)?;

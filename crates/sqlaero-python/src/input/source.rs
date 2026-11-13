@@ -84,7 +84,7 @@ pub(crate) trait CellWriter {
     fn native_python(
         &mut self,
         value: &Bound<'_, PyAny>,
-        sink: &mut dyn ValueSink<Error = ValueError>,
+        sink: &mut dyn ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
         child: Option<usize>,
     ) -> PyResult<()>;
 
@@ -143,7 +143,7 @@ pub(crate) trait PreparedSource<'py> {
         &mut self,
         row: usize,
         column: usize,
-        sink: &mut dyn ValueSink<Error = ValueError>,
+        sink: &mut dyn ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
         context: &Context,
         budget: &IoBudget,
         visitor: &mut dyn CellWriter,
@@ -182,6 +182,7 @@ macro_rules! cell_destinations {
             row: usize,
             column: usize,
             sink: &mut dyn sqlaero_core::bind::value::ValueSink<
+                Context = sqlaero_core::bind::Context,
                 Error = sqlaero_core::bind::value::ValueError,
             >,
             context: &sqlaero_core::bind::Context,

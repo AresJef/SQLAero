@@ -147,7 +147,9 @@ impl Destination for Vec<u8> {
     }
 }
 
-pub(crate) struct Native<'a>(pub(crate) &'a mut dyn ValueSink<Error = ValueError>);
+pub(crate) struct Native<'a>(
+    pub(crate) &'a mut dyn ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
+);
 
 impl Destination for Native<'_> {
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {

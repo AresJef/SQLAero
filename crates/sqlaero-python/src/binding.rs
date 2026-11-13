@@ -930,7 +930,10 @@ impl Row<'_, '_> {
     /// Adapt one logical row directly into native prepared parameters.
     /// Container roles are the same roles used by positional text binding.
     pub(crate) fn write_parameters<
-        S: sqlaero_core::bind::value::ValueSink<Error = sqlaero_core::bind::value::ValueError>,
+        S: sqlaero_core::bind::value::ValueSink<
+                Context = sqlaero_core::bind::Context,
+                Error = sqlaero_core::bind::value::ValueError,
+            >,
     >(
         self,
         types: &ScalarTypes,
@@ -942,7 +945,10 @@ impl Row<'_, '_> {
     }
 
     fn write_parameters_checked<
-        S: sqlaero_core::bind::value::ValueSink<Error = sqlaero_core::bind::value::ValueError>,
+        S: sqlaero_core::bind::value::ValueSink<
+                Context = sqlaero_core::bind::Context,
+                Error = sqlaero_core::bind::value::ValueError,
+            >,
     >(
         mut self,
         types: &ScalarTypes,
@@ -1910,7 +1916,10 @@ impl CellWriter for Visit<'_> {
     fn native_python(
         &mut self,
         value: &Bound<'_, PyAny>,
-        sink: &mut dyn sqlaero_core::bind::value::ValueSink<Error = sqlaero_core::bind::value::ValueError>,
+        sink: &mut dyn sqlaero_core::bind::value::ValueSink<
+            Context = sqlaero_core::bind::Context,
+            Error = sqlaero_core::bind::value::ValueError,
+        >,
         child: Option<usize>,
     ) -> PyResult<()> {
         let py = value.py();

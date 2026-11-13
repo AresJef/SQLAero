@@ -6,3 +6,4 @@
 pub mod buffer;
 pub mod structure;
 pub mod temporal;
+pub mod value;

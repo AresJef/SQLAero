@@ -148,7 +148,9 @@ impl ScalarTypes {
     }
 
     /// Consume one scalar through the common recognition and protocol boundary.
-    pub(crate) fn write_native<S: ValueSink<Error = ValueError>>(
+    pub(crate) fn write_native<
+        S: ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
+    >(
         &self,
         value: &Bound<'_, PyAny>,
         sink: &mut S,

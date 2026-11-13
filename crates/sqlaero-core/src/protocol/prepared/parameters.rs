@@ -425,6 +425,7 @@ impl Parameters {
 }
 
 impl ValueSink for Parameters {
+    type Context = Context;
     type Error = ValueError;
 
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {

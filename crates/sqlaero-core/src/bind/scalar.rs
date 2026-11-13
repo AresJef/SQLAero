@@ -147,30 +147,8 @@ pub fn decimal(
     Ok(())
 }
 
-/// A native calendar date. Input adapters supply an already valid source date;
-/// UTC normalization may produce the adjacent year 0000 or 10000.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Date {
-    /// Proleptic Gregorian year, including the approved derived endpoints.
-    pub year: i32,
-    /// Calendar month, 1 through 12.
-    pub month: u8,
-    /// Day valid for this month and year.
-    pub day: u8,
-}
-
-/// Native clock components read at the language boundary.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Clock {
-    /// Hour, 0 through 23.
-    pub hour: u8,
-    /// Minute, 0 through 59.
-    pub minute: u8,
-    /// Second, 0 through 59.
-    pub second: u8,
-    /// Fractional microsecond, 0 through 999999.
-    pub microsecond: u32,
-}
+/// Format-neutral calendar and native-resolution clock facts.
+pub use sqlaero_transcode::temporal::{Clock, Date};
 
 const DAY_MICROS: i128 = 86_400_000_000;
 
@@ -183,39 +161,29 @@ pub(crate) fn month_days(year: i32, month: u8) -> u8 {
     }
 }
 
-impl Date {
-    fn shift_one(&mut self, forward: bool) {
-        if forward {
-            if self.day < month_days(self.year, self.month) {
-                self.day += 1;
-            } else {
-                self.day = 1;
-                if self.month == 12 {
-                    self.month = 1;
-                    self.year += 1;
-                } else {
-                    self.month += 1;
-                }
-            }
-        } else if self.day > 1 {
-            self.day -= 1;
+fn shift_one(date: &mut Date, forward: bool) {
+    if forward {
+        if date.day < month_days(date.year, date.month) {
+            date.day += 1;
         } else {
-            if self.month == 1 {
-                self.month = 12;
-                self.year -= 1;
+            date.day = 1;
+            if date.month == 12 {
+                date.month = 1;
+                date.year += 1;
             } else {
-                self.month -= 1;
+                date.month += 1;
             }
-            self.day = month_days(self.year, self.month);
         }
-    }
-}
-
-impl Clock {
-    fn micros(self) -> i128 {
-        ((i128::from(self.hour) * 60 + i128::from(self.minute)) * 60 + i128::from(self.second))
-            * 1_000_000
-            + i128::from(self.microsecond)
+    } else if date.day > 1 {
+        date.day -= 1;
+    } else {
+        if date.month == 1 {
+            date.month = 12;
+            date.year -= 1;
+        } else {
+            date.month -= 1;
+        }
+        date.day = month_days(date.year, date.month);
     }
 }
 
@@ -236,9 +204,9 @@ pub fn utc(
     }
     let adjusted = clock.micros() - offset_micros;
     if adjusted < 0 {
-        date.shift_one(false);
+        shift_one(&mut date, false);
     } else if adjusted >= DAY_MICROS {
-        date.shift_one(true);
+        shift_one(&mut date, true);
     }
     let value = adjusted.rem_euclid(DAY_MICROS);
     Ok((
