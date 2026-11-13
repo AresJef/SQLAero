@@ -1,48 +1,7 @@
 //! Exact temporal tick decomposition without Python objects or floating point.
 
 use super::{scalar::ScalarError, writer};
-
-/// Original source unit; calendar months and years remain distinct from days.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TimeUnit {
-    /// Gregorian calendar year, or the approved mean duration year.
-    Year,
-    /// Gregorian calendar month, or the approved mean duration month.
-    Month,
-    /// Seven elapsed days.
-    Week,
-    /// A day of 86,400 elapsed seconds.
-    Day,
-    /// An elapsed hour.
-    Hour,
-    /// An elapsed minute.
-    Minute,
-    /// A second.
-    Second,
-    /// One thousandth of a second.
-    Millisecond,
-    /// One millionth of a second.
-    Microsecond,
-    /// One billionth of a second.
-    Nanosecond,
-    /// Recognized but not supported for a finite input in this scope.
-    Picosecond,
-    /// Recognized but not supported for a finite input in this scope.
-    Femtosecond,
-    /// Recognized but not supported for a finite input in this scope.
-    Attosecond,
-    /// Unit-less temporal storage; only a source-defined null may use it.
-    Generic,
-}
-
-/// The value semantics of temporal ticks.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum TimeKind {
-    /// Ticks relative to the Unix calendar epoch.
-    DateTime,
-    /// A signed elapsed duration, including hours beyond one day.
-    Duration,
-}
+pub use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
 
 /// A bounded stack formatter; all supported i128 dates fit well below 128 bytes.
 struct Stamp {

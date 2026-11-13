@@ -1580,6 +1580,7 @@ dependencies = [
  "rustls-pki-types",
  "smallvec",
  "sqlaero-core",
+ "sqlaero-transcode",
  "zeroize",
 ]
 

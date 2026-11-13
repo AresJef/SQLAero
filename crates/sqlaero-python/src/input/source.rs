@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::{ValueError, ValueSink};
 use sqlaero_core::transport::deadline::IoBudget;
+pub(crate) use sqlaero_transcode::structure::Shape;
 
 /// Prepare a recognized typed provider at the Python boundary. The caller
 /// checks ordinary scalar and sequence paths first; no provider is imported
@@ -51,17 +52,6 @@ pub(crate) fn prepare<'py>(
         return Ok(Some(super::boxed(value.py(), source)?));
     }
     Ok(None)
-}
-
-/// Logical structure, independent of a template's number of placeholders.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum Shape {
-    /// One-dimensional typed input; each element remains one logical cell.
-    Vector { length: usize },
-    /// One record is a single row, including when `many` is true.
-    Record { fields: usize },
-    /// A natural row source; `many` cannot erase its second dimension.
-    Table { rows: usize, columns: usize },
 }
 
 /// The writer's structural role, independent of literal bytes or Python type.
