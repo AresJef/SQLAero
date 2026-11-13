@@ -114,19 +114,17 @@ class ProtocolString(str):
         raise AssertionError("must read base string length")
 
 
-def test_final_fragment_is_exact_string_from_the_existing_string_protocol() -> None:
+def test_final_fragment_is_exact_string_from_actual_base_storage() -> None:
     value = escape(ProtocolString("base value"))
-    assert type(value) is str and value == "'adapted\\'value'"
+    assert type(value) is str and value == "'base value'"
 
 
-def test_escape_preserves_the_original_string_protocol_exception() -> None:
+def test_escape_does_not_call_a_replacement_string_protocol() -> None:
     original = MemoryError("original value protocol failure")
     class Broken(str):
         def __str__(self) -> str:
             raise original
-    with pytest.raises(MemoryError) as failure:
-        escape([1, Broken("base")], many=True)
-    assert failure.value is original
+    assert escape([1, Broken("base")], many=True) == ["1", "'base'"]
 
 
 @pytest.mark.parametrize("charset", [

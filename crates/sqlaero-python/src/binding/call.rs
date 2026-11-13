@@ -528,7 +528,7 @@ impl ValueSink for DiscardValue {
     fn write(&mut self, _: ValueRef<'_>, _: &Context) -> Result<(), ValueError> {
         Ok(())
     }
-    fn text_start(&mut self, _: usize, _: &Context) -> Result<(), ValueError> {
+    fn text_start(&mut self, _: Option<usize>, _: &Context) -> Result<(), ValueError> {
         Ok(())
     }
     fn text_fragment(&mut self, _: &str, _: &Context) -> Result<(), ValueError> {

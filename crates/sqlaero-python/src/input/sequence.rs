@@ -28,16 +28,24 @@ pub(crate) struct IterSequence<'py> {
     state: RefCell<IterState<'py>>,
 }
 impl<'py> Sequence<'py> {
+    /// Recognize the prepared base list/tuple fast path without user iteration.
+    pub(crate) fn plain(value: &Bound<'py, PyAny>) -> PyResult<Option<Self>> {
+        if value.is_exact_instance_of::<PyList>() {
+            Ok(Some(Self::List(value.cast::<PyList>()?.clone())))
+        } else if value.is_exact_instance_of::<PyTuple>() {
+            Ok(Some(Self::Tuple(value.cast::<PyTuple>()?.clone())))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub(crate) fn from(
         value: &Bound<'py, PyAny>,
         types: &ScalarTypes,
         active: &[usize],
     ) -> PyResult<Option<Self>> {
-        if value.is_exact_instance_of::<PyList>() {
-            return Ok(Some(Self::List(value.cast::<PyList>()?.clone())));
-        }
-        if value.is_exact_instance_of::<PyTuple>() {
-            return Ok(Some(Self::Tuple(value.cast::<PyTuple>()?.clone())));
+        if let Some(value) = Self::plain(value)? {
+            return Ok(Some(value));
         }
         Self::extended(value, types, active)
     }

@@ -68,7 +68,7 @@ impl ValueSink for DisplaySink<'_> {
         self.before()?;
         TextSink::new(&mut self.output).write(value, context)
     }
-    fn text_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError> {
+    fn text_start(&mut self, length: Option<usize>, context: &Context) -> Result<(), ValueError> {
         self.native.text_start(length, context)?;
         self.before()?;
         TextSink::new(&mut self.output).text_start(length, context)

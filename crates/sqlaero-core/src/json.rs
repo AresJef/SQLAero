@@ -45,7 +45,7 @@ enum Frame {
 }
 
 struct Text {
-    remaining: usize,
+    remaining: Option<usize>,
     key: bool,
 }
 
@@ -183,7 +183,7 @@ impl Writer {
         })
     }
 
-    fn string_start(&mut self, length: usize, key: bool) -> Result<(), Error> {
+    fn string_start(&mut self, length: Option<usize>, key: bool) -> Result<(), Error> {
         if key {
             if self.text.is_some() {
                 return Err(Error::State("a text value is still open"));
@@ -212,13 +212,19 @@ impl Writer {
     }
 
     fn string_fragment(&mut self, value: &str) -> Result<(), Error> {
-        let remaining = self
+        let remaining = match self
             .text
             .as_ref()
             .ok_or(Error::State("text fragment has no start"))?
             .remaining
-            .checked_sub(value.len())
-            .ok_or(Error::State("text source length changed"))?;
+        {
+            Some(remaining) => Some(
+                remaining
+                    .checked_sub(value.len())
+                    .ok_or(Error::State("text source length changed"))?,
+            ),
+            None => None,
+        };
         const HEX: &[u8; 16] = b"0123456789abcdef";
         let mut start = 0;
         for (index, &byte) in value.as_bytes().iter().enumerate() {
@@ -258,9 +264,12 @@ impl Writer {
     }
 
     fn string_end(&mut self) -> Result<(), Error> {
-        let Some(Text { remaining: 0, key }) = self.text else {
+        let Some(Text { remaining, key }) = self.text else {
             return Err(Error::State("text end has an incomplete or missing source"));
         };
+        if remaining.is_some_and(|remaining| remaining != 0) {
+            return Err(Error::State("text source is incomplete"));
+        }
         self.append(if key { b"\":" } else { b"\"" })?;
         self.text = None;
         Ok(())
@@ -271,7 +280,7 @@ impl Writer {
     /// # Errors
     /// Returns an invalid object state or allocation failure.
     pub fn key_start(&mut self, utf8_len: usize) -> Result<(), Error> {
-        self.perform(|writer| writer.string_start(utf8_len, true))
+        self.perform(|writer| writer.string_start(Some(utf8_len), true))
     }
 
     /// Write a small, already admitted full key without truncating at NUL.
@@ -280,7 +289,7 @@ impl Writer {
     /// Returns a structural or allocation failure.
     pub fn key(&mut self, value: &str) -> Result<(), Error> {
         self.perform(|writer| {
-            writer.string_start(value.len(), true)?;
+            writer.string_start(Some(value.len()), true)?;
             writer.string_fragment(value)?;
             writer.string_end()
         })
@@ -295,7 +304,7 @@ impl Consumer for Writer {
         self.perform(|writer| {
             match value {
                 ScalarRef::Text(value) => {
-                    writer.string_start(value.len(), false)?;
+                    writer.string_start(Some(value.len()), false)?;
                     writer.string_fragment(value)?;
                     return writer.string_end();
                 }
@@ -326,7 +335,7 @@ impl Consumer for Writer {
         })
     }
 
-    fn text_start(&mut self, length: usize, _: &Options) -> Result<(), Error> {
+    fn text_start(&mut self, length: Option<usize>, _: &Options) -> Result<(), Error> {
         self.perform(|writer| writer.string_start(length, false))
     }
     fn text_fragment(&mut self, value: &str, _: &Options) -> Result<(), Error> {

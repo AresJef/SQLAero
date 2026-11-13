@@ -20,7 +20,7 @@ fn native_facts_reach_a_non_sql_consumer_without_numeric_policy() {
             }
             Ok(())
         }
-        fn text_start(&mut self, _: usize, _: &()) -> Result<(), Self::Error> {
+        fn text_start(&mut self, _: Option<usize>, _: &()) -> Result<(), Self::Error> {
             Ok(())
         }
         fn text_fragment(&mut self, _: &str, _: &()) -> Result<(), Self::Error> {

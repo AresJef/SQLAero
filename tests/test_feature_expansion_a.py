@@ -2,7 +2,7 @@
 
 # pyright: reportPrivateUsage=false
 
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from decimal import Decimal
 from typing import Any, cast
 
@@ -66,7 +66,7 @@ def test_native_scalar_sink_keeps_long_text_and_binary_work_windows(no_backslash
         )
 
 
-def test_native_scalar_sink_retains_approved_subclass_protocols() -> None:
+def test_native_scalar_sink_reads_actual_subclass_base_values() -> None:
     class Integer(int):
         def __int__(self) -> int:
             return 42
@@ -79,7 +79,7 @@ def test_native_scalar_sink_retains_approved_subclass_protocols() -> None:
         def __str__(self) -> str:
             return "converted"
 
-    for value, expected in [(Integer(1), b"42"), (Float(9), b"1.25e0"), (Text("base"), b"'converted'")]:
+    for value, expected in [(Integer(1), b"1"), (Float(9), b"9.0e0"), (Text("base"), b"'base'")]:
         assert native_scalar(value) == expected
 
 
@@ -194,13 +194,13 @@ def test_structured_numpy_void_field_failure_keeps_original_exception_and_index(
     np: Any = pytest.importorskip("numpy")
     original = MemoryError("actual void field conversion failure")
 
-    class FailingInt(int):
-        def __int__(self) -> int:
+    class FailingZone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta | None:
             raise original
 
     record = np.zeros(1, dtype=[("first", "i8"), ("second", object)])[0]
     record["first"] = 7
-    record["second"] = FailingInt(9)
+    record["second"] = datetime(2026, 11, 13, tzinfo=FailingZone())
     def text_row(data: object) -> list[bytes]:
         return _sqlaero._bind_sql("SELECT %s,%s", data)
 

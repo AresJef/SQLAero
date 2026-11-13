@@ -6,6 +6,23 @@ from typing import Any, Generic, Iterator, Literal, Never, Self, SupportsIndex, 
 from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as MySQLErrorCode
 
 @final
+class JSON:
+    """Lazy JSON text parameter; contents are serialized by Escape at each call."""
+    def __new__(cls, obj: object, *, allow_nan: bool = True) -> Self: ...
+    @property
+    def data(self) -> object:
+        """Original read-only payload reference; underlying contents may change between calls."""
+        ...
+    @property
+    def allow_nan(self) -> bool:
+        """True maps nonfinite numbers to null; False raises ValueError."""
+        ...
+
+def json_dumps(obj: object, *, allow_nan: bool = True) -> bytes:
+    """Serialize compact UTF-8 JSON. Options require exact bool; pass wrapped.data, not JSON wrappers."""
+    ...
+
+@final
 class ColumnInfo:
     """Immutable metadata for one column at its original result position."""
     def __new__(cls, _factory_only: Never, /) -> Self: ...

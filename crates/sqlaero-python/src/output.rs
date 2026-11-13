@@ -553,6 +553,55 @@ pub(crate) fn bytes<'py>(py: Python<'py>, data: &[u8]) -> PyResult<Bound<'py, Py
         )
     }
 }
+
+/// Publish final bytes with bounded copies and the current call's control view.
+/// The new Python object remains private until every byte is initialized.
+pub(crate) fn bytes_bounded<'py>(
+    py: Python<'py>,
+    data: &[u8],
+    budget: Option<&sqlaero_core::transport::deadline::IoBudget>,
+) -> PyResult<Bound<'py, PyAny>> {
+    const WINDOW: usize = 256 * 1024;
+    crate::input::checkpoint(py, budget)?;
+    if data.len() <= WINDOW {
+        let value = bytes(py, data)?;
+        crate::input::checkpoint(py, budget)?;
+        return Ok(value);
+    }
+    let length = isize::try_from(data.len()).map_err(|_| errors::memory_error(py))?;
+    // SAFETY: the public constructor accepts NULL data to allocate a fresh,
+    // unique bytes object of this checked length. The owner never escapes
+    // before initialization, and deallocation does not inspect payload bytes.
+    let value = unsafe {
+        Bound::<PyAny>::from_owned_ptr_or_err(
+            py,
+            pyo3::ffi::PyBytes_FromStringAndSize(std::ptr::null(), length),
+        )?
+    };
+    // SAFETY: this exact, freshly allocated bytes object has no other owner.
+    // The public API exposes its buffer for initialization in precisely this
+    // constructor case. No Rust shared reference to that buffer exists yet.
+    let target = unsafe { pyo3::ffi::PyBytes_AsString(value.as_ptr()).cast::<u8>() };
+    if target.is_null() {
+        return Err(PyErr::fetch(py));
+    }
+    for (index, source) in data.chunks(WINDOW).enumerate() {
+        crate::input::checkpoint(py, budget)?;
+        // SAFETY: every range lies inside the measured bytes allocation;
+        // source is a disjoint live Rust slice. Its immutable owner and the
+        // private Python bytes owner remain live across signal checkpoints.
+        // No partially initialized bytes object is published to Python code.
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                source.as_ptr(),
+                target.add(index * WINDOW),
+                source.len(),
+            );
+        }
+    }
+    crate::input::checkpoint(py, budget)?;
+    Ok(value)
+}
 pub(crate) fn codepoints<'py>(py: Python<'py>, data: &[u32]) -> PyResult<Bound<'py, PyString>> {
     // SAFETY: every u32 is a Unicode code point (surrogates are intentional
     // only under surrogateescape); CPython copies the initialized slice.

@@ -5,9 +5,7 @@ use super::{ScalarTypes, clock, date, delta, integer_to};
 use crate::{errors, output};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{
-    PyBytes, PyDate, PyDateTime, PyDelta, PyFloat, PyInt, PyString, PyTime, PyTuple,
-};
+use pyo3::types::{PyDate, PyDateTime, PyDelta, PyTime, PyTuple};
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::ValueRef;
 use sqlaero_core::transport::deadline::IoBudget;
@@ -26,30 +24,7 @@ pub(super) fn write<D: Destination + ?Sized>(
         struct_time(value.cast::<PyTuple>()?, result, context)?;
         return Ok(true);
     }
-    if value.is_instance_of::<PyString>() {
-        result.text(&value.str()?, context, budget)?;
-    } else if value.is_instance_of::<PyInt>() {
-        // SAFETY: the public protocol returns a new exact int or its original
-        // exception. No source slot or foreign view is held across the call.
-        let converted = unsafe {
-            Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Long(value.as_ptr()))?
-        };
-        integer_to(&converted, result, context)?;
-    } else if value.is_instance_of::<PyFloat>() {
-        // SAFETY: formal float conversion preserves the subclass __float__
-        // behavior, unlike directly reading its base PyFloat storage.
-        let converted = unsafe {
-            Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyNumber_Float(value.as_ptr()))?
-        };
-        emit(result, py, ValueRef::Float(converted.extract()?), context)?;
-    } else if value.is_instance_of::<PyBytes>() {
-        // SAFETY: the bytes protocol is used only for a true bytes subclass;
-        // bytearray and memoryview cannot enter this branch.
-        let converted = unsafe {
-            Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyObject_Bytes(value.as_ptr()))?
-        };
-        result.binary(py, converted.cast::<PyBytes>()?.as_bytes(), context, budget)?;
-    } else if value.is_instance_of::<PyDateTime>() {
+    if value.is_instance_of::<PyDateTime>() {
         types.write_datetime_to(value.cast::<PyDateTime>()?, result, context)?;
     } else if value.is_instance_of::<PyDate>() {
         emit(

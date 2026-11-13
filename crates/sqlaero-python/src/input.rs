@@ -4,8 +4,8 @@ use crate::errors;
 use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
 use pyo3::types::{
-    PyBool, PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyFloat, PyInt,
-    PyString, PyTime, PyTimeAccess, PyType, PyTzInfoAccess,
+    PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyInt, PyString, PyTime,
+    PyTimeAccess, PyType, PyTzInfoAccess,
 };
 use sink::{Destination, emit};
 use sqlaero_core::bind::scalar::{Clock, Date, ScalarError};
@@ -19,16 +19,19 @@ pub(crate) mod arrow;
 pub(crate) mod control;
 mod decimal;
 mod diagnostic;
+pub(crate) mod json;
 pub(crate) mod sink;
 pub(crate) use diagnostic::binary_diagnostic;
 pub(crate) mod numpy;
 pub(crate) mod pandas;
 pub(crate) mod polars;
+pub(crate) mod primitive;
 pub(crate) mod probe;
 pub(crate) mod sequence;
 pub(crate) mod source;
 pub(crate) mod standard;
 pub(crate) mod temporal;
+pub(crate) mod unicode;
 
 /// Allocate one boundary-owned strategy fallibly, using the same global
 /// allocation/layout that Box will later release. No upstream storage is read.
@@ -172,27 +175,18 @@ impl ScalarTypes {
         budget: Option<&IoBudget>,
     ) -> PyResult<bool> {
         let py = value.py();
-        if value.is_none() {
-            return emit(output, py, ValueRef::Null, context).map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyBool>() {
-            return emit(output, py, ValueRef::Boolean(value.extract()?), context).map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyInt>() {
-            return integer_to(value, output, context).map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyFloat>() {
-            return emit(output, py, ValueRef::Float(value.extract()?), context).map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyString>() {
-            return output
-                .text(value.cast::<PyString>()?, context, budget)
-                .map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyBytes>() {
-            return output
-                .binary(py, value.cast::<PyBytes>()?.as_bytes(), context, budget)
-                .map(|()| true);
+        if let Some(source) = primitive::read(value)? {
+            match source {
+                primitive::Source::Native(ValueRef::Bytes(bytes)) => {
+                    output.binary(py, bytes, context, budget)?;
+                }
+                primitive::Source::Native(value) => emit(output, py, value, context)?,
+                primitive::Source::Text(value) => output.text(value, context, budget)?,
+                primitive::Source::WideInteger { value, overflow } => {
+                    integer_wide(value.as_any(), output, context, overflow)?;
+                }
+            }
+            return Ok(true);
         }
         self.write_extended(value, output, context, budget)
     }
@@ -207,6 +201,9 @@ impl ScalarTypes {
         budget: Option<&IoBudget>,
     ) -> PyResult<bool> {
         let py = value.py();
+        if let Ok(wrapper) = value.cast::<json::Json>() {
+            return json::mysql(wrapper, self, output, context, budget).map(|()| true);
+        }
         if value.is_exact_instance_of::<PyDateTime>() {
             return self
                 .write_datetime_to(value.cast::<PyDateTime>()?, output, context)
@@ -643,7 +640,7 @@ pub(crate) fn check(py: Python<'_>, budget: &IoBudget) -> PyResult<()> {
     py.check_signals()?;
     budget.check().map_err(|error| errors::timeout(py, error))
 }
-fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
+pub(crate) fn checkpoint(py: Python<'_>, budget: Option<&IoBudget>) -> PyResult<()> {
     match budget {
         Some(budget) => check(py, budget),
         None => py.check_signals(),
@@ -730,7 +727,7 @@ pub(crate) fn text_utf8(
     }
     checkpoint(py, budget)?;
     output
-        .text_start(source.len(), context)
+        .text_start(Some(source.len()), context)
         .map_err(|error| convert_error(error, 0))?;
     let mut start = 0;
     while start < source.len() {

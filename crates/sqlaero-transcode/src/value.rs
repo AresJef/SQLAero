@@ -89,10 +89,16 @@ pub trait Consumer {
     /// Returns the target's actual policy, encoding or capacity failure.
     fn write(&mut self, value: ScalarRef<'_>, context: &Self::Context) -> Result<(), Self::Error>;
 
-    /// Begin one exact-length UTF-8 value, independently of output encoding.
+    /// Begin one text value, with its exact UTF-8 size when already known.
+    /// None permits one-pass bounded conversion of immutable source codepoints;
+    /// the adapter must still consume the whole original source exactly once.
     /// # Errors
     /// Returns an actual preparation or destination failure.
-    fn text_start(&mut self, utf8_len: usize, context: &Self::Context) -> Result<(), Self::Error>;
+    fn text_start(
+        &mut self,
+        utf8_len: Option<usize>,
+        context: &Self::Context,
+    ) -> Result<(), Self::Error>;
     /// Consume a complete-character fragment before the borrow expires.
     /// # Errors
     /// Returns an actual conversion or destination failure.

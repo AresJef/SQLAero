@@ -1035,7 +1035,7 @@ fn write_bytes(
     super::check(py, budget)?;
     if text {
         output
-            .text_start(length, context)
+            .text_start(Some(length), context)
             .map_err(|error| sink::failure(py, error))?;
     } else {
         output

@@ -95,7 +95,7 @@ impl ValueSink for TextSink<'_> {
         Ok(())
     }
 
-    fn text_start(&mut self, _: usize, context: &Context) -> Result<(), ValueError> {
+    fn text_start(&mut self, _: Option<usize>, context: &Context) -> Result<(), ValueError> {
         writer::append(self.output, b"'", context.limit)?;
         Ok(())
     }
@@ -178,7 +178,7 @@ mod tests {
                 self.0.extend_from_slice(&value.to_le_bytes());
                 Ok(())
             }
-            fn text_start(&mut self, _: usize, _: &Context) -> Result<(), Self::Error> {
+            fn text_start(&mut self, _: Option<usize>, _: &Context) -> Result<(), Self::Error> {
                 Err("integer-only contract test")
             }
             fn text_fragment(&mut self, _: &str, _: &Context) -> Result<(), Self::Error> {
@@ -214,7 +214,7 @@ mod tests {
             };
             let mut text = Vec::new();
             let mut sink = TextSink::new(&mut text);
-            sink.text_start(7, &context).unwrap();
+            sink.text_start(Some(7), &context).unwrap();
             sink.text_fragment("中'", &context).unwrap();
             sink.text_fragment("é", &context).unwrap();
             sink.text_end(&context).unwrap();

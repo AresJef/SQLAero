@@ -1,6 +1,8 @@
 """Public native synchronous MySQL entry points."""
 
 from ._sqlaero import (
+    JSON as JSON,
+    json_dumps as json_dumps,
     connect as connect,
     Connection as Connection,
     Cursor as Cursor,

@@ -45,11 +45,22 @@ fn unicode_and_controls_are_escaped_without_ascii_replacement() {
 fn bounded_fragments_form_exactly_one_string() {
     let mut writer = Writer::new();
     let options = Options::default();
-    writer.text_start(6, &options).unwrap();
+    writer.text_start(Some(6), &options).unwrap();
     writer.text_fragment("a", &options).unwrap();
     writer.text_fragment("😀\0", &options).unwrap();
     writer.text_end(&options).unwrap();
     assert_eq!(writer.finish().unwrap(), "\"a😀\\u0000\"".as_bytes());
+}
+
+#[test]
+fn unmeasured_utf8_fragments_keep_one_pass_source_conversion() {
+    let mut writer = Writer::new();
+    let options = Options::default();
+    writer.text_start(None, &options).unwrap();
+    writer.text_fragment("é", &options).unwrap();
+    writer.text_fragment("😀", &options).unwrap();
+    writer.text_end(&options).unwrap();
+    assert_eq!(writer.finish().unwrap(), "\"é😀\"".as_bytes());
 }
 
 #[test]
@@ -80,7 +91,7 @@ fn incomplete_or_reused_root_cannot_produce_a_successful_document() {
     assert!(writer.write(ScalarRef::Null, &Options::default()).is_err());
     assert!(writer.finish().is_err());
     let mut writer = Writer::new();
-    writer.text_start(2, &Options::default()).unwrap();
+    writer.text_start(Some(2), &Options::default()).unwrap();
     assert!(writer.text_fragment("😀", &Options::default()).is_err());
     assert!(writer.finish().is_err());
     let mut writer = Writer::new();

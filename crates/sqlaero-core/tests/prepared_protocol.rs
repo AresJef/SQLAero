@@ -209,7 +209,7 @@ fn real_prepared_parameters_preserve_native_values_long_chunks_and_reusable_hand
         ] {
             parameters.write(value, &context()).unwrap();
         }
-        parameters.text_start(text.len(), &context()).unwrap();
+        parameters.text_start(Some(text.len()), &context()).unwrap();
         // Each fragment ends on a known character boundary of this fixture.
         for fragment in text.as_bytes().chunks(64_000) {
             parameters
@@ -572,7 +572,7 @@ fn real_compression_preserves_text_prepared_tls_and_actual_negotiated_status() {
                     .collect();
                 let mut parameters =
                     Parameters::new(statement.id, statement.parameters, LIMIT).unwrap();
-                parameters.text_start(text.len(), &context()).unwrap();
+                parameters.text_start(Some(text.len()), &context()).unwrap();
                 for fragment in text.as_bytes().chunks(7 * 8192) {
                     parameters
                         .text_fragment(std::str::from_utf8(fragment).unwrap(), &context())

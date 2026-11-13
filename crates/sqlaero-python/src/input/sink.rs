@@ -1,7 +1,7 @@
 //! Boundary destinations for the single scalar/provider recognition path.
 
 use super::source::{CellWriter, PreparedSource};
-use super::{binary, codec_error, scalar_error, text};
+use super::{binary, scalar_error};
 use crate::errors;
 use pyo3::prelude::*;
 use pyo3::types::PyString;
@@ -31,7 +31,7 @@ pub(crate) trait Destination {
         budget: Option<&IoBudget>,
     ) -> PyResult<()>;
 
-    fn text_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError>;
+    fn text_start(&mut self, length: Option<usize>, context: &Context) -> Result<(), ValueError>;
     fn text_fragment(&mut self, text: &str, context: &Context) -> Result<(), ValueError>;
     fn text_end(&mut self, context: &Context) -> Result<(), ValueError>;
     fn bytes_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError>;
@@ -78,7 +78,14 @@ impl Destination for Vec<u8> {
         context: &Context,
         budget: Option<&IoBudget>,
     ) -> PyResult<()> {
-        text(source, self, context, true, budget)
+        super::unicode::write(
+            source,
+            &mut TextSink::new(self),
+            context,
+            budget,
+            context.codec.name(),
+            |error, start, fragment| unicode_failure(source, context, error, start, fragment),
+        )
     }
 
     fn binary(
@@ -90,7 +97,7 @@ impl Destination for Vec<u8> {
     ) -> PyResult<()> {
         binary(py, source, self, context.limit, budget)
     }
-    fn text_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError> {
+    fn text_start(&mut self, length: Option<usize>, context: &Context) -> Result<(), ValueError> {
         TextSink::new(self).text_start(length, context)
     }
     fn text_fragment(&mut self, text: &str, context: &Context) -> Result<(), ValueError> {
@@ -162,46 +169,14 @@ impl Destination for Native<'_> {
         context: &Context,
         budget: Option<&IoBudget>,
     ) -> PyResult<()> {
-        super::checkpoint(source.py(), budget)?;
-        let value = super::unicode(source, context)?;
-        let convert_error = |error, start| match error {
-            ValueError::Encoding(error) => {
-                let error = match error {
-                    CodecError::Encode { offset, point } => CodecError::Encode {
-                        offset: start + offset,
-                        point,
-                    },
-                    error => error,
-                };
-                codec_error(source, value, context.codec.name(), error)
-            }
-            error => failure(source.py(), error),
-        };
-        if value.len() <= super::WORK_BYTES {
-            self.0
-                .write(ValueRef::Text(value), context)
-                .map_err(|error| convert_error(error, 0))?;
-        } else {
-            self.0
-                .text_start(value.len(), context)
-                .map_err(|error| convert_error(error, 0))?;
-            let mut start = 0;
-            while start < value.len() {
-                super::checkpoint(source.py(), budget)?;
-                let mut end = (start + super::WORK_BYTES).min(value.len());
-                while !value.is_char_boundary(end) {
-                    end -= 1;
-                }
-                self.0
-                    .text_fragment(&value[start..end], context)
-                    .map_err(|error| convert_error(error, start))?;
-                start = end;
-            }
-            self.0
-                .text_end(context)
-                .map_err(|error| convert_error(error, 0))?;
-        }
-        super::checkpoint(source.py(), budget)
+        super::unicode::write(
+            source,
+            self.0,
+            context,
+            budget,
+            context.codec.name(),
+            |error, start, fragment| unicode_failure(source, context, error, start, fragment),
+        )
     }
 
     fn binary(
@@ -232,7 +207,7 @@ impl Destination for Native<'_> {
         }
         super::checkpoint(py, budget)
     }
-    fn text_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError> {
+    fn text_start(&mut self, length: Option<usize>, context: &Context) -> Result<(), ValueError> {
         self.0.text_start(length, context)
     }
     fn text_fragment(&mut self, text: &str, context: &Context) -> Result<(), ValueError> {
@@ -313,6 +288,37 @@ pub(crate) fn emit(
     destination
         .write(value, context)
         .map_err(|error| failure(py, error))
+}
+
+fn unicode_failure(
+    source: &Bound<'_, PyString>,
+    context: &Context,
+    error: ValueError,
+    start: usize,
+    fragment: &str,
+) -> PyErr {
+    match error {
+        ValueError::Encoding(CodecError::Encode { offset, point }) => {
+            let position = start + fragment[..offset].chars().count();
+            match errors::message(
+                source.py(),
+                format_args!(
+                    "character U+{point:04X} is not representable in MySQL {}",
+                    context.codec.name()
+                ),
+            ) {
+                Ok(reason) => super::encode_error(
+                    source,
+                    context.codec.name(),
+                    position,
+                    position + 1,
+                    &reason,
+                ),
+                Err(error) => error,
+            }
+        }
+        error => failure(source.py(), error),
+    }
 }
 
 pub(crate) fn failure(py: Python<'_>, error: ValueError) -> PyErr {
@@ -422,7 +428,7 @@ impl Destination for RoleSink<'_> {
         self.scalar();
         self.output.binary(py, source, context, budget)
     }
-    fn text_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError> {
+    fn text_start(&mut self, length: Option<usize>, context: &Context) -> Result<(), ValueError> {
         self.scalar();
         self.output.text_start(length, context)
     }

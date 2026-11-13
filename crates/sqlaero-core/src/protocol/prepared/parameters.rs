@@ -19,7 +19,7 @@ pub struct Parameters {
 enum Fragment {
     Text {
         prefix: usize,
-        expected: usize,
+        expected: Option<usize>,
         written: usize,
     },
     Bytes {
@@ -95,7 +95,7 @@ impl Parameters {
         Ok(())
     }
 
-    fn begin_text(&mut self, utf8_length: usize) -> Result<(), ValueError> {
+    fn begin_text(&mut self, utf8_length: Option<usize>) -> Result<(), ValueError> {
         self.ready()?;
         let prefix = self.output.len();
         // The marker carries the actual encoded byte count, filled at end.
@@ -119,7 +119,7 @@ impl Parameters {
         };
         let next = written
             .checked_add(value.len())
-            .filter(|next| next <= expected)
+            .filter(|next| expected.is_none_or(|expected| *next <= expected))
             .ok_or(WireError::Malformed("text parameter source length changed"))?;
         context.codec.encode(value, &mut self.output, self.limit)?;
         if let Some(Fragment::Text { written, .. }) = &mut self.fragment {
@@ -137,7 +137,7 @@ impl Parameters {
         else {
             return Err(WireError::Malformed("text end without a text parameter").into());
         };
-        if written != expected {
+        if expected.is_some_and(|expected| written != expected) {
             return Err(WireError::Malformed("incomplete prepared text parameter").into());
         }
         let length = (self.output.len() - prefix - 9) as u64;
@@ -319,7 +319,7 @@ impl Parameters {
                 252
             }
             ValueRef::Text(value) => {
-                self.begin_text(value.len())?;
+                self.begin_text(Some(value.len()))?;
                 self.append_text(value, context)?;
                 self.finish_text()?;
                 253
@@ -448,7 +448,7 @@ impl ValueSink for Parameters {
         }
     }
 
-    fn text_start(&mut self, utf8_length: usize, _: &Context) -> Result<(), ValueError> {
+    fn text_start(&mut self, utf8_length: Option<usize>, _: &Context) -> Result<(), ValueError> {
         let result = self.begin_text(utf8_length);
         if result.is_err() {
             self.failed = true;
@@ -674,7 +674,7 @@ mod tests {
                 .charset,
         );
         let mut writer = Parameters::new(1, 2, 4096).unwrap();
-        writer.text_start(3, &context).unwrap();
+        writer.text_start(Some(3), &context).unwrap();
         writer.text_fragment("é", &context).unwrap();
         writer.text_fragment("'", &context).unwrap();
         writer.text_end(&context).unwrap();
@@ -686,6 +686,24 @@ mod tests {
     }
 
     #[test]
+    fn unmeasured_source_utf8_keeps_actual_encoding_length_and_one_position() {
+        let mut context = context();
+        context.codec = Codec::new(
+            crate::charset::resolve(Some("latin1"), None)
+                .unwrap()
+                .charset,
+        );
+        let mut writer = Parameters::new(1, 1, 4096).unwrap();
+        writer.text_start(None, &context).unwrap();
+        writer.text_fragment("é", &context).unwrap();
+        writer.text_fragment("'", &context).unwrap();
+        writer.text_end(&context).unwrap();
+        let bytes = writer.finish().unwrap();
+        assert_eq!(&bytes[12..14], &[253, 0]);
+        assert_eq!(&bytes[14..], &[254, 2, 0, 0, 0, 0, 0, 0, 0, 0xe9, b'\'']);
+    }
+
+    #[test]
     fn fragmented_payload_cannot_finish_after_wrong_lengths_or_encoding_error() {
         let mut writer = Parameters::new(1, 1, 4096).unwrap();
         writer.bytes_start(3, &context()).unwrap();
@@ -693,12 +711,12 @@ mod tests {
         assert!(writer.bytes_end(&context()).is_err());
         assert!(writer.finish().is_err());
         let mut writer = Parameters::new(1, 1, 4096).unwrap();
-        writer.text_start(3, &context()).unwrap();
+        writer.text_start(Some(3), &context()).unwrap();
         writer.text_fragment("ab", &context()).unwrap();
         assert!(writer.text_end(&context()).is_err());
         assert!(writer.finish().is_err());
         let mut writer = Parameters::new(1, 1, 4096).unwrap();
-        writer.text_start(1, &context()).unwrap();
+        writer.text_start(Some(1), &context()).unwrap();
         assert!(writer.text_fragment("é", &context()).is_err());
         assert!(writer.finish().is_err());
         let mut ascii = context();
@@ -708,7 +726,7 @@ mod tests {
                 .charset,
         );
         let mut writer = Parameters::new(1, 1, 4096).unwrap();
-        writer.text_start(2, &ascii).unwrap();
+        writer.text_start(Some(2), &ascii).unwrap();
         assert!(writer.text_fragment("é", &ascii).is_err());
         assert!(writer.finish().is_err());
     }
