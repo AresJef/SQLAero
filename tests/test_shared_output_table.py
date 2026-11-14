@@ -7,7 +7,7 @@ must agree with their own target policy, rather than with each other.
 
 import json
 import math
-from datetime import date, datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone, tzinfo
 from time import struct_time
 from zoneinfo import ZoneInfo
 
@@ -239,3 +239,68 @@ def test_struct_time_table_unused_auxiliary_fields_are_not_sql_inputs() -> None:
     with pytest.raises(TypeError) as caught:
         json_dumps(value)
     assert "tm_wday" in "\n".join(caught.value.__notes__)
+
+
+@pytest.mark.parametrize(("parts", "offset", "sql", "error"), [
+    (_STRUCT_PARTS, 28800, "'2024-01-01 19:04:05'", None),
+    (_STRUCT_PARTS, -18000, "'2024-01-02 08:04:05'", None),
+    (_STRUCT_PARTS, 0, "'2024-01-02 03:04:05'", None),
+    ((2024, 13, 2, 3, 4, 5, 1, 2, -1), 0, None, ValueError),
+    (_STRUCT_PARTS, 1.5, None, TypeError),
+    (_STRUCT_PARTS, 86400, None, ValueError),
+    ((2024, 13, 31, 25, 59, 61, 999, 999, 999), None, "'2024-13-31 25:59:61'", None),
+    ((True, 1, 2, 3, 4, 5, 1, 2, -1), None, "'0001-01-02 03:04:05'", None),
+], ids=["012-11", "012-12", "012-13", "012-14", "012-15", "012-16", "012-02", "012-08"])
+def test_struct_time_table_original_fields_and_mysql_policy(parts, offset, sql, error) -> None:
+    source = struct_time(parts, {"tm_gmtoff": offset})
+    if error is None:
+        assert _sqlaero._escape_projection(source) == sql
+    else:
+        with pytest.raises(error):
+            _sqlaero._escape_projection(source)
+    assert json.loads(json_dumps(source)) == dict(zip(_STRUCT_FIELDS, (*parts, None, offset)))
+    if parts[0] is True:
+        assert json.loads(json_dumps(source))["tm_year"] is True
+
+
+@pytest.mark.parametrize(("base", "args", "sql", "document"), [
+    (date, (2026, 11, 12), "'2026-11-12'", b'"2026-11-12"'),
+    (datetime, (2026, 11, 12, 8, 9, 10, 123456), "'2026-11-12 08:09:10.123456'",
+     b'"2026-11-12T08:09:10.123456"'),
+    (time, (8, 9, 10, 120000), "'08:09:10.120000'", b'"08:09:10.120000"'),
+    (timedelta, (1, 90), "'24:01:30'", b'"P1DT90S"'),
+], ids=["008-06", "009-16", "010-11", "011-10"])
+def test_temporal_table_true_subclass_cannot_replace_base_storage(base, args, sql, document) -> None:
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("table real subclass must use actual base fields")
+    attrs = {name: property(forbidden) for name in
+             ("year", "month", "day", "hour", "minute", "second", "microsecond",
+              "days", "seconds", "microseconds")}
+    attrs.update(__str__=forbidden, isoformat=forbidden, total_seconds=forbidden)
+    source = type("StoredTemporal", (base,), attrs)(*args)
+    assert _sqlaero._escape_projection(source) == sql
+    assert json_dumps(source) == document
+
+
+def test_temporal_table_absent_offset_is_not_a_fabricated_utc_offset() -> None:
+    class NoOffset(tzinfo):
+        def utcoffset(self, _dt):
+            return None
+    stamp = datetime(2026, 11, 12, 8, tzinfo=NoOffset())
+    clock = time(8, tzinfo=NoOffset())
+    assert _sqlaero._escape_projection(stamp) == "'2026-11-12 08:00:00'"
+    assert json_dumps(stamp) == b'"2026-11-12T08:00:00"'
+    assert _sqlaero._escape_projection(clock) == "'08:00:00'"
+    assert json_dumps(clock) == b'"08:00:00"'
+
+
+def test_time_table_mysql_ignores_but_json_preserves_offset_callback_error() -> None:
+    original = MemoryError("original time offset")
+    class BrokenOffset(tzinfo):
+        def utcoffset(self, _dt):
+            raise original
+    source = time(8, tzinfo=BrokenOffset())
+    assert _sqlaero._escape_projection(source) == "'08:00:00'"
+    with pytest.raises(MemoryError) as caught:
+        json_dumps(source)
+    assert caught.value is original

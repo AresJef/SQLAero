@@ -380,4 +380,36 @@ mod utc_tests {
         assert!(decompose_utc(1, TimeUnit::Month, 1, 0).is_err());
         assert!(decompose_utc(1, TimeUnit::Second, 0, 0).is_err());
     }
+
+    #[test]
+    fn oversized_finite_ticks_fail_without_wrapping_or_a_partial_value() {
+        // Both extreme products fit i128; scaling them into weeks does not.
+        // The fact contract allows u64 multipliers even though NumPy's usual
+        // dtype constructors offer a much narrower multiplier domain.
+        for ticks in [i64::MIN, i64::MAX] {
+            for kind in [TimeKind::DateTime, TimeKind::Duration] {
+                assert!(matches!(
+                    decompose(ticks, TimeUnit::Week, u64::MAX, kind),
+                    Err(Error::Range(_))
+                ));
+            }
+            assert!(matches!(
+                decompose_utc(ticks, TimeUnit::Week, u64::MAX, 0),
+                Err(Error::Range(_))
+            ));
+            assert!(matches!(
+                decompose_clock(ticks, TimeUnit::Week, u64::MAX),
+                Err(Error::Range(_))
+            ));
+        }
+        // A later valid call is independent of the rejected arithmetic.
+        assert_eq!(
+            decompose(1, TimeUnit::Second, 1, TimeKind::Duration).unwrap(),
+            Value::Duration {
+                negative: false,
+                second: 1,
+                nanosecond: 0
+            }
+        );
+    }
 }

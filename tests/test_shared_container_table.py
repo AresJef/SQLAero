@@ -9,7 +9,7 @@ from uuid import UUID
 import pytest
 
 from sqlaero import _sqlaero, json_dumps
-from sqlaero.errors import DataError
+from sqlaero.errors import DataError, SQLAeroError
 
 
 Point = namedtuple("Point", "x y")
@@ -125,3 +125,33 @@ def test_set_table_uses_real_iteration_without_sorting_or_flattening(base: type)
     assert json_dumps(base([math.nan])) == b"[null]"
     with pytest.raises(ValueError):
         json_dumps(base([math.nan]), allow_nan=False)
+
+
+def test_container_table_invalid_leaf_and_cycle_keep_real_locations() -> None:
+    for convert in (_sqlaero._escape_projection, json_dumps):
+        with pytest.raises(TypeError) as caught:
+            convert([7, bytearray(b"ab")])
+        assert "[1]" in "\n".join(caught.value.__notes__)
+    source = [7]
+    source.append(source)
+    with pytest.raises(SQLAeroError, match="cycle"):
+        _sqlaero._escape_projection(source)
+    with pytest.raises(ValueError, match="cycle"):
+        json_dumps(source)
+    # An exception cannot leave ancestry in the next independent invocation.
+    assert _sqlaero._escape_projection([7, [8]]) == ("7", "(8)")
+    assert json_dumps([7, [8]]) == b"[7,[8]]"
+
+
+@pytest.mark.parametrize(("factory", "document"), [
+    (list, b"[]"), (tuple, b"[]"), (dict, b"{}"), (set, b"[]"),
+    (frozenset, b"[]"), (lambda: range(0), b"[]"), (Empty, b"{}"),
+    (lambda: {}.keys(), b"[]"), (lambda: {}.values(), b"[]"), (lambda: {}.items(), b"[]"),
+])
+def test_empty_container_table_root_keeps_one_zero_parameter_call(factory, document) -> None:
+    source = factory()
+    assert _sqlaero._escape_projection(source) == ()
+    assert _sqlaero._escape_projection(source, itemize=False) == "()"
+    for itemize in (False, True):
+        assert _sqlaero._escape_projection(source, many=True, itemize=itemize) == [()]
+    assert json_dumps(source) == document
