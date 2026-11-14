@@ -70,6 +70,7 @@ pub struct Writer {
     integer: Option<Integer>,
     root: bool,
     failed: bool,
+    drained: bool,
 }
 
 impl Writer {
@@ -82,9 +83,51 @@ impl Writer {
     /// # Errors
     /// Rejects an empty, incomplete or previously failed document.
     pub fn finish(self) -> Result<String, Error> {
+        self.complete()?;
+        if self.drained {
+            return Err(Error::State("document prefix was already consumed"));
+        }
+        Ok(self.output)
+    }
+
+    fn complete(&self) -> Result<(), Error> {
         if self.failed || !self.root || !self.frames.is_empty() || self.fragment_open() {
             return Err(Error::State("document is incomplete or failed"));
         }
+        Ok(())
+    }
+
+    /// Read the current complete-character UTF-8 fragment without copying it.
+    /// A fragment may end inside a JSON value; its consumer retains the prefix
+    /// privately until the complete document has successfully finished.
+    /// # Errors
+    /// A failed writer cannot publish any further fragment.
+    pub fn pending_output(&self) -> Result<&str, Error> {
+        if self.failed {
+            return Err(Error::State("document already failed"));
+        }
+        Ok(&self.output)
+    }
+
+    /// Retire only a successfully consumed fragment, retaining its allocation
+    /// and all container/string/integer state for the next native write.
+    /// # Errors
+    /// Rejects a failed writer instead of resetting or hiding its failure.
+    pub fn consume_output(&mut self) -> Result<(), Error> {
+        if self.failed {
+            return Err(Error::State("document already failed"));
+        }
+        self.drained |= !self.output.is_empty();
+        self.output.clear();
+        Ok(())
+    }
+
+    /// Finish a fragmented document and return only its unconsumed tail.
+    /// The caller owns all earlier fragments and must discard them on failure.
+    /// # Errors
+    /// Rejects an empty, incomplete or previously failed document.
+    pub fn finish_tail(self) -> Result<String, Error> {
+        self.complete()?;
         Ok(self.output)
     }
 

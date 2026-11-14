@@ -3,6 +3,7 @@
 use super::{Serialize, failure};
 use crate::input::cell::{NativeFailure, Schema, Target};
 use crate::input::control::Checkpoint;
+use crate::input::sink::Destination;
 use crate::input::source::{PreparedSource, Shape};
 use crate::{errors, input};
 use pyo3::exceptions::PyValueError;
@@ -12,12 +13,12 @@ use sqlaero_core::json::Error;
 use sqlaero_transcode::diagnostic::{Coordinate, Path};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
-struct Cell<'a, 'b, 'c> {
-    state: &'a mut Serialize<'b>,
+struct Cell<'a, 'b, 'c, D: Destination + ?Sized> {
+    state: &'a mut Serialize<'b, D>,
     path: &'a Path<'c>,
 }
 
-impl Target for Cell<'_, '_, '_> {
+impl<D: Destination + ?Sized> Target for Cell<'_, '_, '_, D> {
     fn needs_field_names(&self) -> bool {
         true
     }
@@ -48,28 +49,18 @@ impl Target for Cell<'_, '_, '_> {
         Ok(())
     }
     fn native_scalar(&mut self, value: ScalarRef<'_>) -> Result<(), NativeFailure> {
-        self.state
-            .writer
-            .write(value, &self.state.options)
-            .map_err(NativeFailure::Json)
+        self.state.writer.write(value, &self.state.options)
     }
     fn native_text_start(&mut self, length: usize) -> Result<(), NativeFailure> {
         self.state
             .writer
             .text_start(Some(length), &self.state.options)
-            .map_err(NativeFailure::Json)
     }
     fn native_text_fragment(&mut self, value: &str) -> Result<(), NativeFailure> {
-        self.state
-            .writer
-            .text_fragment(value, &self.state.options)
-            .map_err(NativeFailure::Json)
+        self.state.writer.text_fragment(value, &self.state.options)
     }
     fn native_text_end(&mut self) -> Result<(), NativeFailure> {
-        self.state
-            .writer
-            .text_end(&self.state.options)
-            .map_err(NativeFailure::Json)
+        self.state.writer.text_end(&self.state.options)
     }
     fn text_encoding(&self) -> &'static str {
         "utf-8"
@@ -131,7 +122,7 @@ impl Target for Cell<'_, '_, '_> {
     }
 }
 
-impl Serialize<'_> {
+impl<D: Destination + ?Sized> Serialize<'_, D> {
     pub(super) fn typed(&mut self, value: &Bound<'_, PyAny>, path: &Path<'_>) -> PyResult<bool> {
         let py = value.py();
         let budget = self.budget.ok_or_else(|| {

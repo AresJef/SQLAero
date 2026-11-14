@@ -4,6 +4,53 @@ use sqlaero_core::json::{Error, Options, Writer};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
 #[test]
+fn drained_prefix_keeps_container_and_open_string_state() {
+    let mut writer = Writer::new();
+    let options = Options::default();
+    writer.array_start().unwrap();
+    writer.text_start(None, &options).unwrap();
+    writer.text_fragment("é\n", &options).unwrap();
+    let mut published = writer.pending_output().unwrap().to_owned();
+    writer.consume_output().unwrap();
+    writer.text_fragment("tail", &options).unwrap();
+    writer.text_end(&options).unwrap();
+    writer.write(ScalarRef::Signed(7), &options).unwrap();
+    writer.array_end().unwrap();
+    published.push_str(&writer.finish_tail().unwrap());
+    assert_eq!(published, "[\"é\\ntail\",7]");
+}
+
+#[test]
+fn drained_writer_cannot_claim_its_tail_is_a_whole_document() {
+    let mut writer = Writer::new();
+    writer
+        .write(ScalarRef::Signed(7), &Options::default())
+        .unwrap();
+    assert_eq!(writer.pending_output().unwrap(), "7");
+    writer.consume_output().unwrap();
+    assert!(writer.finish().is_err());
+}
+
+#[test]
+fn failed_or_incomplete_stream_never_publishes_a_tail() {
+    let mut writer = Writer::new();
+    writer.array_start().unwrap();
+    writer.consume_output().unwrap();
+    assert!(writer.finish_tail().is_err());
+    let mut writer = Writer::new();
+    writer.array_start().unwrap();
+    writer.consume_output().unwrap();
+    assert!(
+        writer
+            .write(ScalarRef::Float(f64::NAN), &Options { allow_nan: false })
+            .is_err()
+    );
+    assert!(writer.pending_output().is_err());
+    assert!(writer.consume_output().is_err());
+    assert!(writer.finish_tail().is_err());
+}
+
+#[test]
 fn bounded_integer_blocks_remain_one_exact_number() {
     let mut writer = Writer::new();
     writer.array_start().unwrap();

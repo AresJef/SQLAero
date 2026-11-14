@@ -48,6 +48,11 @@ pub(crate) trait Destination {
     fn text_start(&mut self, length: Option<usize>, context: &Context) -> Result<(), ValueError>;
     fn text_fragment(&mut self, text: &str, context: &Context) -> Result<(), ValueError>;
     fn text_end(&mut self, context: &Context) -> Result<(), ValueError>;
+    /// Whether this native destination accepts text before its final byte
+    /// length is known. Prepared parameters retain their owned length contract.
+    fn can_stream_text(&self) -> bool {
+        false
+    }
     fn bytes_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError>;
     fn bytes_fragment(&mut self, bytes: &[u8], context: &Context) -> Result<(), ValueError>;
     fn bytes_end(&mut self, context: &Context) -> Result<(), ValueError>;
@@ -68,6 +73,9 @@ pub(crate) trait Destination {
 }
 
 impl Destination for Vec<u8> {
+    fn can_stream_text(&self) -> bool {
+        true
+    }
     fn source(
         &mut self,
         source: &mut dyn PreparedSource<'_>,
@@ -430,6 +438,9 @@ impl<'a> RoleSink<'a> {
     }
 }
 impl Destination for RoleSink<'_> {
+    fn can_stream_text(&self) -> bool {
+        self.output.can_stream_text()
+    }
     fn source(
         &mut self,
         source: &mut dyn PreparedSource<'_>,

@@ -5,17 +5,20 @@ use super::sequence::{Kind, Projection};
 use std::collections::{HashMap, hash_map::RandomState};
 
 mod keys;
+mod output;
 mod source;
+use super::cell::NativeFailure;
 use super::sink::Destination;
 use super::{ScalarTypes, integer};
 use crate::input::control::Checkpoint;
 use crate::{config, errors};
+use output::Output;
 use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyInt};
 use sqlaero_core::bind::Context;
-use sqlaero_core::json::{Error, Options, Writer};
+use sqlaero_core::json::{Error, Options};
 use sqlaero_transcode::diagnostic::{Coordinate, Path};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
@@ -78,7 +81,11 @@ fn option(argument: config::Argument<'_>) -> PyResult<bool> {
         .map_or(Ok(true), |value| config::boolean(value, "allow_nan"))
 }
 
-pub(super) fn failure(py: Python<'_>, error: Error) -> PyErr {
+pub(super) fn failure(py: Python<'_>, error: impl Into<NativeFailure>) -> PyErr {
+    let error = match error.into() {
+        NativeFailure::Json(error) => error,
+        NativeFailure::Mysql(error) => return super::sink::failure(py, error),
+    };
     match error {
         Error::Unsupported(name) => errors::builtin_format::<PyTypeError>(
             py,
@@ -96,17 +103,17 @@ pub(super) fn failure(py: Python<'_>, error: Error) -> PyErr {
     }
 }
 
-struct Serialize<'a> {
+struct Serialize<'a, D: Destination + ?Sized = Vec<u8>> {
     types: &'a ScalarTypes,
     options: Options,
     budget: Option<&'a dyn Checkpoint>,
-    writer: Writer,
+    writer: Output<'a, D>,
     active: Vec<usize>,
     failure_located: bool,
     nodes: usize,
 }
 
-impl Serialize<'_> {
+impl<D: Destination + ?Sized> Serialize<'_, D> {
     fn locate(&mut self, py: Python<'_>, error: &PyErr, path: &Path<'_>) {
         if !self.failure_located {
             errors::note_format(py, error, format_args!("while serializing JSON at {path}"));
@@ -475,15 +482,32 @@ pub(crate) fn serialize(
     allow_nan: bool,
     budget: Option<&dyn Checkpoint>,
 ) -> PyResult<String> {
-    let py = value.py();
     let local = super::control::Control::unlimited();
-    let budget = Some(budget.unwrap_or(&local as &dyn Checkpoint));
+    let budget = budget.unwrap_or(&local as &dyn Checkpoint);
+    serialize_into(
+        value,
+        types,
+        allow_nan,
+        budget,
+        Output::<Vec<u8>>::buffered(),
+    )
+}
+
+fn serialize_into<'a, D: Destination + ?Sized>(
+    value: &Bound<'_, PyAny>,
+    types: &'a ScalarTypes,
+    allow_nan: bool,
+    budget: &'a dyn Checkpoint,
+    writer: Output<'a, D>,
+) -> PyResult<String> {
+    let py = value.py();
+    let budget = Some(budget);
     super::checkpoint(py, budget)?;
     let mut state = Serialize {
         types,
         options: Options { allow_nan },
         budget,
-        writer: Writer::new(),
+        writer,
         active: Vec::new(),
         failure_located: false,
         nodes: 0,
@@ -514,6 +538,24 @@ pub(crate) fn mysql<D: Destination + ?Sized>(
         let value = value.try_borrow()?;
         (value.data(py), value.allow_nan)
     };
+    if context.codec.name() == "utf8mb4" && output.can_stream_text() {
+        let local = super::control::Control::unlimited();
+        let budget = budget.unwrap_or(&local as &dyn Checkpoint);
+        output
+            .text_start(None, context)
+            .map_err(|error| super::sink::failure(py, error))?;
+        serialize_into(
+            data.bind(py),
+            types,
+            allow_nan,
+            budget,
+            Output::streaming(output, context),
+        )?;
+        super::checkpoint(py, Some(budget))?;
+        return output
+            .text_end(context)
+            .map_err(|error| super::sink::failure(py, error));
+    }
     let text = serialize(data.bind(py), types, allow_nan, budget)?;
     // A native String is valid UTF-8 by construction. No whole-document scan
     // or Python JSON str/bytes is introduced before the target encodes it.
