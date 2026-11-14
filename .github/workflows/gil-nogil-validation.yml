@@ -160,7 +160,7 @@ jobs:
           rustc --version
           python --version
           cargo fmt --all --check
-          cargo test -p sqlaero-core --locked
+          cargo test -p sqlaero-core -p sqlaero-transcode --locked
           cargo clippy --workspace --all-targets --locked -- -D warnings
           python tools/error_catalog.py --check
           pyright

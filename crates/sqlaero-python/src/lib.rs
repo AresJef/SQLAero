@@ -114,6 +114,26 @@ impl _ValueEncoder {
         binding::encode_value(data, &self.types.borrow(data.py()), &self.context, &budget)
             .map(|bytes| _EncodedValue { bytes })
     }
+
+    /// Run the production JSON serializer with prepared types and retain its
+    /// native allocation. JSON is independent of this encoder's SQL context;
+    /// conversion to builtin bytes belongs outside this measurement boundary.
+    #[pyo3(signature = (data, *, allow_nan=config::Argument::default()), text_signature = "($self, data, *, allow_nan=True)")]
+    fn encode_json(
+        &self,
+        data: &Bound<'_, PyAny>,
+        allow_nan: config::Argument<'_>,
+    ) -> PyResult<_EncodedValue> {
+        input::json::serialize(
+            data,
+            &self.types.borrow(data.py()),
+            input::json::option(allow_nan)?,
+            None,
+        )
+        .map(|text| _EncodedValue {
+            bytes: text.into_bytes(),
+        })
+    }
 }
 
 /// Prepare only the context that production prepares outside value traversal.

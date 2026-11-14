@@ -74,7 +74,7 @@ impl Json {
     }
 }
 
-fn option(argument: config::Argument<'_>) -> PyResult<bool> {
+pub(crate) fn option(argument: config::Argument<'_>) -> PyResult<bool> {
     argument
         .0
         .as_ref()

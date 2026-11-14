@@ -42,7 +42,12 @@ resource: Any = None if os.name == 'nt' else importlib.import_module('resource')
 ROOT = Path(__file__).resolve().parents[1]
 FROZEN = ROOT / "experimental/rust/list_rust.so"
 Call = Callable[[], object]
-CPU_FAMILIES = frozenset({"escape", "bind", "fetch", "decode-json", "diagnostic", "metadata", "retry", "tls"})
+JSON_BOUNDARIES = {
+    "json-native": "production Python adapter and Rust JSON writer to a native owner; prepared types, no builtin bytes copy",
+    "json-bytes": "complete public json_dumps call including its final builtin bytes copy",
+    "json-sql": "production JSON wrapper traversal and MySQL text escaping to a native SQL value owner; wrapper and connection context prepared outside timing",
+}
+CPU_FAMILIES = frozenset({"escape", "bind", "fetch", "decode-json", "diagnostic", "metadata", "retry", "tls", *JSON_BOUNDARIES})
 
 
 def digest(path: Path) -> str:
@@ -105,9 +110,12 @@ class Case:
     no_backslash: bool = False
 
     def identity(self) -> dict[str, object]:
-        return {"id": self.id, "family": self.family, "input": fingerprint(self.value),
-                "sql": self.sql, "many": self.many, "itemize": self.itemize,
-                "no_backslash": self.no_backslash}
+        result: dict[str, object] = {"id": self.id, "family": self.family, "input": fingerprint(self.value),
+                  "sql": self.sql, "many": self.many, "itemize": self.itemize,
+                  "no_backslash": self.no_backslash}
+        if self.family in JSON_BOUNDARIES:
+            result["timing_boundary"] = JSON_BOUNDARIES[self.family]
+        return result
 
 
 @dataclass
@@ -239,6 +247,53 @@ def cases(*, typed: bool = True) -> list[Case]:
     if typed:
         result.extend(typed_cases())
     return result
+
+
+def json_cases(existing: list[Case] | None = None) -> list[Case]:
+    """Add three explicit boundaries without changing any frozen old input.
+
+    Reuse already constructed provider inputs. JSON never adds a production
+    dependency, and a missing optional provider is not a successful case.
+    """
+    values: dict[str, object] = {
+        "null": None, "bool": True, "integer": 7, "wide-integer": 10**100 + 7,
+        "float": 0.1, "negative-zero": -0.0, "nonfinite": float("inf"),
+        "decimal": Decimal("12.5000"), "date": date(2024, 2, 29),
+        "datetime": datetime(2024, 2, 29, 12, 34, 56, 123456, tzinfo=timezone.utc),
+        "duration": timedelta(days=-2, microseconds=7),
+        "empty-array": [], "empty-object": {},
+        "object": {"id": 7, "name": "中文🙂", "nested": [None, True, -0.0]},
+    }
+    for size in (16, 1024, 262144):
+        for name, text in (("ascii", "a"), ("unicode", "中🙂"), ("escaped", '"\\\n\x00')):
+            values[f"text-{name}/codepoints{size}"] = (text * size)[:size]
+    for size in (1, 100, 10000):
+        values[f"integer-array/N{size}"] = list(range(size))
+        values[f"nested/N{size}"] = [{"i": i, "s": "中'", "v": [None, True]} for i in range(size)]
+    selected = {
+        "numpy/i8/array/N1000", "numpy/f4/array/N1000", "numpy/text/array/N1000",
+        "numpy/datetime/array/N1000", "numpy/duration/array/N1000", "numpy/object/array/N1000",
+        "numpy/record/scalar", "numpy/table-int64/R1000C4",
+        "pandas/Timestamp-utc/scalar", "pandas/Series-nullable/N1000", "pandas/MultiIndex/N1000",
+        "pandas/ArrowExtensionArray/N1000", "pandas/frame-int64/R1000C4",
+        "arrow/i64/N1000", "arrow/utf8/N1000", "arrow/list/N1000", "arrow/struct/N1000",
+        "arrow/chunked/N1000", "arrow/dictionary/N1000", "arrow/duration-ns/N1000",
+        "arrow/frame-int64/R1000C4", "polars/i64/N1000", "polars/utf8/N1000",
+        "polars/list/N1000", "polars/struct/N1000", "polars/category/N1000",
+        "polars/frame-int64/R1000C4",
+    }
+    for case in existing or []:
+        name = case.id.removeprefix("typed/")
+        if name in selected:
+            values["provider/" + name] = case.value
+    return [Case(f"{family}/{name}", value, family)
+            for name, value in values.items() for family in JSON_BOUNDARIES]
+
+
+def catalog() -> list[Case]:
+    """Prepare each provider pool once; keep the original cases() contract."""
+    existing = cases()
+    return existing + json_cases(existing) + feature_cases() + tls_cases()
 
 
 def typed_cases() -> list[Case]:
@@ -539,6 +594,16 @@ def target(case: Case, native: Any, legacy: Any | None, sessions: dict[str, Any]
     if case.family == "escape":
         encode = native._prepare_encoder(no_backslash=case.no_backslash).encode
         return Task(lambda: encode(case.value))
+    if case.family == "json-native":
+        encode_json = native._prepare_encoder().encode_json
+        return Task(lambda: encode_json(case.value))
+    if case.family == "json-bytes":
+        dumps = native.json_dumps
+        return Task(lambda: dumps(case.value))
+    if case.family == "json-sql":
+        value = native.JSON(case.value)
+        encode = native._prepare_encoder(no_backslash=case.no_backslash).encode
+        return Task(lambda: encode(value))
     if case.family == "bind":
         bind = native._bind_sql
         return Task(lambda: bind(case.sql, case.value, many=case.many,
@@ -1156,7 +1221,7 @@ def measure(call: Call, n: int) -> dict[str, object]:
 def worker(package: str | None, with_legacy: bool, warmup_calls: int = 16) -> None:
     native = load_native(package)
     legacy = load_legacy() if with_legacy else None
-    collection = {case.id: case for case in cases() + feature_cases() + tls_cases()}
+    collection = {case.id: case for case in catalog()}
     calls: dict[tuple[str, str], Task] = {}
     preparations: dict[tuple[str, str], dict[str, int]] = {}
     sessions: dict[str, Any] = {}
@@ -1407,7 +1472,7 @@ def package_identity(package: str | None) -> dict[str, object]:
 
 
 def collect(args: argparse.Namespace) -> None:
-    selected = [case for case in cases() + feature_cases() + tls_cases() if case.id in args.case or
+    selected = [case for case in catalog() if case.id in args.case or
                 any(case.id.startswith(prefix) for prefix in args.prefix)]
     if args.legacy:
         selected = [case for case in selected if case.family == "escape" and not case.no_backslash]
@@ -1463,7 +1528,7 @@ def collect(args: argparse.Namespace) -> None:
                 "warmup_calls": args.warmup_calls, "warmup_wall_cap_ns": 2_000_000,
                 "reference_package": args.reference, "candidate_package": args.candidate,
                 "legacy": args.legacy, "cases": [case.identity() for case in selected],
-                "boundary": "full production visitor to Rust owner; bind probe includes Python diagnostic copies",
+                "boundary": "full production visitor to Rust owner; bind probe includes Python diagnostic copies; JSON cases record their three distinct boundaries",
                 "gc": "enabled; normal timed GC retained", "bootstrap_seed": 20261026}
     append(directory / "invocations.jsonl", metadata)
     rejections: Counter[str] = Counter()
@@ -1900,18 +1965,18 @@ def parallel(args: argparse.Namespace) -> None:
     before_import = gil_state()
     if before_import['free_threaded_build'] and before_import['gil_enabled']:
         raise RuntimeError('Free-threaded parallel measurement requires the GIL disabled before import')
-    collection = {case.id: case for case in cases()}
+    collection = {case.id: case for case in catalog()}
     if args.case[0] not in collection:
         raise ValueError(f'Unknown case ID: {args.case[0]}')
     case = collection[args.case[0]]
-    if case.family not in {'escape', 'bind', 'fetch', 'batch', 'roundtrip'}:
+    if case.family not in {'escape', 'bind', 'fetch', 'batch', 'roundtrip', *JSON_BOUNDARIES}:
         raise ValueError(f'Parallel does not support task family {case.family}')
     thread_cases: list[Case] | None = None
     if args.independent_inputs:
         thread_cases = [case]
         expected_case = case.identity()
         for _ in range(args.threads - 1):
-            current = next(item for item in cases() if item.id == case.id)
+            current = next(item for item in catalog() if item.id == case.id)
             if current.identity() != expected_case:
                 raise ValueError('Independent factory inputs differ from the selected case')
             thread_cases.append(current)
@@ -2009,7 +2074,7 @@ def main() -> None:
     elif args.command == "worker":
         worker(args.package, args.legacy, args.warmup_calls)
     elif args.command == "list":
-        print(json.dumps([case.identity() for case in cases() + feature_cases() + tls_cases()], indent=2))
+        print(json.dumps([case.identity() for case in catalog()], indent=2))
     elif args.command == "summarize":
         summarize(Path(args.output))
     else:

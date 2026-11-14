@@ -1,4 +1,5 @@
 """Feature recipes reuse the frozen sampler and retain their real call work."""
+# pyright: reportPrivateUsage=false
 from __future__ import annotations
 
 import base64
@@ -430,3 +431,65 @@ def test_local_batches_reopen_the_same_file_and_support_full_n_and_two_n_work(
         task.finish()
         assert not paths[0].exists() and not connection.rows
     connection.close()
+
+
+@pytest.mark.parametrize(("value", "expected"), [
+    (None, b"null"),
+    ([7, True, None], b"[7,true,null]"),
+    ({"x": "é\n"}, '{"x":"é\\n"}'.encode()),
+    (-0.0, b"-0.0"),
+])
+def test_native_json_owner_preserves_public_bytes_without_sql_context(
+    value: object, expected: bytes,
+) -> None:
+    from sqlaero import _sqlaero as native
+
+    for no_backslash in (False, True):
+        encoder = native._prepare_encoder(no_backslash=no_backslash)
+        result = encoder.encode_json(value)
+        assert type(result) is native._EncodedValue
+        assert len(result) == len(expected)
+        assert result.to_bytes() == native.json_dumps(value) == expected
+
+
+def test_native_json_owner_uses_the_public_strict_option_and_nonfinite_policy() -> None:
+    from sqlaero import _sqlaero as native
+
+    encoder = native._prepare_encoder()
+    assert encoder.encode_json(float("inf")).to_bytes() == b"null"
+    with pytest.raises(ValueError, match="nonfinite.*allow_nan=False"):
+        encoder.encode_json(float("inf"), allow_nan=False)
+    for invalid in (None, 0, 1, "true"):
+        with pytest.raises(TypeError, match="allow_nan"):
+            encoder.encode_json(7, allow_nan=invalid)  # pyright: ignore[reportArgumentType]
+
+
+def test_json_three_boundaries_share_inputs_and_keep_timed_output_costs(runner: Any) -> None:
+    from sqlaero import _sqlaero as native
+
+    source = {"x": "é\n"}
+    expected_json = '{"x":"é\\n"}'.encode()
+    expected_sql = b"'" + expected_json.replace(b"\\", b"\\\\").replace(b'"', b'\\"') + b"'"
+    for family in ("json-native", "json-bytes", "json-sql"):
+        case = runner.Case(family + "/independent-oracle", source, family)
+        assert family in runner.CPU_FAMILIES
+        assert case.identity()["timing_boundary"]
+        task = runner.target(case, native, None, {})
+        assert task.prepare is task.finish is None
+        outputs = [task.call() for _ in range(2)]
+        if family == "json-bytes":
+            assert all(type(value) is bytes and value == expected_json for value in outputs)
+        else:
+            assert outputs[0] is not outputs[1]
+            expected = expected_sql if family == "json-sql" else expected_json
+            assert all(type(value) is native._EncodedValue and value.to_bytes() == expected for value in outputs)
+
+
+def test_json_catalog_has_distinct_boundaries_and_reuses_provider_input(runner: Any) -> None:
+    value = object()
+    records = runner.json_cases([runner.Case("typed/arrow/struct/N1000", value)])
+    assert len(records) == len({case.id for case in records})
+    selected = [case for case in records if "/provider/arrow/struct/N1000" in case.id]
+    assert len(selected) == 3 and all(case.value is value for case in selected)
+    assert {case.family for case in selected} == set(runner.JSON_BOUNDARIES)
+    assert all(case.family in runner.CPU_FAMILIES for case in records)

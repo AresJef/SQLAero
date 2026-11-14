@@ -324,6 +324,9 @@ def _encode_value(data: object, *, no_backslash: bool = False) -> _EncodedValue:
 class _ValueEncoder:
     """Retain prepared type and charset state for the production value visitor."""
     def encode(self, data: object) -> _EncodedValue: ...
+    def encode_json(self, data: object, *, allow_nan: bool = True) -> _EncodedValue:
+        """Measure JSON to a Rust owner, independently of SQL configuration."""
+        ...
 def _prepare_encoder(*, no_backslash: bool = False) -> _ValueEncoder:
     """Prepare the same immutable context used outside production traversal."""
     ...
