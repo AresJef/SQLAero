@@ -76,13 +76,18 @@ with live(options['label']) as connection:
     try:
         first, second = np.datetime64('2026-11-12', 'D'), np.datetime64('2026-11-13', 'D')
         if options['phase'] == 'array_metadata':
-            first, second = np.array([first]), np.array([second])
-        current.execute('INSERT INTO provider_control VALUES (%s),(%s)', (first, second))
+            # A root temporal array supplies finite native cells in both text
+            # and prepared mode. A nested array is rejected by prepared scalar
+            # admission before any finite-unit protocol is needed.
+            current.execute('INSERT INTO provider_control VALUES (%s)',
+                            np.array([first, second]), many=True)
+        else:
+            current.execute('INSERT INTO provider_control VALUES (%s),(%s)', (first, second))
     except Exception as error:
         caught = error
     finally:
         np.__getattr__, np.int8, np.int16, np.datetime_data = old_getattr, int8, int16, datetime_data
-    assert current.closed and not connection.closed
+    assert current.closed and not connection.closed, (caught, calls, current.closed, connection.closed)
     assert calls == ['retire'] and len(exits) == 1, (calls, exits)
     if options['raise_original']:
         assert caught is original_error, caught

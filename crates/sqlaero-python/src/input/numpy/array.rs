@@ -145,6 +145,7 @@ pub(crate) struct NumpySource<'py> {
     width: usize,
     swap: bool,
     temporal: Option<(TimeUnit, u64, TimeKind)>,
+    temporal_reader: Option<Py<PyAny>>,
     raw: Option<RawBlock>,
     // A single small handle; only eligible Unicode writers allocate storage.
     utf8: Option<Box<UnicodeScratch>>,
@@ -269,19 +270,8 @@ impl<'py> NumpySource<'py> {
             }
         };
         let native_order = errors::attribute(&dtype, c"isnative")?.extract::<bool>()?;
-        let temporal = match kind {
-            ArrayKind::Scalar(Kind::DateTime) => {
-                let (unit, multiplier) =
-                    super::temporal_dtype_metadata(&dtype, &api.datetime_data, Some(budget))?;
-                Some((unit, multiplier, TimeKind::DateTime))
-            }
-            ArrayKind::Scalar(Kind::Duration) => {
-                let (unit, multiplier) =
-                    super::temporal_dtype_metadata(&dtype, &api.datetime_data, Some(budget))?;
-                Some((unit, multiplier, TimeKind::Duration))
-            }
-            _ => None,
-        };
+        let temporal_reader = matches!(kind, ArrayKind::Scalar(Kind::DateTime | Kind::Duration))
+            .then(|| api.datetime_data.clone_ref(py));
         Ok(Self {
             owner: value.clone(),
             dtype_get: api.dtype.clone_ref(py),
@@ -294,10 +284,46 @@ impl<'py> NumpySource<'py> {
             kind,
             width,
             swap: !native_order,
-            temporal,
+            temporal: None,
+            temporal_reader,
             raw: None,
             utf8: None,
         })
+    }
+
+    /// Finite unit facts are prepared once, after actual NaT recognition. The
+    /// protocol cannot conceal a retired operation or a changed source layout.
+    fn finite_temporal(&mut self, budget: &dyn Checkpoint) -> PyResult<(TimeUnit, u64, TimeKind)> {
+        if let Some(prepared) = self.temporal {
+            return Ok(prepared);
+        }
+        let py = self.owner.py();
+        let kind = match self.kind {
+            ArrayKind::Scalar(Kind::DateTime) => TimeKind::DateTime,
+            ArrayKind::Scalar(Kind::Duration) => TimeKind::Duration,
+            _ => {
+                return Err(errors::builtin_message::<PyTypeError>(
+                    py,
+                    "NumPy source has no temporal unit schema",
+                ));
+            }
+        };
+        let reader = self.temporal_reader.as_ref().ok_or_else(|| {
+            errors::builtin_message::<PyTypeError>(
+                py,
+                "NumPy finite temporal metadata reader is missing",
+            )
+        })?;
+        let (unit, multiplier) = super::temporal_dtype_metadata(&self.dtype, reader, Some(budget))?;
+        crate::input::buffer::read(py, budget, self.allocation.native_root(), || {
+            // Validate again after the actual protocol. No source export is
+            // retained through it or through the following Control boundary.
+            drop(self.native_view()?);
+            Ok(())
+        })?;
+        let facts = (unit, multiplier, kind);
+        self.temporal = Some(facts);
+        Ok(facts)
     }
 
     fn cell_bytes(
@@ -1070,16 +1096,11 @@ impl NumpySource<'_> {
             Kind::F64 => ScalarRef::Float(f64::from_ne_bytes(b)),
             Kind::Bool => ScalarRef::Boolean(b[0] != 0),
             Kind::DateTime | Kind::Duration => {
-                let Some((unit, multiplier, kind)) = self.temporal else {
-                    return Err(errors::builtin_message::<PyTypeError>(
-                        py,
-                        "NumPy temporal metadata is missing",
-                    ));
-                };
                 let value = i64::from_ne_bytes(b);
                 if value == i64::MIN {
                     ScalarRef::Null
                 } else {
+                    let (unit, multiplier, kind) = self.finite_temporal(budget)?;
                     if multiplier == 0 {
                         return Err(errors::builtin_message::<PyTypeError>(
                             py,
