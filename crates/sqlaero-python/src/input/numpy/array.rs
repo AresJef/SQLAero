@@ -288,7 +288,9 @@ impl<'py> NumpySource<'py> {
                 ));
             }
         };
-        let native_order = errors::attribute(&dtype, c"isnative")?.extract::<bool>()?;
+        // A structural layout never reads numeric payload bytes. Its leaf
+        // readers prepare their own byte order; do not rescan a compound dtype.
+        let native_order = record || errors::attribute(&dtype, c"isnative")?.extract::<bool>()?;
         let temporal_reader = matches!(kind, ArrayKind::Scalar(Kind::DateTime | Kind::Duration))
             .then(|| api.datetime_data.clone_ref(py));
         Ok(Self {
