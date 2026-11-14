@@ -81,8 +81,10 @@ impl _EncodedValue {
     }
 
     /// Copy diagnostic bytes outside a performance measurement.
-    fn to_bytes<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
-        PyBytes::new(py, &self.bytes)
+    fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        // JSON owners have no SQL packet quota. Even this untimed diagnostic
+        // copy therefore uses the same bounded final-output boundary.
+        Ok(output::bytes_bounded(py, &self.bytes, None)?.cast_into::<PyBytes>()?)
     }
 }
 
