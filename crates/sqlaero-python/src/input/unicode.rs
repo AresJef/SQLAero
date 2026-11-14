@@ -7,6 +7,28 @@ use pyo3::types::{PyString, PyStringData, PyStringMethods};
 use sqlaero_transcode::utf8::{self, EncodeError};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
+/// Consume owned UTF-8 in bounded complete-character fragments, independently
+/// of the output syntax or original Python source type.
+pub(crate) fn native_fragments(
+    py: Python<'_>,
+    text: &str,
+    budget: Option<&dyn Checkpoint>,
+    mut consume: impl FnMut(usize, &str) -> PyResult<()>,
+) -> PyResult<()> {
+    if text.len() <= super::WORK_BYTES {
+        super::control::bytes(py, budget, text.len())?;
+        return consume(0, text);
+    }
+    let mut start = 0;
+    while start < text.len() {
+        super::checkpoint(py, budget)?;
+        let end = text.floor_char_boundary(start.saturating_add(super::WORK_BYTES).min(text.len()));
+        consume(start, &text[start..end])?;
+        start = end;
+    }
+    super::checkpoint(py, budget)
+}
+
 /// Read immutable base storage, reusing bounded cached UTF-8 when suitable.
 /// A target error is translated at the boundary with exact source coordinates.
 pub(crate) fn write<C: Consumer + ?Sized>(

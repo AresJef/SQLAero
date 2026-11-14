@@ -1,7 +1,10 @@
 //! JSON wrapper and native serialization at the single input boundary.
 
 use super::primitive::{self, Source};
-use super::sequence::Sequence;
+use super::sequence::{Kind, Projection};
+use std::collections::{HashMap, hash_map::RandomState};
+
+mod keys;
 use super::sink::Destination;
 use super::{ScalarTypes, integer};
 use crate::input::control::Checkpoint;
@@ -128,6 +131,9 @@ impl Serialize<'_> {
                 Source::WideInteger { value, .. } => self.integer(value),
             };
         }
+        if let Some(kind) = super::sequence::kind(value, self.types) {
+            return self.container(value, kind);
+        }
         if let Some(source) = super::scalar_source::read(self.types, value)? {
             use super::scalar_source::Source;
             let native = match source {
@@ -186,38 +192,6 @@ impl Serialize<'_> {
                 .write(native, &self.options)
                 .map_err(|error| failure(py, error));
         }
-        if let Some(sequence) = Sequence::plain(value)? {
-            let identity = value.as_ptr() as usize;
-            if self.active.contains(&identity) {
-                return Err(errors::builtin_message::<PyValueError>(
-                    py,
-                    "JSON input contains a true cycle",
-                ));
-            }
-            self.active
-                .try_reserve(1)
-                .map_err(|_| errors::memory_error(py))?;
-            self.active.push(identity);
-            self.writer
-                .array_start()
-                .map_err(|error| failure(py, error))?;
-            for index in 0..sequence.len() {
-                if index % 256 == 0 {
-                    super::checkpoint(py, self.budget)?;
-                }
-                self.path
-                    .try_reserve(1)
-                    .map_err(|_| errors::memory_error(py))?;
-                self.path.push(index);
-                self.value(&sequence.row_item(index)?)?;
-                self.path.pop();
-            }
-            self.writer
-                .array_end()
-                .map_err(|error| failure(py, error))?;
-            self.active.pop();
-            return Ok(());
-        }
         let detail = self.types.diagnostic(value)?;
         Err(errors::builtin_format::<PyTypeError>(
             py,
@@ -225,55 +199,105 @@ impl Serialize<'_> {
         ))
     }
 
-    fn integer(&mut self, source: &Bound<'_, PyInt>) -> PyResult<()> {
-        let py = source.py();
-        super::checkpoint(py, self.budget)?;
-        let owner = integer::Export::new(source)?;
-        let (negative, source) = match owner.value()? {
-            integer::Value::Compact(value) => {
-                return self
-                    .writer
-                    .write(ScalarRef::Signed(value), &self.options)
-                    .map_err(|error| failure(py, error));
-            }
-            integer::Value::Digits { negative, source } => (negative, source),
-        };
-        let mut decimal = sqlaero_transcode::integer::DecimalDigits::new(source)
-            .map_err(|error| integer::failure(py, error))?;
-        // Copy, arithmetic and output all return to the same original control
-        // boundary; no Python decimal string or unbounded bigint conversion.
-        while !decimal
-            .step(4096)
-            .map_err(|error| integer::failure(py, error))?
-        {
-            super::checkpoint(py, self.budget)?;
-        }
-        super::checkpoint(py, self.budget)?;
-        let groups = decimal.groups().ok_or_else(|| {
-            errors::client(
+    fn container(&mut self, value: &Bound<'_, PyAny>, kind: Kind) -> PyResult<()> {
+        let py = value.py();
+        let identity = value.as_ptr() as usize;
+        if self.active.contains(&identity) {
+            return Err(errors::builtin_message::<PyValueError>(
                 py,
-                sqlaero_core::error::ClientErrorCode::InternalState,
-                "native integer conversion finished without complete decimal digits",
-            )
-        })?;
-        self.writer
-            .integer_start(negative)
-            .map_err(|error| failure(py, error))?;
-        for (index, group) in groups.iter().rev().enumerate() {
-            if index.is_multiple_of(1024) {
+                "JSON input contains a true cycle",
+            ));
+        }
+        self.active
+            .try_reserve(1)
+            .map_err(|_| errors::memory_error(py))?;
+        self.active.push(identity);
+        let object = kind == Kind::Dict;
+        if object {
+            self.writer.object_start()
+        } else {
+            self.writer.array_start()
+        }
+        .map_err(|error| failure(py, error))?;
+        let projection = if object || kind == Kind::Items {
+            Projection::Entries
+        } else {
+            Projection::Values
+        };
+        let sequence = self
+            .types
+            .sequences
+            .prepare(value, kind, projection, self.budget)?;
+        let mut names: HashMap<u64, Vec<String>> = HashMap::new();
+        let seed = RandomState::new();
+        for index in 0..sequence.len() {
+            if index.is_multiple_of(256) {
                 super::checkpoint(py, self.budget)?;
             }
-            let mut format = itoa::Buffer::new();
-            let digits = format.format(*group).as_bytes();
-            if index != 0 && digits.len() < 9 {
+            self.path
+                .try_reserve(1)
+                .map_err(|_| errors::memory_error(py))?;
+            self.path.push(index);
+            let current = sequence.row_item(index, self.budget)?;
+            if object {
+                let pair = current.cast::<pyo3::types::PyTuple>()?;
+                let key = keys::read(&pair.get_item(0)?, self.budget, &seed)?;
+                names.try_reserve(1).map_err(|_| errors::memory_error(py))?;
+                if let Some(previous) = names.get(&key.hash) {
+                    for name in previous {
+                        if keys::same(py, name, &key.value, self.budget)? {
+                            return Err(errors::builtin_format::<PyValueError>(
+                                py,
+                                format_args!(
+                                    "JSON object keys collide after normalization at entry {index}"
+                                ),
+                            ));
+                        }
+                    }
+                }
                 self.writer
-                    .integer_fragment(&b"000000000"[..9 - digits.len()])
+                    .key_start(key.value.len())
                     .map_err(|error| failure(py, error))?;
+                super::unicode::native_fragments(py, &key.value, self.budget, |_, text| {
+                    self.writer
+                        .text_fragment(text, &self.options)
+                        .map_err(|error| failure(py, error))
+                })?;
+                self.writer
+                    .text_end(&self.options)
+                    .map_err(|error| failure(py, error))?;
+                let previous = names.entry(key.hash).or_default();
+                previous
+                    .try_reserve(1)
+                    .map_err(|_| errors::memory_error(py))?;
+                previous.push(key.value);
+                self.value(&pair.get_item(1)?)?;
+            } else {
+                self.value(&current)?;
             }
-            self.writer
-                .integer_fragment(digits)
-                .map_err(|error| failure(py, error))?;
+            self.path.pop();
         }
+        if object {
+            self.writer.object_end()
+        } else {
+            self.writer.array_end()
+        }
+        .map_err(|error| failure(py, error))?;
+        self.active.pop();
+        Ok(())
+    }
+
+    fn integer(&mut self, source: &Bound<'_, PyInt>) -> PyResult<()> {
+        let py = source.py();
+        let integer = integer::Decimal::acquire(source, self.budget)?;
+        self.writer
+            .integer_start(integer.negative)
+            .map_err(|error| failure(py, error))?;
+        integer.fragments(py, self.budget, |text| {
+            self.writer
+                .integer_fragment(text.as_bytes())
+                .map_err(|error| failure(py, error))
+        })?;
         self.writer
             .integer_end()
             .map_err(|error| failure(py, error))?;

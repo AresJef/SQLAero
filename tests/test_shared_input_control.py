@@ -1,6 +1,7 @@
 """Source protocols revalidate actual owners without inventing execution facts."""
 
 from datetime import datetime, timedelta, tzinfo
+from datetime import time as clock_time
 import time
 from typing import Any
 from types import FrameType
@@ -8,7 +9,7 @@ import re
 from uuid import uuid4
 
 import pytest
-from sqlaero import Cursor, DictCursor, SSCursor, SSDictCursor
+from sqlaero import Cursor, DictCursor, SSCursor, SSDictCursor, JSON
 from sqlaero import _sqlaero
 from sqlaero.errors import InterfaceBusyError, InterfaceError, SQLAeroErrorCode
 from test_public_connection import live, requires_mysql
@@ -57,7 +58,7 @@ def test_medium_values_charge_cumulative_byte_work_before_final_publication(kind
 @pytest.mark.parametrize("kind", [Cursor, DictCursor, SSCursor, SSDictCursor])
 @pytest.mark.parametrize("prepared", [False, True], ids=["text", "prepared"])
 @pytest.mark.parametrize("entry", ["execute", "callproc"])
-@pytest.mark.parametrize("source_kind", ["datetime", "struct-time"])
+@pytest.mark.parametrize("source_kind", ["datetime", "struct-time", "json-dict", "json-time"])
 @pytest.mark.parametrize("raises", [False, True], ids=["returns", "raises"])
 def test_source_callback_cannot_execute_after_transaction_retires_its_cursor(
     label: str, kind: Any, prepared: bool, entry: str, source_kind: str, raises: bool,
@@ -112,8 +113,15 @@ def test_source_callback_cannot_execute_after_transaction_retires_its_cursor(
                     return 1
 
             fields: Any = (Year(), Month(), 2, 0, 0, 0, 1, 2, 0)
-            value = (datetime(2024, 1, 2, tzinfo=Zone()) if source_kind == "datetime"
-                     else time.struct_time(fields))
+            if source_kind == "datetime":
+                value = datetime(2024, 1, 2, tzinfo=Zone())
+            elif source_kind == "struct-time":
+                value = time.struct_time(fields)
+            elif source_kind == "json-dict":
+                value = JSON({"first": datetime(2024, 1, 2, tzinfo=Zone()),
+                              "later": datetime(2030, 1, 1, tzinfo=LaterZone())})
+            else:
+                value = JSON(clock_time(3, tzinfo=Zone()))
             caught: Exception | None = None
             try:
                 if entry == "execute":

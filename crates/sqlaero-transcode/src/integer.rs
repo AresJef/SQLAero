@@ -178,11 +178,30 @@ impl<'a> DecimalDigits<'a> {
     pub fn groups(&self) -> Option<&[u32]> {
         (self.phase == Phase::Done).then_some(self.groups.as_slice())
     }
+
+    /// Release the source borrow and arithmetic workspace after conversion.
+    /// No incomplete or failed conversion publishes decimal groups.
+    pub fn into_groups(self) -> Option<Vec<u32>> {
+        (self.phase == Phase::Done).then_some(self.groups)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn completed_groups_outlive_the_source_while_incomplete_state_cannot_publish() {
+        let groups = {
+            let source = [0x15, 0xcd, 0x5b, 0x07];
+            let digits = Digits::new(&source, 8, 1, true, true).unwrap();
+            assert!(DecimalDigits::new(digits).unwrap().into_groups().is_none());
+            let mut conversion = DecimalDigits::new(digits).unwrap();
+            while !conversion.step(1).unwrap() {}
+            conversion.into_groups().unwrap()
+        };
+        assert_eq!(groups, [123_456_789]);
+    }
 
     fn decimal(bytes: &[u8], bits: u8, width: u8, order: bool, endian: bool) -> String {
         let mut value =

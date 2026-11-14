@@ -648,7 +648,7 @@ impl<'py> Rows<'py> {
         types: &ScalarTypes,
         budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
-        let sequence = Sequence::from(root, types, &[])?;
+        let sequence = Sequence::from(root, types, &[], Some(budget))?;
         let native = if sequence.is_none() {
             source::prepare(root, types, budget)?
         } else {
@@ -736,7 +736,7 @@ impl<'py> Rows<'py> {
         }
         let (value, outer, path) = match &self.outer {
             Some(outer) if !self.empty => {
-                let value = outer.row_item(index)?;
+                let value = outer.row_item(index, Some(budget))?;
                 (value, Some(outer.identity()), smallvec![index])
             }
             _ => (self.root.clone(), None, SmallVec::new()),
@@ -745,7 +745,7 @@ impl<'py> Rows<'py> {
             if self.outer.is_none() {
                 self.single.as_ref().map(SequenceRef::Borrowed)
             } else {
-                Sequence::from(&value, types, &[])?.map(SequenceRef::Owned)
+                Sequence::from(&value, types, &[], Some(budget))?.map(SequenceRef::Owned)
             }
         } else {
             None
@@ -988,7 +988,7 @@ impl Row<'_, '_> {
             .filter(|_| self.itemize)
             .map(SequenceRef::sequence);
         if let Some(sequence) = sequence {
-            visit.enter_sequence(py, sequence)?;
+            visit.enter(py, sequence.identity())?;
         }
         let mut native = match &mut self.input {
             RowInput::Native(native) => Some(native),
@@ -1040,19 +1040,22 @@ impl Row<'_, '_> {
                     Err(crate::input::sink::fragment_error(py))
                 }
             } else {
-                let value = match sequence {
-                    Some(sequence) => sequence.row_item(index).inspect_err(|error| {
-                        errors::note_format(
-                            py,
-                            error,
-                            format_args!(
-                                "while binding {}[{index}]; current request was not sent",
-                                path_text(&visit.path),
-                            ),
-                        );
-                    })?,
-                    None => self.value.clone(),
-                };
+                let value =
+                    match sequence {
+                        Some(sequence) => sequence.row_item(index, Some(budget)).inspect_err(
+                            |error| {
+                                errors::note_format(
+                                    py,
+                                    error,
+                                    format_args!(
+                                        "while binding {}[{index}]; current request was not sent",
+                                        path_text(&visit.path),
+                                    ),
+                                );
+                            },
+                        )?,
+                        None => self.value.clone(),
+                    };
                 if require_none {
                     call::require_none(&value, index)
                         .and_then(|()| visit.native_python(&value, sink, sequence.map(|_| index)))
@@ -1324,7 +1327,7 @@ impl Row<'_, '_> {
             None
         };
         if let Some(row) = row {
-            visit.enter_sequence(py, row)?;
+            visit.enter(py, row.identity())?;
         }
         let mut native = match &mut self.input {
             RowInput::Native(native) => Some(native),
@@ -1352,7 +1355,7 @@ impl Row<'_, '_> {
                 visit.context = effective;
             }
             let source = if let Some(row) = row {
-                row.row_item(index).inspect_err(|error| {
+                row.row_item(index, Some(budget)).inspect_err(|error| {
                     errors::note_format(
                         py,
                         error,
@@ -1665,7 +1668,7 @@ impl Visit<'_> {
                 }
                 Ok(false) => (),
             }
-            match Sequence::from(value, self.types, &self.active) {
+            match Sequence::from(value, self.types, &self.active, Some(self.budget)) {
                 Ok(sequence) => sequence,
                 Err(error) => {
                     self.failed_value(value, child, &error);
@@ -1682,24 +1685,6 @@ impl Visit<'_> {
         }
     }
 
-    fn enter_sequence(&mut self, py: Python<'_>, sequence: &Sequence<'_>) -> PyResult<()> {
-        self.enter(py, sequence.identity())?;
-        if let Some(alias) = sequence.alias() {
-            if self.active.contains(&alias) {
-                return Err(errors::client(
-                    py,
-                    ClientErrorCode::ContainerNesting,
-                    "normalized input contains a true cycle",
-                ));
-            }
-            self.active
-                .try_reserve(1)
-                .map_err(|_| errors::memory_error(py))?;
-            self.active.push(alias);
-        }
-        Ok(())
-    }
-
     // Keep canonical entry/exit on its existing inlined traversal path.
     // Ownership and entry/exit stay here; the item loop remains shared below.
     #[inline(always)]
@@ -1713,24 +1698,7 @@ impl Visit<'_> {
         if let Some(index) = child {
             self.path.push(index);
         }
-        // Exact containers have one identity and cannot carry a normalized
-        // alias. Keep their entry on the original checked enter path without
-        // the generic normalization wrapper. A Sequence's strategy is immutable
-        // during traversal, so retain its alias fact for the matching exit.
-        let aliased = match sequence {
-            Sequence::List(value) => {
-                self.enter(py, value.as_ptr() as usize)?;
-                false
-            }
-            Sequence::Tuple(value) => {
-                self.enter(py, value.as_ptr() as usize)?;
-                false
-            }
-            _ => {
-                self.enter_sequence(py, sequence)?;
-                sequence.alias().is_some()
-            }
-        };
+        self.enter(py, sequence.identity())?;
         let result = (|| {
             writer::append(output, b"(", self.context.limit)
                 .map_err(|error| errors::wire(py, error))?;
@@ -1754,7 +1722,7 @@ impl Visit<'_> {
                     })
                 }
                 _ => self.sequence_items(py, sequence.len(), output, |visit, index, output| {
-                    sequence.with_item(index, |value| {
+                    sequence.with_item(index, Some(visit.budget), |value| {
                         let value = value.inspect_err(|_| {
                             visit.path.push(index);
                         })?;
@@ -1763,9 +1731,6 @@ impl Visit<'_> {
                 }),
             }
         })();
-        if aliased {
-            self.active.pop();
-        }
         self.active.pop();
         self.active_depth -= 1;
         if result.is_ok() && child.is_some() {
@@ -1937,7 +1902,7 @@ impl CellWriter for Visit<'_> {
             )? {
                 return Ok(());
             }
-            if Sequence::from(value, self.types, &self.active)?.is_some()
+            if Sequence::from(value, self.types, &self.active, Some(self.budget))?.is_some()
                 || source::prepare(value, self.types, self.budget)?.is_some()
             {
                 return Err(crate::input::sink::fragment_error(py));

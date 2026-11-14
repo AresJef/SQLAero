@@ -83,6 +83,7 @@ pub(crate) struct ScalarTypes {
     datetime_offset: Py<PyAny>,
     time_offset: Py<PyAny>,
     struct_time: Py<PyType>,
+    sequences: sequence::Types,
     numpy: std::sync::OnceLock<numpy::NumpyTypes>,
     pandas: std::sync::OnceLock<pandas::PandasTypes>,
     polars: std::sync::OnceLock<polars::PolarsTypes>,
@@ -113,6 +114,7 @@ impl ScalarTypes {
         Ok(Self {
             decimal: decimal_type.unbind(),
             native_decimal,
+            sequences: sequence::Types::new(py)?,
             utc: errors::attribute(&timezone, c"utc")?.unbind(),
             datetime_offset: errors::attribute(py.get_type::<PyDateTime>().as_any(), c"utcoffset")?
                 .unbind(),
@@ -720,18 +722,11 @@ pub(crate) fn text_utf8(
     output
         .text_start(Some(source.len()), context)
         .map_err(|error| convert_error(error, 0))?;
-    let mut start = 0;
-    while start < source.len() {
-        checkpoint(py, budget)?;
-        let mut end = (start + WORK_BYTES).min(source.len());
-        while !source.is_char_boundary(end) {
-            end -= 1;
-        }
+    unicode::native_fragments(py, source, budget, |start, text| {
         output
-            .text_fragment(&source[start..end], context)
-            .map_err(|error| convert_error(error, start))?;
-        start = end;
-    }
+            .text_fragment(text, context)
+            .map_err(|error| convert_error(error, start))
+    })?;
     output
         .text_end(context)
         .map_err(|error| convert_error(error, 0))

@@ -89,7 +89,7 @@ def test_datetime_base_offset_still_calls_the_real_tzinfo_once_and_preserves_its
 
 @pytest.mark.parametrize("base", [list, tuple])
 @pytest.mark.parametrize("itemize", [False, True])
-def test_sequence_subclass_normalizes_once_and_binds_the_formal_values(base: type, itemize: bool) -> None:
+def test_sequence_subclass_reads_actual_base_values_without_normalizing(base: type, itemize: bool) -> None:
     seen: list[str] = []
     def iterate(_self: object) -> Iterator[int]:
         seen.append("iterate")
@@ -97,12 +97,12 @@ def test_sequence_subclass_normalizes_once_and_binds_the_formal_values(base: typ
     Child = type("Child", (base,), {"__iter__": iterate})
     source = Child([1, 2])
     sql = "SELECT %s,%s" if itemize else "SELECT %s"
-    expected = b"\x03SELECT 11,22" if itemize else b"\x03SELECT (11,22)"
+    expected = b"\x03SELECT 1,2" if itemize else b"\x03SELECT (1,2)"
     assert _sqlaero._bind_sql(sql, source, itemize=itemize) == [expected]
-    assert seen == ["iterate"]
+    assert seen == []
 
 
-def test_normalization_retains_the_original_cycle_identity() -> None:
+def test_actual_container_retains_the_original_cycle_identity() -> None:
     seen: list[str] = []
     class Child(list[object]):
         def __iter__(self) -> Iterator[object]:
@@ -112,11 +112,11 @@ def test_normalization_retains_the_original_cycle_identity() -> None:
     value.append(value)
     with pytest.raises(Exception, match="true cycle"):
         encoded(value)
-    assert seen == ["iterate"]
+    assert seen == []
 
 
 @pytest.mark.parametrize("child_levels", [63, 64])
-def test_normalized_container_alias_does_not_add_a_logical_level(child_levels: int) -> None:
+def test_actual_container_has_exactly_one_logical_level(child_levels: int) -> None:
     class Child(list[object]):
         pass
 
@@ -144,10 +144,10 @@ def test_approved_source_protocol_original_exception_is_not_replaced() -> None:
     assert caught.value is original
 
 
-def test_dict_subclass_uses_the_formal_base_constructor() -> None:
+def test_dict_subclass_reads_base_values_without_a_copy() -> None:
     class Child(dict[str, object]):
         def values(self):
-            raise AssertionError("base conversion precedes values semantics")
+            raise AssertionError("base values descriptor must ignore replacements")
     assert encoded(Child(a=1, b=2)) == b"(1,2)"
 
 
@@ -213,12 +213,15 @@ def test_bytearray_subclasses_do_not_reenter_through_bytes_protocol() -> None:
 @pytest.mark.parametrize('many', [False, True])
 def test_preparation_failures_keep_original_exception_and_root_or_row_location(many: bool) -> None:
     original = MemoryError('actual preparation failure')
-    class Broken(list[object]):
-        def __iter__(self) -> Iterator[object]:
+    # C01 ignores replacement iteration. Use the still-approved struct_time
+    # integer protocol to preserve original-exception and location coverage.
+    class Broken:
+        def __index__(self) -> int:
             raise original
-    source = [(1,), Broken([2])] if many else Broken([2])
+    bad = clock.struct_time((Broken(), 1, 1, 0, 0, 0, 0, 1, 0))
+    source = [(1,), (bad,)] if many else [bad]
     with pytest.raises(MemoryError) as caught:
         _sqlaero._bind_sql('SELECT %s', source, many=many)
     assert caught.value is original
-    location = 'args[1]' if many else 'args'
+    location = 'args[1][0]' if many else 'args[0]'
     assert any(f'while binding {location};' in note for note in getattr(original, '__notes__', ()))

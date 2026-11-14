@@ -1,10 +1,11 @@
 //! Attached ownership for CPython's immutable, zero-copy integer export.
 
+use super::control::Checkpoint;
 use crate::errors;
 use pyo3::prelude::*;
 use pyo3::types::PyInt;
 use sqlaero_core::error::ClientErrorCode;
-use sqlaero_transcode::integer::{Digits, Error};
+use sqlaero_transcode::integer::{DecimalDigits, Digits, Error};
 use std::ffi::c_void;
 
 #[repr(C)]
@@ -35,6 +36,77 @@ pub(crate) struct Export<'a, 'py> {
 pub(crate) enum Value<'a> {
     Compact(i64),
     Digits { negative: bool, source: Digits<'a> },
+}
+
+enum Coefficient {
+    Compact(u64),
+    Blocks(Vec<u32>),
+}
+
+/// An acquired exact integer, shared by number output and normalized keys.
+/// Native base-1e9 blocks are arithmetic state, never a Python decimal string.
+pub(crate) struct Decimal {
+    pub(crate) negative: bool,
+    coefficient: Coefficient,
+}
+
+impl Decimal {
+    pub(crate) fn acquire(
+        source: &Bound<'_, PyInt>,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<Self> {
+        let py = source.py();
+        super::checkpoint(py, budget)?;
+        let owner = Export::new(source)?;
+        match owner.value()? {
+            Value::Compact(value) => Ok(Self {
+                negative: value < 0,
+                coefficient: Coefficient::Compact(value.unsigned_abs()),
+            }),
+            Value::Digits { negative, source } => {
+                let mut digits = DecimalDigits::new(source).map_err(|error| failure(py, error))?;
+                while !digits.step(4096).map_err(|error| failure(py, error))? {
+                    super::checkpoint(py, budget)?;
+                }
+                super::checkpoint(py, budget)?;
+                Ok(Self {
+                    negative,
+                    coefficient: Coefficient::Blocks(digits.into_groups().ok_or_else(|| {
+                        errors::client(
+                            py,
+                            ClientErrorCode::InternalState,
+                            "integer conversion did not finish",
+                        )
+                    })?),
+                })
+            }
+        }
+    }
+
+    pub(crate) fn fragments(
+        &self,
+        py: Python<'_>,
+        budget: Option<&dyn Checkpoint>,
+        mut consume: impl FnMut(&str) -> PyResult<()>,
+    ) -> PyResult<()> {
+        match &self.coefficient {
+            Coefficient::Compact(value) => consume(itoa::Buffer::new().format(*value))?,
+            Coefficient::Blocks(groups) => {
+                for (index, group) in groups.iter().rev().enumerate() {
+                    if index.is_multiple_of(1024) {
+                        super::checkpoint(py, budget)?;
+                    }
+                    let mut buffer = itoa::Buffer::new();
+                    let text = buffer.format(*group);
+                    if index != 0 && text.len() < 9 {
+                        consume(&"000000000"[..9 - text.len()])?;
+                    }
+                    consume(text)?;
+                }
+            }
+        }
+        super::checkpoint(py, budget)
+    }
 }
 
 impl<'a, 'py> Export<'a, 'py> {
