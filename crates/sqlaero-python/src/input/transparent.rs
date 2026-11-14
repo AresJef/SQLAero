@@ -27,8 +27,23 @@ impl<'py> Value<'py> {
         self.owners.len()
     }
 
-    pub(crate) fn identities(&self) -> impl Iterator<Item = usize> + '_ {
-        self.owners.iter().map(|owner| owner.as_ptr() as usize)
+    /// Consume identities in bounded windows. The caller pre-reserves its
+    /// native ancestry storage and restores its old length on failure. The
+    /// consumer stores a copied address; it never calls Python or retains a
+    /// raw view. This preserves Vec/SmallVec storage chosen by each caller.
+    pub(crate) fn for_each_identity(
+        &self,
+        budget: Option<&dyn Checkpoint>,
+        mut consume: impl FnMut(usize),
+    ) -> PyResult<()> {
+        let py = self.payload.py();
+        for owners in self.owners.chunks(256) {
+            super::control::bytes(py, budget, owners.len() * size_of::<usize>())?;
+            for owner in owners {
+                consume(owner.as_ptr() as usize);
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn intersects(

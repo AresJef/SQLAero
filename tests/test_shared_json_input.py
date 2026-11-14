@@ -48,6 +48,16 @@ def test_json_integer_precision_has_no_sql_or_python_string_limit(digits: int, n
     assert json_dumps([value]) == b"[" + expected + b"]"
 
 
+def test_public_json_document_has_no_mysql_packet_quota() -> None:
+    # J10/current resource policy: independent JSON is not a COM_QUERY.
+    length = 64 * 1024 * 1024 + 1
+    source = "a" * length
+    result = json_dumps(source)
+    assert type(result) is bytes and len(result) == length + 2
+    assert result[:1] == result[-1:] == b'"'
+    assert result.count(b"a") == length
+
+
 def test_json_wide_integer_subclass_reads_only_base_storage() -> None:
     class Integer(int):
         def __int__(self) -> int:

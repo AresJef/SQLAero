@@ -1701,7 +1701,12 @@ impl Visit<'_> {
         self.active
             .try_reserve(source.len())
             .map_err(|_| errors::memory_error(py))?;
-        self.active.extend(source.identities());
+        if let Err(error) =
+            source.for_each_identity(Some(self.budget), |identity| self.active.push(identity))
+        {
+            self.active.truncate(previous);
+            return Err(error);
+        }
         // These owners emit no container and do not consume output depth.
         Ok(previous)
     }

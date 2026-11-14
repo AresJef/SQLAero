@@ -271,7 +271,12 @@ impl Serialize<'_> {
             self.active
                 .try_reserve(source.len())
                 .map_err(|_| errors::memory_error(py))?;
-            self.active.extend(source.identities());
+            if let Err(error) =
+                source.for_each_identity(self.budget, |identity| self.active.push(identity))
+            {
+                self.active.truncate(previous);
+                return Err(error);
+            }
             let result = self.value_at(source.payload(), path);
             self.active.truncate(previous);
             return result;
