@@ -113,6 +113,34 @@ pub(crate) trait PreparedSource<'py> {
     /// Return the prepared logical shape without per-value Python metadata work.
     fn shape(&self) -> Shape;
 
+    /// Present source schema facts without reading values or formatting output.
+    /// Each target independently admits the schema it can represent.
+    fn schema(&self, _target: &mut dyn super::cell::Target) -> PyResult<()> {
+        Err(crate::errors::builtin_message::<
+            pyo3::exceptions::PyTypeError,
+        >(
+            self.owner().py(),
+            "this typed provider's shared schema migration is not connected yet",
+        ))
+    }
+
+    /// Immediate format-neutral cell consumption. Provider families migrate
+    /// their existing checked reader here without creating a second catalog.
+    fn consume_cell(
+        &mut self,
+        _row: usize,
+        _column: usize,
+        _target: &mut dyn super::cell::Target,
+        _budget: &dyn crate::input::control::Checkpoint,
+    ) -> PyResult<()> {
+        Err(crate::errors::builtin_message::<
+            pyo3::exceptions::PyTypeError,
+        >(
+            self.owner().py(),
+            "this typed provider's shared cell migration is not connected yet",
+        ))
+    }
+
     /// Write one actual logical cell, checking its current access boundaries.
     /// Arguments select source coordinates, never SQL names or placeholder roles.
     fn write_cell(

@@ -10,14 +10,14 @@
 use super::allocation::{Allocation, Export};
 use super::{Kind, half_to_f64};
 use crate::errors;
+use crate::input::cell::{Schema, Target};
 use crate::input::control::Checkpoint;
-use crate::input::sink::{self, Destination};
-use crate::input::source::{CellWriter, PreparedSource, Shape};
-use crate::input::temporal::{self, TimeKind, TimeUnit};
+use crate::input::source::{PreparedSource, Shape};
+use crate::input::temporal::{TimeKind, TimeUnit};
 use pyo3::exceptions::{PyBufferError, PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyString, PyTuple, PyType};
-use sqlaero_core::bind::Context;
+use sqlaero_transcode::value::ScalarRef;
 
 const RAW_BLOCK_ITEMS: usize = 1024;
 const RAW_BLOCK_BYTES: usize = 8192;
@@ -180,11 +180,13 @@ impl<'py> NumpySource<'py> {
         let native_order = errors::attribute(&dtype, c"isnative")?.extract::<bool>()?;
         let temporal = match kind {
             ArrayKind::Scalar(Kind::DateTime) => {
-                let (unit, multiplier) = super::temporal_metadata(&view, datetime_data)?;
+                let (unit, multiplier) =
+                    super::temporal_metadata(&view, datetime_data, Some(budget))?;
                 Some((unit, multiplier, TimeKind::DateTime))
             }
             ArrayKind::Scalar(Kind::Duration) => {
-                let (unit, multiplier) = super::temporal_metadata(&view, datetime_data)?;
+                let (unit, multiplier) =
+                    super::temporal_metadata(&view, datetime_data, Some(budget))?;
                 Some((unit, multiplier, TimeKind::Duration))
             }
             _ => None,
@@ -599,8 +601,7 @@ impl<'py> NumpySource<'py> {
         &mut self,
         row: usize,
         column: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
+        output: &mut (impl Target + ?Sized),
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         let py = self.owner.py();
@@ -618,61 +619,47 @@ impl<'py> NumpySource<'py> {
                 }
                 end = start;
             }
-            output
-                .bytes_start(length, context)
-                .map_err(|error| sink::failure(py, error))?;
+            output.bytes_start(py, length)?;
             for fragment in cell[..length].chunks(4096) {
                 crate::input::check(py, budget)?;
-                output
-                    .bytes_fragment(fragment, context)
-                    .map_err(|error| sink::failure(py, error))?;
+                output.bytes_fragment(py, fragment)?;
             }
-            return output
-                .bytes_end(context)
-                .map_err(|error| sink::failure(py, error));
+            return output.bytes_end(py);
         }
         let length = self.content_width(row, column, budget)?;
-        output
-            .bytes_start(length, context)
-            .map_err(|error| sink::failure(py, error))?;
+        output.bytes_start(py, length)?;
         let mut chunk = [0u8; 4096];
         let mut start = 0;
         while start < length {
             crate::input::check(py, budget)?;
             let take = (length - start).min(chunk.len());
             self.copy_cell_range(row, column, start, &mut chunk[..take], budget)?;
-            output
-                .bytes_fragment(&chunk[..take], context)
-                .map_err(|error| sink::failure(py, error))?;
+            output.bytes_fragment(py, &chunk[..take])?;
             start += take;
         }
-        output
-            .bytes_end(context)
-            .map_err(|error| sink::failure(py, error))
+        output.bytes_end(py)
     }
 
     fn write_unicode(
         &mut self,
         row: usize,
         column: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
+        output: &mut (impl Target + ?Sized),
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         let py = self.owner.py();
         let swap = self.swap;
         let mut scratch = self.utf8.take();
         if let Some(cell) = self.owned_cell(row, column, budget)? {
-            let valid =
-                Self::owned_unicode_text(py, cell, swap, output, context, budget, &mut scratch)?;
+            let valid = Self::owned_unicode_text(py, cell, swap, output, budget, &mut scratch)?;
             // The helper only retains owned UTF-8, so the cell borrow has ended
             // before either the codec or the exceptional real getter runs.
             let result = if valid {
                 let text = scratch.as_ref().map_or("", |scratch| scratch.text.as_str());
-                crate::input::text_utf8(py, text, output, context, Some(budget))
+                output.text_utf8(py, text, budget)
             } else {
                 let source = self.element(row, column)?;
-                output.text(source.cast::<PyString>()?, context, Some(budget))
+                output.text(source.cast::<PyString>()?, budget)
             };
             if let Some(scratch) = scratch.as_deref_mut() {
                 scratch.text.clear();
@@ -685,9 +672,7 @@ impl<'py> NumpySource<'py> {
         // Every logical non-padding code point needs at least one output byte
         // for the supported client codecs. Reject this known minimum before
         // allocating the cell's UTF-8 representation.
-        output
-            .check_text_minimum(length / 4, context)
-            .map_err(|error| errors::wire(py, error))?;
+        output.text_minimum(py, length / 4)?;
         let mut text = String::new();
         let mut chunk = [0u8; 4096];
         let mut start = 0;
@@ -710,13 +695,13 @@ impl<'py> NumpySource<'py> {
                     // scalar provides the existing codec's original Python
                     // exception payload only on this exceptional path.
                     let source = self.element(row, column)?;
-                    return output.text(source.cast::<PyString>()?, context, Some(budget));
+                    return output.text(source.cast::<PyString>()?, budget);
                 };
                 text.push(character);
             }
             start += take;
         }
-        crate::input::text_utf8(py, &text, output, context, Some(budget))
+        output.text_utf8(py, &text, budget)
     }
 
     /// Decode an already owned UCS4 cell without intermediate fragment copies.
@@ -725,8 +710,7 @@ impl<'py> NumpySource<'py> {
         py: Python<'_>,
         cell: &[u8],
         swap: bool,
-        output: &(impl Destination + ?Sized),
-        context: &Context,
+        output: &(impl Target + ?Sized),
         budget: &dyn Checkpoint,
         scratch: &mut Option<Box<UnicodeScratch>>,
     ) -> PyResult<bool> {
@@ -743,9 +727,7 @@ impl<'py> NumpySource<'py> {
         }
         // Keep the original minimum-width rejection before UTF-8 allocation
         // or the canonical getter for an invalid UCS4 point.
-        output
-            .check_text_minimum(length / 4, context)
-            .map_err(|error| errors::wire(py, error))?;
+        output.text_minimum(py, length / 4)?;
         if length == 0 {
             if let Some(scratch) = scratch.as_deref_mut() {
                 scratch.text.clear();
@@ -800,68 +782,66 @@ impl<'py> PreparedSource<'py> for NumpySource<'py> {
         self.shape
     }
 
-    crate::input::source::cell_destinations!();
-}
+    fn schema(&self, target: &mut dyn Target) -> PyResult<()> {
+        if matches!(self.kind, ArrayKind::Bytes) {
+            target.schema(self.owner.py(), Schema::Binary)?;
+        }
+        Ok(())
+    }
 
-impl<'py> NumpySource<'py> {
-    fn write_cell_to(
+    fn consume_cell(
         &mut self,
         row: usize,
         column: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
+        target: &mut dyn Target,
         budget: &dyn Checkpoint,
-        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        self.consume_cell_to(row, column, target, budget)
+    }
+
+    crate::input::source::cell_destinations!();
+}
+
+impl NumpySource<'_> {
+    crate::input::cell::destinations!();
+
+    fn consume_cell_to(
+        &mut self,
+        row: usize,
+        column: usize,
+        output: &mut (impl Target + ?Sized),
+        budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         let py = self.owner.py();
-        visitor.checkpoint(py, 1)?;
+        output.checkpoint(py, 1)?;
         let kind = match self.kind {
             ArrayKind::Scalar(kind) => kind,
-            ArrayKind::Bytes => return self.write_bytes(row, column, output, context, budget),
-            ArrayKind::Unicode => return self.write_unicode(row, column, output, context, budget),
+            ArrayKind::Bytes => return self.write_bytes(row, column, output, budget),
+            ArrayKind::Unicode => return self.write_unicode(row, column, output, budget),
             ArrayKind::Object => {
-                // The canonical public getter owns its return value. We never
-                // retain a raw mutable Object slot or borrowed element across
-                // Python recursion; upstream concurrent-write constraints are
-                // distinct from this returned-reference ownership guarantee.
+                // Retain the public getter's owning reference. Never hold a raw
+                // mutable Object slot across recursive target consumption.
                 let value = self.element(row, column)?;
                 crate::input::check(py, budget)?;
-                return output.python(visitor, &value, None);
+                return output.python(&value, None);
             }
         };
         let b = self.cell_bytes(row, column, budget)?;
-        let result = match kind {
-            Kind::I8 => sink::integer(output, i8::from_ne_bytes([b[0]]), context),
-            Kind::I16 => sink::integer(output, i16::from_ne_bytes([b[0], b[1]]), context),
-            Kind::I32 => sink::integer(
-                output,
-                i32::from_ne_bytes([b[0], b[1], b[2], b[3]]),
-                context,
-            ),
-            Kind::I64 => sink::integer(output, i64::from_ne_bytes(b), context),
-            Kind::U8 => sink::integer(output, b[0], context),
-            Kind::U16 => sink::integer(output, u16::from_ne_bytes([b[0], b[1]]), context),
-            Kind::U32 => sink::integer(
-                output,
-                u32::from_ne_bytes([b[0], b[1], b[2], b[3]]),
-                context,
-            ),
-            Kind::U64 => sink::integer(output, u64::from_ne_bytes(b), context),
-            Kind::F16 => sink::float(
-                output,
-                half_to_f64(u16::from_ne_bytes([b[0], b[1]])),
-                context,
-            ),
-            Kind::F32 => sink::float(
-                output,
-                f64::from(f32::from_ne_bytes([b[0], b[1], b[2], b[3]])),
-                context,
-            ),
-            Kind::F64 => sink::float(output, f64::from_ne_bytes(b), context),
-            Kind::Bool => output.write(
-                sqlaero_core::bind::value::ValueRef::Boolean(b[0] != 0),
-                context,
-            ),
+        let value = match kind {
+            Kind::I8 => ScalarRef::Signed(i64::from(i8::from_ne_bytes([b[0]]))),
+            Kind::I16 => ScalarRef::Signed(i64::from(i16::from_ne_bytes([b[0], b[1]]))),
+            Kind::I32 => ScalarRef::Signed(i64::from(i32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
+            Kind::I64 => ScalarRef::Signed(i64::from_ne_bytes(b)),
+            Kind::U8 => ScalarRef::Unsigned(u64::from(b[0])),
+            Kind::U16 => ScalarRef::Unsigned(u64::from(u16::from_ne_bytes([b[0], b[1]]))),
+            Kind::U32 => {
+                ScalarRef::Unsigned(u64::from(u32::from_ne_bytes([b[0], b[1], b[2], b[3]])))
+            }
+            Kind::U64 => ScalarRef::Unsigned(u64::from_ne_bytes(b)),
+            Kind::F16 => ScalarRef::Float(half_to_f64(u16::from_ne_bytes([b[0], b[1]]))),
+            Kind::F32 => ScalarRef::Float(f64::from(f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
+            Kind::F64 => ScalarRef::Float(f64::from_ne_bytes(b)),
+            Kind::Bool => ScalarRef::Boolean(b[0] != 0),
             Kind::DateTime | Kind::Duration => {
                 let Some((unit, multiplier, kind)) = self.temporal else {
                     return Err(errors::builtin_message::<PyTypeError>(
@@ -869,18 +849,25 @@ impl<'py> NumpySource<'py> {
                         "NumPy temporal metadata is missing",
                     ));
                 };
-                return temporal::write(
-                    py,
-                    i64::from_ne_bytes(b),
-                    unit,
-                    multiplier,
-                    kind,
-                    output,
-                    context,
-                    Some(budget),
-                );
+                let value = i64::from_ne_bytes(b);
+                if value == i64::MIN {
+                    ScalarRef::Null
+                } else {
+                    if multiplier == 0 {
+                        return Err(errors::builtin_message::<PyTypeError>(
+                            py,
+                            "NumPy datetime unit multiplier must be positive",
+                        ));
+                    }
+                    ScalarRef::Ticks {
+                        value,
+                        unit,
+                        multiplier,
+                        kind,
+                    }
+                }
             }
         };
-        result.map_err(|error| sink::failure(py, error))
+        output.scalar(py, value)
     }
 }

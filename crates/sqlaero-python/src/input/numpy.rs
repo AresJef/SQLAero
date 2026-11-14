@@ -9,7 +9,7 @@ use crate::errors;
 use crate::input::control::Checkpoint;
 use pyo3::exceptions::{PyBufferError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyModule, PyString, PyTuple, PyType};
+use pyo3::types::{PyInt, PyModule, PyString, PyTuple, PyType};
 use std::ffi::CStr;
 
 use super::temporal::{TimeKind, TimeUnit};
@@ -241,7 +241,7 @@ impl NumpyTypes {
                 let (unit, multiplier) = if ticks == i64::MIN {
                     (TimeUnit::Generic, 1)
                 } else {
-                    super::control::callback(py, budget, || self.temporal_metadata(value, kind))?
+                    self.temporal_metadata(value, kind, budget)?
                 };
                 NumpyScalar::Temporal {
                     ticks,
@@ -258,14 +258,16 @@ impl NumpyTypes {
         &self,
         value: &Bound<'_, PyAny>,
         kind: TimeKind,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<(TimeUnit, u64)> {
         let get = match kind {
             TimeKind::DateTime => &self.datetime_dtype_get,
             TimeKind::Duration => &self.duration_dtype_get,
         };
         let args = crate::output::tuple_from_ready(value.py(), [value.clone()])?;
-        let dtype = get.bind(value.py()).call1(args)?;
-        temporal_dtype_metadata(&dtype, &self.datetime_data)
+        let dtype =
+            super::control::callback(value.py(), budget, || get.bind(value.py()).call1(args))?;
+        temporal_dtype_metadata(&dtype, &self.datetime_data, budget)
     }
 }
 
@@ -287,18 +289,21 @@ fn prepare_array<'py>(
 fn temporal_metadata(
     value: &Bound<'_, PyAny>,
     datetime_data: &Py<PyAny>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<(TimeUnit, u64)> {
-    let dtype = errors::attribute(value, c"dtype")?;
-    temporal_dtype_metadata(&dtype, datetime_data)
+    let dtype =
+        super::control::callback(value.py(), budget, || errors::attribute(value, c"dtype"))?;
+    temporal_dtype_metadata(&dtype, datetime_data, budget)
 }
 
 fn temporal_dtype_metadata(
     dtype: &Bound<'_, PyAny>,
     datetime_data: &Py<PyAny>,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyResult<(TimeUnit, u64)> {
     let py = dtype.py();
     let args = crate::output::tuple_from_ready(py, [dtype.clone()])?;
-    let metadata = datetime_data.bind(py).call1(args)?;
+    let metadata = super::control::callback(py, budget, || datetime_data.bind(py).call1(args))?;
     let metadata = metadata.cast::<PyTuple>()?;
     if metadata.len() != 2 {
         return Err(errors::builtin_message::<PyTypeError>(
@@ -307,7 +312,20 @@ fn temporal_dtype_metadata(
         ));
     }
     let name = metadata.get_item(0)?;
-    let name = name.cast::<PyString>()?.to_str()?;
+    let name = name.cast::<PyString>()?;
+    // SAFETY: the actual Unicode base was checked above. The public length API
+    // reads its base storage without dispatching a subclass __len__ override.
+    let length = unsafe { pyo3::ffi::PyUnicode_GetLength(name.as_ptr()) };
+    if length < 0 {
+        return Err(PyErr::fetch(py));
+    }
+    if length > 7 {
+        return Err(errors::builtin_message::<PyTypeError>(
+            py,
+            "NumPy returned an unrecognized datetime unit",
+        ));
+    }
+    let name = name.to_str()?;
     let unit = match name {
         "Y" => TimeUnit::Year,
         "M" => TimeUnit::Month,
@@ -330,7 +348,7 @@ fn temporal_dtype_metadata(
             ));
         }
     };
-    let multiplier = metadata.get_item(1)?.extract::<u64>()?;
+    let multiplier = metadata.get_item(1)?.cast::<PyInt>()?.extract::<u64>()?;
     // A dtype can carry zero units for a source NaT. Retain the metadata until
     // the common boundary has checked its ticks; finite zero multipliers are
     // rejected there, after the source-specific NaT -> NULL rule.

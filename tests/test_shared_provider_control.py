@@ -14,7 +14,7 @@ from test_public_connection import requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("cursor", ["Cursor", "DictCursor", "SSCursor", "SSDictCursor"])
 @pytest.mark.parametrize("prepared", [False, True])
-@pytest.mark.parametrize("phase", ["cold", "metadata"])
+@pytest.mark.parametrize("phase", ["cold", "metadata", "array_metadata"])
 @pytest.mark.parametrize("raise_original", [False, True])
 def test_numpy_protocol_reentry_stops_before_later_callbacks_or_wire(
     label: str, cursor: str, prepared: bool, phase: str, raise_original: bool,
@@ -62,13 +62,22 @@ with live(options['label']) as connection:
             return old_getattr(name)
         np.__getattr__ = get
     else:
+        class Multiplier:
+            def __index__(self):
+                calls.append('later')
+                return 1
         def metadata(dtype):
             retire()
+            if options['phase'] == 'array_metadata':
+                return ('ns', Multiplier())
             return datetime_data(dtype)
         np.datetime_data = metadata
     caught = None
     try:
-        current.execute('INSERT INTO provider_control VALUES (%s),(%s)', (np.datetime64('2026-11-12', 'D'), np.datetime64('2026-11-13', 'D')))
+        first, second = np.datetime64('2026-11-12', 'D'), np.datetime64('2026-11-13', 'D')
+        if options['phase'] == 'array_metadata':
+            first, second = np.array([first]), np.array([second])
+        current.execute('INSERT INTO provider_control VALUES (%s),(%s)', (first, second))
     except Exception as error:
         caught = error
     finally:

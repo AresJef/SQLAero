@@ -5,6 +5,7 @@ use super::sequence::{Kind, Projection};
 use std::collections::{HashMap, hash_map::RandomState};
 
 mod keys;
+mod source;
 use super::sink::Destination;
 use super::{ScalarTypes, integer};
 use crate::input::control::Checkpoint;
@@ -92,6 +93,7 @@ struct Serialize<'a> {
     writer: Writer,
     active: Vec<usize>,
     failure_located: bool,
+    nodes: usize,
 }
 
 impl Serialize<'_> {
@@ -149,6 +151,17 @@ impl Serialize<'_> {
         }
         if let Some(kind) = super::sequence::kind(value, self.types) {
             return self.container(value, kind, path);
+        }
+        // Reject active source identity before any provider preparation or
+        // required protocol, just as on the common MySQL input boundary.
+        if super::transparent::contains(py, &self.active, value.as_ptr() as usize, self.budget)? {
+            return Err(errors::builtin_message::<PyValueError>(
+                py,
+                "JSON input contains a true cycle",
+            ));
+        }
+        if self.typed(value, path)? {
+            return Ok(());
         }
         if let Some(source) = super::scalar_source::read(self.types, value, self.budget)? {
             use super::scalar_source::Source;
@@ -425,6 +438,7 @@ pub(crate) fn serialize(
         writer: Writer::new(),
         active: Vec::new(),
         failure_located: false,
+        nodes: 0,
     };
     let root = Path::root("data");
     state.value_at(value, &root)?;

@@ -17,6 +17,7 @@ use sqlaero_core::error::ClientErrorCode;
 
 pub(crate) mod arrow;
 mod buffer;
+pub(crate) mod cell;
 pub(crate) mod control;
 mod decimal;
 mod diagnostic;
