@@ -4,7 +4,7 @@ use crate::errors;
 use crate::input::attribute::{GetSet, receiver_view};
 use crate::input::cell::{Schema, Target};
 use crate::input::control::{self, Checkpoint};
-use crate::input::source::{PreparedSource, Shape};
+use crate::input::source::{Child, PreparedSource, Selected, Shape};
 use crate::input::{
     arrow,
     numpy::{NumpyArrayApi, NumpySource, NumpyTypes},
@@ -725,6 +725,24 @@ impl<'py> PreparedSource<'py> for PandasSource<'py> {
             source.schema(target)?;
         }
         Ok(())
+    }
+    fn child<'a>(&'a mut self, index: usize, budget: &dyn Checkpoint) -> PyResult<Child<'a, 'py>> {
+        // A one-dimensional wrapper must not erase its native element's
+        // structure. Reuse the Arrow source's selected child and retained
+        // owner; a table's compound cell remains one positional column.
+        if matches!(self.shape, Shape::Vector { .. })
+            && matches!(self.columns.first(), Some(Column::Arrow(_)))
+        {
+            let Column::Arrow(source) = &mut self.columns[0] else {
+                unreachable!("native column was identified before borrowing its child")
+            };
+            return source.child(index, budget);
+        }
+        if let Some(value) = self.python_child(index, budget)? {
+            return Ok(Child::Python(value));
+        }
+        let shape = self.child_shape(index)?;
+        Ok(Child::Native(Selected::new(self, index, shape)))
     }
     fn python_child(
         &mut self,

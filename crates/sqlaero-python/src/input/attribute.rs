@@ -4,7 +4,7 @@ use super::control::{self, Checkpoint};
 use crate::errors;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::PyType;
+use pyo3::types::{PyString, PyType};
 use std::ffi::CStr;
 
 /// Read one actual Python instance-state entry at the boundary, never through
@@ -145,14 +145,15 @@ pub(crate) fn receiver_view<'py>(
                 pyo3::ffi::PyObject_GenericGetDict(value.as_ptr(), std::ptr::null_mut()),
             )
         }?;
+        let name = PyString::from_bytes(py, b"__dict__")?;
         // SAFETY: view is a fresh exact Python-state base receiver and
-        // dictionary is an owning actual dict from the public getter above.
+        // dictionary owns the original actual instance state. Use the public
+        // generic attribute setter so its canonical __dict__ descriptor also
+        // updates managed/inline attribute state. Replacing only the dict
+        // pointer can leave stale attribute reads on CPython 3.13. This does
+        // not dispatch the source subclass's replacement __setattr__.
         let status = unsafe {
-            pyo3::ffi::PyObject_GenericSetDict(
-                view.as_ptr(),
-                dictionary.as_ptr(),
-                std::ptr::null_mut(),
-            )
+            pyo3::ffi::PyObject_GenericSetAttr(view.as_ptr(), name.as_ptr(), dictionary.as_ptr())
         };
         if status != 0 {
             return Err(PyErr::fetch(py));

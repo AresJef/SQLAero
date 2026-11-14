@@ -89,6 +89,8 @@ def test_unknown_record_schema_is_rejected_even_without_value_rows(dtype: object
     for value in [np.zeros((), dtype=dtype), np.empty(0, dtype=dtype)]:
         with pytest.raises(TypeError):
             json_dumps(value)
+        with pytest.raises(TypeError):
+            _sqlaero._encode_value(value)
 
 
 def test_record_binary_schema_is_not_hidden_by_empty_storage() -> None:

@@ -161,10 +161,13 @@ def test_pandas_standalone_arrow_extension_array_reuses_native_arrow() -> None:
     assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 1", b"\x03SELECT NULL", b"\x03SELECT 2"]
 
 
-def test_pandas_arrow_nested_array_keeps_each_list_as_one_cell() -> None:
+def test_pandas_arrow_nested_array_uses_shared_many_row_policy() -> None:
     pa = pytest.importorskip("pyarrow")
     value = pd.array([[1, None], None, []], dtype=pd.ArrowDtype(pa.list_(pa.int64())))
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT (1,NULL)", b"\x03SELECT NULL", b"\x03SELECT ()"]
+    assert _sqlaero._escape_projection(value, many=True) == [("1", "NULL"), "NULL", ()]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == [b"\x03SELECT (1,NULL)", b"\x03SELECT NULL", b"\x03SELECT ()"]
+    with pytest.raises(ProgrammingError):
+        _sqlaero._bind_sql("SELECT %s", value, many=True)
 
 
 def test_pandas_categorical_only_encodes_referenced_labels() -> None:

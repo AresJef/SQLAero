@@ -59,10 +59,30 @@ def test_empty_native_sequence_keeps_one_zero_parameter_call(kind: str,many: boo
     assert json_dumps(source)==b"[]"
 
 
+@pytest.mark.parametrize("many",[False,True])
+@pytest.mark.parametrize("itemize",[False,True])
+def test_zero_row_table_never_manufactures_a_real_data_row(many: bool,itemize: bool) -> None:
+    source=np.empty((0,2),dtype="i8")
+    assert _sqlaero._escape_projection(source,many=many,itemize=itemize)==[()]
+    assert json_dumps(source)==b"[]"
+
+
 def test_unstructured_void_is_never_a_record_or_implicit_binary_value() -> None:
     source=np.void(b"ab")
     for convert in (_sqlaero._escape_projection,json_dumps):
         with pytest.raises(TypeError):convert(source)
+
+
+@pytest.mark.parametrize("kind",["object","bytearray","cycle"])
+def test_invalid_object_array_leaf_keeps_the_actual_element_location(kind: str) -> None:
+    source=np.empty(2,dtype=object)
+    source[0]=7
+    source[1]=source if kind=="cycle" else bytearray(b"ab") if kind=="bytearray" else object()
+    with pytest.raises(DataError if kind=="cycle" else TypeError) as sql_error:
+        _sqlaero._escape_projection(source)
+    with pytest.raises(ValueError if kind=="cycle" else TypeError) as json_error:
+        json_dumps(source)
+    for caught in (sql_error,json_error):assert "[1]" in "\n".join(caught.value.__notes__)
 
 
 @pytest.mark.parametrize(("many","itemize","expected"),[
@@ -96,9 +116,15 @@ def test_record_array_names_change_only_json_keys_not_root_sql_positions(many: b
         assert _sqlaero._escape_projection(source,many=many,itemize=itemize)==expected
     assert json_dumps(first)==b'[{"id":7,"name":"ab"},{"id":8,"name":"cd"}]'
     assert json_dumps(renamed)==b'[{"code":7,"text":"ab"},{"code":8,"text":"cd"}]'
+    for source in (first[:1].reshape(()),first[0],renamed[0]):
+        fields = (["7","'ab'"] if many else ("7","'ab'") if itemize else "(7,'ab')")
+        assert _sqlaero._escape_projection(source,many=many,itemize=itemize)==fields
+    assert json_dumps(first[:1].reshape(()))==json_dumps(first[0])==b'{"id":7,"name":"ab"}'
+    assert json_dumps(renamed[0])==b'{"code":7,"text":"ab"}'
 
 
 @pytest.mark.parametrize(("source", "sql", "document"), [
+    pytest.param(np.array([True,False]), ("1","0"), b"[true,false]", id="041-20-bool"),
     pytest.param(np.array([7,8],dtype="i8"), ("7","8"), b"[7,8]", id="041-01"),
     pytest.param(np.array([[7,8],[9,10]]), [("7","8"),("9","10")], b"[[7,8],[9,10]]", id="041-02"),
     pytest.param(np.array(7), "7", b"7", id="041-03"),
