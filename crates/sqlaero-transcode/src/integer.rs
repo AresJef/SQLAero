@@ -28,6 +28,29 @@ pub struct Digits<'a> {
 }
 
 impl<'a> Digits<'a> {
+    /// Read a canonical source which fits an unsigned native 128-bit value.
+    /// The declared digit width bounds work before any source digit is read.
+    /// # Errors
+    /// Returns malformed source-layout errors; None means the canonical source
+    /// cannot fit this native width. No decimal formatting or rounding occurs.
+    pub fn unsigned128(self) -> Result<Option<u128>, Error> {
+        if self.len() > 128_usize.div_ceil(usize::from(self.bits)) {
+            return Ok(None);
+        }
+        let radix = 1_u128 << self.bits;
+        let mut value = 0_u128;
+        for index in (0..self.len()).rev() {
+            let word = self.word(index)?;
+            let Some(next) = value
+                .checked_mul(radix)
+                .and_then(|value| value.checked_add(u128::from(word)))
+            else {
+                return Ok(None);
+            };
+            value = next;
+        }
+        Ok(Some(value))
+    }
     /// Admit layout facts without scanning or copying the source.
     /// # Errors
     /// Rejects unsupported widths, invalid digit bits or a partial digit.
@@ -189,6 +212,33 @@ impl<'a> DecimalDigits<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unsigned_native_width_checks_the_declared_bound_before_reading_words() {
+        let maximum = [0xff; 16];
+        assert_eq!(
+            Digits::new(&maximum, 8, 1, true, true)
+                .unwrap()
+                .unsigned128()
+                .unwrap(),
+            Some(u128::MAX)
+        );
+        let oversized = [1; 17];
+        assert_eq!(
+            Digits::new(&oversized, 8, 1, true, true)
+                .unwrap()
+                .unsigned128()
+                .unwrap(),
+            None
+        );
+        let malformed = [0, 1];
+        assert!(
+            Digits::new(&malformed, 8, 2, true, true)
+                .unwrap()
+                .unsigned128()
+                .is_err()
+        );
+    }
 
     #[test]
     fn completed_groups_outlive_the_source_while_incomplete_state_cannot_publish() {

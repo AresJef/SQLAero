@@ -19,6 +19,7 @@ pub(crate) mod arrow;
 pub(crate) mod control;
 mod decimal;
 mod diagnostic;
+mod identifier;
 pub(crate) mod integer;
 pub(crate) mod json;
 pub(crate) mod sink;
@@ -28,6 +29,7 @@ pub(crate) mod pandas;
 pub(crate) mod polars;
 pub(crate) mod primitive;
 pub(crate) mod probe;
+mod record;
 mod scalar_source;
 pub(crate) mod sequence;
 pub(crate) mod source;
@@ -84,6 +86,7 @@ pub(crate) struct ScalarTypes {
     time_offset: Py<PyAny>,
     struct_time: Py<PyType>,
     sequences: sequence::Types,
+    uuid: std::sync::OnceLock<identifier::UuidType>,
     numpy: std::sync::OnceLock<numpy::NumpyTypes>,
     pandas: std::sync::OnceLock<pandas::PandasTypes>,
     polars: std::sync::OnceLock<polars::PolarsTypes>,
@@ -98,6 +101,28 @@ impl ScalarTypes {
     }
     pub(crate) fn decimal_type<'py>(&self, py: Python<'py>) -> &Bound<'py, PyType> {
         self.decimal.bind(py)
+    }
+
+    pub(super) fn uuid_value(
+        &self,
+        value: &Bound<'_, PyAny>,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<Option<u128>> {
+        let py = value.py();
+        if self.uuid.get().is_none() {
+            if !provider_loaded(py, b"uuid")? {
+                return Ok(None);
+            }
+            let candidate = control::callback(py, budget, || identifier::UuidType::new(py))?;
+            let _ = self.uuid.set(candidate);
+            // A losing candidate is dropped after OnceLock has released its
+            // publish lock, before actual source facts are consumed.
+            checkpoint(py, budget)?;
+        }
+        match self.uuid.get() {
+            Some(types) => types.read(value, budget),
+            None => Ok(None),
+        }
     }
     pub(crate) fn new(py: Python<'_>) -> PyResult<Self> {
         // PyO3's exact datetime type checks expect an initialized C API. Its
@@ -115,6 +140,7 @@ impl ScalarTypes {
             decimal: decimal_type.unbind(),
             native_decimal,
             sequences: sequence::Types::new(py)?,
+            uuid: std::sync::OnceLock::new(),
             utc: errors::attribute(&timezone, c"utc")?.unbind(),
             datetime_offset: errors::attribute(py.get_type::<PyDateTime>().as_any(), c"utcoffset")?
                 .unbind(),
@@ -209,7 +235,7 @@ impl ScalarTypes {
         budget: Option<&dyn Checkpoint>,
     ) -> PyResult<bool> {
         let py = value.py();
-        let Some(source) = scalar_source::read(self, value)? else {
+        let Some(source) = scalar_source::read(self, value, budget)? else {
             return Ok(false);
         };
         match source {

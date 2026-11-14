@@ -54,6 +54,7 @@ impl Consumer for Text {
 
 pub(super) fn read(
     value: &Bound<'_, PyAny>,
+    types: &crate::input::ScalarTypes,
     budget: Option<&dyn Checkpoint>,
     seed: &RandomState,
 ) -> PyResult<Key> {
@@ -86,12 +87,19 @@ pub(super) fn read(
                     .map_err(|error| failure(py, error))
             })?;
         }
-        _ => {
-            return Err(errors::builtin_message::<PyTypeError>(
-                py,
-                "JSON object keys must be actual str, int or UUID values; bool and automatic string conversion are not accepted",
-            ));
+        None => {
+            if let Some(value) = types.uuid_value(value, budget)? {
+                output
+                    .text_fragment(
+                        sqlaero_transcode::identifier::UuidText::new(value).as_str(),
+                        &(),
+                    )
+                    .map_err(|error| failure(py, error))?;
+            } else {
+                return Err(unsupported(py));
+            }
         }
+        _ => return Err(unsupported(py)),
     }
     // Fixed chunk boundaries make the hash independent of source acquisition
     // fragments; neither a wide integer nor a long Unicode key is hashed in one
@@ -128,4 +136,11 @@ pub(super) fn same(
         }
     }
     Ok(true)
+}
+
+fn unsupported(py: Python<'_>) -> PyErr {
+    errors::builtin_message::<PyTypeError>(
+        py,
+        "JSON object keys must be actual str, int or UUID values; bool and automatic string conversion are not accepted",
+    )
 }

@@ -324,6 +324,13 @@ impl Parameters {
                 self.finish_text()?;
                 253
             }
+            ValueRef::Uuid(value) => {
+                let text = sqlaero_transcode::identifier::UuidText::new(value);
+                self.begin_text(Some(36))?;
+                self.append_text(text.as_str(), context)?;
+                self.finish_text()?;
+                253
+            }
             ValueRef::Date(value) => self.temporal(Temporal::Date {
                 year: i128::from(value.year),
                 month: value.month,

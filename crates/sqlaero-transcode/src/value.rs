@@ -19,6 +19,8 @@ pub enum ScalarRef<'a> {
     Signed(i64),
     /// An exact unsigned native-width integer.
     Unsigned(u64),
+    /// Actual UUID bits, without a target's binary or textual representation.
+    Uuid(u128),
     /// A borrowed arbitrary-precision integer, with no digit limit here.
     BigInteger(&'a BigInt),
     /// Original binary64 bits, including negative zero and nonfinite values.

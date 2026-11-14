@@ -105,7 +105,7 @@ pub(crate) fn bytes(
     }
 }
 
-/// Run one approved source protocol and recheck before consuming its result.
+/// Check entry, run one approved protocol, then recheck before consuming it.
 /// The actual callback exception wins and is propagated unchanged; a success
 /// cannot hide a retired owner or an expired original operation deadline.
 pub(crate) fn callback<T>(
@@ -113,6 +113,10 @@ pub(crate) fn callback<T>(
     control: Option<&dyn Checkpoint>,
     invoke: impl FnOnce() -> PyResult<T>,
 ) -> PyResult<T> {
+    // An earlier owner's release can itself run Python finalizers after its
+    // last explicit protocol returned. Never enter a later protocol relying on
+    // that older success check. Ordinary scalar reads do not use this helper.
+    super::checkpoint(py, control)?;
     let value = invoke()?;
     super::checkpoint(py, control)?;
     Ok(value)

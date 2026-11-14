@@ -150,7 +150,7 @@ impl Serialize<'_> {
         if let Some(kind) = super::sequence::kind(value, self.types) {
             return self.container(value, kind, path);
         }
-        if let Some(source) = super::scalar_source::read(self.types, value)? {
+        if let Some(source) = super::scalar_source::read(self.types, value, self.budget)? {
             use super::scalar_source::Source;
             let native = match source {
                 Source::Native(value) => value,
@@ -228,7 +228,12 @@ impl Serialize<'_> {
             .try_reserve(1)
             .map_err(|_| errors::memory_error(py))?;
         self.active.push(identity);
-        let object = kind == Kind::Dict;
+        let record = if kind == Kind::Tuple {
+            super::record::names(value, self.budget)?
+        } else {
+            None
+        };
+        let object = kind == Kind::Dict || record.is_some();
         if object {
             self.writer.object_start()
         } else {
@@ -258,8 +263,13 @@ impl Serialize<'_> {
                 }
                 let current = sequence.row_item(index, self.budget)?;
                 if object {
-                    let pair = current.cast::<pyo3::types::PyTuple>()?;
-                    let key = keys::read(&pair.get_item(0)?, self.budget, &seed)?;
+                    let (source_key, source_value) = if let Some(record) = &record {
+                        (record.get(index)?, current)
+                    } else {
+                        let pair = current.cast::<pyo3::types::PyTuple>()?;
+                        (pair.get_item(0)?, pair.get_item(1)?)
+                    };
+                    let key = keys::read(&source_key, self.types, self.budget, &seed)?;
                     names.try_reserve(1).map_err(|_| errors::memory_error(py))?;
                     if let Some(previous) = names.get(&key.hash) {
                         for name in previous {
@@ -288,7 +298,7 @@ impl Serialize<'_> {
                         name: &key.value,
                         ordinal: index,
                     });
-                    self.value_at(&pair.get_item(1)?, &child)?;
+                    self.value_at(&source_value, &child)?;
                     let previous = names.entry(key.hash).or_default();
                     previous
                         .try_reserve(1)

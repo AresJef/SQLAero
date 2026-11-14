@@ -26,6 +26,7 @@ pub(super) enum Source<'a, 'py> {
 pub(super) fn read<'a, 'py>(
     types: &ScalarTypes,
     value: &'a Bound<'py, PyAny>,
+    budget: Option<&dyn super::control::Checkpoint>,
 ) -> PyResult<Option<Source<'a, 'py>>> {
     let py = value.py();
     if let Ok(wrapper) = value.cast::<super::json::Json>() {
@@ -85,7 +86,9 @@ pub(super) fn read<'a, 'py>(
     } else if super::actual_instance(value, types.decimal_type(py)) {
         Ok(Some(Source::Decimal(value)))
     } else {
-        Ok(None)
+        Ok(types
+            .uuid_value(value, budget)?
+            .map(|value| Source::Native(ScalarRef::Uuid(value))))
     }
 }
 

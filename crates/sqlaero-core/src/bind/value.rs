@@ -62,6 +62,12 @@ impl ValueSink for TextSink<'_> {
             }
             ValueRef::Signed(value) => scalar::integer(output, value, limit)?,
             ValueRef::Unsigned(value) => scalar::integer(output, value, limit)?,
+            ValueRef::Uuid(value) => context.codec.literal(
+                sqlaero_transcode::identifier::UuidText::new(value).as_str(),
+                output,
+                context.no_backslash_escapes,
+                limit,
+            )?,
             ValueRef::BigInteger(value) => scalar::large_integer(output, value, limit)?,
             ValueRef::Float(value) => scalar::float(output, value, limit)?,
             ValueRef::Decimal {

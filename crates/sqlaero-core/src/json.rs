@@ -384,6 +384,12 @@ impl Consumer for Writer {
                     return writer.string_end();
                 }
                 ScalarRef::Bytes(_) => return Err(Error::Unsupported("binary")),
+                ScalarRef::Uuid(value) => {
+                    let text = sqlaero_transcode::identifier::UuidText::new(value);
+                    writer.string_start(Some(36), false)?;
+                    writer.string_fragment(text.as_str())?;
+                    return writer.string_end();
+                }
                 ScalarRef::Date(date) => {
                     return writer.temporal(temporal::Text::calendar(date, None, None)?);
                 }

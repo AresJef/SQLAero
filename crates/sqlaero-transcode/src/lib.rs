@@ -5,6 +5,7 @@
 
 pub mod buffer;
 pub mod diagnostic;
+pub mod identifier;
 pub mod integer;
 pub mod number;
 pub mod structure;
