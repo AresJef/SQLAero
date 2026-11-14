@@ -151,6 +151,19 @@ impl Serialize<'_> {
                         .array_end()
                         .map_err(|error| failure(py, error))?;
                 }
+                Shape::Tensor {
+                    dimensions,
+                    elements,
+                } => {
+                    let mut position = 0;
+                    self.tensor(source.as_mut(), 0..dimensions, &mut position, path, budget)?;
+                    if position != elements {
+                        return Err(errors::builtin_message::<PyValueError>(
+                            py,
+                            "native array axes disagree with the prepared logical cell count",
+                        ));
+                    }
+                }
                 Shape::Record { .. } => {
                     return Err(errors::builtin_message::<PyValueError>(
                         py,
@@ -177,5 +190,38 @@ impl Serialize<'_> {
             self.locate(source.owner().py(), error, path);
         }
         result
+    }
+
+    /// Output axes are target structure, not source chunking or SQL row layout.
+    /// Only actual reached arrays consume depth; an empty early axis ends here.
+    fn tensor(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        axes: std::ops::Range<usize>,
+        position: &mut usize,
+        path: &Path<'_>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        let py = source.owner().py();
+        let axis = axes.start;
+        let length = source.axis_length(axis).ok_or_else(|| {
+            errors::builtin_message::<PyValueError>(py, "native array axis length is missing")
+        })?;
+        Cell { state: self, path }.checkpoint(py, 1)?;
+        self.writer
+            .array_start()
+            .map_err(|error| failure(py, error))?;
+        for index in 0..length {
+            let child = path.child(Coordinate::Index(index));
+            if axis + 1 == axes.end {
+                self.typed_cell(source, *position, 0, &child, budget)?;
+                *position = position
+                    .checked_add(1)
+                    .ok_or_else(|| errors::memory_error(py))?;
+            } else {
+                self.tensor(source, axis + 1..axes.end, position, &child, budget)?;
+            }
+        }
+        self.writer.array_end().map_err(|error| failure(py, error))
     }
 }

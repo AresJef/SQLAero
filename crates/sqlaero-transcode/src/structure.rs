@@ -23,4 +23,12 @@ pub enum Shape {
         /// Actual number of columns, including schemas with no rows.
         columns: usize,
     },
+    /// Higher-dimensional native values. Axis lengths remain prepared source
+    /// facts; the consumer decides whether these axes have a target mapping.
+    Tensor {
+        /// Actual number of axes, without charging an invented output depth.
+        dimensions: usize,
+        /// Total logical cells, excluding physical layout and chunk boundaries.
+        elements: usize,
+    },
 }

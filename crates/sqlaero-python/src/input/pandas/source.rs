@@ -1144,8 +1144,11 @@ impl<'py> PandasSource<'py> {
         let length = match self.shape {
             Shape::Vector { length } => length,
             Shape::Table { rows, .. } => rows,
-            Shape::Record { .. } | Shape::Scalar => {
-                return Err(invalid(py, "Pandas source cannot have record shape"));
+            Shape::Record { .. } | Shape::Scalar | Shape::Tensor { .. } => {
+                return Err(invalid(
+                    py,
+                    "Pandas source requires a vector or table shape",
+                ));
             }
         };
         if row >= length {

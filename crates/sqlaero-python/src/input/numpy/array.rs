@@ -1,7 +1,7 @@
 //! Prepared exact ndarray coordinates with short, reacquired native exports.
 //!
-//! NumPy requires callers to keep shared storage stable. A private view is used
-//! only while preparing metadata. Each new native read reacquires the original
+//! NumPy requires callers to keep shared storage stable. Canonical public buffer
+//! slots prepare metadata. Each new native read reacquires the original
 //! source because even a retained view/export can be invalidated by setstate.
 //! Fixed-width values can reuse an already copied, bounded Rust-owned block;
 //! such bytes no longer borrow mutable NumPy memory.
@@ -38,9 +38,9 @@ struct UnicodeScratch {
     text: String,
 }
 
-/// Only the copying window owns these fresh exports. Metadata is copied into
-/// native coordinates before any source address is formed; no Python call,
-/// allocation or checkpoint occurs while reading their bytes.
+/// Only the copying window owns these fresh exports. Prepared axis lengths and
+/// current public strides are checked before any source address is formed;
+/// no Python call, allocation or checkpoint occurs while reading their bytes.
 struct NativeView<'owner, 'py> {
     // Fields drop in declaration order: end the derived export first.
     source: Export<'owner, 'py>,
@@ -48,6 +48,7 @@ struct NativeView<'owner, 'py> {
     dimensions: usize,
     lengths: [usize; 2],
     strides: [isize; 2],
+    tensor_axes: &'owner [usize],
     width: usize,
 }
 
@@ -57,11 +58,28 @@ impl NativeView<'_, '_> {
             return None;
         }
         let mut offset = 0isize;
-        for (axis, coordinate) in [row, column].into_iter().enumerate().take(self.dimensions) {
-            let delta = isize::try_from(coordinate)
-                .ok()?
-                .checked_mul(self.strides[axis])?;
-            offset = offset.checked_add(delta)?;
+        if self.dimensions > 2 {
+            let mut remainder = row;
+            for axis in (0..self.dimensions).rev() {
+                let length = self.tensor_axes[axis];
+                if length == 0 {
+                    return None;
+                }
+                let coordinate = remainder % length;
+                remainder /= length;
+                // SAFETY: native_view checked rank and every axis length;
+                // this public stride vector remains live inside its export.
+                let stride = unsafe { *self.source.raw.strides.add(axis) };
+                offset =
+                    offset.checked_add(isize::try_from(coordinate).ok()?.checked_mul(stride)?)?;
+            }
+        } else {
+            for (axis, coordinate) in [row, column].into_iter().enumerate().take(self.dimensions) {
+                let delta = isize::try_from(coordinate)
+                    .ok()?
+                    .checked_mul(self.strides[axis])?;
+                offset = offset.checked_add(delta)?;
+            }
         }
         let address = (self.source.raw.buf as usize).checked_add_signed(offset)?;
         if !self.root.contains(address as *const u8, self.width) {
@@ -74,7 +92,25 @@ impl NativeView<'_, '_> {
         let Ok(width) = isize::try_from(self.width) else {
             return false;
         };
-        if self.dimensions == 1 {
+        if self.dimensions > 2 {
+            let mut expected = width;
+            for axis in (0..self.dimensions).rev() {
+                // SAFETY: the complete checked metadata stays exported.
+                let stride = unsafe { *self.source.raw.strides.add(axis) };
+                let length = self.tensor_axes[axis];
+                if length > 1 && stride != expected {
+                    return false;
+                }
+                let Some(next) = isize::try_from(length)
+                    .ok()
+                    .and_then(|n| expected.checked_mul(n))
+                else {
+                    return false;
+                };
+                expected = next;
+            }
+            true
+        } else if self.dimensions == 1 {
             self.strides[0] == width
         } else {
             self.strides[1] == width
@@ -103,6 +139,8 @@ pub(crate) struct NumpySource<'py> {
     item_get: pyo3::ffi::binaryfunc,
     allocation: Allocation<'py>,
     shape: Shape,
+    // Ordinary0/1/2D sources keep an empty Vec without a metadata allocation.
+    tensor_axes: Vec<usize>,
     kind: ArrayKind,
     width: usize,
     swap: bool,
@@ -135,26 +173,36 @@ impl<'py> NumpySource<'py> {
         let dimensions = usize::try_from(raw.ndim).ok();
         let width = usize::try_from(raw.itemsize).ok();
         let mut lengths = [1usize; 2];
-        let mut valid = dimensions.is_some_and(|d| d <= 2)
+        let mut extra = [std::mem::MaybeUninit::<usize>::uninit(); 64];
+        let mut elements = Some(1usize);
+        let mut zero = false;
+        let mut valid = dimensions.is_some_and(|d| d <= extra.len())
             && width.is_some()
             && raw.len >= 0
             && raw.suboffsets.is_null();
         if valid && let Some(dimensions) = dimensions {
             valid = dimensions == 0 || (!raw.shape.is_null() && !raw.strides.is_null());
             if valid {
-                for (axis, length) in lengths.iter_mut().enumerate().take(dimensions) {
-                    // SAFETY: checked ndim is at most2 and the public shape
+                for axis in 0..dimensions {
+                    // SAFETY: checked ndim is at most64 and the public shape
                     // vector has that many entries, retained by this export.
                     let actual = unsafe { *raw.shape.add(axis) };
                     if let Ok(actual) = usize::try_from(actual) {
-                        *length = actual;
+                        if dimensions <= 2 {
+                            lengths[axis] = actual;
+                        } else {
+                            extra[axis].write(actual);
+                        }
+                        zero |= actual == 0;
+                        elements = elements.and_then(|n| n.checked_mul(actual));
                     } else {
                         valid = false;
                     }
                 }
-                valid &= lengths[0]
-                    .checked_mul(lengths[1])
-                    .and_then(|n| n.checked_mul(width.unwrap_or(0)))
+                if zero {
+                    elements = Some(0);
+                }
+                valid &= elements.and_then(|n| n.checked_mul(width.unwrap_or(0)))
                     == Some(raw.len as usize);
             }
         }
@@ -163,18 +211,33 @@ impl<'py> NumpySource<'py> {
         if !valid {
             return Err(errors::builtin_message::<PyValueError>(
                 py,
-                "NumPy storage requires a valid zero, one or two dimensional shape",
+                "NumPy storage requires valid native dimensions, lengths and byte width",
             ));
         }
         let dimensions = dimensions.unwrap_or(0);
         let width = width.unwrap_or(0);
+        let mut tensor_axes = Vec::new();
         let shape = match dimensions {
             0 => Shape::Scalar,
             1 => Shape::Vector { length: lengths[0] },
-            _ => Shape::Table {
+            2 => Shape::Table {
                 rows: lengths[0],
                 columns: lengths[1],
             },
+            _ => {
+                tensor_axes
+                    .try_reserve_exact(dimensions)
+                    .map_err(|_| errors::memory_error(py))?;
+                for axis in extra.iter().take(dimensions) {
+                    // SAFETY: valid proves every actual axis was initialized
+                    // above, and the raw export ended before this allocation.
+                    tensor_axes.push(unsafe { axis.assume_init() });
+                }
+                Shape::Tensor {
+                    dimensions,
+                    elements: elements.unwrap_or(0),
+                }
+            }
         };
         let tag = errors::attribute(&dtype, c"kind")?;
         let tag = tag.extract::<&str>()?;
@@ -227,6 +290,7 @@ impl<'py> NumpySource<'py> {
             dtype,
             allocation,
             shape,
+            tensor_axes,
             kind,
             width,
             swap: !native_order,
@@ -247,6 +311,7 @@ impl<'py> NumpySource<'py> {
             Shape::Scalar => (1, 1),
             Shape::Vector { length } => (length, 1),
             Shape::Table { rows, columns } => (rows, columns),
+            Shape::Tensor { elements, .. } => (elements, 1),
             Shape::Record { .. } => (0, 0),
         };
         let total = rows.checked_mul(columns);
@@ -335,6 +400,10 @@ impl<'py> NumpySource<'py> {
             Shape::Scalar => (0, [1, 1]),
             Shape::Vector { length } => (1, [length, 1]),
             Shape::Table { rows, columns } => (2, [rows, columns]),
+            Shape::Tensor {
+                dimensions,
+                elements,
+            } => (dimensions, [elements, 1]),
             Shape::Record { .. } => {
                 return Err(errors::builtin_message::<PyTypeError>(
                     py,
@@ -372,11 +441,18 @@ impl<'py> NumpySource<'py> {
                 // SAFETY: a non-NULL shape/stride vector has `raw.ndim`
                 // entries, and this loop is bounded by the checked ndim.
                 let (length, stride) = unsafe { (*raw.shape.add(axis), *raw.strides.add(axis)) };
-                if length < 0 || length as usize != lengths[axis] {
+                let expected = if dimensions > 2 {
+                    self.tensor_axes[axis]
+                } else {
+                    lengths[axis]
+                };
+                if length < 0 || length as usize != expected {
                     valid = false;
                     break;
                 }
-                strides[axis] = stride;
+                if dimensions <= 2 {
+                    strides[axis] = stride;
+                }
             }
         }
         if !valid {
@@ -393,6 +469,7 @@ impl<'py> NumpySource<'py> {
             dimensions,
             lengths,
             strides,
+            tensor_axes: &self.tensor_axes,
             width: self.width,
         })
     }
@@ -572,6 +649,7 @@ impl<'py> NumpySource<'py> {
                 Shape::Scalar => (1, 1),
                 Shape::Vector { length } => (length, 1),
                 Shape::Table { rows, columns } => (rows, columns),
+                Shape::Tensor { elements, .. } => (elements, 1),
                 Shape::Record { .. } => (0, 0),
             };
             let total = rows.checked_mul(columns);
@@ -630,6 +708,30 @@ impl<'py> NumpySource<'py> {
                 let row = crate::input::python_index(py, row)?;
                 let column = crate::input::python_index(py, column)?;
                 crate::output::tuple_from_ready(py, [row, column])?.into_any()
+            }
+            Shape::Tensor {
+                dimensions,
+                elements,
+            } => {
+                if row >= elements || column != 0 {
+                    return Err(errors::builtin_message::<PyIndexError>(
+                        py,
+                        "NumPy flat coordinate is outside its prepared axes",
+                    ));
+                }
+                let mut coordinates = Vec::new();
+                coordinates
+                    .try_reserve_exact(dimensions)
+                    .map_err(|_| errors::memory_error(py))?;
+                let mut divisor = elements;
+                let mut remainder = row;
+                for &length in &self.tensor_axes {
+                    divisor /= length;
+                    let coordinate = remainder / divisor;
+                    remainder %= divisor;
+                    coordinates.push(crate::input::python_index(py, coordinate)?.unbind());
+                }
+                crate::output::tuple_from_ready_vec(py, coordinates)?.into_any()
             }
             Shape::Record { .. } => {
                 return Err(errors::builtin_message::<PyTypeError>(
@@ -892,6 +994,19 @@ impl<'py> PreparedSource<'py> for NumpySource<'py> {
 
     fn shape(&self) -> Shape {
         self.shape
+    }
+
+    fn axis_length(&self, axis: usize) -> Option<usize> {
+        match self.shape {
+            Shape::Scalar | Shape::Record { .. } => None,
+            Shape::Vector { length } => (axis == 0).then_some(length),
+            Shape::Table { rows, columns } => match axis {
+                0 => Some(rows),
+                1 => Some(columns),
+                _ => None,
+            },
+            Shape::Tensor { .. } => self.tensor_axes.get(axis).copied(),
+        }
     }
 
     fn schema(&self, target: &mut dyn Target) -> PyResult<()> {

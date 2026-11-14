@@ -113,6 +113,17 @@ pub(crate) trait PreparedSource<'py> {
     /// Return the prepared logical shape without per-value Python metadata work.
     fn shape(&self) -> Shape;
 
+    /// Return one actual axis length without rereading Python metadata.
+    /// Higher-rank sources implement this over their prepared native facts.
+    fn axis_length(&self, axis: usize) -> Option<usize> {
+        match (self.shape(), axis) {
+            (Shape::Vector { length }, 0) => Some(length),
+            (Shape::Table { rows, .. }, 0) => Some(rows),
+            (Shape::Table { columns, .. }, 1) => Some(columns),
+            _ => None,
+        }
+    }
+
     /// Present source schema facts without reading values or formatting output.
     /// Each target independently admits the schema it can represent.
     fn schema(&self, _target: &mut dyn super::cell::Target) -> PyResult<()> {

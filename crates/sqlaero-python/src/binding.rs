@@ -24,6 +24,29 @@ mod prepared_display;
 #[cfg(test)]
 mod prepared_native_tests;
 
+fn tensor_error(py: Python<'_>) -> PyErr {
+    errors::builtin_message::<pyo3::exceptions::PyValueError>(
+        py,
+        "MySQL parameters support at most two array axes; wrap higher-dimensional values in JSON(...) for one JSON text parameter",
+    )
+}
+
+/// MySQL target admission consumes source shape facts, without a Python type catalog.
+fn mysql_source<'py>(
+    value: &Bound<'py, PyAny>,
+    types: &ScalarTypes,
+    budget: &dyn Checkpoint,
+) -> PyResult<Option<Box<dyn PreparedSource<'py> + 'py>>> {
+    let prepared = source::prepare(value, types, budget)?;
+    if prepared
+        .as_ref()
+        .is_some_and(|source| matches!(source.shape(), Shape::Tensor { .. }))
+    {
+        return Err(tensor_error(value.py()));
+    }
+    Ok(prepared)
+}
+
 /// Select the request boundary policy. Prepared display is readable SQL,
 /// never the binary payload and never eligible for text VALUES merging.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -615,7 +638,7 @@ impl<'py> Rows<'py> {
                 .is_some_and(|source| match source.shape() {
                     Shape::Table { .. } => true,
                     Shape::Vector { .. } => self.many,
-                    Shape::Record { .. } | Shape::Scalar => false,
+                    Shape::Record { .. } | Shape::Scalar | Shape::Tensor { .. } => false,
                 })
     }
     pub(crate) fn remaining(&self) -> usize {
@@ -650,7 +673,7 @@ impl<'py> Rows<'py> {
     ) -> PyResult<Self> {
         let sequence = Sequence::from(root, types, &[], Some(budget))?;
         let native = if sequence.is_none() {
-            source::prepare(root, types, budget)?
+            mysql_source(root, types, budget)?
         } else {
             None
         };
@@ -663,6 +686,7 @@ impl<'py> Rows<'py> {
             Some(Shape::Vector { length }) => (if many { length.max(1) } else { 1 }, length == 0),
             Some(Shape::Record { .. } | Shape::Scalar) => (1, false),
             Some(Shape::Table { rows, .. }) => (rows.max(1), rows == 0),
+            Some(Shape::Tensor { .. }) => return Err(tensor_error(root.py())),
             None => (
                 outer.as_ref().map_or(1, |v| v.len().max(1)),
                 outer.as_ref().is_some_and(|v| v.len() == 0),
@@ -753,7 +777,7 @@ impl<'py> Rows<'py> {
         let input = if let Some(sequence) = sequence {
             RowInput::Sequence(sequence)
         } else if !self.empty {
-            match source::prepare(&value, types, budget)? {
+            match mysql_source(&value, types, budget)? {
                 Some(source) => RowInput::Native(NativeRow {
                     source: SourceRef::Owned(source),
                     row: None,
@@ -1416,6 +1440,7 @@ impl Row<'_, '_> {
                         (Shape::Record { .. }, _) => (0, index),
                         (Shape::Table { .. }, Some(row)) => (row, index),
                         (Shape::Table { .. }, None) => (0, 0),
+                        (Shape::Tensor { .. }, _) => return Err(tensor_error(py)),
                     };
                     if matches!((shape, source_row), (Shape::Table { .. }, None)) {
                         visit
@@ -1440,6 +1465,7 @@ impl Row<'_, '_> {
                     }
                 } else if let Some(row) = source_row {
                     match shape {
+                        Shape::Tensor { .. } => Err(tensor_error(py)),
                         Shape::Vector { .. } => {
                             visit.native_cell::<TRACK_ROLE>(native.source.source(), row, 0, output)
                         }
@@ -1829,7 +1855,7 @@ impl Visit<'_> {
                 self.active.truncate(previous);
                 return result;
             }
-            let Some(mut source) = source::prepare(value, self.types, self.budget)? else {
+            let Some(mut source) = mysql_source(value, self.types, self.budget)? else {
                 return Err(crate::input::unsupported(value));
             };
             let container = source.shape() != Shape::Scalar;
@@ -1877,6 +1903,7 @@ impl Visit<'_> {
                 writer::append(output, b")", self.context.limit).map_err(|e| errors::wire(py, e))
             }
             Shape::Record { fields } => self.native_row(source, 0, fields, output),
+            Shape::Tensor { .. } => Err(tensor_error(py)),
             Shape::Table { rows, columns } => {
                 writer::append(output, b"(", self.context.limit)
                     .map_err(|e| errors::wire(py, e))?;
@@ -1977,7 +2004,7 @@ impl CellWriter for Visit<'_> {
                 return result;
             }
             if Sequence::from(value, self.types, &self.active, Some(self.budget))?.is_some()
-                || source::prepare(value, self.types, self.budget)?.is_some()
+                || mysql_source(value, self.types, self.budget)?.is_some()
             {
                 return Err(crate::input::sink::fragment_error(py));
             }
