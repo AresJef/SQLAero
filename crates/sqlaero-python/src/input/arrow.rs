@@ -38,6 +38,7 @@ use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
 
 mod cdata;
 mod dictionary;
+mod names;
 mod offset;
 mod projection;
 mod schema;
@@ -141,6 +142,52 @@ pub(crate) struct Prepared<'py> {
     shape: Shape,
     owner: Bound<'py, PyAny>,
     offsets: Option<Box<offset::Offsets<'py>>>,
+    names: names::Source<'py>,
+}
+
+/// Attached source metadata and its current schema position. This carries no
+/// SQL context or formatted answers, and is borrowed only for this traversal.
+struct Read<'a, 'py> {
+    owner: &'a Bound<'py, PyAny>,
+    offsets: &'a mut Option<Box<offset::Offsets<'py>>>,
+    names: &'a mut names::Source<'py>,
+    node: usize,
+}
+
+impl<'py> Read<'_, 'py> {
+    fn at(&mut self, node: usize) -> Read<'_, 'py> {
+        Read {
+            owner: self.owner,
+            offsets: self.offsets,
+            names: self.names,
+            node,
+        }
+    }
+    fn child(
+        &mut self,
+        edge: names::Edge,
+        dtype: &DataType,
+        wanted: bool,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<usize> {
+        if wanted && names::needed(dtype) {
+            self.names.child(self.node, edge, budget)
+        } else {
+            Ok(0)
+        }
+    }
+    fn dictionary(
+        &mut self,
+        mut dtype: &DataType,
+        wanted: bool,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        while let DataType::Dictionary(_, value) = dtype {
+            self.node = self.child(names::Edge::Value, value, wanted, budget)?;
+            dtype = value;
+        }
+        Ok(())
+    }
 }
 
 /// These strategies are mutually exclusive for one validated source schema.
@@ -586,6 +633,7 @@ pub(crate) fn prepare_exported<'py>(
             shape,
             owner: owner.clone(),
             offsets: None,
+            names: names::Source::arrow(exported, shape),
         });
     }
     let capsule = exported.call_method0(c"__arrow_c_stream__")?;
@@ -640,6 +688,7 @@ pub(crate) fn prepare_exported<'py>(
         shape,
         owner: owner.clone(),
         offsets: None,
+        names: names::Source::arrow(exported, shape),
     })
 }
 
@@ -878,6 +927,16 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
     fn shape(&self) -> Shape {
         self.shape
     }
+    fn prepare_field_names(&mut self, budget: &dyn Checkpoint) -> PyResult<bool> {
+        let Shape::Table { columns, .. } = self.shape else {
+            return Ok(false);
+        };
+        self.names.prepare_fields(0, columns, budget)?;
+        Ok(true)
+    }
+    fn field_name(&self, column: usize) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.names.field(0, column)
+    }
 
     fn schema(&self, target: &mut dyn Target) -> PyResult<()> {
         consume_schema(self.owner.py(), self.field.data_type(), target)
@@ -925,14 +984,18 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         }
         let (array, local) = self.current_array(index, budget)?;
         projection::consume_child(
-            &self.owner,
+            Read {
+                owner: &self.owner,
+                offsets: &mut self.offsets,
+                names: &mut self.names,
+                node: 0,
+            },
             &array,
             local,
             row,
             column,
             target,
             budget,
-            &mut self.offsets,
         )
     }
 
@@ -951,13 +1014,23 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
             Shape::Vector { .. } if column == 0 => false,
             _ => return Err(invalid(py, "Arrow cell is outside its prepared shape")),
         };
+        let value = cell_array(py, &array, table, column)?;
+        let node = if table && target.needs_field_names() && names::needed(value.data_type()) {
+            self.names.child(0, names::Edge::Field(column), budget)?
+        } else {
+            0
+        };
         consume_value(
-            &self.owner,
-            cell_array(py, &array, table, column)?,
+            Read {
+                owner: &self.owner,
+                offsets: &mut self.offsets,
+                names: &mut self.names,
+                node,
+            },
+            value,
             index,
             target,
             budget,
-            &mut self.offsets,
         )
     }
 
@@ -1543,7 +1616,12 @@ impl<'py> Prepared<'py> {
                     cache.write(py, column, value, index, text, context, budget, visitor)
                 } else {
                     consume_value(
-                        &self.owner,
+                        Read {
+                            owner: &self.owner,
+                            offsets: &mut self.offsets,
+                            names: &mut self.names,
+                            node: 0,
+                        },
                         value,
                         index,
                         &mut super::cell::Mysql {
@@ -1552,12 +1630,16 @@ impl<'py> Prepared<'py> {
                             visitor,
                         },
                         budget,
-                        &mut self.offsets,
                     )
                 }
             }
             None => consume_value(
-                &self.owner,
+                Read {
+                    owner: &self.owner,
+                    offsets: &mut self.offsets,
+                    names: &mut self.names,
+                    node: 0,
+                },
                 cell_array(py, &array, table, column)?,
                 index,
                 &mut super::cell::Mysql {
@@ -1566,7 +1648,6 @@ impl<'py> Prepared<'py> {
                     visitor,
                 },
                 budget,
-                &mut self.offsets,
             ),
         }
     }

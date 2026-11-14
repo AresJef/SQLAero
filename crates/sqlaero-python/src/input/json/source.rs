@@ -18,6 +18,9 @@ struct Cell<'a, 'b, 'c> {
 }
 
 impl Target for Cell<'_, '_, '_> {
+    fn needs_field_names(&self) -> bool {
+        true
+    }
     fn needs_local_offsets(&self) -> bool {
         true
     }
@@ -277,6 +280,7 @@ impl Serialize<'_> {
         path: &Path<'_>,
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
+        source.prepare_field_names(budget)?;
         let names = self.source_keys(source, fields, path)?;
         self.record_cells(source, 0, &names, path, budget)
     }

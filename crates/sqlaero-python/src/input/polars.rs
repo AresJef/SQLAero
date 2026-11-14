@@ -14,6 +14,10 @@ use super::arrow;
 use super::source::{CellWriter, PreparedSource, Shape};
 use crate::errors;
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "native columns are the ordinary case; retain the existing inline reader rather than add a heap allocation and indirection to every Polars column"
+)]
 enum Column<'py> {
     Native(arrow::Prepared<'py>),
     Object(Bound<'py, PyAny>),

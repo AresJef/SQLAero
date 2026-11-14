@@ -2,7 +2,7 @@
 //! and array; it never builds Python rows or a normalized Rust value tree.
 
 use super::{
-    Array, ArrayRef, DataType, StructArray, consume_scalar, dictionary_label, invalid, offset,
+    Array, ArrayRef, DataType, Read, StructArray, consume_scalar, dictionary_label, invalid, names,
 };
 use crate::input::cell::Target;
 use crate::input::control::Checkpoint;
@@ -128,77 +128,105 @@ pub(super) fn shape(
 }
 
 pub(super) fn consume<'py>(
-    owner: &Bound<'py, PyAny>,
+    mut read: Read<'_, 'py>,
     array: &ArrayRef,
     index: usize,
     target: &mut dyn Target,
     budget: &dyn Checkpoint,
-    offsets: &mut Option<Box<offset::Offsets<'py>>>,
 ) -> PyResult<()> {
-    let (array, index) = resolve(owner.py(), array, index, budget)?;
-    let selected = kind(owner.py(), array, index)?;
+    let (resolved, index) = resolve(read.owner.py(), array, index, budget)?;
+    let selected = kind(read.owner.py(), resolved, index)?;
     if matches!(selected, Kind::Scalar) {
-        return consume_scalar(owner.py(), array, index, target, budget, offsets);
+        return consume_scalar(
+            read.owner.py(),
+            resolved,
+            index,
+            target,
+            budget,
+            read.offsets,
+        );
     }
+    read.dictionary(array.data_type(), target.needs_field_names(), budget)?;
     target.source(
         &mut View {
-            owner,
-            array,
+            read,
+            array: resolved,
             index,
             selected,
-            offsets,
         },
         budget,
     )
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "consume one already selected native row, without an allocated source or value tree"
-)]
 pub(super) fn consume_child<'py>(
-    owner: &Bound<'py, PyAny>,
+    mut read: Read<'_, 'py>,
     array: &ArrayRef,
     index: usize,
     row: usize,
     column: usize,
     target: &mut dyn Target,
     budget: &dyn Checkpoint,
-    offsets: &mut Option<Box<offset::Offsets<'py>>>,
 ) -> PyResult<()> {
-    let (array, index) = resolve(owner.py(), array, index, budget)?;
-    match kind(owner.py(), array, index)? {
-        Kind::Scalar if row == 0 && column == 0 => {
-            consume_scalar(owner.py(), array, index, target, budget, offsets)
+    let (resolved, index) = resolve(read.owner.py(), array, index, budget)?;
+    let selected = kind(read.owner.py(), resolved, index)?;
+    if matches!(selected, Kind::Scalar) {
+        if row != 0 || column != 0 {
+            return Err(invalid(
+                read.owner.py(),
+                "Arrow selected scalar is outside its actual row shape",
+            ));
         }
+        return consume_scalar(
+            read.owner.py(),
+            resolved,
+            index,
+            target,
+            budget,
+            read.offsets,
+        );
+    }
+    read.dictionary(array.data_type(), target.needs_field_names(), budget)?;
+    match selected {
         Kind::Record(record) if row == 0 && column < record.num_columns() => {
-            consume(owner, record.column(column), index, target, budget, offsets)
+            let value = record.column(column);
+            let node = read.child(
+                names::Edge::Field(column),
+                value.data_type(),
+                target.needs_field_names(),
+                budget,
+            )?;
+            consume(read.at(node), value, index, target, budget)
         }
         Kind::Slice {
             values,
             start,
             length,
         } if row < length && column == 0 => {
-            consume(owner, values, start + row, target, budget, offsets)
+            let node = read.child(
+                names::Edge::Value,
+                values.data_type(),
+                target.needs_field_names(),
+                budget,
+            )?;
+            consume(read.at(node), values, start + row, target, budget)
         }
         _ => Err(invalid(
-            owner.py(),
+            read.owner.py(),
             "Arrow selected cell is outside its actual row shape",
         )),
     }
 }
 
 struct View<'a, 'py> {
-    owner: &'a Bound<'py, PyAny>,
+    read: Read<'a, 'py>,
     array: &'a ArrayRef,
     index: usize,
     selected: Kind<'a>,
-    offsets: &'a mut Option<Box<offset::Offsets<'py>>>,
 }
 
 impl<'py> PreparedSource<'py> for View<'_, 'py> {
     fn owner(&self) -> &Bound<'py, PyAny> {
-        self.owner
+        self.read.owner
     }
     fn shape(&self) -> Shape {
         match self.selected {
@@ -212,11 +240,17 @@ impl<'py> PreparedSource<'py> for View<'_, 'py> {
     fn schema(&self, _target: &mut dyn Target) -> PyResult<()> {
         Ok(())
     }
-    fn field_name(&self, _column: usize) -> PyResult<Option<Bound<'py, PyAny>>> {
-        Err(invalid(
-            self.owner.py(),
-            "full Arrow field-name source migration is not connected yet",
-        ))
+    fn prepare_field_names(&mut self, budget: &dyn Checkpoint) -> PyResult<bool> {
+        let Kind::Record(record) = self.selected else {
+            return Ok(false);
+        };
+        self.read
+            .names
+            .prepare_fields(self.read.node, record.num_columns(), budget)?;
+        Ok(true)
+    }
+    fn field_name(&self, column: usize) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.read.names.field(self.read.node, column)
     }
     fn consume_cell(
         &mut self,
@@ -225,15 +259,15 @@ impl<'py> PreparedSource<'py> for View<'_, 'py> {
         target: &mut dyn Target,
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
+        let node = self.read.node;
         consume_child(
-            self.owner,
+            self.read.at(node),
             self.array,
             self.index,
             row,
             column,
             target,
             budget,
-            self.offsets,
         )
     }
     crate::input::source::cell_destinations!();

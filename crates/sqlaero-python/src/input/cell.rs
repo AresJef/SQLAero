@@ -35,6 +35,9 @@ pub(crate) enum Schema {
 /// Consume borrowed facts before returning. Python references never leave this
 /// attached boundary, and sources retain no target-formatted answers.
 pub(crate) trait Target {
+    fn needs_field_names(&self) -> bool {
+        false
+    }
     /// Whether source-aware UTC storage needs its original local offset too.
     /// Positional MySQL consumes the original UTC ticks without that protocol.
     fn needs_local_offsets(&self) -> bool {
