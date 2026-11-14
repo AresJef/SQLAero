@@ -4,6 +4,7 @@
 //! formats consume native facts without introducing a complete value tree.
 
 pub mod buffer;
+pub mod decimal;
 pub mod diagnostic;
 pub mod identifier;
 pub mod integer;

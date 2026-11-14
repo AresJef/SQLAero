@@ -15,6 +15,13 @@ use sqlaero_core::protocol::framing::WireError;
 /// diagnostics and signal checks remain at this boundary.
 pub(crate) trait Destination {
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError>;
+    fn decimal_start(
+        &mut self,
+        header: sqlaero_transcode::decimal::Header,
+        context: &Context,
+    ) -> Result<Option<sqlaero_transcode::decimal::Layout>, ValueError>;
+    fn decimal_fragment(&mut self, ascii: &str, context: &Context) -> Result<(), ValueError>;
+    fn decimal_end(&mut self, context: &Context) -> Result<(), ValueError>;
 
     fn text(
         &mut self,
@@ -70,6 +77,19 @@ impl Destination for Vec<u8> {
     #[inline(always)]
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
         TextSink::new(self).write(value, context)
+    }
+    fn decimal_start(
+        &mut self,
+        header: sqlaero_transcode::decimal::Header,
+        context: &Context,
+    ) -> Result<Option<sqlaero_transcode::decimal::Layout>, ValueError> {
+        TextSink::new(self).decimal_start(header, context)
+    }
+    fn decimal_fragment(&mut self, ascii: &str, context: &Context) -> Result<(), ValueError> {
+        TextSink::new(self).decimal_fragment(ascii, context)
+    }
+    fn decimal_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        TextSink::new(self).decimal_end(context)
     }
 
     fn text(
@@ -154,6 +174,48 @@ impl Destination for Vec<u8> {
     }
 }
 
+/// Borrow a boundary destination as the same native Consumer contract. This
+/// forwards facts/fragments only; it never recognizes a Python input again.
+pub(super) struct Adapter<'a, D: Destination + ?Sized>(pub(super) &'a mut D);
+impl<D: Destination + ?Sized> ValueSink for Adapter<'_, D> {
+    type Context = Context;
+    type Error = ValueError;
+    fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
+        self.0.write(value, context)
+    }
+    fn decimal_start(
+        &mut self,
+        header: sqlaero_transcode::decimal::Header,
+        context: &Context,
+    ) -> Result<Option<sqlaero_transcode::decimal::Layout>, ValueError> {
+        self.0.decimal_start(header, context)
+    }
+    fn decimal_fragment(&mut self, ascii: &str, context: &Context) -> Result<(), ValueError> {
+        self.0.decimal_fragment(ascii, context)
+    }
+    fn decimal_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        self.0.decimal_end(context)
+    }
+    fn text_start(&mut self, length: Option<usize>, context: &Context) -> Result<(), ValueError> {
+        self.0.text_start(length, context)
+    }
+    fn text_fragment(&mut self, value: &str, context: &Context) -> Result<(), ValueError> {
+        self.0.text_fragment(value, context)
+    }
+    fn text_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        self.0.text_end(context)
+    }
+    fn bytes_start(&mut self, length: usize, context: &Context) -> Result<(), ValueError> {
+        self.0.bytes_start(length, context)
+    }
+    fn bytes_fragment(&mut self, value: &[u8], context: &Context) -> Result<(), ValueError> {
+        self.0.bytes_fragment(value, context)
+    }
+    fn bytes_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        self.0.bytes_end(context)
+    }
+}
+
 pub(crate) struct Native<'a>(
     pub(crate) &'a mut dyn ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
 );
@@ -161,6 +223,19 @@ pub(crate) struct Native<'a>(
 impl Destination for Native<'_> {
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
         self.0.write(value, context)
+    }
+    fn decimal_start(
+        &mut self,
+        header: sqlaero_transcode::decimal::Header,
+        context: &Context,
+    ) -> Result<Option<sqlaero_transcode::decimal::Layout>, ValueError> {
+        self.0.decimal_start(header, context)
+    }
+    fn decimal_fragment(&mut self, ascii: &str, context: &Context) -> Result<(), ValueError> {
+        self.0.decimal_fragment(ascii, context)
+    }
+    fn decimal_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        self.0.decimal_end(context)
     }
 
     fn text(
@@ -417,6 +492,20 @@ impl Destination for RoleSink<'_> {
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
         self.scalar();
         self.output.write(value, context)
+    }
+    fn decimal_start(
+        &mut self,
+        header: sqlaero_transcode::decimal::Header,
+        context: &Context,
+    ) -> Result<Option<sqlaero_transcode::decimal::Layout>, ValueError> {
+        self.scalar();
+        self.output.decimal_start(header, context)
+    }
+    fn decimal_fragment(&mut self, ascii: &str, context: &Context) -> Result<(), ValueError> {
+        self.output.decimal_fragment(ascii, context)
+    }
+    fn decimal_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        self.output.decimal_end(context)
     }
     fn text(
         &mut self,

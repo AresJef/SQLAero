@@ -370,7 +370,7 @@ def test_arrow_decimal_physical_signed_extremes_keep_exact_values_and_owned_slic
     tokens: list[bytes] = []
     for coefficient in coefficients[1:6]:
         text = format(Decimal(f"{coefficient}e{-scale}"), "f")
-        tokens.append((text.rstrip("0").rstrip(".") if "." in text else text).encode())
+        tokens.append(text.encode())
     expected = b"(" + b",".join([*tokens, b"NULL"]) + b")"
     assert _sqlaero._encode_value(value).to_bytes() == expected
     chunked = pa.chunked_array([value.slice(0, 2), value.slice(2, 0), value.slice(2)])
@@ -390,7 +390,7 @@ def test_arrow_decimal256_keeps_wide_fallback_and_necessary_precision(
     value = pa.Array.from_buffers(pa.decimal256(76, scale), 1, [None, pa.py_buffer(payload)])
     if accepted:
         text = format(Decimal(f"{coefficient}e{-scale}"), "f")
-        expected = (text.rstrip("0").rstrip(".") if "." in text else text).encode()
+        expected = text.encode()
         assert _sqlaero._encode_value(value).to_bytes() == b"(" + expected + b")"
     else:
         with pytest.raises(_sqlaero.DataError):
@@ -424,10 +424,11 @@ def test_arrow_decimal256_signed_narrowing_boundary_keeps_the_complete_value(coe
 
 
 @pytest.mark.parametrize("coefficient", [10**70, -(10**70)])
-def test_decimal256_wide_zero_suffix_preserves_only_necessary_precision(coefficient: int) -> None:
+def test_decimal256_wide_zero_suffix_keeps_scale_and_necessary_value_precision(coefficient: int) -> None:
     payload = coefficient.to_bytes(32, "little", signed=True)
     value = pa.Array.from_buffers(pa.decimal256(76, 70), 1, [None, pa.py_buffer(payload)])
-    assert _sqlaero._encode_value(value).to_bytes() == (b"(1)" if coefficient > 0 else b"(-1)")
+    expected = (b"1." if coefficient > 0 else b"-1.") + b"0" * 70
+    assert _sqlaero._encode_value(value).to_bytes() == b"(" + expected + b")"
 
 
 @pytest.mark.parametrize("coefficient", [10**76 - 1, -(10**76 - 1), 2**255 - 1, -(2**255)])

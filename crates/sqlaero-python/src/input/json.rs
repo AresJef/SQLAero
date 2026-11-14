@@ -208,11 +208,21 @@ impl Serialize<'_> {
                         }
                     }
                 }
-                Source::Decimal(_) => {
-                    return Err(errors::builtin_message::<PyTypeError>(
-                        py,
-                        "Decimal JSON migration is not connected yet",
-                    ));
+                Source::Decimal(value) => {
+                    return self
+                        .types
+                        .decimal
+                        .read(value, self.budget, |header, digits| {
+                            super::decimal::consume(
+                                py,
+                                header,
+                                digits,
+                                &mut self.writer,
+                                &self.options,
+                                self.budget,
+                                |error| failure(py, error),
+                            )
+                        });
                 }
                 Source::StructTime(value) => return self.struct_time(value, path),
                 Source::Json(_) => {

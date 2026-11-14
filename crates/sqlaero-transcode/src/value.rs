@@ -104,6 +104,25 @@ pub trait Consumer {
     /// Returns the target's actual policy, encoding or capacity failure.
     fn write(&mut self, value: ScalarRef<'_>, context: &Self::Context) -> Result<(), Self::Error>;
 
+    /// Select decimal notation/policy and begin one value. None means that the
+    /// target completely consumed a nonfinite fact (for example as null).
+    /// # Errors
+    /// Returns an actual target admission, state or capacity failure.
+    fn decimal_start(
+        &mut self,
+        header: crate::decimal::Header,
+        context: &Self::Context,
+    ) -> Result<Option<crate::decimal::Layout>, Self::Error>;
+    /// Consume a bounded ASCII fragment produced by the shared decimal renderer.
+    /// # Errors
+    /// Returns the actual destination or state failure.
+    fn decimal_fragment(&mut self, ascii: &str, context: &Self::Context)
+    -> Result<(), Self::Error>;
+    /// Finish exactly the current decimal without changing its numeric category.
+    /// # Errors
+    /// Returns an incomplete value, state or destination failure.
+    fn decimal_end(&mut self, context: &Self::Context) -> Result<(), Self::Error>;
+
     /// Begin one text value, with its exact UTF-8 size when already known.
     /// None permits one-pass bounded conversion of immutable source codepoints;
     /// the adapter must still consume the whole original source exactly once.

@@ -38,7 +38,7 @@ class ExactDecimal(Decimal):
     (Integer(1), b"1"), (Floating(2.5), b"2.5e0"),
     (Text("ignored"), b"'ignored'"),
     (Binary(b"ignored"), b"CAST(X'69676E6F726564' AS BINARY)"),
-    (ExactDecimal("1.2300"), b"1.23"),
+    (ExactDecimal("1.2300"), b"1.2300"),
 ])
 def test_scalar_subclasses_read_their_real_base_values(value: object, expected: bytes) -> None:
     assert encoded(value) == expected

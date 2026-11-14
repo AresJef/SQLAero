@@ -387,6 +387,34 @@ impl Consumer for Writer {
                     return writer.string_end();
                 }
                 ScalarRef::Bytes(_) => return Err(Error::Unsupported("binary")),
+                ScalarRef::Decimal {
+                    negative,
+                    digits,
+                    exponent,
+                } => {
+                    use sqlaero_transcode::decimal::{Digits, Inspect, Render};
+                    let mut inspect = Inspect::default();
+                    for &digit in digits {
+                        inspect.digit(digit).map_err(Error::Range)?;
+                    }
+                    let header = inspect.finish(negative, exponent).map_err(Error::Range)?;
+                    if let Some(layout) = writer.decimal_start(header, options)? {
+                        let mut render =
+                            Render::new(Digits::Values(digits), layout).map_err(Error::Range)?;
+                        let mut chunk = [0; 4096];
+                        loop {
+                            let n = render.read(&mut chunk);
+                            if n == 0 {
+                                break;
+                            }
+                            let text = std::str::from_utf8(&chunk[..n])
+                                .map_err(|_| Error::State("decimal renderer emitted non-ASCII"))?;
+                            writer.decimal_fragment(text, options)?;
+                        }
+                        writer.decimal_end(options)?;
+                    }
+                    return Ok(());
+                }
                 ScalarRef::Uuid(value) => {
                     let text = sqlaero_transcode::identifier::UuidText::new(value);
                     writer.string_start(Some(36), false)?;
@@ -465,6 +493,38 @@ impl Consumer for Writer {
                 )),
             }
         })
+    }
+
+    fn decimal_start(
+        &mut self,
+        header: sqlaero_transcode::decimal::Header,
+        options: &Options,
+    ) -> Result<Option<sqlaero_transcode::decimal::Layout>, Error> {
+        self.perform(|writer| {
+            use sqlaero_transcode::decimal::{Layout, Notation};
+            if header.category().is_some() {
+                if !options.allow_nan {
+                    return Err(Error::NonFinite);
+                }
+                writer.value()?;
+                writer.append("null")?;
+                return Ok(None);
+            }
+            let notation = if header.exponent() <= 0 && header.adjusted() >= -6 {
+                Notation::Plain
+            } else {
+                Notation::Scientific
+            };
+            let layout = Layout::new(header, notation).map_err(Error::Range)?;
+            writer.string_start(Some(layout.len()), false)?;
+            Ok(Some(layout))
+        })
+    }
+    fn decimal_fragment(&mut self, ascii: &str, _: &Options) -> Result<(), Error> {
+        self.perform(|writer| writer.string_fragment(ascii))
+    }
+    fn decimal_end(&mut self, _: &Options) -> Result<(), Error> {
+        self.perform(Self::string_end)
     }
 
     fn text_start(&mut self, length: Option<usize>, _: &Options) -> Result<(), Error> {

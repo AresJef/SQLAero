@@ -122,6 +122,34 @@ impl ValueSink for TextSink<'_> {
         Ok(())
     }
 
+    fn decimal_start(
+        &mut self,
+        header: sqlaero_transcode::decimal::Header,
+        context: &Context,
+    ) -> Result<Option<sqlaero_transcode::decimal::Layout>, ValueError> {
+        if header.category().is_some() {
+            writer::append(self.output, b"NULL", context.limit)?;
+            return Ok(None);
+        }
+        let layout = scalar::decimal_layout(header)?;
+        let required = self.output.len().saturating_add(layout.len());
+        if required > context.limit {
+            return Err(WireError::Limit {
+                required,
+                limit: context.limit,
+            }
+            .into());
+        }
+        Ok(Some(layout))
+    }
+    fn decimal_fragment(&mut self, ascii: &str, context: &Context) -> Result<(), ValueError> {
+        writer::append(self.output, ascii.as_bytes(), context.limit)?;
+        Ok(())
+    }
+    fn decimal_end(&mut self, _: &Context) -> Result<(), ValueError> {
+        Ok(())
+    }
+
     fn text_start(&mut self, _: Option<usize>, context: &Context) -> Result<(), ValueError> {
         writer::append(self.output, b"'", context.limit)?;
         Ok(())
@@ -236,6 +264,19 @@ mod tests {
                 };
                 self.0.extend_from_slice(&value.to_le_bytes());
                 Ok(())
+            }
+            fn decimal_start(
+                &mut self,
+                _: sqlaero_transcode::decimal::Header,
+                _: &Context,
+            ) -> Result<Option<sqlaero_transcode::decimal::Layout>, Self::Error> {
+                Err("integer-only contract test")
+            }
+            fn decimal_fragment(&mut self, _: &str, _: &Context) -> Result<(), Self::Error> {
+                Err("integer-only contract test")
+            }
+            fn decimal_end(&mut self, _: &Context) -> Result<(), Self::Error> {
+                Err("integer-only contract test")
             }
             fn text_start(&mut self, _: Option<usize>, _: &Context) -> Result<(), Self::Error> {
                 Err("integer-only contract test")

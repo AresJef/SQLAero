@@ -83,8 +83,7 @@ pub(crate) fn actual_instance(value: &Bound<'_, PyAny>, base: &Bound<'_, PyType>
 /// type pointer or per-value import, and a future interpreter can own its state.
 #[pyclass(frozen)]
 pub(crate) struct ScalarTypes {
-    decimal: Py<PyType>,
-    native_decimal: bool,
+    decimal: decimal::Api,
     utc: Py<PyAny>,
     datetime_offset: Py<PyAny>,
     time_offset: Py<PyAny>,
@@ -129,7 +128,7 @@ impl ScalarTypes {
         diagnostic::value(value)
     }
     pub(crate) fn decimal_type<'py>(&self, py: Python<'py>) -> &Bound<'py, PyType> {
-        self.decimal.bind(py)
+        self.decimal.typ(py)
     }
 
     pub(super) fn uuid_value(
@@ -164,10 +163,9 @@ impl ScalarTypes {
         let timezone = errors::attribute(datetime.as_any(), c"timezone")?;
         let decimal_type =
             errors::attribute(decimal.as_any(), c"Decimal")?.cast_into::<PyType>()?;
-        let native_decimal = decimal::native_type(&decimal_type)?;
+        let decimal_api = decimal::Api::new(&decimal_type)?;
         Ok(Self {
-            decimal: decimal_type.unbind(),
-            native_decimal,
+            decimal: decimal_api,
             sequences: sequence::Types::new(py)?,
             uuid: std::sync::OnceLock::new(),
             enum_type: std::sync::OnceLock::new(),
@@ -277,15 +275,21 @@ impl ScalarTypes {
                 emit(output, py, scalar_source::clock_fact(value), context)?
             }
             scalar_source::Source::Decimal(value) => {
-                if value.get_type().is(self.decimal.bind(py)) {
-                    decimal::write(value, self.native_decimal, output, context, budget)?;
-                } else {
-                    let converted = control::callback(py, budget, || {
-                        self.decimal_type(py)
-                            .call1(crate::output::tuple_from_ready(py, [value.clone()])?)
-                    })?;
-                    decimal::write(&converted, self.native_decimal, output, context, budget)?;
-                }
+                self.decimal.read(value, budget, |header, digits| {
+                    decimal::consume(
+                        py,
+                        header,
+                        digits,
+                        &mut sink::Adapter(output),
+                        context,
+                        budget,
+                        |error| {
+                            let error = sink::failure(py, error);
+                            decimal::note(py, &error, header, digits);
+                            error
+                        },
+                    )
+                })?;
             }
             scalar_source::Source::StructTime(value) => {
                 standard::struct_time(value, output, context, budget)?

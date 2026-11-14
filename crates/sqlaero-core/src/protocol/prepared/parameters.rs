@@ -26,6 +26,9 @@ enum Fragment {
     Bytes {
         remaining: usize,
     },
+    Decimal {
+        remaining: usize,
+    },
 }
 
 impl Parameters {
@@ -303,9 +306,27 @@ impl Parameters {
                 digits,
                 exponent,
             } => {
-                let mut text = Vec::new();
-                scalar::decimal(&mut text, negative, digits, exponent, self.limit)?;
-                self.bytes(&text)?;
+                use sqlaero_transcode::decimal::{Digits, Inspect, Render};
+                let mut inspect = Inspect::default();
+                for &digit in digits {
+                    inspect.digit(digit).map_err(scalar::ScalarError::Range)?;
+                }
+                let header = inspect
+                    .finish(negative, exponent)
+                    .map_err(scalar::ScalarError::Range)?;
+                let layout = scalar::decimal_layout(header)?;
+                let mut render = Render::new(Digits::Values(digits), layout)
+                    .map_err(scalar::ScalarError::Range)?;
+                self.begin_bytes(layout.len())?;
+                let mut chunk = [0; 128];
+                loop {
+                    let n = render.read(&mut chunk);
+                    if n == 0 {
+                        break;
+                    }
+                    self.append_bytes(&chunk[..n])?;
+                }
+                self.finish_bytes()?;
                 246
             }
             ValueRef::Bytes(value) => {
@@ -466,6 +487,60 @@ impl ValueSink for Parameters {
                 Err(error)
             }
         }
+    }
+
+    fn decimal_start(
+        &mut self,
+        header: sqlaero_transcode::decimal::Header,
+        context: &Context,
+    ) -> Result<Option<sqlaero_transcode::decimal::Layout>, ValueError> {
+        let result = (|| {
+            if header.category().is_some() {
+                self.write(ValueRef::Null, context)?;
+                return Ok(None);
+            }
+            let layout = scalar::decimal_layout(header)?;
+            self.begin_bytes(layout.len())?;
+            self.fragment = Some(Fragment::Decimal {
+                remaining: layout.len(),
+            });
+            Ok(Some(layout))
+        })();
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+    fn decimal_fragment(&mut self, ascii: &str, _: &Context) -> Result<(), ValueError> {
+        let result = (|| {
+            let Some(Fragment::Decimal { remaining }) = self.fragment else {
+                return Err(
+                    WireError::Malformed("decimal fragment without a decimal parameter").into(),
+                );
+            };
+            if self.failed {
+                return Err(WireError::Malformed("failed prepared decimal writer").into());
+            }
+            let remaining = remaining
+                .checked_sub(ascii.len())
+                .ok_or(WireError::Malformed("decimal source length changed"))?;
+            self.append(ascii.as_bytes())?;
+            self.fragment = Some(Fragment::Decimal { remaining });
+            Ok(())
+        })();
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+    fn decimal_end(&mut self, _: &Context) -> Result<(), ValueError> {
+        if self.failed || !matches!(self.fragment, Some(Fragment::Decimal { remaining: 0 })) {
+            self.failed = true;
+            return Err(WireError::Malformed("incomplete prepared decimal parameter").into());
+        }
+        self.fragment = None;
+        self.complete(246, false);
+        Ok(())
     }
 
     fn text_start(&mut self, utf8_length: Option<usize>, _: &Context) -> Result<(), ValueError> {
@@ -632,8 +707,45 @@ mod tests {
         assert_eq!(&bytes[12..16], &[246, 0, 246, 0]);
         assert_eq!(
             &bytes[16..],
-            b"\x281234567890123456789012345678901234567890\x07-12.345"
+            b"\x281234567890123456789012345678901234567890\x09-12.34500"
         );
+    }
+
+    #[test]
+    fn fragmented_decimal_keeps_numeric_kind_and_rejects_incomplete_or_crossed_values() {
+        use sqlaero_transcode::decimal::Inspect;
+        let mut inspect = Inspect::default();
+        for digit in [1, 2, 0, 0] {
+            inspect.digit(digit).unwrap();
+        }
+        let header = inspect.finish(false, -2).unwrap();
+        let ctx = context();
+        let mut value = Parameters::new(7, 1, 4096).unwrap();
+        assert_eq!(value.decimal_start(header, &ctx).unwrap().unwrap().len(), 5);
+        value.decimal_fragment("12.", &ctx).unwrap();
+        value.decimal_fragment("00", &ctx).unwrap();
+        value.decimal_end(&ctx).unwrap();
+        let bytes = value.finish().unwrap();
+        assert_eq!(&bytes[12..14], &[246, 0]);
+        assert_eq!(&bytes[14..], b"\x0512.00");
+
+        for action in 0..4 {
+            let mut value = Parameters::new(7, 1, 4096).unwrap();
+            value.decimal_start(header, &ctx).unwrap();
+            assert!(
+                match action {
+                    0 => value.decimal_end(&ctx),
+                    1 => value.decimal_fragment("123456", &ctx),
+                    2 => value.bytes_fragment(b"12.00", &ctx),
+                    _ => value.text_fragment("12.00", &ctx),
+                }
+                .is_err()
+            );
+            assert!(value.finish().is_err());
+        }
+        let mut limited = Parameters::new(7, 1, 16).unwrap();
+        assert!(limited.decimal_start(header, &ctx).is_err());
+        assert!(limited.finish().is_err());
     }
 
     #[test]

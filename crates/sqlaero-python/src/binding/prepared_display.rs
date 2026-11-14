@@ -68,6 +68,24 @@ impl ValueSink for DisplaySink<'_> {
         self.before()?;
         TextSink::new(&mut self.output).write(value, context)
     }
+    fn decimal_start(
+        &mut self,
+        header: sqlaero_transcode::decimal::Header,
+        context: &Context,
+    ) -> Result<Option<sqlaero_transcode::decimal::Layout>, ValueError> {
+        let plan = self.native.decimal_start(header, context)?;
+        self.before()?;
+        TextSink::new(&mut self.output).decimal_start(header, context)?;
+        Ok(plan)
+    }
+    fn decimal_fragment(&mut self, ascii: &str, context: &Context) -> Result<(), ValueError> {
+        self.native.decimal_fragment(ascii, context)?;
+        TextSink::new(&mut self.output).decimal_fragment(ascii, context)
+    }
+    fn decimal_end(&mut self, context: &Context) -> Result<(), ValueError> {
+        self.native.decimal_end(context)?;
+        TextSink::new(&mut self.output).decimal_end(context)
+    }
     fn text_start(&mut self, length: Option<usize>, context: &Context) -> Result<(), ValueError> {
         self.native.text_start(length, context)?;
         self.before()?;

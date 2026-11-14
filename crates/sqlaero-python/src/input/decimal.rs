@@ -1,22 +1,18 @@
 //! Exact Decimal acquisition through a qualified native string protocol.
 //!
-//! The native conversion may allocate and is not internally interruptible by
-//! this crate. It already underlies the previous native `as_tuple` conversion;
-//! checks surround that call and bound our own parsing work. Scientific text
-//! is never sent to MySQL: the existing exact native formatter owns SQL output.
+//! One canonical base snapshot is the explicitly approved atomic CPython
+//! source interval. Original control surrounds it; later inspection/rendering
+//! is bounded. Targets select their own policy without normalizing the source
+//! coefficient, scale, signed zero or nonfinite category in this reader.
 
-use super::sink::{self, Destination, emit};
 use crate::errors;
 use crate::input::control::Checkpoint;
-use pyo3::exceptions::PyAttributeError;
+use pyo3::exceptions::{PyAttributeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyInt, PyString, PyTuple, PyType};
-use sqlaero_core::bind::Context;
-use sqlaero_core::bind::scalar::ScalarError;
-use sqlaero_core::bind::value::{ValueError, ValueRef};
+use pyo3::types::{PyDict, PyInt, PyString, PyStringData, PyTuple, PyType};
+use sqlaero_transcode::decimal::{Digits, Header, Inspect, Render, Special};
+use sqlaero_transcode::value::Consumer;
 use std::ffi::CStr;
-
-const COEFFICIENT_CAPACITY: usize = 65;
 
 /// Select the immutable native protocol without retaining any new Python
 /// objects. Mutable and pure-Python providers retain their original hooks.
@@ -59,271 +55,310 @@ fn optional_attribute<'py>(
     }
 }
 
-/// Acquire one exact Decimal and write only through the original SQL numeric
-/// formatter. No binary float, normalization or context arithmetic is used.
-pub(super) fn write<D: Destination + ?Sized>(
-    value: &Bound<'_, PyAny>,
-    native: bool,
-    output: &mut D,
-    context: &Context,
-    budget: Option<&dyn Checkpoint>,
-) -> PyResult<()> {
-    let py = value.py();
-    if native {
-        super::checkpoint(py, budget)?;
-        let text = value.str()?;
-        super::checkpoint(py, budget)?;
-        if let Some(parsed) = parse(py, text.to_str()?.as_bytes(), budget)? {
-            return match parsed {
-                Parsed::Null => emit(output, py, ValueRef::Null, context),
-                Parsed::Finite(parts) => parts.write(py, output, context),
-            };
-        }
-        // An unexpected future native representation does not redefine the
-        // public numeric contract. Only grammar mismatch falls back; Python
-        // allocation, signal and deadline exceptions above are never caught.
-    }
-    original(value, output, context)
+/// Module-owned canonical source API. Only immutable native base slots may be
+/// cached; the legacy nonnative source retains its live base as_tuple protocol.
+pub(super) struct Api {
+    typ: Py<PyType>,
+    string: Option<pyo3::ffi::reprfunc>,
 }
 
-fn original<D: Destination + ?Sized>(
-    value: &Bound<'_, PyAny>,
-    output: &mut D,
-    context: &Context,
-) -> PyResult<()> {
-    let py = value.py();
-    let parts = value.call_method0(PyString::from_bytes(py, b"as_tuple")?)?;
-    let parts = parts.cast::<PyTuple>()?;
-    let exponent = parts.get_item(2)?;
-    if !exponent.is_exact_instance_of::<PyInt>() {
-        return emit(output, py, ValueRef::Null, context);
-    }
-    let negative = parts.get_item(0)?.extract::<u8>()? != 0;
-    let digits = parts.get_item(1)?.extract::<Vec<u8>>()?;
-    let exponent = exponent.extract::<i64>()?;
-    output
-        .write(
-            ValueRef::Decimal {
-                negative,
-                digits: &digits,
-                exponent,
-            },
-            context,
-        )
-        .map_err(|error| {
-            let ValueError::Scalar(error) = error else {
-                return sink::failure(py, error);
-            };
-            failure(
-                py,
-                error,
-                negative,
-                &digits[..digits.len().min(16)],
-                digits.len(),
-                exponent,
-            )
-        })
-}
-
-enum Parsed {
-    Null,
-    Finite(Parts),
-}
-
-struct Parts {
-    negative: bool,
-    digits: [u8; COEFFICIENT_CAPACITY],
-    necessary: usize,
-    preview: [u8; 16],
-    original_digits: usize,
-    original_exponent: i64,
-    trailing: usize,
-}
-
-impl Parts {
-    fn write<D: Destination + ?Sized>(
-        self,
-        py: Python<'_>,
-        output: &mut D,
-        context: &Context,
-    ) -> PyResult<()> {
-        // Preserve the core's exponent-overflow precedence before its exact
-        // width rejection. Zero bypasses exponent expansion in the core.
-        let result = match i64::try_from(self.trailing)
-            .ok()
-            .and_then(|trailing| self.original_exponent.checked_add(trailing))
-        {
-            None => Err(ValueError::Scalar(ScalarError::Range(
-                "Decimal exponent exceeds the exact SQL range",
-            ))),
-            Some(_) if self.necessary > self.digits.len() => Err(ValueError::Scalar(
-                ScalarError::Range("Decimal exceeds 65 necessary decimal places"),
-            )),
-            Some(exponent) => output.write(
-                ValueRef::Decimal {
-                    negative: self.negative,
-                    digits: &self.digits[..self.necessary],
-                    exponent,
-                },
-                context,
-            ),
+impl Api {
+    pub(super) fn new(typ: &Bound<'_, PyType>) -> PyResult<Self> {
+        let string = if native_type(typ)? {
+            // SAFETY: the live retained immutable native base owns this public
+            // tp_str slot. Its documented signature is reprfunc.
+            let slot =
+                unsafe { pyo3::ffi::PyType_GetSlot(typ.as_ptr().cast(), pyo3::ffi::Py_tp_str) };
+            if slot.is_null() {
+                return Err(errors::builtin_message::<PyTypeError>(
+                    typ.py(),
+                    "canonical Decimal has no public string slot",
+                ));
+            }
+            // SAFETY: the checked public tp_str slot has this exact signature.
+            Some(unsafe { std::mem::transmute::<*mut std::ffi::c_void, pyo3::ffi::reprfunc>(slot) })
+        } else {
+            None
         };
-        result.map_err(|error| {
-            let ValueError::Scalar(error) = error else {
-                return sink::failure(py, error);
-            };
-            failure(
-                py,
-                error,
-                self.negative,
-                &self.preview[..self.original_digits.min(self.preview.len())],
-                self.original_digits,
-                self.original_exponent,
-            )
+        Ok(Self {
+            typ: typ.clone().unbind(),
+            string,
         })
     }
+
+    pub(super) fn typ<'py>(&self, py: Python<'py>) -> &Bound<'py, PyType> {
+        self.typ.bind(py)
+    }
+
+    /// Acquire once, then lend original facts only for immediate consumption.
+    /// The approved native source call itself is atomic inside CPython; every
+    /// later parse and target fragment returns through the original Control.
+    pub(super) fn read(
+        &self,
+        value: &Bound<'_, PyAny>,
+        budget: Option<&dyn Checkpoint>,
+        consume: impl FnOnce(Header, Digits<'_>) -> PyResult<()>,
+    ) -> PyResult<()> {
+        let py = value.py();
+        if let Some(string) = self.string {
+            let source = super::control::callback(py, budget, || {
+                // SAFETY: the source is a qualified actual Decimal subtype,
+                // retained across its canonical base slot. This skips every
+                // subclass replacement without inspecting private layouts.
+                unsafe { Bound::from_owned_ptr_or_err(py, string(value.as_ptr())) }
+            })?
+            .cast_into::<PyString>()?;
+            // SAFETY: this owned canonical str is immutable and attached for
+            // all bounded reads and callbacks below. No raw view is detached.
+            let PyStringData::Ucs1(bytes) = (unsafe { source.data()? }) else {
+                return Err(errors::builtin_message::<PyTypeError>(
+                    py,
+                    "canonical Decimal snapshot must be ASCII",
+                ));
+            };
+            let (header, digits) = parse(py, bytes, budget)?;
+            consume(header, digits)
+        } else {
+            let parts = super::control::callback(py, budget, || {
+                let method = errors::attribute(self.typ(py).as_any(), c"as_tuple")?;
+                method.call1(crate::output::tuple_from_ready(py, [value.clone()])?)
+            })?;
+            let parts = parts.cast::<PyTuple>()?;
+            let sign = parts.get_item(0)?.cast::<PyInt>()?.extract::<u8>()? != 0;
+            let exponent = parts.get_item(2)?;
+            let category = if exponent.is_exact_instance_of::<PyInt>() {
+                None
+            } else if let Ok(label) = exponent.cast::<PyString>() {
+                // The standard as_tuple marker is a single immutable ASCII
+                // character; do not invoke a user string conversion.
+                // SAFETY: an actual retained str/subclass is required above;
+                // these public base-storage APIs do not call __len__/__str__.
+                let length = unsafe { pyo3::ffi::PyUnicode_GetLength(label.as_ptr()) };
+                if length < 0 {
+                    return Err(PyErr::fetch(py));
+                }
+                if length == 1 {
+                    // SAFETY: the checked base string has exactly one point.
+                    Some(
+                        match u8::try_from(unsafe {
+                            pyo3::ffi::PyUnicode_ReadChar(label.as_ptr(), 0)
+                        }) {
+                            Ok(b'F') => Special::Infinity,
+                            Ok(b'N') => Special::SignalingNaN,
+                            _ => Special::QuietNaN,
+                        },
+                    )
+                } else {
+                    Some(Special::QuietNaN)
+                }
+            } else {
+                Some(Special::QuietNaN)
+            };
+            let exponent = if category.is_none() {
+                exponent.extract::<i64>()?
+            } else {
+                0
+            };
+            let source = parts.get_item(1)?;
+            let source = source.cast::<PyTuple>()?;
+            let mut digits = Vec::new();
+            digits
+                .try_reserve_exact(source.len())
+                .map_err(|_| errors::memory_error(py))?;
+            let mut inspected = Inspect::default();
+            for index in 0..source.len() {
+                if index != 0 && index.is_multiple_of(4096) {
+                    super::checkpoint(py, budget)?;
+                }
+                let digit = source.get_item(index)?.cast::<PyInt>()?.extract::<u8>()?;
+                inspected
+                    .digit(digit)
+                    .map_err(|error| malformed(py, error))?;
+                digits.push(digit);
+            }
+            super::control::bytes(py, budget, source.len().min(4096))?;
+            let header = if let Some(category) = category {
+                Header::special(sign, category)
+            } else {
+                inspected
+                    .finish(sign, exponent)
+                    .map_err(|error| malformed(py, error))?
+            };
+            consume(header, Digits::Values(&digits))
+        }
+    }
 }
 
-fn failure(
-    py: Python<'_>,
-    error: ScalarError,
-    negative: bool,
-    preview: &[u8],
-    digits: usize,
-    exponent: i64,
-) -> PyErr {
-    let error = super::scalar_error(py, error);
-    errors::note_format(
+fn malformed(py: Python<'_>, reason: &'static str) -> PyErr {
+    errors::builtin_format::<PyValueError>(
         py,
-        &error,
-        format_args!(
-            "failed Decimal components: sign={}, digits={:?}{} ({} digits), exponent={exponent}",
-            u8::from(negative),
-            preview,
-            if digits > 16 { " [truncated]" } else { "" },
-            digits,
-        ),
-    );
-    error
+        format_args!("invalid canonical Decimal source: {reason}"),
+    )
 }
 
-/// Parse only the native ASCII grammar. All storage is fixed size even when
-/// an input has many insignificant zeros or an enormous compact exponent.
-fn parse(py: Python<'_>, text: &[u8], budget: Option<&dyn Checkpoint>) -> PyResult<Option<Parsed>> {
-    let mut at = 0;
+/// Parse source ASCII without an extra full coefficient buffer or SQL policy.
+fn parse<'a>(
+    py: Python<'_>,
+    text: &'a [u8],
+    budget: Option<&dyn Checkpoint>,
+) -> PyResult<(Header, Digits<'a>)> {
     let negative = text.first() == Some(&b'-');
-    if negative || text.first() == Some(&b'+') {
-        at += 1;
-    }
-    let unsigned = &text[at..];
-    if unsigned == b"Infinity" {
-        return Ok(Some(Parsed::Null));
-    }
-    let payload = unsigned
-        .strip_prefix(b"NaN")
-        .or_else(|| unsigned.strip_prefix(b"sNaN"));
-    if let Some(payload) = payload {
+    let start = usize::from(negative || text.first() == Some(&b'+'));
+    let unsigned = &text[start..];
+    let special = if unsigned == b"Infinity" {
+        Some((Special::Infinity, &b""[..]))
+    } else if let Some(payload) = unsigned.strip_prefix(b"sNaN") {
+        Some((Special::SignalingNaN, payload))
+    } else {
+        unsigned
+            .strip_prefix(b"NaN")
+            .map(|payload| (Special::QuietNaN, payload))
+    };
+    if let Some((category, payload)) = special {
         for (index, byte) in payload.iter().enumerate() {
             if index != 0 && index.is_multiple_of(4096) {
                 super::checkpoint(py, budget)?;
             }
             if !byte.is_ascii_digit() {
-                return Ok(None);
+                return Err(malformed(py, "invalid nonfinite payload"));
             }
         }
-        return Ok(Some(Parsed::Null));
+        super::control::bytes(py, budget, text.len().min(4096))?;
+        return Ok((
+            Header::special(negative, category),
+            Digits::Ascii(payload, &[]),
+        ));
     }
-    let mut parts = Parts {
-        negative,
-        digits: [0; COEFFICIENT_CAPACITY],
-        necessary: 0,
-        preview: [0; 16],
-        original_digits: 0,
-        original_exponent: 0,
-        trailing: 0,
-    };
-    let mut dot = false;
-    let mut any = false;
+    let mut at = start;
+    let mut point = None;
     let mut fractional = 0usize;
+    let mut inspected = Inspect::default();
     while let Some(&byte) = text.get(at) {
-        if at != 0 && at.is_multiple_of(4096) {
+        if at != start && at.is_multiple_of(4096) {
             super::checkpoint(py, budget)?;
         }
-        if byte == b'e' || byte == b'E' {
+        if byte == b'E' || byte == b'e' {
             break;
         }
+        if byte == b'.' && point.is_none() {
+            point = Some(at);
+        } else if byte.is_ascii_digit() {
+            inspected
+                .digit(byte - b'0')
+                .map_err(|error| malformed(py, error))?;
+            fractional += usize::from(point.is_some());
+        } else {
+            return Err(malformed(py, "invalid coefficient character"));
+        }
         at += 1;
-        if byte == b'.' && !dot {
-            dot = true;
-            continue;
-        }
-        if !byte.is_ascii_digit() {
-            return Ok(None);
-        }
-        any = true;
-        fractional += usize::from(dot);
-        let digit = byte - b'0';
-        if digit != 0 || parts.original_digits != 0 {
-            let index = parts.original_digits;
-            if let Some(place) = parts.digits.get_mut(index) {
-                *place = digit;
-            }
-            if let Some(place) = parts.preview.get_mut(index) {
-                *place = digit;
-            }
-            parts.original_digits += 1;
-            parts.trailing = if digit == 0 { parts.trailing + 1 } else { 0 };
-        }
     }
-    if !any {
-        return Ok(None);
-    }
+    let end = at;
     let mut exponent = 0i128;
-    if at < text.len() {
+    if at != text.len() {
         at += 1;
-        let exp_negative = text.get(at) == Some(&b'-');
-        if exp_negative || text.get(at) == Some(&b'+') {
-            at += 1;
-        }
-        let start = at;
+        let negative = text.get(at) == Some(&b'-');
+        at += usize::from(negative || text.get(at) == Some(&b'+'));
+        let digits_start = at;
         while let Some(&byte) = text.get(at) {
-            if at != 0 && at.is_multiple_of(4096) {
+            if at.is_multiple_of(4096) {
                 super::checkpoint(py, budget)?;
             }
             if !byte.is_ascii_digit() {
-                return Ok(None);
+                return Err(malformed(py, "invalid exponent character"));
             }
-            let Some(next) = exponent
+            exponent = exponent
                 .checked_mul(10)
-                .and_then(|value| value.checked_add(i128::from(byte - b'0')))
-            else {
-                // Preserve the old exponent conversion's actual exception.
-                return Ok(None);
-            };
-            exponent = next;
+                .and_then(|n| n.checked_add(i128::from(byte - b'0')))
+                .ok_or_else(|| malformed(py, "source exponent exceeds accurate native range"))?;
             at += 1;
         }
-        if at == start {
-            return Ok(None);
+        if at == digits_start {
+            return Err(malformed(py, "empty exponent"));
         }
-        if exp_negative {
+        if negative {
             exponent = -exponent;
         }
     }
-    let Some(exponent) = exponent
+    let exponent = exponent
         .checked_sub(fractional as i128)
-        .and_then(|exponent| i64::try_from(exponent).ok())
-    else {
-        return Ok(None);
+        .and_then(|n| i64::try_from(n).ok())
+        .ok_or_else(|| malformed(py, "source exponent exceeds accurate native range"))?;
+    let header = inspected
+        .finish(negative, exponent)
+        .map_err(|error| malformed(py, error))?;
+    let digits = match point {
+        None => Digits::Ascii(&text[start..end], &[]),
+        Some(point) => Digits::Ascii(&text[start..point], &text[point + 1..end]),
     };
-    parts.original_exponent = exponent;
-    if parts.original_digits == 0 {
-        // Native as_tuple represents every zero with exactly one zero digit;
-        // its possibly extreme exponent is immaterial to the SQL zero value.
-        parts.original_digits = 1;
-        parts.necessary = 1;
+    super::control::bytes(py, budget, text.len().min(4096))?;
+    Ok((header, digits))
+}
+
+/// Consume the same coefficient with a target-selected layout and native sink.
+/// Python control remains here, never inside a pure native target.
+pub(super) fn consume<C: Consumer + ?Sized>(
+    py: Python<'_>,
+    header: Header,
+    digits: Digits<'_>,
+    target: &mut C,
+    context: &C::Context,
+    budget: Option<&dyn Checkpoint>,
+    failure: impl Fn(C::Error) -> PyErr,
+) -> PyResult<()> {
+    let Some(layout) = target.decimal_start(header, context).map_err(&failure)? else {
+        return Ok(());
+    };
+    let render = Render::new(digits, layout).map_err(|error| malformed(py, error))?;
+    if layout.len() <= 128 {
+        fragments::<C, 128>(py, render, target, context, budget, &failure)?;
     } else {
-        parts.necessary = parts.original_digits - parts.trailing;
+        fragments::<C, 4096>(py, render, target, context, budget, &failure)?;
     }
-    Ok(Some(Parsed::Finite(parts)))
+    target.decimal_end(context).map_err(failure)
+}
+
+fn fragments<C: Consumer + ?Sized, const N: usize>(
+    py: Python<'_>,
+    mut render: Render<'_>,
+    target: &mut C,
+    context: &C::Context,
+    budget: Option<&dyn Checkpoint>,
+    failure: &impl Fn(C::Error) -> PyErr,
+) -> PyResult<()> {
+    let mut chunk = [0; N];
+    loop {
+        let n = render.read(&mut chunk);
+        if n == 0 {
+            return Ok(());
+        }
+        super::control::bytes(py, budget, n)?;
+        let text = std::str::from_utf8(&chunk[..n])
+            .map_err(|_| malformed(py, "native decimal renderer emitted non-ASCII"))?;
+        target.decimal_fragment(text, context).map_err(failure)?;
+    }
+}
+
+/// Add bounded original component facts only for an actual target range error.
+pub(super) fn note(py: Python<'_>, error: &PyErr, header: Header, digits: Digits<'_>) {
+    if error.is_instance_of::<errors::DataError>(py) {
+        let mut preview = [0; 16];
+        if let Ok(n) = digits.preview(header, &mut preview) {
+            errors::note_format(
+                py,
+                error,
+                format_args!(
+                    "failed Decimal components: sign={}, digits={:?}{} ({} digits), exponent={}",
+                    u8::from(header.negative()),
+                    &preview[..n],
+                    if header.digits() > 16 {
+                        " [truncated]"
+                    } else {
+                        ""
+                    },
+                    header.digits(),
+                    header.exponent(),
+                ),
+            );
+        }
+    }
 }

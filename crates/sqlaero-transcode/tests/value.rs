@@ -20,6 +20,19 @@ fn native_facts_reach_a_non_sql_consumer_without_numeric_policy() {
             }
             Ok(())
         }
+        fn decimal_start(
+            &mut self,
+            _: sqlaero_transcode::decimal::Header,
+            _: &(),
+        ) -> Result<Option<sqlaero_transcode::decimal::Layout>, Self::Error> {
+            Err("not a decimal test")
+        }
+        fn decimal_fragment(&mut self, _: &str, _: &()) -> Result<(), Self::Error> {
+            Err("not a decimal test")
+        }
+        fn decimal_end(&mut self, _: &()) -> Result<(), Self::Error> {
+            Err("not a decimal test")
+        }
         fn text_start(&mut self, _: Option<usize>, _: &()) -> Result<(), Self::Error> {
             Ok(())
         }

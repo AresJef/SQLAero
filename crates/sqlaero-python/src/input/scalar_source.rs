@@ -49,7 +49,7 @@ pub(super) fn read<'a, 'py>(
             value.cast::<PyDelta>()?,
         )))));
     }
-    if value.get_type().is(types.decimal.bind(py)) {
+    if value.get_type().is(types.decimal_type(py)) {
         return Ok(Some(Source::Decimal(value)));
     }
     // Provider temporal storage must win over its datetime/timedelta ancestry:

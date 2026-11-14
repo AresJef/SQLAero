@@ -83,8 +83,8 @@ pub fn float(output: &mut Vec<u8>, value: f64, limit: usize) -> Result<(), WireE
     Ok(())
 }
 
-/// Normalize an exact Decimal coefficient and exponent without binary floating
-/// point, Python context operations or potentially enormous zero expansion.
+/// Render an exact Decimal coefficient and exponent, preserving source scale.
+/// Necessary precision and actual request capacity remain independent limits.
 /// `digits` contains its nonnegative coefficient in most-significant order.
 ///
 /// # Errors
@@ -97,59 +97,46 @@ pub fn decimal(
     exponent: i64,
     limit: usize,
 ) -> Result<(), ScalarError> {
-    if digits.iter().any(|digit| *digit > 9) {
-        return Err(ScalarError::Range("invalid Decimal coefficient"));
+    use sqlaero_transcode::decimal::{Digits, Inspect, Render};
+    let mut inspect = Inspect::default();
+    for &digit in digits {
+        inspect.digit(digit).map_err(ScalarError::Range)?;
     }
-    let Some(first) = digits.iter().position(|digit| *digit != 0) else {
-        append(output, if negative { b"-0" } else { b"0" }, limit)?;
-        return Ok(());
-    };
-    let last = digits
-        .iter()
-        .rposition(|digit| *digit != 0)
-        .ok_or(ScalarError::Range("invalid Decimal coefficient"))?;
-    let trailing = i64::try_from(digits.len() - last - 1)
-        .map_err(|_| ScalarError::Range("Decimal coefficient is too large"))?;
-    let exponent = exponent.checked_add(trailing).ok_or(ScalarError::Range(
-        "Decimal exponent exceeds the exact SQL range",
-    ))?;
-    let coefficient = &digits[first..=last];
-    let width = i64::try_from(coefficient.len())
-        .map_err(|_| ScalarError::Range("Decimal coefficient is too large"))?;
-    let decimal_point = width.checked_add(exponent).ok_or(ScalarError::Range(
-        "Decimal exponent exceeds the exact SQL range",
-    ))?;
-    let integer_places = decimal_point.max(0);
-    let fractional_places = exponent.saturating_neg().max(0);
-    if integer_places.saturating_add(fractional_places) > 65 {
-        return Err(ScalarError::Range(
-            "Decimal exceeds 65 necessary decimal places",
-        ));
-    }
-    let width = integer_places.max(1) as usize
-        + fractional_places as usize
-        + usize::from(fractional_places > 0)
-        + usize::from(negative);
-    reserve(output, width, limit)?;
-    if negative {
-        output.push(b'-');
-    }
-    if decimal_point <= 0 {
-        output.extend_from_slice(b"0.");
-        output.resize(output.len() + (-decimal_point) as usize, b'0');
-        output.extend(coefficient.iter().map(|digit| b'0' + digit));
-    } else {
-        for (index, digit) in coefficient.iter().enumerate() {
-            if index as i64 == decimal_point {
-                output.push(b'.');
-            }
-            output.push(b'0' + digit);
+    let header = inspect
+        .finish(negative, exponent)
+        .map_err(ScalarError::Range)?;
+    let layout = decimal_layout(header)?;
+    let mut render = Render::new(Digits::Values(digits), layout).map_err(ScalarError::Range)?;
+    // Native provider coefficients are bounded; long Python coefficients use
+    // this same plan through the fragmented Consumer contract at the boundary.
+    let mut chunk = [0; 128];
+    loop {
+        let length = render.read(&mut chunk);
+        if length == 0 {
+            break;
         }
-        if exponent > 0 {
-            output.resize(output.len() + exponent as usize, b'0');
-        }
+        append(output, &chunk[..length], limit)?;
     }
     Ok(())
+}
+
+/// Apply only MySQL's necessary-value precision policy, retaining source scale.
+/// # Errors
+/// Rejects nonfinite misuse, excessive necessary precision or output overflow.
+pub fn decimal_layout(
+    header: sqlaero_transcode::decimal::Header,
+) -> Result<sqlaero_transcode::decimal::Layout, ScalarError> {
+    use sqlaero_transcode::decimal::{Layout, Notation};
+    if !header.is_zero() && header.category().is_none() {
+        let point = header.digits() as i128 + i128::from(header.exponent());
+        let fraction = (-i128::from(header.exponent()) - header.trailing() as i128).max(0);
+        if point.max(0) + fraction > 65 {
+            return Err(ScalarError::Range(
+                "Decimal exceeds 65 necessary decimal places",
+            ));
+        }
+    }
+    Layout::new(header, Notation::Plain).map_err(ScalarError::Range)
 }
 
 /// Format-neutral calendar and native-resolution clock facts.
@@ -328,9 +315,9 @@ pub fn duration(output: &mut Vec<u8>, micros: i128, limit: usize) -> Result<(), 
 mod tests {
     use super::*;
     #[test]
-    fn decimal_normalization_enforces_exact_precision_without_expansion() {
+    fn decimal_scale_and_necessary_value_precision_are_independent() {
         for (digits, exp, expected) in [
-            (&[1, 2, 3, 4, 5, 6, 0, 0][..], -4, "1234.56"),
+            (&[1, 2, 3, 4, 5, 6, 0, 0][..], -4, "1234.5600"),
             (&[1][..], -3, "0.001"),
             (&[1][..], 3, "1000"),
             (&[0][..], i64::MAX, "0"),

@@ -25,7 +25,7 @@ from sqlaero import _sqlaero
     (float("nan"), b"NULL"), (float("inf"), b"NULL"),
     (-float("inf"), b"NULL"), (Decimal("NaN123"), b"NULL"),
     (Decimal("-sNaN42"), b"NULL"), (Decimal("Infinity"), b"NULL"),
-    (Decimal("-Infinity"), b"NULL"), (Decimal("1234.5600"), b"1234.56"),
+    (Decimal("-Infinity"), b"NULL"), (Decimal("1234.5600"), b"1234.5600"),
     (Decimal("1e-30"), b"0." + b"0" * 29 + b"1"),
     (Decimal("1e64"), b"1" + b"0" * 64),
     (Decimal("-0e999999999999999999"), b"-0"),
@@ -92,14 +92,14 @@ def test_float_text_round_trips_and_remains_approximate(value: float) -> None:
 def test_decimal_is_independent_of_the_current_rounding_context() -> None:
     with localcontext() as context:
         context.prec = 2
-        assert _sqlaero._encode_scalar(Decimal("1234.5600")) == b"1234.56"
+        assert _sqlaero._encode_scalar(Decimal("1234.5600")) == b"1234.5600"
 
 
 @pytest.mark.parametrize("value,expected", [
     (Decimal("1e-31"), b"0." + b"0" * 30 + b"1"),
     (Decimal("-1e-65"), b"-0." + b"0" * 64 + b"1"),
-    (Decimal("0.000000000000000000000000000000012300"), b"0." + b"0" * 31 + b"123"),
-    (Decimal("9" * 65 + ".000"), b"9" * 65),
+    (Decimal("0.000000000000000000000000000000012300"), b"0." + b"0" * 31 + b"12300"),
+    (Decimal("9" * 65 + ".000"), b"9" * 65 + b".000"),
 ])
 def test_decimal_value_precision_is_independent_of_target_column_scale(value: Decimal, expected: bytes) -> None:
     assert _sqlaero._encode_scalar(value) == expected
@@ -107,14 +107,14 @@ def test_decimal_value_precision_is_independent_of_target_column_scale(value: De
 
 @pytest.mark.parametrize("capitals", [0, 1])
 def test_decimal_encoding_does_not_apply_context_traps_precision_or_capitals(capitals: int) -> None:
-    cases: tuple[tuple[str, bytes], ...] = (
-        ("1.234567890123456789000", b"1.234567890123456789"),
+    cases: tuple[tuple[str, bytes | None], ...] = (
+        ("1.234567890123456789000", b"1.234567890123456789000"),
         ("1e64", b"1" + b"0" * 64),
         ("1e-65", b"0." + b"0" * 64 + b"1"),
         ("0e999999999999999999", b"0"),
         ("-0e999999999999999999", b"-0"),
-        ("0e-999999999999999999", b"0"),
-        ("-0e-999999999999999999", b"-0"),
+        ("0e-999999999999999999", None),
+        ("-0e-999999999999999999", None),
         ("-sNaN42", b"NULL"),
         ("Infinity", b"NULL"),
     )
@@ -125,7 +125,14 @@ def test_decimal_encoding_does_not_apply_context_traps_precision_or_capitals(cap
             context.traps[signal] = True
         context.clear_flags()
         for text, expected in cases:
-            assert _sqlaero._encode_value(Decimal(text)).to_bytes() == expected
+            if expected is None:
+                # DEC01 retains negative-exponent zero scale; impossible output
+                # is rejected by the existing request capacity before expansion.
+                with pytest.raises(OperationalError) as caught:
+                    _sqlaero._encode_value(Decimal(text))
+                assert caught.value.code == 65538
+            else:
+                assert _sqlaero._encode_value(Decimal(text)).to_bytes() == expected
             assert not any(context.flags.values())
 
 
@@ -150,9 +157,9 @@ def test_decimal_necessary_digits_respect_both_integral_and_fractional_boundarie
 
 
 @pytest.mark.parametrize(("text", "expected"), [
-    ("123" + "0" * 10000 + "e-10000", b"123"),
-    ("9" * 65 + "0" * 10000 + "e-10000", b"9" * 65),
-    ("0." + "1" * 65 + "0" * 10000, b"0." + b"1" * 65),
+    ("123" + "0" * 10000 + "e-10000", b"123." + b"0" * 10000),
+    ("9" * 65 + "0" * 10000 + "e-10000", b"9" * 65 + b"." + b"0" * 10000),
+    ("0." + "1" * 65 + "0" * 10000, b"0." + b"1" * 65 + b"0" * 10000),
 ])
 def test_decimal_redundant_long_coefficient_zeroes_do_not_change_the_exact_domain(
     text: str, expected: bytes,
@@ -186,7 +193,7 @@ def test_real_decimal_subclass_uses_the_formal_base_value_without_its_string_hoo
         def __str__(self) -> str:
             raise AssertionError("a real Decimal subclass must normalize to its base value")
 
-    assert _sqlaero._encode_value(StringTrap("1.2300")).to_bytes() == b"1.23"
+    assert _sqlaero._encode_value(StringTrap("1.2300")).to_bytes() == b"1.2300"
 
 
 @pytest.mark.parametrize("provider", ["mutable", "pure-python"])
@@ -220,7 +227,7 @@ decimal.Decimal = chosen
 from sqlaero import _sqlaero
 
 value = chosen("123.00")
-assert _sqlaero._encode_value(value).to_bytes() == b"123"
+assert _sqlaero._encode_value(value).to_bytes() == b"123.00"
 assert calls == ["tuple"], calls
 
 original = KeyboardInterrupt("actual live as_tuple failure")

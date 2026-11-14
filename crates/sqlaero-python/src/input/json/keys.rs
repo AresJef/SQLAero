@@ -31,6 +31,19 @@ impl Consumer for Text {
         };
         self.text_fragment(text, &())
     }
+    fn decimal_start(
+        &mut self,
+        _: sqlaero_transcode::decimal::Header,
+        _: &(),
+    ) -> Result<Option<sqlaero_transcode::decimal::Layout>, Error> {
+        Err(Error::Unsupported("Decimal object keys"))
+    }
+    fn decimal_fragment(&mut self, _: &str, _: &()) -> Result<(), Error> {
+        Err(Error::Unsupported("Decimal object keys"))
+    }
+    fn decimal_end(&mut self, _: &()) -> Result<(), Error> {
+        Err(Error::Unsupported("Decimal object keys"))
+    }
     fn text_start(&mut self, _: Option<usize>, _: &()) -> Result<(), Error> {
         Ok(())
     }
