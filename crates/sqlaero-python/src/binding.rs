@@ -1960,20 +1960,8 @@ impl CellWriter for Visit<'_> {
     }
 }
 
-struct InputPath<'a>(&'a [usize]);
-
-impl std::fmt::Display for InputPath<'_> {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter.write_str("args")?;
-        for index in self.0 {
-            write!(formatter, "[{index}]")?;
-        }
-        Ok(())
-    }
-}
-
-fn path_text(path: &[usize]) -> InputPath<'_> {
-    InputPath(path)
+fn path_text(path: &[usize]) -> sqlaero_transcode::diagnostic::Indices<'_> {
+    sqlaero_transcode::diagnostic::Indices::new("args", path)
 }
 pub(crate) fn template_error(py: Python<'_>, error: TemplateError) -> PyErr {
     match error {

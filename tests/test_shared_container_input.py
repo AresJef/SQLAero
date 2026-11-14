@@ -154,7 +154,7 @@ def test_long_key_work_returns_to_signal_checks_without_publishing_a_prefix() ->
                 serialize()
             except MemoryError as error:
                 assert error is original and count == 3
-                assert 'while serializing JSON at data[0]' in '\\n'.join(error.__notes__)
+                assert 'while serializing JSON at data[key#0]' in '\\n'.join(error.__notes__)
             else:
                 raise AssertionError('long key had no growing-work checks')
         finally:

@@ -15,6 +15,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyInt};
 use sqlaero_core::bind::Context;
 use sqlaero_core::json::{Error, Options, Writer};
+use sqlaero_transcode::diagnostic::{Coordinate, Path};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
 /// A lazy JSON text parameter. The payload reference and allow_nan are read-only;
@@ -90,11 +91,26 @@ struct Serialize<'a> {
     budget: Option<&'a dyn Checkpoint>,
     writer: Writer,
     active: Vec<usize>,
-    path: Vec<usize>,
+    failure_located: bool,
 }
 
 impl Serialize<'_> {
-    fn value(&mut self, value: &Bound<'_, PyAny>) -> PyResult<()> {
+    fn locate(&mut self, py: Python<'_>, error: &PyErr, path: &Path<'_>) {
+        if !self.failure_located {
+            errors::note_format(py, error, format_args!("while serializing JSON at {path}"));
+            self.failure_located = true;
+        }
+    }
+
+    fn value_at(&mut self, value: &Bound<'_, PyAny>, path: &Path<'_>) -> PyResult<()> {
+        let result = self.value(value, path);
+        if let Err(error) = &result {
+            self.locate(value.py(), error, path);
+        }
+        result
+    }
+
+    fn value(&mut self, value: &Bound<'_, PyAny>, path: &Path<'_>) -> PyResult<()> {
         let py = value.py();
         if value.is_instance_of::<Json>() {
             return Err(errors::builtin_message::<PyTypeError>(
@@ -132,7 +148,7 @@ impl Serialize<'_> {
             };
         }
         if let Some(kind) = super::sequence::kind(value, self.types) {
-            return self.container(value, kind);
+            return self.container(value, kind, path);
         }
         if let Some(source) = super::scalar_source::read(self.types, value)? {
             use super::scalar_source::Source;
@@ -199,7 +215,7 @@ impl Serialize<'_> {
         ))
     }
 
-    fn container(&mut self, value: &Bound<'_, PyAny>, kind: Kind) -> PyResult<()> {
+    fn container(&mut self, value: &Bound<'_, PyAny>, kind: Kind, path: &Path<'_>) -> PyResult<()> {
         let py = value.py();
         let identity = value.as_ptr() as usize;
         if self.active.contains(&identity) {
@@ -231,51 +247,62 @@ impl Serialize<'_> {
         let mut names: HashMap<u64, Vec<String>> = HashMap::new();
         let seed = RandomState::new();
         for index in 0..sequence.len() {
-            if index.is_multiple_of(256) {
-                super::checkpoint(py, self.budget)?;
-            }
-            self.path
-                .try_reserve(1)
-                .map_err(|_| errors::memory_error(py))?;
-            self.path.push(index);
-            let current = sequence.row_item(index, self.budget)?;
-            if object {
-                let pair = current.cast::<pyo3::types::PyTuple>()?;
-                let key = keys::read(&pair.get_item(0)?, self.budget, &seed)?;
-                names.try_reserve(1).map_err(|_| errors::memory_error(py))?;
-                if let Some(previous) = names.get(&key.hash) {
-                    for name in previous {
-                        if keys::same(py, name, &key.value, self.budget)? {
-                            return Err(errors::builtin_format::<PyValueError>(
-                                py,
-                                format_args!(
-                                    "JSON object keys collide after normalization at entry {index}"
-                                ),
-                            ));
+            let entry = path.child(if object {
+                Coordinate::Key(index)
+            } else {
+                Coordinate::Index(index)
+            });
+            let result = (|| {
+                if index.is_multiple_of(256) {
+                    super::checkpoint(py, self.budget)?;
+                }
+                let current = sequence.row_item(index, self.budget)?;
+                if object {
+                    let pair = current.cast::<pyo3::types::PyTuple>()?;
+                    let key = keys::read(&pair.get_item(0)?, self.budget, &seed)?;
+                    names.try_reserve(1).map_err(|_| errors::memory_error(py))?;
+                    if let Some(previous) = names.get(&key.hash) {
+                        for name in previous {
+                            if keys::same(py, name, &key.value, self.budget)? {
+                                return Err(errors::builtin_format::<PyValueError>(
+                                    py,
+                                    format_args!(
+                                        "JSON object keys collide after normalization at entry {index}"
+                                    ),
+                                ));
+                            }
                         }
                     }
-                }
-                self.writer
-                    .key_start(key.value.len())
-                    .map_err(|error| failure(py, error))?;
-                super::unicode::native_fragments(py, &key.value, self.budget, |_, text| {
                     self.writer
-                        .text_fragment(text, &self.options)
-                        .map_err(|error| failure(py, error))
-                })?;
-                self.writer
-                    .text_end(&self.options)
-                    .map_err(|error| failure(py, error))?;
-                let previous = names.entry(key.hash).or_default();
-                previous
-                    .try_reserve(1)
-                    .map_err(|_| errors::memory_error(py))?;
-                previous.push(key.value);
-                self.value(&pair.get_item(1)?)?;
-            } else {
-                self.value(&current)?;
+                        .key_start(key.value.len())
+                        .map_err(|error| failure(py, error))?;
+                    super::unicode::native_fragments(py, &key.value, self.budget, |_, text| {
+                        self.writer
+                            .text_fragment(text, &self.options)
+                            .map_err(|error| failure(py, error))
+                    })?;
+                    self.writer
+                        .text_end(&self.options)
+                        .map_err(|error| failure(py, error))?;
+                    let child = path.child(Coordinate::Field {
+                        name: &key.value,
+                        ordinal: index,
+                    });
+                    self.value_at(&pair.get_item(1)?, &child)?;
+                    let previous = names.entry(key.hash).or_default();
+                    previous
+                        .try_reserve(1)
+                        .map_err(|_| errors::memory_error(py))?;
+                    previous.push(key.value);
+                } else {
+                    self.value_at(&current, &entry)?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                self.locate(py, &error, &entry);
+                return Err(error);
             }
-            self.path.pop();
         }
         if object {
             self.writer.object_end()
@@ -305,17 +332,6 @@ impl Serialize<'_> {
     }
 }
 
-struct Path<'a>(&'a [usize]);
-impl std::fmt::Display for Path<'_> {
-    fn fmt(&self, output: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        output.write_str("data")?;
-        for index in self.0 {
-            write!(output, "[{index}]")?;
-        }
-        Ok(())
-    }
-}
-
 pub(crate) fn serialize(
     value: &Bound<'_, PyAny>,
     types: &ScalarTypes,
@@ -332,18 +348,19 @@ pub(crate) fn serialize(
         budget,
         writer: Writer::new(),
         active: Vec::new(),
-        path: Vec::new(),
+        failure_located: false,
     };
-    if let Err(error) = state.value(value) {
-        errors::note_format(
-            py,
-            &error,
-            format_args!("while serializing JSON at {}", Path(&state.path)),
-        );
+    let root = Path::root("data");
+    state.value_at(value, &root)?;
+    if let Err(error) = super::checkpoint(py, budget) {
+        state.locate(py, &error, &root);
         return Err(error);
     }
-    super::checkpoint(py, budget)?;
-    state.writer.finish().map_err(|error| failure(py, error))
+    state.writer.finish().map_err(|error| {
+        let error = failure(py, error);
+        errors::note_format(py, &error, format_args!("while serializing JSON at {root}"));
+        error
+    })
 }
 
 /// Serialize one lazy wrapper as text, never as source SQL or binary input.
