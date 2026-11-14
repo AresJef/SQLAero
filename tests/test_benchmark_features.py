@@ -493,3 +493,28 @@ def test_json_catalog_has_distinct_boundaries_and_reuses_provider_input(runner: 
     assert len(selected) == 3 and all(case.value is value for case in selected)
     assert {case.family for case in selected} == set(runner.JSON_BOUNDARIES)
     assert all(case.family in runner.CPU_FAMILIES for case in records)
+
+
+def test_output_changes_require_exact_native_input_output_and_spec_evidence(runner: Any) -> None:
+    from copy import deepcopy
+
+    case: dict[str, object] = {"id": "decimal-policy", "input": {"sha256": "actual-source"}}
+    old: dict[str, object] = {"value_bytes": 4, "sha256": "12.5"}
+    new: dict[str, object] = {"value_bytes": 6, "sha256": "12.500"}
+    assert runner.comparison_semantics(case, old, old, {}, "old-native", "new-native") == "IDENTICAL_OUTPUT"
+    with pytest.raises(RuntimeError, match="exact validated policy contract"):
+        runner.comparison_semantics(case, old, new, {}, "old-native", "new-native")
+    entry: dict[str, object] = {"input_identity": case, "reference_native_sha256": "old-native",
+             "candidate_native_sha256": "new-native", "reference_output": old,
+             "candidate_output": new, "requirement_refs": ["DEC01"],
+             "functional_evidence": ["independent-decimal-golden.xml"]}
+    assert runner.comparison_semantics(case, old, new, {"decimal-policy": entry},
+                                       "old-native", "new-native") == "SPECIFIED_OUTPUT_CHANGE"
+    for key in entry:
+        wrong = deepcopy(entry)
+        wrong[key] = None
+        with pytest.raises(RuntimeError, match="exact validated policy contract"):
+            runner.comparison_semantics(case, old, new, {"decimal-policy": wrong}, "old-native", "new-native")
+    for reference_hash, candidate_hash in (("other-native", "new-native"), ("old-native", "other-native")):
+        with pytest.raises(RuntimeError, match="exact validated policy contract"):
+            runner.comparison_semantics(case, old, new, {"decimal-policy": entry}, reference_hash, candidate_hash)

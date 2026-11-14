@@ -1471,6 +1471,37 @@ def package_identity(package: str | None) -> dict[str, object]:
                              for path in sorted(folder.glob("*.py"))}}
 
 
+def comparison_semantics(
+    case: dict[str, object], reference: dict[str, object], candidate: dict[str, object],
+    specified: dict[str, Any], reference_native: str, candidate_native: str,
+) -> str:
+    """Validate exact outputs; known policy changes never permit arbitrary mismatches.
+
+    These fingerprints freeze measurement identity, not semantic correctness.
+    Each entry must separately cite its approved requirement and independent
+    functional evidence. Performance/statistical gates remain unchanged.
+    """
+    if reference == candidate:
+        return "IDENTICAL_OUTPUT"
+    raw: object = specified.get(str(case["id"]))
+    if not isinstance(raw, dict):
+        raise RuntimeError(f"Reference and candidate outputs differ without an exact validated policy contract: {case['id']}")
+    item = cast(dict[str, Any], raw)
+    if (item.get("input_identity") != case
+            or item.get("reference_native_sha256") != reference_native
+            or item.get("candidate_native_sha256") != candidate_native
+            or item.get("reference_output") != reference
+            or item.get("candidate_output") != candidate
+            or not isinstance(item.get("requirement_refs"), list)
+            or not item["requirement_refs"]
+            or not all(type(value) is str and value for value in cast(list[object], item["requirement_refs"]))
+            or not isinstance(item.get("functional_evidence"), list)
+            or not item["functional_evidence"]
+            or not all(type(value) is str and value for value in cast(list[object], item["functional_evidence"]))):
+        raise RuntimeError(f"Reference and candidate outputs differ without an exact validated policy contract: {case['id']}")
+    return "SPECIFIED_OUTPUT_CHANGE"
+
+
 def collect(args: argparse.Namespace) -> None:
     selected = [case for case in catalog() if case.id in args.case or
                 any(case.id.startswith(prefix) for prefix in args.prefix)]
@@ -1484,9 +1515,14 @@ def collect(args: argparse.Namespace) -> None:
     directory = Path(args.output).resolve()
     directory.mkdir(parents=True, exist_ok=True)
     parameters: dict[str, int] = {}
+    output_contracts: dict[str, Any] = {}
     if args.config:
         config = cast(dict[str, Any], json.loads(Path(args.config).read_text()))
         parameters = {str(key): int(value) for key, value in config["calls"].items()}
+        raw_contracts: object = config.get("specified_output_changes", {})
+        if not isinstance(raw_contracts, dict):
+            raise ValueError("specified_output_changes must be a per-case mapping")
+        output_contracts = cast(dict[str, Any], raw_contracts)
         if "warmup_calls" in config and config["warmup_calls"] != args.warmup_calls:
             raise ValueError("Warmup call cap differs from the frozen configuration")
     started = time.perf_counter_ns()
@@ -1501,6 +1537,7 @@ def collect(args: argparse.Namespace) -> None:
                 "minimum_ms": args.minimum_ms, "target_ms": args.target_ms,
                 "warmup_calls": args.warmup_calls, "warmup_wall_cap_ns": 2_000_000,
                 "config_sha256": digest(Path(args.config)) if args.config else None,
+                "specified_output_changes": output_contracts,
                 "cases": [case.identity() for case in selected]}
     contract_path = directory / "contract.json"
     if contract_path.exists() and json.loads(contract_path.read_text()) != contract:
@@ -1571,8 +1608,9 @@ def collect(args: argparse.Namespace) -> None:
                         checked[role] = (a if role == "A" else b).sample(
                             case.id, 0, role_a if role == "A" else "native")
                     checked_a, checked_b = checked["A"], checked["B"]
-                    if not args.legacy and checked_a["output"] != checked_b["output"]:
-                        raise RuntimeError(f"Reference and candidate outputs differ: {case.id}")
+                    semantics = ("LEGACY_DISTINCT_BOUNDARIES" if args.legacy else comparison_semantics(
+                        case.identity(), checked_a["output"], checked_b["output"], output_contracts,
+                        str(actual_a), str(expected_b["sha256"])))
                     if case.id not in parameters:
                         if args.command == "run":
                             raise ValueError(f"Formal calls not frozen for {case.id}")
@@ -1592,6 +1630,7 @@ def collect(args: argparse.Namespace) -> None:
                             "cycles": args.cycles, "target_ms": args.target_ms,
                             "warmup_calls": args.warmup_calls,
                             "minimum_ms": args.minimum_ms, "runner_sha256": metadata["runner_sha256"],
+                            "specified_output_changes": output_contracts,
                             "cases": metadata["cases"]}, indent=2))
                     n = parameters[case.id]
                     if args.command == "calibrate" and cycle == 0 and case.family in CPU_FAMILIES:
@@ -1629,6 +1668,7 @@ def collect(args: argparse.Namespace) -> None:
                             if span > (250_000_000 if samples["A"]["cpu_quality"] else 21_000_000_000):
                                 reason = "group_span"
                             group = {"cycle": cycle, "case": case.id, "order": order,
+                                     "comparison_semantics": semantics,
                                      "cycle_key": cycle_key,
                                      "samples": samples, "span_ns": span, "reasons": reasons,
                                      "run_sha256": metadata["runner_sha256"]}
