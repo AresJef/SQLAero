@@ -262,8 +262,13 @@ impl PolarsTypes {
                 let name =
                     control::callback(py, Some(budget), || errors::attribute(&snapshot, c"name"))?;
                 export_name(&name, format_args!("Series name"), budget)?;
-                let mut source = arrow::prepare_exported(value, &snapshot, shape, budget)?;
-                source.polars_names(dtype, None);
+                let source = arrow::prepare_exported(
+                    value,
+                    &snapshot,
+                    shape,
+                    arrow::names::Source::polars(dtype, None),
+                    budget,
+                )?;
                 Storage::Native(source)
             };
             (shape, storage)
@@ -321,13 +326,13 @@ impl PolarsTypes {
                             format_args!("column name at position {index}"),
                             budget,
                         )?;
-                        let mut source = arrow::prepare_exported(
+                        let source = arrow::prepare_exported(
                             &column,
                             &column,
                             Shape::Vector { length: rows },
+                            arrow::names::Source::polars(dtype, None),
                             budget,
                         )?;
-                        source.polars_names(dtype, None);
                         Column::Native(source)
                     });
                 }
@@ -344,8 +349,8 @@ impl PolarsTypes {
                         budget,
                     )?;
                 }
-                let mut source = arrow::prepare_exported(value, &snapshot, shape, budget)?;
-                source.source_names(prepared_names);
+                let source =
+                    arrow::prepare_exported(value, &snapshot, shape, prepared_names, budget)?;
                 (shape, Storage::Native(source))
             }
         };

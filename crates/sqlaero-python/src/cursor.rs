@@ -1834,7 +1834,7 @@ macro_rules! cursor_api {
                     let many=many.0.as_ref().map_or(Ok(false),|value|config::boolean(value,"many"))?;
                     let itemize=itemize.0.as_ref().map_or(Ok(true),|value|config::boolean(value,"itemize"))?;
                     let sql=sql.cast::<PyString>().map_err(|_|errors::builtin_message::<pyo3::exceptions::PyTypeError>(py,"sql must be str; already encoded bytes are not accepted"))?;
-                    let budget=IoBudget::new(sqlaero_core::transport::deadline::TimeoutKind::Operation,None,None,None);
+                    let budget=crate::input::control::Control::unlimited();
                     let types=connection.types.borrow(py);
                     let mode=if self.prepared {binding::PlanMode::PreparedDisplay} else {binding::PlanMode::Text};
                     let mut planner=binding::Planner::new(sql,args.0.as_ref(),many,itemize,mode,&types,&budget)?;

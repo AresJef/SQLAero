@@ -525,7 +525,14 @@ pub(crate) fn prepare<'py>(
     } else {
         return Ok(None);
     };
-    prepare_exported(value, value, shape, budget).map(Some)
+    prepare_exported(
+        value,
+        value,
+        shape,
+        names::Source::arrow(value, shape),
+        budget,
+    )
+    .map(Some)
 }
 
 /// Import a public CPU export whose canonical outer type was already checked.
@@ -534,6 +541,7 @@ pub(crate) fn prepare_exported<'py>(
     owner: &Bound<'py, PyAny>,
     exported: &Bound<'py, PyAny>,
     shape: Shape,
+    mut names: names::Source<'py>,
     budget: &dyn Checkpoint,
 ) -> PyResult<Prepared<'py>> {
     let py = owner.py();
@@ -576,8 +584,8 @@ pub(crate) fn prepare_exported<'py>(
                 FFI_ArrowArray::from_raw(array),
             )
         };
-        let field = schema::import(py, &schema, budget)?;
-        validate_field(py, &field, 0)?;
+        let field = schema::import(py, &schema, &mut names, budget)?;
+        validate_field(py, &field, 0, budget)?;
         super::check(py, budget)?;
         cdata::normalize_nulls(py, &mut array, field.data_type(), budget)?;
         // SAFETY: a canonical CPU producer owns these valid C buffers until
@@ -598,7 +606,7 @@ pub(crate) fn prepare_exported<'py>(
             shape,
             owner: owner.clone(),
             offsets: None,
-            names: names::Source::arrow(exported, shape),
+            names,
         });
     }
     let capsule = exported.call_method0(c"__arrow_c_stream__")?;
@@ -634,8 +642,8 @@ pub(crate) fn prepare_exported<'py>(
     if schema.release().is_none() {
         return Err(invalid(py, "Arrow stream returned a released schema"));
     }
-    let field = schema::import(py, &schema, budget)?;
-    validate_field(py, &field, 0)?;
+    let field = schema::import(py, &schema, &mut names, budget)?;
+    validate_field(py, &field, 0, budget)?;
     validate_table_schema(py, &field, shape)?;
     super::check(py, budget)?;
     Ok(Prepared {
@@ -651,7 +659,7 @@ pub(crate) fn prepare_exported<'py>(
         shape,
         owner: owner.clone(),
         offsets: None,
-        names: names::Source::arrow(exported, shape),
+        names,
     })
 }
 
@@ -686,7 +694,13 @@ fn validate_root_shape(py: Python<'_>, array: &ArrayRef, shape: Shape) -> PyResu
     }
 }
 
-fn validate_field(py: Python<'_>, field: &Field, depth: usize) -> PyResult<()> {
+fn validate_field(
+    py: Python<'_>,
+    field: &Field,
+    depth: usize,
+    budget: &dyn Checkpoint,
+) -> PyResult<()> {
+    budget.bytes(py, 8)?;
     if depth >= 64 {
         return Err(errors::client(
             py,
@@ -730,13 +744,15 @@ fn validate_field(py: Python<'_>, field: &Field, depth: usize) -> PyResult<()> {
         DataType::Time32(ArrowTimeUnit::Second | ArrowTimeUnit::Millisecond)
         | DataType::Time64(ArrowTimeUnit::Microsecond | ArrowTimeUnit::Nanosecond) => Ok(()),
         DataType::FixedSizeBinary(width) if *width >= 0 => Ok(()),
-        DataType::List(child) | DataType::LargeList(child) => validate_field(py, child, depth + 1),
+        DataType::List(child) | DataType::LargeList(child) => {
+            validate_field(py, child, depth + 1, budget)
+        }
         DataType::FixedSizeList(child, width) if *width >= 0 => {
-            validate_field(py, child, depth + 1)
+            validate_field(py, child, depth + 1, budget)
         }
         DataType::Struct(fields) => {
             for child in fields {
-                validate_field(py, child, depth + 1)?;
+                validate_field(py, child, depth + 1, budget)?;
             }
             Ok(())
         }
@@ -757,7 +773,12 @@ fn validate_field(py: Python<'_>, field: &Field, depth: usize) -> PyResult<()> {
                     "Arrow dictionary key must be an 8/16/32/64-bit integer",
                 ));
             }
-            validate_field(py, &Field::new("", value.as_ref().clone(), true), depth + 1)
+            validate_field(
+                py,
+                &Field::new("", value.as_ref().clone(), true),
+                depth + 1,
+                budget,
+            )
         }
         _ => Err(invalid(py, "unsupported Arrow logical input dtype")),
     }
@@ -1037,22 +1058,6 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
     crate::input::source::cell_destinations!();
 }
 
-impl<'py> Prepared<'py> {
-    /// Join complete logical provider names to the same positional C Data
-    /// reader. This retains metadata, never target-formatted values.
-    pub(super) fn polars_names(
-        &mut self,
-        dtype: Bound<'py, PyAny>,
-        table: Option<Bound<'py, PyAny>>,
-    ) {
-        self.names = names::Source::polars(dtype, table);
-    }
-
-    pub(super) fn source_names(&mut self, names: names::Source<'py>) {
-        self.names = names;
-    }
-}
-
 fn consume_schema(py: Python<'_>, dtype: &DataType, target: &mut dyn Target) -> PyResult<()> {
     if binary_schema(dtype, &mut || target.checkpoint(py, 1))? {
         target.schema(py, Schema::Binary)?;
@@ -1131,8 +1136,9 @@ pub(crate) fn declared_schema(
         }
         FFI_ArrowSchema::from_raw(raw)
     };
-    let field = schema::import(py, &schema, budget)?;
-    validate_field(py, &field, 0)?;
+    let mut logical = names::Source::ArrowType(dtype.clone());
+    let field = schema::import(py, &schema, &mut logical, budget)?;
+    validate_field(py, &field, 0, budget)?;
     let binary = binary_schema(field.data_type(), &mut || super::check(py, budget))?;
     Ok(binary.then_some(Schema::Binary))
 }

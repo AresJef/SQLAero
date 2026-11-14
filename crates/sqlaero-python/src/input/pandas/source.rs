@@ -608,8 +608,13 @@ impl SourceTypes {
             Family::Arrow => {
                 let exported = errors::attribute(storage, c"__arrow_array__")?.call0()?;
                 crate::input::check(py, budget)?;
-                let source =
-                    arrow::prepare_exported(storage, &exported, Shape::Vector { length }, budget)?;
+                let source = arrow::prepare_exported(
+                    storage,
+                    &exported,
+                    Shape::Vector { length },
+                    arrow::names::Source::arrow(&exported, Shape::Vector { length }),
+                    budget,
+                )?;
                 Ok(Column::Arrow(source))
             }
             Family::Categorical => {

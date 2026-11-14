@@ -31,6 +31,7 @@ pub(super) enum Edge {
 pub(crate) enum Source<'py> {
     ArrowArray(Bound<'py, PyAny>),
     ArrowTable(Bound<'py, PyAny>),
+    ArrowType(Bound<'py, PyAny>),
     PolarsArray(Bound<'py, PyAny>),
     PolarsTable {
         owner: Bound<'py, PyAny>,
@@ -64,7 +65,7 @@ struct Field<'py> {
 }
 
 impl<'py> Source<'py> {
-    pub(super) fn arrow(value: &Bound<'py, PyAny>, shape: Shape) -> Self {
+    pub(crate) fn arrow(value: &Bound<'py, PyAny>, shape: Shape) -> Self {
         if matches!(shape, Shape::Table { .. }) {
             Self::ArrowTable(value.clone())
         } else {
@@ -88,6 +89,7 @@ impl<'py> Source<'py> {
             let (owner, attribute, polars, table) = match self {
                 Self::ArrowArray(value) => (value.clone(), Some(c"type"), false, None),
                 Self::ArrowTable(value) => (value.clone(), Some(c"schema"), false, None),
+                Self::ArrowType(dtype) => (dtype.clone(), None, false, None),
                 Self::PolarsArray(dtype) => (dtype.clone(), None, true, None),
                 Self::PolarsTable { owner, dtypes } => {
                     (dtypes.clone(), None, true, Some(owner.clone()))
@@ -123,6 +125,56 @@ impl<'py> Source<'py> {
             unreachable!()
         };
         Ok(schema)
+    }
+
+    /// Recover complete logical timezone metadata, which the C ABI's NUL
+    /// terminator cannot represent. This path does not prepare JSON names or
+    /// allocate a wide record's name slots. Only actual timestamp nodes use it.
+    pub(super) fn timezone(
+        &mut self,
+        path: &[Edge],
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<Bound<'py, PyString>>> {
+        let schema = self.schema(budget)?;
+        let mut dtype = schema.nodes[0].dtype.clone();
+        let py = dtype.py();
+        for (depth, edge) in path.iter().enumerate() {
+            budget.bytes(py, 8)?;
+            dtype = match edge {
+                Edge::Field(index) if schema.polars && depth == 0 && schema.table.is_some() => {
+                    dtype.cast::<PyList>()?.get_item(*index)?
+                }
+                Edge::Field(index) if schema.polars => {
+                    let fields = control::callback(py, Some(budget), || {
+                        errors::attribute(&dtype, c"fields")
+                    })?;
+                    let field = fields.cast::<PyList>()?.get_item(*index)?;
+                    control::callback(py, Some(budget), || errors::attribute(&field, c"dtype"))?
+                }
+                Edge::Field(index) => control::callback(py, Some(budget), || {
+                    let field = dtype.call_method1(c"field", (*index,))?;
+                    errors::attribute(&field, c"type")
+                })?,
+                Edge::Value => control::callback(py, Some(budget), || {
+                    errors::attribute(
+                        &dtype,
+                        if schema.polars {
+                            c"inner"
+                        } else {
+                            c"value_type"
+                        },
+                    )
+                })?,
+            };
+        }
+        let value = control::callback(py, Some(budget), || {
+            errors::attribute(&dtype, if schema.polars { c"time_zone" } else { c"tz" })
+        })?;
+        if value.is_none() {
+            Ok(None)
+        } else {
+            Ok(Some(value.cast_into::<PyString>()?))
+        }
     }
 
     pub(crate) fn prepare_fields(

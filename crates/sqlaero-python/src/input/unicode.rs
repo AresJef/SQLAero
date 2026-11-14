@@ -7,6 +7,63 @@ use pyo3::types::{PyString, PyStringData, PyStringMethods};
 use sqlaero_transcode::utf8::{self, EncodeError};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
+/// An owned native metadata snapshot through the same base-string reader as
+/// ordinary values. No subclass conversion or whole long UTF-8 conversion.
+pub(crate) fn snapshot(source: &Bound<'_, PyString>, budget: &dyn Checkpoint) -> PyResult<String> {
+    struct Text(String);
+    impl Consumer for Text {
+        type Context = ();
+        type Error = ();
+        fn write(&mut self, value: ScalarRef<'_>, _: &()) -> Result<(), ()> {
+            let ScalarRef::Text(value) = value else {
+                return Err(());
+            };
+            self.text_fragment(value, &())
+        }
+        fn decimal_start(
+            &mut self,
+            _: sqlaero_transcode::decimal::Header,
+            _: &(),
+        ) -> Result<Option<sqlaero_transcode::decimal::Layout>, ()> {
+            Err(())
+        }
+        fn decimal_fragment(&mut self, _: &str, _: &()) -> Result<(), ()> {
+            Err(())
+        }
+        fn decimal_end(&mut self, _: &()) -> Result<(), ()> {
+            Err(())
+        }
+        fn text_start(&mut self, _: Option<usize>, _: &()) -> Result<(), ()> {
+            Ok(())
+        }
+        fn text_fragment(&mut self, value: &str, _: &()) -> Result<(), ()> {
+            sqlaero_transcode::buffer::append_text(&mut self.0, value, usize::MAX).map_err(|_| ())
+        }
+        fn text_end(&mut self, _: &()) -> Result<(), ()> {
+            Ok(())
+        }
+        fn bytes_start(&mut self, _: usize, _: &()) -> Result<(), ()> {
+            Err(())
+        }
+        fn bytes_fragment(&mut self, _: &[u8], _: &()) -> Result<(), ()> {
+            Err(())
+        }
+        fn bytes_end(&mut self, _: &()) -> Result<(), ()> {
+            Err(())
+        }
+    }
+    let mut output = Text(String::new());
+    write(
+        source,
+        &mut output,
+        &(),
+        Some(budget),
+        "utf-8",
+        |(), _, _| errors::memory_error(source.py()),
+    )?;
+    Ok(output.0)
+}
+
 /// Source C-string admission, independent of target encoding or key policy.
 /// Scan immutable actual str storage in bounded units without a UTF-8 copy.
 pub(crate) fn contains_nul(

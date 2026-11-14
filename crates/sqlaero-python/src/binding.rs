@@ -15,7 +15,6 @@ use sqlaero_core::bind::{
     writer,
 };
 use sqlaero_core::error::ClientErrorCode;
-use sqlaero_core::transport::deadline::IoBudget;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -588,13 +587,12 @@ pub(crate) fn escape<'py>(
     types: &ScalarTypes,
     context: &Context,
 ) -> PyResult<Bound<'py, PyAny>> {
-    use sqlaero_core::transport::deadline::TimeoutKind;
     let py = data.py();
     let context = Context {
         limit: usize::MAX,
         ..*context
     };
-    let budget = IoBudget::new(TimeoutKind::Operation, None, None, None);
+    let budget = crate::input::control::Control::unlimited();
     let mut rows = Rows::new(data, many, itemize, types, &budget)?;
     if rows.public_batch() {
         let output = crate::output::list(py, [])?;

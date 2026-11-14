@@ -3,6 +3,7 @@
 use super::*;
 use pyo3::types::{PyDict, PyTuple};
 use sqlaero_core::charset::{codec::Codec, resolve};
+use sqlaero_core::transport::deadline::IoBudget;
 use sqlaero_core::transport::deadline::TimeoutKind;
 use std::sync::Arc;
 

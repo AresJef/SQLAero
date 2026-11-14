@@ -47,15 +47,23 @@ struct Release {
     allocation_capacity: usize,
 }
 
-fn contains_null(dtype: &DataType) -> bool {
+fn contains_null(py: Python<'_>, dtype: &DataType, budget: &dyn Checkpoint) -> PyResult<bool> {
+    budget.bytes(py, 8)?;
     match dtype {
-        DataType::Null => true,
+        DataType::Null => Ok(true),
         DataType::List(child) | DataType::LargeList(child) | DataType::FixedSizeList(child, _) => {
-            contains_null(child.data_type())
+            contains_null(py, child.data_type(), budget)
         }
-        DataType::Struct(fields) => fields.iter().any(|field| contains_null(field.data_type())),
-        DataType::Dictionary(_, value) => contains_null(value),
-        _ => false,
+        DataType::Struct(fields) => {
+            for field in fields {
+                if contains_null(py, field.data_type(), budget)? {
+                    return Ok(true);
+                }
+            }
+            Ok(false)
+        }
+        DataType::Dictionary(_, value) => contains_null(py, value, budget),
+        _ => Ok(false),
     }
 }
 
@@ -68,7 +76,7 @@ pub(super) fn normalize_nulls(
     dtype: &DataType,
     budget: &dyn Checkpoint,
 ) -> PyResult<()> {
-    if !contains_null(dtype) {
+    if !contains_null(py, dtype, budget)? {
         return Ok(());
     }
     let root = ptr::from_mut(array).cast::<ArrayAbi>();
@@ -122,7 +130,7 @@ fn collect(
     changes: &mut Vec<Change>,
     budget: &dyn Checkpoint,
 ) -> PyResult<()> {
-    if !contains_null(dtype) {
+    if !contains_null(py, dtype, budget)? {
         return Ok(());
     }
     super::super::check(py, budget)?;
@@ -166,7 +174,7 @@ fn collect(
                 ));
             }
             for (index, field) in fields.iter().enumerate() {
-                if contains_null(field.data_type()) {
+                if contains_null(py, field.data_type(), budget)? {
                     let child = child(py, &header, index)?;
                     collect(
                         py,

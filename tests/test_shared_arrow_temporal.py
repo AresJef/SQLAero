@@ -6,8 +6,56 @@ import struct
 
 import pytest
 from sqlaero import _sqlaero, json_dumps
+from sqlaero import Cursor, DictCursor, SSCursor, SSDictCursor
+from sqlaero.errors import InterfaceError, SQLAeroErrorCode
+from test_public_connection import live, requires_mysql
 
 pa = pytest.importorskip("pyarrow")
+
+
+@pytest.mark.parametrize("zone", ["UTC\x00bad", "\x00bad"])
+@pytest.mark.parametrize("container", ["array", "chunked", "list", "struct", "dictionary", "table", "batch", "pandas"])
+def test_timezone_metadata_is_not_truncated_at_c_data_nul(zone: str, container: str) -> None:
+    value = pa.array([0], type=pa.timestamp("ns", zone))
+    if container == "chunked":
+        value = pa.chunked_array([value.slice(0, 0), value])
+    elif container == "list":
+        value = pa.ListArray.from_arrays(pa.array([0, 1], type=pa.int32()), value)
+    elif container == "struct":
+        value = pa.StructArray.from_arrays([value], names=["stamp"])
+    elif container == "dictionary":
+        value = pa.DictionaryArray.from_arrays(pa.array([0], type=pa.int8()), value)
+    elif container == "table":
+        value = pa.table({"stamp": value})
+    elif container == "batch":
+        value = pa.record_batch([value], names=["stamp"])
+    elif container == "pandas":
+        pd = pytest.importorskip("pandas")
+        value = pd.arrays.ArrowExtensionArray(value)
+    # The provider's full timezone is invalid. A C-string prefix may not turn
+    # it into UTC or a naive timestamp. The real protocol error is preserved.
+    with pytest.raises((ValueError, KeyError), match="null|NUL|embedded|time zone|Time zone|ZoneInfo"):
+        json_dumps(value)
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ["84", "97"])
+@pytest.mark.parametrize("kind", [Cursor, DictCursor, SSCursor, SSDictCursor])
+@pytest.mark.parametrize("prepared", [False, True])
+def test_complete_timezone_fact_keeps_mysql_aware_session_guard(label: str, kind, prepared: bool) -> None:
+    value = pa.array([0], type=pa.timestamp("ns", "\x00bad"))
+    with live(label) as connection, connection.cursor(kind, prepared=prepared) as current:
+        # MySQL consumes the UTC instant, not the source's local-zone name.
+        current.execute("SELECT CAST(%s AS DATETIME) AS stamp", value)
+        from datetime import datetime
+        assert current.fetchone() == ({"stamp": datetime(1970, 1, 1)} if kind in (DictCursor, SSDictCursor) else (datetime(1970, 1, 1),))
+        assert current.fetchone() is None
+        current.execute("SET SESSION time_zone = '+02:00'")
+        with pytest.raises(InterfaceError) as caught:
+            current.execute("SELECT %s", value)
+        assert caught.value.code == SQLAeroErrorCode.SESSION_STATE
+        current.execute("SELECT 17 AS value")
+        assert current.fetchone() == ({"value": 17} if kind in (DictCursor, SSDictCursor) else (17,))
 
 
 @pytest.mark.parametrize(("dtype", "ticks", "expected"), [

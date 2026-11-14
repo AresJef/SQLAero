@@ -200,12 +200,13 @@ fn _bind_sql<'py>(
         transport::deadline::{IoBudget, TimeoutKind},
     };
     let py = module.py();
-    let budget = IoBudget::new(
+    let origin = IoBudget::new(
         TimeoutKind::Operation,
         timeout_ns.map(std::time::Duration::from_nanos),
         None,
         None,
     );
+    let budget = input::control::Control::local(&origin);
     input::check(py, &budget)?;
     let owner = module.getattr(PyString::from_bytes(module.py(), b"_scalar_types")?)?;
     let types = owner.extract::<PyRef<'_, input::ScalarTypes>>()?;
