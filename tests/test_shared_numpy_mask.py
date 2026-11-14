@@ -2,6 +2,7 @@
 
 from datetime import datetime, tzinfo
 import math
+from typing import NoReturn
 
 import pytest
 
@@ -42,7 +43,7 @@ def test_masked_payload_protocol_is_never_called() -> None:
     original = MemoryError("unmasked timezone protocol")
 
     class Zone(tzinfo):
-        def utcoffset(self, value: datetime | None) -> object:
+        def utcoffset(self, value: datetime | None) -> NoReturn:
             raise original
 
     value = np.ma.array([datetime(2026, 1, 2, tzinfo=Zone())], dtype=object, mask=[True])

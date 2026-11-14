@@ -1,6 +1,6 @@
 //! MaskedArray base data and actual instance masks, without filled() or hooks.
 
-use super::{NumpyArrayApi, NumpySource};
+use super::{NumpyArrayApi, NumpySource, RecordSource};
 use crate::errors;
 use crate::input::cell::Target;
 use crate::input::control::{self, Checkpoint};
@@ -10,7 +10,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyDict};
 use sqlaero_transcode::value::ScalarRef;
 
-enum Mask<'py> {
+pub(super) enum Reader<'py> {
     Scalar(bool),
     Array(Box<NumpySource<'py>>),
 }
@@ -18,10 +18,10 @@ enum Mask<'py> {
 /// One source-owned mask snapshot. Replacement is checked after every callback
 /// boundary before reuse; its mutable array storage keeps the shared external
 /// stability/all-writers-synchronize contract.
-struct State<'py> {
-    owner: Bound<'py, PyAny>,
-    original: Bound<'py, PyAny>,
-    mask: Mask<'py>,
+#[derive(Clone)]
+pub(super) struct State<'py> {
+    pub(super) owner: Bound<'py, PyAny>,
+    pub(super) original: Bound<'py, PyAny>,
 }
 
 fn current<'py>(value: &Bound<'py, PyAny>, budget: &dyn Checkpoint) -> PyResult<Bound<'py, PyAny>> {
@@ -49,20 +49,46 @@ fn current<'py>(value: &Bound<'py, PyAny>, budget: &dyn Checkpoint) -> PyResult<
 }
 
 impl<'py> State<'py> {
-    fn new(
+    fn new(value: &Bound<'py, PyAny>, budget: &dyn Checkpoint) -> PyResult<Self> {
+        Ok(Self {
+            owner: value.clone(),
+            original: current(value, budget)?,
+        })
+    }
+
+    pub(super) fn validate(&self, budget: &dyn Checkpoint) -> PyResult<()> {
+        if !current(&self.owner, budget)?.is(&self.original) {
+            return Err(errors::builtin_message::<PyBufferError>(
+                self.owner.py(),
+                "MaskedArray mask changed during escape; keep data and mask storage stable",
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl<'py> Reader<'py> {
+    pub(super) fn scalar(value: &Bound<'py, PyAny>, api: &NumpyArrayApi) -> PyResult<Option<bool>> {
+        if value.is_exact_instance_of::<PyBool>() {
+            value.extract().map(Some)
+        } else if value.get_type().is(api.boolean.typ(value.py())) {
+            Ok(Some(super::fixed_bytes(value, &api.boolean, 1)?[0] != 0))
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub(super) fn new(
         value: &Bound<'py, PyAny>,
         data: &NumpySource<'py>,
         api: &NumpyArrayApi,
         budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
         let py = value.py();
-        let original = current(value, budget)?;
-        let mask = if original.is_exact_instance_of::<PyBool>() {
-            Mask::Scalar(original.extract()?)
-        } else if original.get_type().is(api.boolean.typ(py)) {
-            Mask::Scalar(super::fixed_bytes(&original, &api.boolean, 1)?[0] != 0)
-        } else if api.accepts(&original) {
-            let source = NumpySource::new(&original, api, budget)?;
+        let mask = if let Some(value) = Self::scalar(value, api)? {
+            Self::Scalar(value)
+        } else if api.accepts(value) {
+            let source = NumpySource::new(value, api, budget)?;
             let same_axes = source.shape() == data.shape()
                 && match data.shape() {
                     Shape::Tensor { dimensions, .. } => (0..dimensions)
@@ -75,38 +101,41 @@ impl<'py> State<'py> {
                     "MaskedArray mask must have actual bool dtype and the same axes as its data",
                 ));
             }
-            Mask::Array(crate::input::boxed(py, source)?)
+            Self::Array(crate::input::boxed(py, source)?)
         } else {
             return Err(errors::builtin_message::<PyTypeError>(
                 py,
                 "MaskedArray mask must be an actual bool value or supported bool ndarray",
             ));
         };
-        Ok(Self {
-            owner: value.clone(),
-            original,
-            mask,
-        })
+        Ok(mask)
     }
 
-    fn missing(&mut self, row: usize, column: usize, budget: &dyn Checkpoint) -> PyResult<bool> {
-        if !current(&self.owner, budget)?.is(&self.original) {
-            return Err(errors::builtin_message::<PyBufferError>(
-                self.owner.py(),
-                "MaskedArray mask changed during escape; keep data and mask storage stable",
-            ));
-        }
-        match &mut self.mask {
-            Mask::Scalar(value) => Ok(*value),
-            Mask::Array(source) => source.bool_cell(row, column, budget),
+    pub(super) fn missing(
+        &mut self,
+        row: usize,
+        column: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<bool> {
+        match self {
+            Self::Scalar(value) => Ok(*value),
+            Self::Array(source) => source.bool_cell(row, column, budget),
         }
     }
 }
 
 /// Read actual mask first, then acquire payload only at an unmasked position.
 pub(crate) struct MaskedSource<'py> {
-    data: NumpySource<'py>,
+    data: Data<'py>,
     state: State<'py>,
+}
+
+enum Data<'py> {
+    Value {
+        source: Box<NumpySource<'py>>,
+        mask: Reader<'py>,
+    },
+    Record(RecordSource<'py>),
 }
 
 impl<'py> MaskedSource<'py> {
@@ -115,8 +144,20 @@ impl<'py> MaskedSource<'py> {
         api: &NumpyArrayApi,
         budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
-        let data = NumpySource::new(value, api, budget)?;
-        let state = State::new(value, &data, api, budget)?;
+        let py = value.py();
+        let state = State::new(value, budget)?;
+        let dtype = api.dtype.get(value)?;
+        let data = if errors::attribute(&dtype, c"names")?.is_none() {
+            let source = NumpySource::new(value, api, budget)?;
+            let mask = Reader::new(&state.original, &source, api, budget)?;
+            Data::Value {
+                source: crate::input::boxed(py, source)?,
+                mask,
+            }
+        } else {
+            Data::Record(RecordSource::new_masked(value, api, budget, state.clone())?)
+        };
+        state.validate(budget)?;
         Ok(Self { data, state })
     }
 }
@@ -126,13 +167,28 @@ impl<'py> PreparedSource<'py> for MaskedSource<'py> {
         &self.state.owner
     }
     fn shape(&self) -> Shape {
-        self.data.shape()
+        match &self.data {
+            Data::Value { source, .. } => source.shape(),
+            Data::Record(source) => source.shape(),
+        }
     }
     fn axis_length(&self, axis: usize) -> Option<usize> {
-        self.data.axis_length(axis)
+        match &self.data {
+            Data::Value { source, .. } => source.axis_length(axis),
+            Data::Record(source) => source.axis_length(axis),
+        }
+    }
+    fn field_name(&self, column: usize) -> PyResult<Option<Bound<'py, PyAny>>> {
+        match &self.data {
+            Data::Value { .. } => Ok(None),
+            Data::Record(source) => source.field_name(column),
+        }
     }
     fn schema(&self, target: &mut dyn Target) -> PyResult<()> {
-        self.data.schema(target)
+        match &self.data {
+            Data::Value { source, .. } => source.schema(target),
+            Data::Record(source) => source.schema(target),
+        }
     }
     fn consume_cell(
         &mut self,
@@ -156,11 +212,19 @@ impl MaskedSource<'_> {
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         target.checkpoint(self.owner().py(), 1)?;
-        if self.state.missing(row, column, budget)? {
-            self.data.validate_layout(budget)?;
-            target.scalar(self.owner().py(), ScalarRef::Null)
-        } else {
-            self.data.consume_cell_to(row, column, target, budget)
+        self.state.validate(budget)?;
+        match &mut self.data {
+            Data::Record(source) => source.consume_cell_to(row, column, target, budget),
+            Data::Value { source, mask } => {
+                let missing = mask.missing(row, column, budget)?;
+                self.state.validate(budget)?;
+                if missing {
+                    source.validate_layout(budget)?;
+                    target.scalar(self.state.owner.py(), ScalarRef::Null)
+                } else {
+                    source.consume_cell_to(row, column, target, budget)
+                }
+            }
         }
     }
 }

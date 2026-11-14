@@ -1,5 +1,6 @@
 //! Canonical record schemas and native fields retain their original owners.
 
+use super::mask::{Reader, State};
 use super::{NumpyArrayApi, NumpySource};
 use crate::errors;
 use crate::input::attribute::GetSet;
@@ -15,11 +16,17 @@ use pyo3::types::{PyString, PyTuple};
 /// still belongs to the actual target containers, including empty sources.
 pub(crate) struct RecordSource<'py> {
     nodes: Vec<Node<'py>>,
+    mask_state: Option<State<'py>>,
 }
 
 enum Node<'py> {
-    Value(Box<NumpySource<'py>>),
+    Value(Box<Leaf<'py>>),
     Record(Box<Record<'py>>),
+}
+
+struct Leaf<'py> {
+    data: NumpySource<'py>,
+    mask: Option<Reader<'py>>,
 }
 
 struct Record<'py> {
@@ -30,20 +37,22 @@ struct Record<'py> {
     layout: NumpySource<'py>,
     // Used only during iterative preparation, then released.
     view: Option<Bound<'py, PyAny>>,
+    mask_view: Option<Bound<'py, PyAny>>,
+    scalar_mask: bool,
     values: Vec<usize>,
 }
 
 impl<'py> Node<'py> {
     fn storage(&self) -> &NumpySource<'py> {
         match self {
-            Self::Value(value) => value,
+            Self::Value(value) => &value.data,
             Self::Record(record) => &record.layout,
         }
     }
 
     fn owner(&self) -> &Bound<'py, PyAny> {
         match self {
-            Self::Value(value) => value.owner(),
+            Self::Value(value) => value.data.owner(),
             Self::Record(record) => &record.owner,
         }
     }
@@ -55,9 +64,10 @@ impl<'py> Record<'py> {
         api: &NumpyArrayApi,
         budget: &dyn Checkpoint,
         is_void: bool,
+        mask: Option<&Bound<'py, PyAny>>,
     ) -> PyResult<Option<Self>> {
         let py = value.py();
-        if crate::input::actual_instance(value, api.masked.bind(py)) {
+        if mask.is_none() && crate::input::actual_instance(value, api.masked.bind(py)) {
             return Ok(None);
         }
         let dtype_get = if is_void {
@@ -85,6 +95,65 @@ impl<'py> Record<'py> {
             ));
         }
         let layout = NumpySource::record_layout(if is_void { &view } else { value }, api, budget)?;
+        let scalar_mask = mask
+            .map(|mask| Reader::scalar(mask, api))
+            .transpose()?
+            .flatten()
+            .is_some();
+        let mask_view = if let Some(mask) = mask {
+            if scalar_mask {
+                Some(mask.clone())
+            } else {
+                if !api.accepts(mask) {
+                    return Err(errors::builtin_message::<PyTypeError>(
+                        py,
+                        "structured mask requires actual bool fields with matching data axes",
+                    ));
+                }
+                let mask_layout = NumpySource::record_layout(mask, api, budget)?;
+                if layout.shape() != mask_layout.shape()
+                    || (0..rank(layout.shape()))
+                        .any(|axis| layout.axis_length(axis) != mask_layout.axis_length(axis))
+                {
+                    return Err(errors::builtin_message::<PyTypeError>(
+                        py,
+                        "structured mask axes must match their data axes",
+                    ));
+                }
+                let mask_dtype = api.dtype.get(mask)?;
+                let mask_names = errors::attribute(&mask_dtype, c"names")?
+                    .cast_into::<PyTuple>()
+                    .map_err(|_| {
+                        errors::builtin_message::<PyTypeError>(
+                            py,
+                            "structured mask field names must match the data fields",
+                        )
+                    })?;
+                if fields.len() != mask_names.len() {
+                    return Err(errors::builtin_message::<PyTypeError>(
+                        py,
+                        "structured mask field names must match the data fields",
+                    ));
+                }
+                for (left, right) in fields.iter().zip(mask_names.iter()) {
+                    if !crate::input::unicode::same(
+                        left.cast::<PyString>()?,
+                        right.cast::<PyString>()?,
+                        budget,
+                    )? {
+                        return Err(errors::builtin_message::<PyTypeError>(
+                            py,
+                            "structured mask field names must match the data fields",
+                        ));
+                    }
+                }
+                Some(crate::input::control::callback(py, Some(budget), || {
+                    api.array_view.bind(py).call1((mask, api.array.typ(py)))
+                })?)
+            }
+        } else {
+            None
+        };
         let mut values = Vec::new();
         values
             .try_reserve_exact(fields.len())
@@ -96,6 +165,8 @@ impl<'py> Record<'py> {
             dtype_get: dtype_get.clone_ref(py),
             layout,
             view: Some(view),
+            mask_view,
+            scalar_mask,
             values,
         }))
     }
@@ -134,8 +205,39 @@ impl<'py> RecordSource<'py> {
         budget: &dyn Checkpoint,
         is_void: bool,
     ) -> PyResult<Option<Self>> {
+        Self::prepare(value, api, budget, is_void, None)
+    }
+
+    pub(super) fn new_masked(
+        value: &Bound<'py, PyAny>,
+        api: &NumpyArrayApi,
+        budget: &dyn Checkpoint,
+        state: State<'py>,
+    ) -> PyResult<Self> {
+        Self::prepare(value, api, budget, false, Some(state))?.ok_or_else(|| {
+            errors::builtin_message::<PyTypeError>(
+                value.py(),
+                "MaskedArray has no structured field schema",
+            )
+        })
+    }
+
+    fn prepare(
+        value: &Bound<'py, PyAny>,
+        api: &NumpyArrayApi,
+        budget: &dyn Checkpoint,
+        is_void: bool,
+        mask_state: Option<State<'py>>,
+    ) -> PyResult<Option<Self>> {
         let py = value.py();
-        let Some(root) = Record::prepare(value, api, budget, is_void)? else {
+        let Some(root) = Record::prepare(
+            value,
+            api,
+            budget,
+            is_void,
+            mask_state.as_ref().map(|state| &state.original),
+        )?
+        else {
             return Ok(None);
         };
         let mut nodes = Vec::new();
@@ -144,7 +246,7 @@ impl<'py> RecordSource<'py> {
         let mut index = 0;
         while index < nodes.len() {
             crate::input::check(py, budget)?;
-            let (view, fields) = match &mut nodes[index] {
+            let (view, fields, mask_view, scalar_mask) = match &mut nodes[index] {
                 Node::Value(_) => {
                     index += 1;
                     continue;
@@ -156,7 +258,12 @@ impl<'py> RecordSource<'py> {
                             "record source preparation view is missing",
                         )
                     })?;
-                    (view, record.fields.clone())
+                    (
+                        view,
+                        record.fields.clone(),
+                        record.mask_view.take(),
+                        record.scalar_mask,
+                    )
                 }
             };
             for field in fields.iter() {
@@ -172,13 +279,37 @@ impl<'py> RecordSource<'py> {
                     // The public mapping slot returns an owning field view.
                     Bound::from_owned_ptr_or_err(py, (api.item)(view.as_ptr(), field.as_ptr()))
                 })?;
-                let child = if let Some(record) = Record::prepare(&current, api, budget, false)? {
+                let field_mask = if let Some(mask_view) = &mask_view {
+                    if scalar_mask {
+                        Some(mask_view.clone())
+                    } else {
+                        Some(crate::input::control::callback(
+                            py,
+                            Some(budget),
+                            || unsafe {
+                                // SAFETY: qualified immutable ndarray slot owns its
+                                // returned field view, including complete names.
+                                Bound::from_owned_ptr_or_err(
+                                    py,
+                                    (api.item)(mask_view.as_ptr(), field.as_ptr()),
+                                )
+                            },
+                        )?)
+                    }
+                } else {
+                    None
+                };
+                let child = if let Some(record) =
+                    Record::prepare(&current, api, budget, false, field_mask.as_ref())?
+                {
                     Node::Record(crate::input::boxed(py, record)?)
                 } else {
-                    Node::Value(crate::input::boxed(
-                        py,
-                        NumpySource::new(&current, api, budget)?,
-                    )?)
+                    let data = NumpySource::new(&current, api, budget)?;
+                    let mask = field_mask
+                        .as_ref()
+                        .map(|mask| Reader::new(mask, &data, api, budget))
+                        .transpose()?;
+                    Node::Value(crate::input::boxed(py, Leaf { data, mask })?)
                 };
                 nodes.try_reserve(1).map_err(|_| errors::memory_error(py))?;
                 let child_index = nodes.len();
@@ -190,7 +321,10 @@ impl<'py> RecordSource<'py> {
             }
             index += 1;
         }
-        Ok(Some(Self { nodes }))
+        if let Some(state) = &mask_state {
+            state.validate(budget)?;
+        }
+        Ok(Some(Self { nodes, mask_state }))
     }
 
     fn shape_at(&self, node: usize, prefix: usize) -> PyResult<Shape> {
@@ -317,8 +451,28 @@ impl<'py> RecordSource<'py> {
     ) -> PyResult<()> {
         match &mut self.nodes[node] {
             Node::Value(value) => {
-                let (row, column) = coordinate(value.shape(), index);
-                value.consume_cell_to(row, column, target, budget)
+                let (row, column) = coordinate(value.data.shape(), index);
+                if let Some(state) = &self.mask_state {
+                    state.validate(budget)?;
+                }
+                let missing = value
+                    .mask
+                    .as_mut()
+                    .map(|mask| mask.missing(row, column, budget))
+                    .transpose()?
+                    .unwrap_or(false);
+                if let Some(state) = &self.mask_state {
+                    state.validate(budget)?;
+                }
+                if missing {
+                    value.data.validate_layout(budget)?;
+                    target.scalar(
+                        value.data.owner().py(),
+                        sqlaero_transcode::value::ScalarRef::Null,
+                    )
+                } else {
+                    value.data.consume_cell_to(row, column, target, budget)
+                }
             }
             Node::Record(_) => self.consume_record(node, index, target, budget),
         }
@@ -327,7 +481,9 @@ impl<'py> RecordSource<'py> {
 
 impl<'py> PreparedSource<'py> for RecordSource<'py> {
     fn owner(&self) -> &Bound<'py, PyAny> {
-        self.nodes[0].owner()
+        self.mask_state
+            .as_ref()
+            .map_or_else(|| self.nodes[0].owner(), |state| &state.owner)
     }
 
     fn shape(&self) -> Shape {
@@ -342,7 +498,7 @@ impl<'py> PreparedSource<'py> for RecordSource<'py> {
                 },
                 shape => shape,
             },
-            Node::Value(value) => value.shape(),
+            Node::Value(value) => value.data.shape(),
         }
     }
 
@@ -358,7 +514,7 @@ impl<'py> PreparedSource<'py> for RecordSource<'py> {
         for node in &self.nodes {
             target.checkpoint(self.owner().py(), 1)?;
             if let Node::Value(value) = node {
-                value.schema(target)?;
+                value.data.schema(target)?;
             }
         }
         Ok(())
@@ -378,7 +534,7 @@ impl<'py> PreparedSource<'py> for RecordSource<'py> {
 
 impl RecordSource<'_> {
     crate::input::cell::destinations!();
-    fn consume_cell_to(
+    pub(super) fn consume_cell_to(
         &mut self,
         row: usize,
         column: usize,

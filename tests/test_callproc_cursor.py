@@ -524,8 +524,11 @@ def out_placeholder_arguments(source: str, receipt: int) -> object:
         return (receipt, Enum('OutSlot', {'VALUE': value}).VALUE)
     if source.startswith('numpy-'):
         np = pytest.importorskip('numpy')
-        if source in ('numpy-masked-null', 'numpy-masked-hidden-none'):
+        if source in ('numpy-masked-null', 'numpy-masked-hidden-none', 'numpy-masked-record-null'):
             payload = None if source == 'numpy-masked-hidden-none' else float('nan')
+            if source == 'numpy-masked-record-null':
+                return np.ma.array(np.array((receipt, payload), dtype=[('receipt', 'i8'), ('out', object)]),
+                                   mask=(False, True))
             return np.ma.array([receipt, payload], dtype=object, mask=[False, True])
         if source == 'numpy-NaT':
             return (receipt, np.datetime64('NaT', 'ns'))
@@ -571,7 +574,7 @@ def target_command_counts(connection: Any) -> dict[str, int]:
     'float-nan', 'integer', 'json-null', 'json-invalid-payload',
     'enum-null', 'enum-invalid-payload',
     'numpy-NaT', 'numpy-timedelta-NaT', 'numpy-object-NaT',
-    'numpy-record-NaT', 'numpy-masked-null', 'numpy-masked-hidden-none',
+    'numpy-record-NaT', 'numpy-masked-null', 'numpy-masked-hidden-none', 'numpy-masked-record-null',
     'pandas-NA', 'pandas-NaT', 'pandas-nullable',
     'arrow-null', 'arrow-list-containing-null', 'polars-null',
 ])
@@ -604,7 +607,8 @@ def test_out_requires_literal_none_before_target_send(
 @pytest.mark.parametrize('kind', KINDS)
 @pytest.mark.parametrize('prepared', [False, True])
 @pytest.mark.parametrize('source', [
-    'tuple', 'list', 'numpy-object', 'numpy-record', 'numpy-masked-object', 'pandas-object', 'polars-object',
+    'tuple', 'list', 'numpy-object', 'numpy-record', 'numpy-masked-object', 'numpy-masked-record',
+    'pandas-object', 'polars-object',
 ])
 def test_literal_none_out_survives_shared_source_preparation(
     routines: Routines, kind: CursorType, prepared: bool, source: str,
@@ -615,7 +619,8 @@ def test_literal_none_out_survives_shared_source_preparation(
         args = [receipt, None]
     elif source.startswith('numpy-'):
         np = pytest.importorskip('numpy')
-        args = (np.ma.array([receipt, None], dtype=object, mask=[False, False]) if source == 'numpy-masked-object'
+        args = (np.ma.array(np.array((receipt, None), dtype=[('receipt', 'i8'), ('out', object)]), mask=False) if source == 'numpy-masked-record'
+                else np.ma.array([receipt, None], dtype=object, mask=[False, False]) if source == 'numpy-masked-object'
                 else np.array([receipt, None], dtype=object) if source == 'numpy-object'
                 else np.array((receipt, None), dtype=[('receipt', 'i8'), ('out', object)])[()])
     elif source == 'pandas-object':

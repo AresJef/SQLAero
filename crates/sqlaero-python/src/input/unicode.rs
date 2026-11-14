@@ -7,6 +7,50 @@ use pyo3::types::{PyString, PyStringData, PyStringMethods};
 use sqlaero_transcode::utf8::{self, EncodeError};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
+/// Compare complete immutable base names without Python equality, UTF-8
+/// materialization or JSON key policy. Source schemas may contain surrogates;
+/// only the target's actual name output decides whether they are admissible.
+pub(crate) fn same(
+    left: &Bound<'_, PyString>,
+    right: &Bound<'_, PyString>,
+    budget: &dyn Checkpoint,
+) -> PyResult<bool> {
+    if left.is(right) {
+        return Ok(true);
+    }
+    let py = left.py();
+    // SAFETY: both true str owners remain live. Their immutable base character
+    // storage follows the same GIL/NoGIL acquisition contract as write below.
+    let (left, right) = unsafe { (left.data()?, right.data()?) };
+    let length = |value: &PyStringData<'_>| match value {
+        PyStringData::Ucs1(values) => values.len(),
+        PyStringData::Ucs2(values) => values.len(),
+        PyStringData::Ucs4(values) => values.len(),
+    };
+    if length(&left) != length(&right) {
+        return Ok(false);
+    }
+    let point = |value: &PyStringData<'_>, index: usize| match value {
+        PyStringData::Ucs1(values) => u32::from(values[index]),
+        PyStringData::Ucs2(values) => u32::from(values[index]),
+        PyStringData::Ucs4(values) => values[index],
+    };
+    for start in (0..length(&left)).step_by(super::WORK_BYTES / 4) {
+        super::check(py, budget)?;
+        let end = (start + super::WORK_BYTES / 4).min(length(&left));
+        let equal = match (&left, &right) {
+            (PyStringData::Ucs1(a), PyStringData::Ucs1(b)) => a[start..end] == b[start..end],
+            (PyStringData::Ucs2(a), PyStringData::Ucs2(b)) => a[start..end] == b[start..end],
+            (PyStringData::Ucs4(a), PyStringData::Ucs4(b)) => a[start..end] == b[start..end],
+            _ => (start..end).all(|index| point(&left, index) == point(&right, index)),
+        };
+        if !equal {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
 /// Preserve an exceptional native UCS4 value in a private Python error payload.
 /// Normal serialization never creates this intermediate Python string. Every
 /// source copy finishes before public Unicode writes or a shared checkpoint;

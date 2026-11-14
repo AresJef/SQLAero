@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import json
+from typing import NoReturn
 
 import pytest
 
@@ -108,7 +109,7 @@ def test_record_original_callback_error_and_field_location_are_preserved() -> No
     original = MemoryError("record timezone source failed")
 
     class Zone(tzinfo):
-        def utcoffset(self, value: datetime | None) -> object:
+        def utcoffset(self, value: datetime | None) -> NoReturn:
             raise original
 
     source = np.empty(1, dtype=[("id", "i8"), ("at", object)])

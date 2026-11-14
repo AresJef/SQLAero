@@ -125,7 +125,7 @@ def test_stable_typed_arrays_have_independent_concurrent_readers() -> None:
         list(pool.map(read, range(4)))
 
 
-@pytest.mark.parametrize("shape", ["many", "single", "error_payload", "tensor", "empty_tensor"])
+@pytest.mark.parametrize("shape", ["many", "single", "error_payload", "tensor", "empty_tensor", "masked", "masked_record"])
 def test_typed_array_long_native_work_preserves_original_signal(shape: str) -> None:
     import os
     import pathlib
@@ -135,7 +135,13 @@ def test_typed_array_long_native_work_preserves_original_signal(shape: str) -> N
 import numpy as np
 from _native_signal import NativeAlarm, native_call_offsets
 from sqlaero import json_dumps
-value = (np.arange(1000000, dtype='i8') if shape == 'many' else np.array(['a' * 2000000]) if shape == 'single'
+if shape == 'masked':
+    value = np.ma.array(np.arange(1000000, dtype='i8'), mask=True)
+elif shape == 'masked_record':
+    value = np.ma.array(np.zeros(1000000, dtype=[('id','i8'),('other','i8')]), mask=False)
+    value.mask['other'] = True
+else:
+    value = (np.arange(1000000, dtype='i8') if shape == 'many' else np.array(['a' * 2000000]) if shape == 'single'
          else np.array([chr(0xd800) + 'a' * 2000000]) if shape == 'error_payload'
          else np.arange(1000000, dtype='i8').reshape(100, 100, 100) if shape == 'tensor'
          else np.empty((1000000, 0, 2), dtype='i8'))
