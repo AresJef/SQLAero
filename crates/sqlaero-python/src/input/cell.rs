@@ -33,9 +33,48 @@ pub(crate) enum Schema {
     Binary,
 }
 
+/// Nonreused identity for one native text domain. A target can retain bytes
+/// after its source advances without retaining foreign buffers or trusting a
+/// recycled address. Exhaustion simply disables this optional reuse path.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) struct TextIdentity(std::num::NonZeroU64);
+impl TextIdentity {
+    pub(crate) fn new() -> Option<Self> {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(1);
+        NEXT.try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            value.checked_add(1)
+        })
+        .ok()
+        .and_then(std::num::NonZeroU64::new)
+        .map(Self)
+    }
+}
+
+/// An already resolved stable native text label. The public native owner
+/// remains at the attached boundary; pure writers never retain it.
+/// The channel is a positional hint, never a type or formatting policy.
+#[derive(Clone, Copy)]
+pub(crate) struct TextReference<'a> {
+    pub(crate) identity: Option<TextIdentity>,
+    pub(crate) values: &'a arrow_array::ArrayRef,
+    pub(crate) index: usize,
+    pub(crate) channel: usize,
+}
+
 /// Consume borrowed facts before returning. Python references never leave this
 /// attached boundary, and sources retain no target-formatted answers.
 pub(crate) trait Target {
+    /// Optional reuse of stable native text. JSON/prepared targets decline
+    /// SQL byte reuse and consume the same already referenced scalar facts.
+    fn referenced_text(
+        &mut self,
+        _py: Python<'_>,
+        _reference: TextReference<'_>,
+        _budget: &dyn Checkpoint,
+    ) -> PyResult<bool> {
+        Ok(false)
+    }
     fn needs_field_names(&self) -> bool {
         false
     }
@@ -78,6 +117,17 @@ pub(crate) struct Mysql<'a, D: Destination + ?Sized> {
 }
 
 impl<D: Destination + ?Sized> Target for Mysql<'_, D> {
+    fn referenced_text(
+        &mut self,
+        py: Python<'_>,
+        reference: TextReference<'_>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<bool> {
+        if let Some(output) = self.output.text_buffer() {
+            return self.visitor.referenced_text(py, reference, output, budget);
+        }
+        Ok(false)
+    }
     fn source(
         &mut self,
         source: &mut dyn PreparedSource<'_>,

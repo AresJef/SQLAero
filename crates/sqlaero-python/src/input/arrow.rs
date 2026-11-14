@@ -5,7 +5,7 @@ use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 
 use super::cell::{NativeFailure, Schema, Target};
-use super::sink::{self, Destination};
+use super::sink::Destination;
 use arrow_array::ffi::{FFI_ArrowArray, from_ffi_and_data_type};
 use arrow_array::types::{
     Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type, UInt16Type, UInt32Type, UInt64Type,
@@ -193,7 +193,7 @@ impl<'py> Read<'_, 'py> {
 /// These strategies are mutually exclusive for one validated source schema.
 /// A generic source owns neither, keeping the original Prepared header small.
 enum FastPath {
-    Dictionary(dictionary::Cache),
+    Dictionary(dictionary::Reader),
     Int64(Int64Views),
     Float32(FloatReader<f32>),
     Boolean(BooleanReader),
@@ -273,16 +273,7 @@ impl Int64Views {
         Ok(Some(views))
     }
 
-    fn write(
-        &self,
-        py: Python<'_>,
-        row: usize,
-        column: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        visitor.checkpoint(py, 1)?;
+    fn read(&self, py: Python<'_>, row: usize, column: usize) -> PyResult<ValueRef<'static>> {
         let values = match self {
             Self::Vector(values) => values,
             Self::Table(columns) => columns
@@ -292,12 +283,11 @@ impl Int64Views {
         if row >= values.len() {
             return Err(invalid(py, "Arrow child index is outside its array"));
         }
-        if values.is_null(row) {
-            sink::emit(output, py, ValueRef::Null, context)
+        Ok(if values.is_null(row) {
+            ValueRef::Null
         } else {
-            sink::integer(output, values.value(row), context)
-                .map_err(|error| sink::failure(py, error))
-        }
+            ValueRef::Signed(values.value(row))
+        })
     }
 }
 
@@ -310,30 +300,17 @@ struct FloatReader<T: ArrowNativeType + Into<f64>> {
 }
 
 impl<T: ArrowNativeType + Into<f64>> FloatReader<T> {
-    fn write(
-        &self,
-        py: Python<'_>,
-        row: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        visitor.checkpoint(py, 1)?;
+    fn read(&self, py: Python<'_>, row: usize) -> PyResult<ValueRef<'static>> {
         if row >= self.values.len() {
             return Err(invalid(py, "Arrow child index is outside its array"));
         }
-        // Read the actual retained validity bitmap on every call. NULL never
-        // reads the value buffer, and no borrowed buffer survives a callback.
-        if self.nulls.as_ref().is_some_and(|nulls| nulls.is_null(row)) {
-            sink::emit(output, py, ValueRef::Null, context)
-        } else {
-            let value = self
-                .values
-                .get(row)
-                .copied()
-                .ok_or_else(|| invalid(py, "Arrow child index is outside its array"))?;
-            sink::float(output, value.into(), context).map_err(|error| sink::failure(py, error))
-        }
+        Ok(
+            if self.nulls.as_ref().is_some_and(|nulls| nulls.is_null(row)) {
+                ValueRef::Null
+            } else {
+                ValueRef::Float(self.values[row].into())
+            },
+        )
     }
 }
 
@@ -357,28 +334,17 @@ impl BooleanReader {
         })
     }
 
-    fn write(
-        &self,
-        py: Python<'_>,
-        row: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        visitor.checkpoint(py, 1)?;
+    fn read(&self, py: Python<'_>, row: usize) -> PyResult<ValueRef<'static>> {
         if row >= self.values.len() {
             return Err(invalid(py, "Arrow child index is outside its array"));
         }
-        // Consult the actual mask every time and never read a NULL data bit.
-        // Only the owned Rust metadata survives the checkpoint above.
-        if self.nulls.as_ref().is_some_and(|nulls| nulls.is_null(row)) {
-            sink::emit(output, py, ValueRef::Null, context)
-        } else {
-            let value = self.values.value(row);
-            output
-                .write(ValueRef::Boolean(value), context)
-                .map_err(|error| sink::failure(py, error))
-        }
+        Ok(
+            if self.nulls.as_ref().is_some_and(|nulls| nulls.is_null(row)) {
+                ValueRef::Null
+            } else {
+                ValueRef::Boolean(self.values.value(row))
+            },
+        )
     }
 }
 
@@ -390,6 +356,9 @@ fn native_fast_path(
     shape: Shape,
     budget: &dyn Checkpoint,
 ) -> PyResult<Option<FastPath>> {
+    if let Some(reader) = dictionary::Reader::prepare(array.data_type(), shape) {
+        return Ok(Some(FastPath::Dictionary(reader)));
+    }
     if let Some(views) = Int64Views::prepare(py, array, shape, budget)? {
         return Ok(Some(FastPath::Int64(views)));
     }
@@ -619,13 +588,9 @@ pub(crate) fn prepare_exported<'py>(
             .map_err(|error| errors::builtin_format::<PyTypeError>(py, format_args!("{error}")))?;
         let array = make_array(data);
         validate_root_shape(py, &array, shape)?;
-        let fast_path = if let Some(cache) = dictionary::Cache::for_schema(&field, shape) {
-            Some(super::boxed(py, FastPath::Dictionary(cache))?)
-        } else {
-            native_fast_path(py, &array, shape, budget)?
-                .map(|views| super::boxed(py, views))
-                .transpose()?
-        };
+        let fast_path = native_fast_path(py, &array, shape, budget)?
+            .map(|views| super::boxed(py, views))
+            .transpose()?;
         return Ok(Prepared {
             storage: Storage::Single(array),
             fast_path,
@@ -681,9 +646,7 @@ pub(crate) fn prepare_exported<'py>(
             end: 0,
             retained: None,
         },
-        fast_path: dictionary::Cache::for_schema(&field, shape)
-            .map(|cache| super::boxed(py, FastPath::Dictionary(cache)))
-            .transpose()?,
+        fast_path: None,
         field,
         shape,
         owner: owner.clone(),
@@ -905,8 +868,8 @@ impl Prepared<'_> {
                     *start = *end;
                     *end = next_end;
                     *current = Some(array);
-                    if let Some(FastPath::Dictionary(cache)) = self.fast_path.as_deref_mut() {
-                        cache.clear_chunk();
+                    if let Some(FastPath::Dictionary(reader)) = self.fast_path.as_deref_mut() {
+                        reader.clear_chunk();
                     } else {
                         self.fast_path = next_fast_path;
                     }
@@ -983,6 +946,13 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
             return self.consume_cell(index, row, target, budget);
         }
         let (array, local) = self.current_array(index, budget)?;
+        if row == 0
+            && column == 0
+            && (self.fast_path.is_some()
+                || projection::shape(&self.owner, &array, local, budget)? == Shape::Scalar)
+        {
+            return self.consume_cell(index, 0, target, budget);
+        }
         projection::consume_child(
             Read {
                 owner: &self.owner,
@@ -1014,6 +984,36 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
             Shape::Vector { .. } if column == 0 => false,
             _ => return Err(invalid(py, "Arrow cell is outside its prepared shape")),
         };
+        if let Some(reader) = self.fast_path.as_deref_mut() {
+            let value = match reader {
+                FastPath::Dictionary(reader) if reader.has_column(column) => {
+                    let value = cell_array(py, &array, table, column)?;
+                    let Some(reference) = reader.reference(py, value, index, column)? else {
+                        return target.scalar(py, ValueRef::Null);
+                    };
+                    if target.referenced_text(py, reference, budget)? {
+                        return Ok(());
+                    }
+                    return consume_scalar(
+                        py,
+                        reference.values,
+                        reference.index,
+                        target,
+                        budget,
+                        &mut self.offsets,
+                    );
+                }
+                FastPath::Dictionary(_) => None,
+                FastPath::Int64(reader) => Some(reader.read(py, index, column)?),
+                FastPath::Float32(reader) => Some(reader.read(py, index)?),
+                FastPath::Float64(reader) => Some(reader.read(py, index)?),
+                FastPath::Boolean(reader) => Some(reader.read(py, index)?),
+            };
+            if let Some(value) = value {
+                // Native buffer borrows end before target error/control work.
+                return target.scalar(py, value);
+            }
+        }
         let value = cell_array(py, &array, table, column)?;
         let node = if table && target.needs_field_names() && names::needed(value.data_type()) {
             self.names.child(0, names::Edge::Field(column), budget)?
@@ -1325,26 +1325,19 @@ fn cell_array<'a>(
     }
 }
 
-fn write_value(
+/// Consume one already resolved native text label through the common reader.
+/// The target owns formatting and any successful encoded-byte reuse.
+pub(crate) fn consume_text_reference(
     py: Python<'_>,
-    array: &ArrayRef,
-    index: usize,
-    output: &mut (impl Destination + ?Sized),
-    context: &Context,
+    reference: super::cell::TextReference<'_>,
+    target: &mut dyn Target,
     budget: &dyn Checkpoint,
-    visitor: &mut dyn CellWriter,
 ) -> PyResult<()> {
-    // The SQL text-label cache calls the same native scalar reader. No
-    // independent label conversion or target-private Python catalog exists.
     consume_scalar(
         py,
-        array,
-        index,
-        &mut super::cell::Mysql {
-            output,
-            context,
-            visitor,
-        },
+        reference.values,
+        reference.index,
+        target,
         budget,
         &mut None,
     )
@@ -1679,77 +1672,15 @@ impl<'py> Prepared<'py> {
         budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
-        let py = self.owner.py();
-        visitor.checkpoint(py, 1)?;
-        let (array, index) = self.current_array(row, budget)?;
-        if index >= array.len() {
-            return Err(invalid(py, "Arrow source row is outside its current array"));
-        }
-        let table = if let Shape::Table { columns, .. } = self.shape {
-            if column >= columns {
-                return Err(invalid(
-                    py,
-                    "Arrow source column is outside its prepared schema",
-                ));
-            }
-            true
-        } else {
-            if column != 0 {
-                return Err(invalid(
-                    py,
-                    "Arrow vector has only one logical cell per element",
-                ));
-            }
-            false
-        };
-        match self.fast_path.as_deref_mut() {
-            Some(FastPath::Int64(views)) => {
-                views.write(py, index, column, output, context, visitor)
-            }
-            Some(FastPath::Float32(reader)) => reader.write(py, index, output, context, visitor),
-            Some(FastPath::Boolean(reader)) => reader.write(py, index, output, context, visitor),
-            Some(FastPath::Float64(reader)) => reader.write(py, index, output, context, visitor),
-            Some(FastPath::Dictionary(cache)) => {
-                let value = cell_array(py, &array, table, column)?;
-                if (!table || cache.has_column(column))
-                    && let Some(text) = output.text_buffer()
-                {
-                    cache.write(py, column, value, index, text, context, budget, visitor)
-                } else {
-                    consume_value(
-                        Read {
-                            owner: &self.owner,
-                            offsets: &mut self.offsets,
-                            names: &mut self.names,
-                            node: 0,
-                        },
-                        value,
-                        index,
-                        &mut super::cell::Mysql {
-                            output,
-                            context,
-                            visitor,
-                        },
-                        budget,
-                    )
-                }
-            }
-            None => consume_value(
-                Read {
-                    owner: &self.owner,
-                    offsets: &mut self.offsets,
-                    names: &mut self.names,
-                    node: 0,
-                },
-                cell_array(py, &array, table, column)?,
-                index,
-                &mut super::cell::Mysql {
-                    output,
-                    context,
-                    visitor,
-                },
-                budget,
-            ),
-        }
+        self.consume_cell(
+            row,
+            column,
+            &mut super::cell::Mysql {
+                output,
+                context,
+                visitor,
+            },
+            budget,
+        )
     }
 }

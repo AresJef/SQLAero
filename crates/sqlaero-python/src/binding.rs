@@ -20,6 +20,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 pub(crate) mod call;
+mod dictionary;
 mod prepared_display;
 #[cfg(test)]
 mod prepared_native_tests;
@@ -623,6 +624,7 @@ pub(crate) struct Rows<'py> {
     outer: Option<Sequence<'py>>,
     single: Option<Sequence<'py>>,
     native: Option<Box<dyn PreparedSource<'py> + 'py>>,
+    dictionary: Option<Box<dictionary::Cache>>,
     itemize: bool,
     many: bool,
     position: usize,
@@ -702,6 +704,7 @@ impl<'py> Rows<'py> {
             outer,
             single,
             native,
+            dictionary: None,
             itemize,
             many,
             position: 0,
@@ -739,6 +742,7 @@ impl<'py> Rows<'py> {
         types: &ScalarTypes,
         budget: &dyn Checkpoint,
     ) -> PyResult<Row<'r, 'py>> {
+        let dictionary = &mut self.dictionary;
         if let Some(native) = self.native.as_mut() {
             let select = !self.empty
                 && match native.shape() {
@@ -755,7 +759,7 @@ impl<'py> Rows<'py> {
                 let outer = Some(self.root.as_ptr() as usize);
                 return match native.child(index, budget)? {
                     source::Child::Python(value) => {
-                        Row::from_value(value, outer, path, self.itemize, types, budget)
+                        Row::from_value(value, outer, path, self.itemize, types, budget, dictionary)
                     }
                     source::Child::Native(source) => Ok(Row {
                         value: self.root.clone(),
@@ -763,6 +767,7 @@ impl<'py> Rows<'py> {
                         path,
                         itemize: self.itemize,
                         zero_positions: false,
+                        dictionary,
                         input: RowInput::Native(NativeRow {
                             source: SourceRef::Selected(source),
                         }),
@@ -775,6 +780,7 @@ impl<'py> Rows<'py> {
                 path,
                 itemize: self.itemize,
                 zero_positions: self.empty,
+                dictionary,
                 input: RowInput::Native(NativeRow {
                     source: SourceRef::Borrowed(native.as_mut()),
                 }),
@@ -815,6 +821,7 @@ impl<'py> Rows<'py> {
             path,
             itemize: self.itemize,
             zero_positions: self.empty,
+            dictionary,
         })
     }
     pub(crate) fn position(&self) -> usize {
@@ -892,6 +899,7 @@ pub(crate) struct Row<'r, 'py> {
     path: SmallVec<[usize; 4]>,
     itemize: bool,
     zero_positions: bool,
+    dictionary: &'r mut Option<Box<dictionary::Cache>>,
 }
 impl<'r, 'py> Row<'r, 'py> {
     fn from_value(
@@ -901,6 +909,7 @@ impl<'r, 'py> Row<'r, 'py> {
         itemize: bool,
         types: &ScalarTypes,
         budget: &dyn Checkpoint,
+        dictionary: &'r mut Option<Box<dictionary::Cache>>,
     ) -> PyResult<Self> {
         let input = if let Some(sequence) = Sequence::from(&value, types, &[], Some(budget))? {
             RowInput::Sequence(SequenceRef::Owned(sequence))
@@ -918,6 +927,7 @@ impl<'r, 'py> Row<'r, 'py> {
             path,
             itemize,
             zero_positions: false,
+            dictionary,
         })
     }
 
@@ -1033,6 +1043,7 @@ impl<'r, 'py> Row<'r, 'py> {
         let width = self.width();
         let progress = crate::input::control::Control::local(budget);
         let mut visit = Visit {
+            dictionary: self.dictionary,
             types,
             context: *context,
             budget: &progress,
@@ -1372,6 +1383,7 @@ impl<'r, 'py> Row<'r, 'py> {
         let width = self.width();
         let progress = crate::input::control::Control::local(budget);
         let mut visit = Visit {
+            dictionary: self.dictionary,
             types,
             context: *context,
             budget: &progress,
@@ -1575,6 +1587,7 @@ fn note_slot_context(
 }
 
 struct Visit<'a> {
+    dictionary: &'a mut Option<Box<dictionary::Cache>>,
     types: &'a ScalarTypes,
     // Copy only the native policy, so one SQL position can refine its temporal
     // precondition without mutating session facts or another position.
@@ -1602,7 +1615,9 @@ pub(crate) fn encode_value(
     check(value.py(), budget)?;
     let mut output = Vec::new();
     let progress = crate::input::control::Control::local(budget);
+    let mut dictionary = None;
     Visit {
+        dictionary: &mut dictionary,
         types,
         context: *context,
         budget: &progress,
@@ -1985,6 +2000,26 @@ impl Visit<'_> {
 }
 
 impl CellWriter for Visit<'_> {
+    fn referenced_text(
+        &mut self,
+        py: Python<'_>,
+        reference: crate::input::cell::TextReference<'_>,
+        output: &mut Vec<u8>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<bool> {
+        if !dictionary::Cache::eligible(&reference) {
+            return Ok(false);
+        }
+        let mut cache = match self.dictionary.take() {
+            Some(cache) => cache,
+            None => crate::input::boxed(py, dictionary::Cache::new())?,
+        };
+        let context = self.context;
+        let result = cache.write(py, reference, output, &context, budget, self);
+        *self.dictionary = Some(cache);
+        result.map(|()| true)
+    }
+
     fn source(
         &mut self,
         source: &mut dyn PreparedSource<'_>,

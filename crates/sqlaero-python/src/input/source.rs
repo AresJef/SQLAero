@@ -129,6 +129,18 @@ impl Selected<'_, '_> {
 /// Reuse the production visitor for Python leaves and native nesting facts.
 /// Implementations live at the attached Python boundary, never in the core.
 pub(crate) trait CellWriter {
+    /// Reuse target-formatted native text within one operation. Validators
+    /// decline it so source checks cannot be bypassed by a successful cache.
+    fn referenced_text(
+        &mut self,
+        _py: Python<'_>,
+        _reference: super::cell::TextReference<'_>,
+        _output: &mut Vec<u8>,
+        _budget: &dyn crate::input::control::Checkpoint,
+    ) -> PyResult<bool> {
+        Ok(false)
+    }
+
     /// Consume an already prepared native projection, without recognizing a
     /// Python class again or treating its retained owner as a new input cycle.
     fn source(

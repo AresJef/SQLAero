@@ -406,58 +406,6 @@ pub(crate) fn failure(py: Python<'_>, error: ValueError) -> PyErr {
     }
 }
 
-/// Statically select native integer width without allocating for small values.
-pub(crate) trait NativeInteger {
-    fn write_to(
-        self,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
-    ) -> Result<(), ValueError>;
-}
-macro_rules! native_integers {
-    ($variant:ident, $wide:ty, $($integer:ty),*) => {$(
-        impl NativeInteger for $integer {
-            fn write_to(self, output: &mut (impl Destination + ?Sized), context: &Context) -> Result<(), ValueError> {
-                output.write(ValueRef::$variant(self as $wide), context)
-            }
-        }
-    )*};
-}
-native_integers!(Signed, i64, i8, i16, i32, i64);
-native_integers!(Unsigned, u64, u8, u16, u32, u64);
-impl NativeInteger for i128 {
-    fn write_to(
-        self,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
-    ) -> Result<(), ValueError> {
-        if let Ok(value) = i64::try_from(self) {
-            output.write(ValueRef::Signed(value), context)
-        } else if let Ok(value) = u64::try_from(self) {
-            output.write(ValueRef::Unsigned(value), context)
-        } else {
-            output.write(
-                ValueRef::BigInteger(&num_bigint::BigInt::from(self)),
-                context,
-            )
-        }
-    }
-}
-pub(crate) fn integer(
-    output: &mut (impl Destination + ?Sized),
-    value: impl NativeInteger,
-    context: &Context,
-) -> Result<(), ValueError> {
-    value.write_to(output, context)
-}
-pub(crate) fn float(
-    output: &mut (impl Destination + ?Sized),
-    value: f64,
-    context: &Context,
-) -> Result<(), ValueError> {
-    output.write(ValueRef::Float(value), context)
-}
-
 /// Observe only explicit writer operations, never parse escaped SQL bytes.
 /// This destination is instantiated solely for a whole-row layout proof;
 /// ordinary text and native parameter hot paths keep their static sinks.
