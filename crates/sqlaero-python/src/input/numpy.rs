@@ -197,6 +197,21 @@ impl NumpyArrayApi {
             && !super::actual_instance(value, self.masked.bind(value.py()))
     }
 
+    /// Reuse admitted physical dtype facts without acquiring a value array.
+    pub(crate) fn dtype_schema(
+        &self,
+        dtype: &Bound<'_, PyAny>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<super::cell::Schema>> {
+        if !self.supports_dtype(dtype) {
+            return Err(errors::builtin_message::<PyTypeError>(
+                dtype.py(),
+                "unsupported NumPy dtype schema",
+            ));
+        }
+        array::dtype_schema(dtype, budget)
+    }
+
     /// Prepare through one canonical checked reader; mask never falls through.
     pub(crate) fn prepare<'py>(
         &self,

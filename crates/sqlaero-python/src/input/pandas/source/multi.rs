@@ -2,7 +2,7 @@
 //! either target emits that row. No Python tuple or formatted row is built.
 
 use super::{Column, SourceTypes, inherits, invalid, numpy_source};
-use crate::input::cell::Target;
+use crate::input::cell::{Schema, Target};
 use crate::input::control::{self, Checkpoint};
 use crate::input::numpy::{NumpyArrayApi, NumpySource};
 use crate::input::source::{Child, PreparedSource, Selected, Shape};
@@ -23,6 +23,7 @@ struct Level<'py> {
     owner: Bound<'py, PyAny>,
     length: usize,
     codes: NumpySource<'py>,
+    declared: Option<Schema>,
     column: Option<Box<Column<'py>>>,
 }
 
@@ -78,8 +79,8 @@ pub(super) fn prepare<'py>(
             })?;
         let level = registry.receiver(&level, base.bind(py), budget)?;
         let dtype = control::callback(py, Some(budget), || errors::attribute(&level, c"dtype"))?;
-        control::callback(py, Some(budget), || {
-            registry.validate_declared(&dtype, budget)
+        let declared = control::callback(py, Some(budget), || {
+            registry.declared_schema(&dtype, &numpy, budget)
         })?;
         let labels = control::callback(py, Some(budget), || level.len())?;
         let codes = control::callback(py, Some(budget), || raw_codes.get_item(&key))?;
@@ -88,6 +89,7 @@ pub(super) fn prepare<'py>(
             owner: level,
             length: labels,
             codes,
+            declared,
             column: None,
         });
     }
@@ -229,6 +231,9 @@ impl<'py> PreparedSource<'py> for Multi<'py> {
     fn schema(&self, target: &mut dyn Target) -> PyResult<()> {
         for level in &self.levels {
             target.checkpoint(self.owner.py(), 1)?;
+            if let Some(schema) = level.declared {
+                target.schema(self.owner.py(), schema)?;
+            }
             if let Some(column) = &level.column {
                 column.schema(target)?;
             }

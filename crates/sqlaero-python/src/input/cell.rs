@@ -28,6 +28,7 @@ impl NativeFailure {
 }
 
 /// Native source schema information, independent of any target's admission.
+#[derive(Clone, Copy)]
 pub(crate) enum Schema {
     Binary,
 }

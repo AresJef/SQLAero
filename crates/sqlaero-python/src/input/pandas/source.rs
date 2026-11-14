@@ -2,7 +2,7 @@
 
 use crate::errors;
 use crate::input::attribute::{GetSet, receiver_view};
-use crate::input::cell::Target;
+use crate::input::cell::{Schema, Target};
 use crate::input::control::{self, Checkpoint};
 use crate::input::source::{PreparedSource, Shape};
 use crate::input::{
@@ -409,14 +409,15 @@ impl SourceTypes {
 
     /// Admit declared label families before looking at codes. Missing rows do
     /// not erase an unsupported schema, and no unused label array is read.
-    fn validate_declared(
+    fn declared_schema(
         &self,
         dtype: &Bound<'_, PyAny>,
+        api: &NumpyArrayApi,
         budget: &dyn Checkpoint,
-    ) -> PyResult<Family> {
+    ) -> PyResult<Option<Schema>> {
         let root = self.family(dtype)?;
         if root != Family::Categorical {
-            return Ok(root);
+            return self.leaf_schema(dtype, root, api, budget);
         }
         let py = dtype.py();
         let mut current = dtype.clone();
@@ -435,8 +436,9 @@ impl SourceTypes {
                 .try_reserve(1)
                 .map_err(|_| errors::memory_error(py))?;
             retained.push(current.clone());
-            if self.family(&current)? != Family::Categorical {
-                return Ok(root);
+            let family = self.family(&current)?;
+            if family != Family::Categorical {
+                return self.leaf_schema(&current, family, api, budget);
             }
             let categories = control::callback(py, Some(budget), || {
                 errors::attribute(&current, c"categories")
@@ -452,6 +454,26 @@ impl SourceTypes {
             let receiver = self.receiver(&categories, base.bind(py), budget)?;
             current =
                 control::callback(py, Some(budget), || errors::attribute(&receiver, c"dtype"))?;
+        }
+    }
+
+    fn leaf_schema(
+        &self,
+        dtype: &Bound<'_, PyAny>,
+        family: Family,
+        api: &NumpyArrayApi,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<Schema>> {
+        match family {
+            Family::Numpy => api.dtype_schema(dtype, budget),
+            Family::Arrow if dtype.get_type().is(self.string_dtype.bind(dtype.py())) => Ok(None),
+            Family::Arrow => {
+                let arrow_dtype = control::callback(dtype.py(), Some(budget), || {
+                    errors::attribute(dtype, c"pyarrow_dtype")
+                })?;
+                arrow::declared_schema(&arrow_dtype, budget)
+            }
+            _ => Ok(None),
         }
     }
 
@@ -490,7 +512,7 @@ impl SourceTypes {
                     let label_dtype = control::callback(py, Some(budget), || {
                         errors::attribute(&categories, c"dtype")
                     })?;
-                    self.validate_declared(&label_dtype, budget)?;
+                    let declared = self.declared_schema(&label_dtype, api, budget)?;
                     let labels = categories.len()?;
                     Ok(Column::Categorical(crate::input::boxed(
                         py,
@@ -500,6 +522,7 @@ impl SourceTypes {
                             labels,
                             length,
                             catalog: catalog.clone_ref(py),
+                            declared,
                             native: None,
                         },
                     )?))
@@ -601,7 +624,7 @@ impl SourceTypes {
                 let codes = errors::attribute(storage, c"codes")?;
                 let categories = errors::attribute(storage, c"categories")?;
                 let dtype = errors::attribute(&categories, c"dtype")?;
-                self.validate_declared(&dtype, budget)?;
+                let declared = self.declared_schema(&dtype, api, budget)?;
                 let labels = categories.len()?;
                 let codes = numpy_source(api, &codes, budget, length)?;
                 // Standard Index values may use the already validated native
@@ -615,6 +638,7 @@ impl SourceTypes {
                         labels,
                         length,
                         catalog: catalog.clone_ref(py),
+                        declared,
                         native: None,
                     },
                 )?))
@@ -773,6 +797,12 @@ impl Column<'_> {
             Self::Numpy(source) | Self::String { data: source, .. } => source.schema(target),
             Self::Arrow(source) => source.schema(target),
             Self::Time { ticks, .. } => ticks.schema(target),
+            Self::Categorical(source) => {
+                if let Some(schema) = source.declared {
+                    target.schema(source.categories.py(), schema)?;
+                }
+                Ok(())
+            }
             _ => Ok(()),
         }
     }
@@ -1029,6 +1059,7 @@ struct Category<'py> {
     labels: usize,
     length: usize,
     catalog: Py<SourceTypes>,
+    declared: Option<Schema>,
     native: Option<Box<Column<'py>>>,
 }
 

@@ -131,6 +131,54 @@ enum ArrayKind {
     RecordLayout,
 }
 
+fn dtype_kind(py: Python<'_>, tag: &str, width: usize, record: bool) -> PyResult<ArrayKind> {
+    Ok(match (tag, width) {
+        ("i", 1) => ArrayKind::Scalar(Kind::I8),
+        ("i", 2) => ArrayKind::Scalar(Kind::I16),
+        ("i", 4) => ArrayKind::Scalar(Kind::I32),
+        ("i", 8) => ArrayKind::Scalar(Kind::I64),
+        ("u", 1) => ArrayKind::Scalar(Kind::U8),
+        ("u", 2) => ArrayKind::Scalar(Kind::U16),
+        ("u", 4) => ArrayKind::Scalar(Kind::U32),
+        ("u", 8) => ArrayKind::Scalar(Kind::U64),
+        ("f", 2) => ArrayKind::Scalar(Kind::F16),
+        ("f", 4) => ArrayKind::Scalar(Kind::F32),
+        ("f", 8) => ArrayKind::Scalar(Kind::F64),
+        ("b", 1) => ArrayKind::Scalar(Kind::Bool),
+        ("M", 8) => ArrayKind::Scalar(Kind::DateTime),
+        ("m", 8) => ArrayKind::Scalar(Kind::Duration),
+        ("S", _) => ArrayKind::Bytes,
+        ("U", width) if width.is_multiple_of(4) => ArrayKind::Unicode,
+        ("O", width) if width == std::mem::size_of::<*mut pyo3::ffi::PyObject>() => {
+            ArrayKind::Object
+        }
+        ("V", _) if record => ArrayKind::RecordLayout,
+        _ => {
+            return Err(errors::builtin_message::<PyTypeError>(
+                py,
+                "NumPy dtype is outside the supported fixed-width, text, binary and Object kinds",
+            ));
+        }
+    })
+}
+
+pub(super) fn dtype_schema(
+    dtype: &Bound<'_, PyAny>,
+    budget: &dyn Checkpoint,
+) -> PyResult<Option<Schema>> {
+    let py = dtype.py();
+    let width = super::super::control::callback(py, Some(budget), || {
+        errors::attribute(dtype, c"itemsize")?.extract::<usize>()
+    })?;
+    let tag =
+        super::super::control::callback(py, Some(budget), || errors::attribute(dtype, c"kind"))?;
+    Ok(matches!(
+        dtype_kind(py, tag.extract::<&str>()?, width, false)?,
+        ArrayKind::Bytes
+    )
+    .then_some(Schema::Binary))
+}
+
 /// Original identity, prepared metadata and necessary normal-resize guards.
 pub(crate) struct NumpySource<'py> {
     owner: Bound<'py, PyAny>,
@@ -260,34 +308,7 @@ impl<'py> NumpySource<'py> {
         };
         let tag = errors::attribute(&dtype, c"kind")?;
         let tag = tag.extract::<&str>()?;
-        let kind = match (tag, width) {
-            ("i", 1) => ArrayKind::Scalar(Kind::I8),
-            ("i", 2) => ArrayKind::Scalar(Kind::I16),
-            ("i", 4) => ArrayKind::Scalar(Kind::I32),
-            ("i", 8) => ArrayKind::Scalar(Kind::I64),
-            ("u", 1) => ArrayKind::Scalar(Kind::U8),
-            ("u", 2) => ArrayKind::Scalar(Kind::U16),
-            ("u", 4) => ArrayKind::Scalar(Kind::U32),
-            ("u", 8) => ArrayKind::Scalar(Kind::U64),
-            ("f", 2) => ArrayKind::Scalar(Kind::F16),
-            ("f", 4) => ArrayKind::Scalar(Kind::F32),
-            ("f", 8) => ArrayKind::Scalar(Kind::F64),
-            ("b", 1) => ArrayKind::Scalar(Kind::Bool),
-            ("M", 8) => ArrayKind::Scalar(Kind::DateTime),
-            ("m", 8) => ArrayKind::Scalar(Kind::Duration),
-            ("S", _) => ArrayKind::Bytes,
-            ("U", width) if width.is_multiple_of(4) => ArrayKind::Unicode,
-            ("O", width) if width == std::mem::size_of::<*mut pyo3::ffi::PyObject>() => {
-                ArrayKind::Object
-            }
-            ("V", _) if record => ArrayKind::RecordLayout,
-            _ => {
-                return Err(errors::builtin_message::<PyTypeError>(
-                    py,
-                    "NumPy dtype is outside the supported fixed-width, text, binary and Object kinds",
-                ));
-            }
-        };
+        let kind = dtype_kind(py, tag, width, record)?;
         // A structural layout never reads numeric payload bytes. Its leaf
         // readers prepare their own byte order; do not rescan a compound dtype.
         let native_order = record || errors::attribute(&dtype, c"isnative")?.extract::<bool>()?;

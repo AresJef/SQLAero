@@ -1054,24 +1054,87 @@ impl<'py> Prepared<'py> {
 }
 
 fn consume_schema(py: Python<'_>, dtype: &DataType, target: &mut dyn Target) -> PyResult<()> {
-    target.checkpoint(py, 1)?;
+    if binary_schema(dtype, &mut || target.checkpoint(py, 1))? {
+        target.schema(py, Schema::Binary)?;
+    }
+    Ok(())
+}
+
+fn binary_schema(dtype: &DataType, check: &mut impl FnMut() -> PyResult<()>) -> PyResult<bool> {
+    check()?;
     match dtype {
         DataType::Binary
         | DataType::LargeBinary
         | DataType::BinaryView
-        | DataType::FixedSizeBinary(_) => target.schema(py, Schema::Binary),
+        | DataType::FixedSizeBinary(_) => Ok(true),
         DataType::List(child) | DataType::LargeList(child) | DataType::FixedSizeList(child, _) => {
-            consume_schema(py, child.data_type(), target)
+            binary_schema(child.data_type(), check)
         }
         DataType::Struct(fields) => {
             for field in fields {
-                consume_schema(py, field.data_type(), target)?;
+                if binary_schema(field.data_type(), check)? {
+                    return Ok(true);
+                }
             }
-            Ok(())
+            Ok(false)
         }
-        DataType::Dictionary(_, value) => consume_schema(py, value, target),
-        _ => Ok(()),
+        DataType::Dictionary(_, value) => binary_schema(value, check),
+        _ => Ok(false),
     }
+}
+
+/// Inspect an existing declared Arrow dtype, never an unused label array.
+/// Reuse the same qualified public C Schema importer and admitted logical
+/// kinds as actual arrays; targets still decide whether Binary is writable.
+pub(crate) fn declared_schema(
+    dtype: &Bound<'_, PyAny>,
+    budget: &dyn Checkpoint,
+) -> PyResult<Option<Schema>> {
+    let py = dtype.py();
+    let module = loaded_module(py)?
+        .ok_or_else(|| invalid(py, "declared Arrow dtype has no loaded provider"))?;
+    let base = crate::input::control::callback(py, Some(budget), || {
+        errors::attribute(&module, c"DataType")
+    })?
+    .cast_into::<PyType>()?;
+    if !super::actual_instance(dtype, &base) {
+        return Err(invalid(
+            py,
+            "declared Arrow schema requires an actual DataType",
+        ));
+    }
+    let actual = dtype.get_type();
+    let name = actual.name()?;
+    let library =
+        crate::input::control::callback(py, Some(budget), || errors::attribute(&module, c"lib"))?;
+    let canonical =
+        crate::input::control::callback(py, Some(budget), || library.getattr_opt(&name))?;
+    if !canonical.is_some_and(|canonical| actual.is(&canonical)) {
+        return Err(invalid(
+            py,
+            "unsupported declared Arrow dtype subclass or extension schema",
+        ));
+    }
+    let capsule = crate::input::control::callback(py, Some(budget), || {
+        dtype.call_method0(c"__arrow_c_schema__")
+    })?;
+    // SAFETY: CPython checks the standard capsule name; the canonical provider
+    // owns a live public C Schema. Moving it empties its release slot once.
+    let schema = unsafe {
+        let raw = pyo3::ffi::PyCapsule_GetPointer(capsule.as_ptr(), c"arrow_schema".as_ptr())
+            .cast::<FFI_ArrowSchema>();
+        if raw.is_null() {
+            return Err(PyErr::fetch(py));
+        }
+        if (*raw).release().is_none() {
+            return Err(invalid(py, "declared Arrow schema was already consumed"));
+        }
+        FFI_ArrowSchema::from_raw(raw)
+    };
+    let field = schema::import(py, &schema, budget)?;
+    validate_field(py, &field, 0)?;
+    let binary = binary_schema(field.data_type(), &mut || super::check(py, budget))?;
+    Ok(binary.then_some(Schema::Binary))
 }
 
 fn consume_scalar<'py>(
