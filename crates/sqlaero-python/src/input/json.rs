@@ -128,6 +128,64 @@ impl Serialize<'_> {
                 Source::WideInteger { value, .. } => self.integer(value),
             };
         }
+        if let Some(source) = super::scalar_source::read(self.types, value)? {
+            use super::scalar_source::Source;
+            let native = match source {
+                Source::Native(value) => value,
+                Source::Datetime(value) => self.types.read_datetime(value, self.budget)?,
+                Source::Clock(value) => self.types.read_time(value, self.budget)?,
+                Source::Pandas {
+                    owner,
+                    facts: super::pandas::PandasScalar::Null,
+                } => {
+                    let _ = owner;
+                    ScalarRef::Null
+                }
+                Source::Pandas { owner, .. } => {
+                    let detail = self.types.diagnostic(owner)?;
+                    return Err(errors::builtin_format::<PyTypeError>(
+                        py,
+                        format_args!(
+                            "Pandas JSON temporal migration is not connected yet: {detail}"
+                        ),
+                    ));
+                }
+                Source::Numpy(super::numpy::NumpyScalar::Signed(value)) => ScalarRef::Signed(value),
+                Source::Numpy(super::numpy::NumpyScalar::Unsigned(value)) => {
+                    ScalarRef::Unsigned(value)
+                }
+                Source::Numpy(super::numpy::NumpyScalar::Float(value)) => ScalarRef::Float(value),
+                Source::Numpy(super::numpy::NumpyScalar::Bool(value)) => ScalarRef::Boolean(value),
+                Source::Numpy(super::numpy::NumpyScalar::Temporal { .. }) => {
+                    return Err(errors::builtin_message::<PyTypeError>(
+                        py,
+                        "NumPy JSON temporal migration is not connected yet",
+                    ));
+                }
+                Source::Decimal(_) => {
+                    return Err(errors::builtin_message::<PyTypeError>(
+                        py,
+                        "Decimal JSON migration is not connected yet",
+                    ));
+                }
+                Source::StructTime(_) => {
+                    return Err(errors::builtin_message::<PyTypeError>(
+                        py,
+                        "struct_time JSON migration is not connected yet",
+                    ));
+                }
+                Source::Json(_) => {
+                    return Err(errors::builtin_message::<PyTypeError>(
+                        py,
+                        "nested JSON wrappers are not supported",
+                    ));
+                }
+            };
+            return self
+                .writer
+                .write(native, &self.options)
+                .map_err(|error| failure(py, error));
+        }
         if let Some(sequence) = Sequence::plain(value)? {
             let identity = value.as_ptr() as usize;
             if self.active.contains(&identity) {

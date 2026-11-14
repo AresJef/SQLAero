@@ -44,9 +44,17 @@ pub enum ScalarRef<'a> {
         date: Date,
         /// Full source clock fields.
         clock: Clock,
+        /// Actual UTC offset from the required source protocol, if aware.
+        /// The original local calendar fields above have not been shifted.
+        offset_micros: Option<i128>,
     },
     /// Local clock fields of a microsecond-resolution source.
-    Time(Clock),
+    Time {
+        /// Actual local clock fields.
+        clock: Clock,
+        /// Actual optional offset, acquired only when the target requires it.
+        offset_micros: Option<i128>,
+    },
     /// Exact signed microseconds from a source with that native resolution.
     Duration(i128),
     /// Original temporal storage, without truncation or range clipping.

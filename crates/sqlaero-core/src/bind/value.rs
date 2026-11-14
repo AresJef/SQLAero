@@ -16,6 +16,11 @@ pub use sqlaero_transcode::value::{Consumer as ValueSink, ScalarRef as ValueRef}
 /// Native text writing failure, retaining the original typed source.
 #[derive(Debug, thiserror::Error)]
 pub enum ValueError {
+    /// An aware source requires an authoritatively confirmed UTC session.
+    #[error(
+        "aware datetime requires a reliably confirmed UTC MySQL session; time_zone is non-UTC or unknown"
+    )]
+    UtcRequired,
     /// The scalar cannot satisfy the exact common value policy.
     #[error(transparent)]
     Scalar(#[from] ScalarError),
@@ -71,10 +76,15 @@ impl ValueSink for TextSink<'_> {
             }
             ValueRef::Bytes(value) => writer::binary(output, value, limit)?,
             ValueRef::Date(date) => scalar::date_time(output, date, None, limit)?,
-            ValueRef::Datetime { date, clock } => {
+            ValueRef::Datetime {
+                date,
+                clock,
+                offset_micros,
+            } => {
+                let (date, clock) = mysql_datetime(date, clock, offset_micros, context)?;
                 scalar::date_time(output, date, Some(clock), limit)?
             }
-            ValueRef::Time(clock) => scalar::time(output, clock, limit)?,
+            ValueRef::Time { clock, .. } => scalar::time(output, clock, limit)?,
             ValueRef::Duration(value) => scalar::duration(output, value, limit)?,
             ValueRef::Ticks {
                 value,
@@ -123,6 +133,22 @@ impl ValueSink for TextSink<'_> {
     fn bytes_end(&mut self, context: &Context) -> Result<(), ValueError> {
         writer::binary_end(self.output, context.limit)?;
         Ok(())
+    }
+}
+
+/// Apply only the MySQL target's session and UTC policy to complete source facts.
+/// # Errors
+/// Rejects an unknown/non-UTC session or an invalid actual offset.
+pub(crate) fn mysql_datetime(
+    date: scalar::Date,
+    clock: scalar::Clock,
+    offset_micros: Option<i128>,
+    context: &Context,
+) -> Result<(scalar::Date, scalar::Clock), ValueError> {
+    match offset_micros {
+        Some(_) if !context.utc_confirmed => Err(ValueError::UtcRequired),
+        Some(offset) => Ok(scalar::utc(date, clock, offset)?),
+        None => Ok((date, clock)),
     }
 }
 

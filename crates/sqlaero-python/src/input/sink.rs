@@ -323,6 +323,11 @@ fn unicode_failure(
 
 pub(crate) fn failure(py: Python<'_>, error: ValueError) -> PyErr {
     match error {
+        ValueError::UtcRequired => errors::client(
+            py,
+            sqlaero_core::error::ClientErrorCode::SessionState,
+            error.to_string(),
+        ),
         ValueError::Scalar(error) => scalar_error(py, error),
         ValueError::Wire(error) => errors::wire(py, error),
         ValueError::Encoding(error) => {

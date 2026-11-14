@@ -5,13 +5,13 @@ use crate::input::control::Checkpoint;
 use pyo3::exceptions::{PyTypeError, PyUnicodeEncodeError};
 use pyo3::prelude::*;
 use pyo3::types::{
-    PyBytes, PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyInt, PyString, PyTime,
+    PyDate, PyDateAccess, PyDateTime, PyDelta, PyDeltaAccess, PyInt, PyString, PyTime,
     PyTimeAccess, PyType, PyTzInfoAccess,
 };
 use sink::{Destination, emit};
 use sqlaero_core::bind::scalar::{Clock, Date, ScalarError};
 use sqlaero_core::bind::value::{ValueError, ValueRef, ValueSink};
-use sqlaero_core::bind::{Context, scalar, writer};
+use sqlaero_core::bind::{Context, writer};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
 
@@ -28,6 +28,7 @@ pub(crate) mod pandas;
 pub(crate) mod polars;
 pub(crate) mod primitive;
 pub(crate) mod probe;
+mod scalar_source;
 pub(crate) mod sequence;
 pub(crate) mod source;
 pub(crate) mod standard;
@@ -80,6 +81,7 @@ pub(crate) struct ScalarTypes {
     native_decimal: bool,
     utc: Py<PyAny>,
     datetime_offset: Py<PyAny>,
+    time_offset: Py<PyAny>,
     struct_time: Py<PyType>,
     numpy: std::sync::OnceLock<numpy::NumpyTypes>,
     pandas: std::sync::OnceLock<pandas::PandasTypes>,
@@ -113,6 +115,8 @@ impl ScalarTypes {
             native_decimal,
             utc: errors::attribute(&timezone, c"utc")?.unbind(),
             datetime_offset: errors::attribute(py.get_type::<PyDateTime>().as_any(), c"utcoffset")?
+                .unbind(),
+            time_offset: errors::attribute(py.get_type::<PyTime>().as_any(), c"utcoffset")?
                 .unbind(),
             struct_time: errors::attribute(errors::module(py, c"time")?.as_any(), c"struct_time")?
                 .cast_into::<PyType>()?
@@ -193,7 +197,7 @@ impl ScalarTypes {
         self.write_extended(value, output, context, budget)
     }
 
-    /// Keep callback-rich temporal and Decimal preparation off primitive frames.
+    /// Read through the single extended registry, then consume source facts.
     #[inline(never)]
     fn write_extended<D: Destination + ?Sized>(
         &self,
@@ -203,70 +207,54 @@ impl ScalarTypes {
         budget: Option<&dyn Checkpoint>,
     ) -> PyResult<bool> {
         let py = value.py();
-        if let Ok(wrapper) = value.cast::<json::Json>() {
-            return json::mysql(wrapper, self, output, context, budget).map(|()| true);
+        let Some(source) = scalar_source::read(self, value)? else {
+            return Ok(false);
+        };
+        match source {
+            scalar_source::Source::Native(value) => emit(output, py, value, context)?,
+            scalar_source::Source::Datetime(value) => {
+                emit(output, py, self.read_datetime(value, budget)?, context)?;
+            }
+            scalar_source::Source::Clock(value) => {
+                emit(output, py, scalar_source::clock_fact(value), context)?
+            }
+            scalar_source::Source::Decimal(value) => {
+                if value.get_type().is(self.decimal.bind(py)) {
+                    decimal::write(value, self.native_decimal, output, context, budget)?;
+                } else {
+                    let converted = control::callback(py, budget, || {
+                        self.decimal_type(py)
+                            .call1(crate::output::tuple_from_ready(py, [value.clone()])?)
+                    })?;
+                    decimal::write(&converted, self.native_decimal, output, context, budget)?;
+                }
+            }
+            scalar_source::Source::StructTime(value) => {
+                standard::struct_time(value, output, context, budget)?
+            }
+            scalar_source::Source::Json(value) => {
+                json::mysql(value, self, output, context, budget)?
+            }
+            scalar_source::Source::Pandas { facts, .. } => {
+                self.write_pandas(py, facts, output, context)?
+            }
+            scalar_source::Source::Numpy(facts) => self.write_numpy(py, facts, output, context)?,
         }
-        if value.is_exact_instance_of::<PyDateTime>() {
-            return self
-                .write_datetime_to(value.cast::<PyDateTime>()?, output, context, budget)
-                .map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyDate>() {
-            return emit(
-                output,
-                py,
-                ValueRef::Date(date(value.cast::<PyDate>()?)),
-                context,
-            )
-            .map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyTime>() {
-            return emit(
-                output,
-                py,
-                ValueRef::Time(clock(value.cast::<PyTime>()?)),
-                context,
-            )
-            .map(|()| true);
-        }
-        if value.is_exact_instance_of::<PyDelta>() {
-            return emit(
-                output,
-                py,
-                ValueRef::Duration(delta(value.cast::<PyDelta>()?)),
-                context,
-            )
-            .map(|()| true);
-        }
-        if value.get_type().is(self.decimal.bind(py)) {
-            return decimal::write(value, self.native_decimal, output, context, budget)
-                .map(|()| true);
-        }
-        if self.write_pandas(value, output, context, budget)? {
-            return Ok(true);
-        }
-        if self.write_numpy(value, output, context, budget)? {
-            return Ok(true);
-        }
-        standard::write(self, value, output, context, budget)
+        Ok(true)
     }
 
-    fn write_datetime_to<D: Destination + ?Sized>(
+    /// Acquire original local fields and the actual base datetime offset.
+    /// UTC admission and normalization are policies of the MySQL target.
+    pub(super) fn read_datetime(
         &self,
         datetime: &Bound<'_, PyDateTime>,
-        output: &mut D,
-        context: &Context,
         budget: Option<&dyn Checkpoint>,
-    ) -> PyResult<()> {
+    ) -> PyResult<ValueRef<'static>> {
         let py = datetime.py();
-        let mut date = date(datetime);
-        let mut clock = clock(datetime);
-        let offset = match datetime.get_tzinfo() {
+        let offset_micros = match datetime.get_tzinfo() {
             None => None,
             Some(zone) if zone.is(self.utc.bind(py)) => Some(0),
             Some(_) => {
-                // Invoke the cached base descriptor so datetime subclass
-                // overrides cannot bypass the approved tzinfo protocol.
                 let offset = control::callback(py, budget, || {
                     self.datetime_offset.bind(py).call1((datetime,))
                 })?;
@@ -277,17 +265,37 @@ impl ScalarTypes {
                 }
             }
         };
-        if let Some(offset) = offset {
-            if !context.utc_confirmed {
-                return Err(errors::client(
-                    py,
-                    ClientErrorCode::SessionState,
-                    "aware datetime requires a reliably confirmed UTC MySQL session; time_zone is non-UTC or unknown",
-                ));
+        Ok(ValueRef::Datetime {
+            date: date(datetime),
+            clock: clock(datetime),
+            offset_micros,
+        })
+    }
+
+    /// Only a target requiring a clock offset calls this source protocol.
+    pub(super) fn read_time(
+        &self,
+        time: &Bound<'_, PyTime>,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<ValueRef<'static>> {
+        let py = time.py();
+        let offset_micros = match time.get_tzinfo() {
+            None => None,
+            Some(zone) if zone.is(self.utc.bind(py)) => Some(0),
+            Some(_) => {
+                let offset =
+                    control::callback(py, budget, || self.time_offset.bind(py).call1((time,)))?;
+                if offset.is_none() {
+                    None
+                } else {
+                    Some(delta(offset.cast::<PyDelta>()?))
+                }
             }
-            (date, clock) = scalar::utc(date, clock, offset).map_err(|e| scalar_error(py, e))?;
-        }
-        emit(output, py, ValueRef::Datetime { date, clock }, context)
+        };
+        Ok(ValueRef::Time {
+            clock: clock(time),
+            offset_micros,
+        })
     }
 
     /// Discover an already-used optional provider, outside every primitive path.
@@ -339,23 +347,13 @@ impl ScalarTypes {
 
     fn write_pandas<D: Destination + ?Sized>(
         &self,
-        value: &Bound<'_, PyAny>,
+        py: Python<'_>,
+        scalar: pandas::PandasScalar,
         output: &mut D,
         context: &Context,
-        _budget: Option<&dyn Checkpoint>,
-    ) -> PyResult<bool> {
-        let py = value.py();
-        let Some(types) = self.pandas_types(py)? else {
-            return Ok(false);
-        };
-        let Some(numpy) = self.numpy_types(py)? else {
-            return Ok(false);
-        };
-        let Some(scalar) = types.read_scalar(value, numpy)? else {
-            return Ok(false);
-        };
+    ) -> PyResult<()> {
         match scalar {
-            pandas::PandasScalar::Null => emit(output, py, ValueRef::Null, context)?,
+            pandas::PandasScalar::Null => emit(output, py, ValueRef::Null, context),
             pandas::PandasScalar::Temporal {
                 ticks,
                 unit,
@@ -370,44 +368,31 @@ impl ScalarTypes {
                         "timezone-aware Pandas input requires a confirmed UTC session",
                     ));
                 }
-                temporal_to(output, py, ticks, unit, multiplier, kind, context)?;
+                temporal_to(output, py, ticks, unit, multiplier, kind, context)
             }
         }
-        Ok(true)
     }
 
     fn write_numpy<D: Destination + ?Sized>(
         &self,
-        value: &Bound<'_, PyAny>,
+        py: Python<'_>,
+        scalar: numpy::NumpyScalar,
         output: &mut D,
         context: &Context,
-        budget: Option<&dyn Checkpoint>,
-    ) -> PyResult<bool> {
-        let py = value.py();
-        let Some(types) = self.numpy_types(py)? else {
-            return Ok(false);
-        };
+    ) -> PyResult<()> {
         use numpy::NumpyScalar;
-        let result = match types.read(value)? {
-            Some(NumpyScalar::Signed(value)) => emit(output, py, ValueRef::Signed(value), context),
-            Some(NumpyScalar::Unsigned(value)) => {
-                emit(output, py, ValueRef::Unsigned(value), context)
-            }
-            Some(NumpyScalar::Float(value)) => emit(output, py, ValueRef::Float(value), context),
-            Some(NumpyScalar::Bool(value)) => emit(output, py, ValueRef::Boolean(value), context),
-            Some(NumpyScalar::Temporal {
+        match scalar {
+            NumpyScalar::Signed(value) => emit(output, py, ValueRef::Signed(value), context),
+            NumpyScalar::Unsigned(value) => emit(output, py, ValueRef::Unsigned(value), context),
+            NumpyScalar::Float(value) => emit(output, py, ValueRef::Float(value), context),
+            NumpyScalar::Bool(value) => emit(output, py, ValueRef::Boolean(value), context),
+            NumpyScalar::Temporal {
                 ticks,
                 unit,
                 multiplier,
                 kind,
-            }) => temporal_to(output, py, ticks, unit, multiplier, kind, context),
-            None if types.is_text(value) => output.text(value.cast()?, context, budget),
-            None if types.is_binary(value) => {
-                output.binary(py, value.cast::<PyBytes>()?.as_bytes(), context, budget)
-            }
-            None => return Ok(false),
-        };
-        result.map(|()| true)
+            } => temporal_to(output, py, ticks, unit, multiplier, kind, context),
+        }
     }
 }
 

@@ -55,8 +55,6 @@ enum Kind {
 /// Canonical type and function references owned by one Python module state.
 pub(crate) struct NumpyTypes {
     numeric: Vec<(Py<PyType>, Kind)>,
-    text: Py<PyType>,
-    binary: Py<PyType>,
     datetime_data: Py<PyAny>,
     array: Py<PyType>,
     record: Py<PyType>,
@@ -126,23 +124,11 @@ impl NumpyTypes {
         }
         Ok(Self {
             numeric,
-            text: exact_type(&module, c"str_")?,
-            binary: exact_type(&module, c"bytes_")?,
             datetime_data: datetime_data.unbind(),
             array: exact_type(&module, c"ndarray")?,
             record: exact_type(&module, c"record")?,
             void: exact_type(&module, c"void")?,
         })
-    }
-
-    /// Identify canonical NumPy Unicode without invoking its string protocol.
-    pub(crate) fn is_text(&self, value: &Bound<'_, PyAny>) -> bool {
-        value.get_type().is(self.text.bind(value.py()))
-    }
-
-    /// Identify canonical NumPy bytes without a temporary Python bytes object.
-    pub(crate) fn is_binary(&self, value: &Bound<'_, PyAny>) -> bool {
-        value.get_type().is(self.binary.bind(value.py()))
     }
 
     /// Prepare only an exact ndarray; logical shape is independent of SQL.

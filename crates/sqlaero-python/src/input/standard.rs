@@ -1,66 +1,16 @@
 //! Approved standard scalar subclasses and the canonical struct_time boundary.
 
+use super::integer_to;
 use super::sink::{Destination, emit};
-use super::{ScalarTypes, clock, date, delta, integer_to};
+use crate::errors;
 use crate::input::control::Checkpoint;
-use crate::{errors, output};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDate, PyDateTime, PyDelta, PyTime, PyTuple};
+use pyo3::types::PyTuple;
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::ValueRef;
 
-/// Invoke only protocols belonging to a confirmed actual base-type family.
-/// Conversion results are written once and never interpreted as SQL source.
-pub(super) fn write<D: Destination + ?Sized>(
-    types: &ScalarTypes,
-    value: &Bound<'_, PyAny>,
-    result: &mut D,
-    context: &Context,
-    budget: Option<&dyn Checkpoint>,
-) -> PyResult<bool> {
-    let py = value.py();
-    if value.get_type().is(types.struct_time.bind(py)) {
-        struct_time(value.cast::<PyTuple>()?, result, context, budget)?;
-        return Ok(true);
-    }
-    if value.is_instance_of::<PyDateTime>() {
-        types.write_datetime_to(value.cast::<PyDateTime>()?, result, context, budget)?;
-    } else if value.is_instance_of::<PyDate>() {
-        emit(
-            result,
-            py,
-            ValueRef::Date(date(value.cast::<PyDate>()?)),
-            context,
-        )?;
-    } else if value.is_instance_of::<PyTime>() {
-        emit(
-            result,
-            py,
-            ValueRef::Time(clock(value.cast::<PyTime>()?)),
-            context,
-        )?;
-    } else if value.is_instance_of::<PyDelta>() {
-        emit(
-            result,
-            py,
-            ValueRef::Duration(delta(value.cast::<PyDelta>()?)),
-            context,
-        )?;
-    } else if super::actual_instance(value, types.decimal_type(py)) {
-        let converted = super::control::callback(py, budget, || {
-            types
-                .decimal_type(py)
-                .call1(output::tuple_from_ready(py, [value.clone()])?)
-        })?;
-        types.try_write_to(&converted, result, context, budget)?;
-    } else {
-        return Ok(false);
-    }
-    Ok(true)
-}
-
-fn struct_time<D: Destination + ?Sized>(
+pub(super) fn struct_time<D: Destination + ?Sized>(
     value: &Bound<'_, PyTuple>,
     result: &mut D,
     context: &Context,

@@ -329,16 +329,24 @@ impl Parameters {
                 month: value.month,
                 day: value.day,
             })?,
-            ValueRef::Datetime { date, clock } => self.temporal(Temporal::Datetime {
-                year: i128::from(date.year),
-                month: date.month,
-                day: date.day,
-                second: u32::from(clock.hour) * 3600
-                    + u32::from(clock.minute) * 60
-                    + u32::from(clock.second),
-                nanosecond: clock.microsecond * 1000,
-            })?,
-            ValueRef::Time(clock) => self.temporal(Temporal::Clock {
+            ValueRef::Datetime {
+                date,
+                clock,
+                offset_micros,
+            } => {
+                let (date, clock) =
+                    crate::bind::value::mysql_datetime(date, clock, offset_micros, context)?;
+                self.temporal(Temporal::Datetime {
+                    year: i128::from(date.year),
+                    month: date.month,
+                    day: date.day,
+                    second: u32::from(clock.hour) * 3600
+                        + u32::from(clock.minute) * 60
+                        + u32::from(clock.second),
+                    nanosecond: clock.microsecond * 1000,
+                })?
+            }
+            ValueRef::Time { clock, .. } => self.temporal(Temporal::Clock {
                 second: u32::from(clock.hour) * 3600
                     + u32::from(clock.minute) * 60
                     + u32::from(clock.second),
@@ -633,6 +641,7 @@ mod tests {
                         second: 3,
                         microsecond: 4,
                     },
+                    offset_micros: None,
                 },
                 &context(),
             )

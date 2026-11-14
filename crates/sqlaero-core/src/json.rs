@@ -7,6 +7,8 @@ use sqlaero_transcode::buffer::{self, CapacityError};
 use sqlaero_transcode::number;
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
+mod temporal;
+
 /// JSON policy prepared once for the current serialization.
 #[derive(Clone, Copy, Debug)]
 pub struct Options {
@@ -297,6 +299,13 @@ impl Writer {
         })
     }
 
+    fn temporal(&mut self, text: temporal::Text) -> Result<(), Error> {
+        let text = text.as_str()?;
+        self.string_start(Some(text.len()), false)?;
+        self.string_fragment(text)?;
+        self.string_end()
+    }
+
     /// Start one exact integer; callers may return control between digit blocks.
     /// # Errors
     /// Propagates an actual writer-state or output-capacity error.
@@ -375,6 +384,27 @@ impl Consumer for Writer {
                     return writer.string_end();
                 }
                 ScalarRef::Bytes(_) => return Err(Error::Unsupported("binary")),
+                ScalarRef::Date(date) => {
+                    return writer.temporal(temporal::Text::calendar(date, None, None)?);
+                }
+                ScalarRef::Datetime {
+                    date,
+                    clock,
+                    offset_micros,
+                } => {
+                    return writer.temporal(temporal::Text::calendar(
+                        date,
+                        Some(clock),
+                        offset_micros,
+                    )?);
+                }
+                ScalarRef::Time {
+                    clock,
+                    offset_micros,
+                } => return writer.temporal(temporal::Text::time(clock, offset_micros)?),
+                ScalarRef::Duration(micros) => {
+                    return writer.temporal(temporal::Text::duration(micros)?);
+                }
                 _ => (),
             }
             writer.value()?;

@@ -204,6 +204,7 @@ fn real_prepared_parameters_preserve_native_values_long_chunks_and_reusable_hand
                     second: 3,
                     microsecond: 123_456,
                 },
+                offset_micros: None,
             },
             ValueRef::Duration(-183_845_123_456),
         ] {
@@ -245,12 +246,15 @@ fn real_prepared_parameters_preserve_native_values_long_chunks_and_reusable_hand
                     month: 11,
                     day: 5,
                 }),
-                ValueRef::Time(Clock {
-                    hour: 1,
-                    minute: 2,
-                    second: 3,
-                    microsecond: 0,
-                }),
+                ValueRef::Time {
+                    clock: Clock {
+                        hour: 1,
+                        minute: 2,
+                        second: 3,
+                        microsecond: 0,
+                    },
+                    offset_micros: None,
+                },
                 ValueRef::Signed(7),
                 ValueRef::Bytes(b""),
             ] {
@@ -345,6 +349,7 @@ fn real_binary_select_uses_native_fields_and_server_current_metadata() {
                         second: 3,
                         microsecond: 123_456,
                     },
+                    offset_micros: None,
                 },
                 ValueRef::Duration(-183_845_123_456),
                 ValueRef::Text(text),
