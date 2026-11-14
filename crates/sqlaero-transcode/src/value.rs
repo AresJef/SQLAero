@@ -83,7 +83,12 @@ pub enum ScalarRef<'a> {
     DateDays(i64),
     /// Six nonnegative calendar components as exact base-ten ASCII digits.
     /// These are numeric facts, not SQL literals or prevalidated calendar fields.
-    CalendarComponents(&'a [&'a [u8]; 6]),
+    CalendarComponents {
+        /// Original calendar components, not a normalized target timestamp.
+        parts: &'a [&'a [u8]; 6],
+        /// Actual explicit UTC offset in seconds; None is not equivalent to 0.
+        offset_seconds: Option<i32>,
+    },
 }
 
 /// Immediate consumption of a scalar or bounded fragments of one value.

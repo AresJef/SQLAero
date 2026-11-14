@@ -190,12 +190,7 @@ impl Serialize<'_> {
                         "Decimal JSON migration is not connected yet",
                     ));
                 }
-                Source::StructTime(_) => {
-                    return Err(errors::builtin_message::<PyTypeError>(
-                        py,
-                        "struct_time JSON migration is not connected yet",
-                    ));
-                }
+                Source::StructTime(value) => return self.struct_time(value, path),
                 Source::Json(_) => {
                     return Err(errors::builtin_message::<PyTypeError>(
                         py,
@@ -339,6 +334,50 @@ impl Serialize<'_> {
             .integer_end()
             .map_err(|error| failure(py, error))?;
         super::checkpoint(py, self.budget)
+    }
+
+    fn struct_time(
+        &mut self,
+        source: &Bound<'_, pyo3::types::PyTuple>,
+        path: &Path<'_>,
+    ) -> PyResult<()> {
+        let py = source.py();
+        let identity = source.as_ptr() as usize;
+        if self.active.contains(&identity) {
+            return Err(errors::builtin_message::<PyValueError>(
+                py,
+                "JSON input contains a true cycle",
+            ));
+        }
+        self.active
+            .try_reserve(1)
+            .map_err(|_| errors::memory_error(py))?;
+        self.active.push(identity);
+        self.writer
+            .object_start()
+            .map_err(|error| failure(py, error))?;
+        for (index, name) in super::standard::STRUCT_FIELDS.iter().enumerate() {
+            self.writer
+                .key_start(name.len())
+                .map_err(|error| failure(py, error))?;
+            self.writer
+                .text_fragment(name, &self.options)
+                .map_err(|error| failure(py, error))?;
+            self.writer
+                .text_end(&self.options)
+                .map_err(|error| failure(py, error))?;
+            let child = path.child(Coordinate::Field {
+                name,
+                ordinal: index,
+            });
+            let value = super::standard::struct_field(source, index)?;
+            self.value_at(&value, &child)?;
+        }
+        self.writer
+            .object_end()
+            .map_err(|error| failure(py, error))?;
+        self.active.pop();
+        Ok(())
     }
 }
 

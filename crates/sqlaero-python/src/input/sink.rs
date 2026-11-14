@@ -329,6 +329,10 @@ pub(crate) fn failure(py: Python<'_>, error: ValueError) -> PyErr {
             error.to_string(),
         ),
         ValueError::Scalar(error) => scalar_error(py, error),
+        ValueError::Calendar(error) => errors::builtin_format::<pyo3::exceptions::PyValueError>(
+            py,
+            format_args!("invalid calendar components with UTC offset: {error}"),
+        ),
         ValueError::Wire(error) => errors::wire(py, error),
         ValueError::Encoding(error) => {
             errors::builtin_message::<pyo3::exceptions::PyValueError>(py, error.to_string())

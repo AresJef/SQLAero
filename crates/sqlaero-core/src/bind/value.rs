@@ -21,6 +21,9 @@ pub enum ValueError {
         "aware datetime requires a reliably confirmed UTC MySQL session; time_zone is non-UTC or unknown"
     )]
     UtcRequired,
+    /// Explicitly offset calendar facts cannot be interpreted accurately.
+    #[error("invalid calendar components with UTC offset: {0}")]
+    Calendar(#[source] ScalarError),
     /// The scalar cannot satisfy the exact common value policy.
     #[error(transparent)]
     Scalar(#[from] ScalarError),
@@ -104,8 +107,15 @@ impl ValueSink for TextSink<'_> {
                 multiplier,
             } => temporal::write_clock(output, value, unit, multiplier, limit)?,
             ValueRef::DateDays(value) => temporal::write_date(output, value, limit)?,
-            ValueRef::CalendarComponents(parts) => {
-                temporal::write_components(output, *parts, limit)?
+            ValueRef::CalendarComponents {
+                parts,
+                offset_seconds,
+            } => {
+                if let Some(value) = mysql_components(*parts, offset_seconds, context)? {
+                    value.write_literal(output, limit)?;
+                } else {
+                    temporal::write_components(output, *parts, limit)?;
+                }
             }
         }
         Ok(())
@@ -155,6 +165,22 @@ pub(crate) fn mysql_datetime(
         Some(_) if !context.utc_confirmed => Err(ValueError::UtcRequired),
         Some(offset) => Ok(scalar::utc(date, clock, offset)?),
         None => Ok((date, clock)),
+    }
+}
+
+/// A missing offset preserves server-owned calendar validation. An explicit
+/// offset, including zero, requires an accurate calendar and the UTC session.
+pub(crate) fn mysql_components(
+    parts: [&[u8]; 6],
+    offset_seconds: Option<i32>,
+    context: &Context,
+) -> Result<Option<temporal::Temporal>, ValueError> {
+    match offset_seconds {
+        None => Ok(None),
+        Some(_) if !context.utc_confirmed => Err(ValueError::UtcRequired),
+        Some(offset) => temporal::components_utc(parts, offset)
+            .map(Some)
+            .map_err(ValueError::Calendar),
     }
 }
 

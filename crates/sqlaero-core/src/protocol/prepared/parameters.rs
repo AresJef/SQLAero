@@ -379,59 +379,67 @@ impl Parameters {
                 multiplier,
             } => self.temporal(temporal::decompose_clock(value, unit, multiplier)?)?,
             ValueRef::DateDays(value) => self.temporal(temporal::decompose_date(value)?)?,
-            ValueRef::CalendarComponents(parts) => {
-                let mut values = [0_u32; 6];
-                let native = parts.iter().zip(&mut values).all(|(part, target)| {
-                    if part.is_empty() {
-                        return false;
-                    }
-                    let Some(value) = part.iter().try_fold(0_u32, |value, digit| {
-                        if !digit.is_ascii_digit() {
-                            return None;
-                        }
-                        value.checked_mul(10)?.checked_add(u32::from(digit - b'0'))
-                    }) else {
-                        return false;
-                    };
-                    *target = value;
-                    true
-                });
-                if native
-                    && normal_date(
-                        i128::from(values[0]),
-                        values[1].min(255) as u8,
-                        values[2].min(255) as u8,
-                    )
-                    && values[1] <= 12
-                    && values[2] <= 31
-                    && values[3] < 24
-                    && values[4] < 60
-                    && values[5] < 60
+            ValueRef::CalendarComponents {
+                parts,
+                offset_seconds,
+            } => {
+                if let Some(value) =
+                    crate::bind::value::mysql_components(*parts, offset_seconds, context)?
                 {
-                    self.temporal(Temporal::Datetime {
-                        year: i128::from(values[0]),
-                        month: values[1] as u8,
-                        day: values[2] as u8,
-                        second: values[3] * 3600 + values[4] * 60 + values[5],
-                        nanosecond: 0,
-                    })?
+                    self.temporal(value)?
                 } else {
-                    let length =
-                        parts
-                            .iter()
-                            .enumerate()
-                            .try_fold(5_usize, |length, (index, part)| {
+                    let mut values = [0_u32; 6];
+                    let native = parts.iter().zip(&mut values).all(|(part, target)| {
+                        if part.is_empty() {
+                            return false;
+                        }
+                        let Some(value) = part.iter().try_fold(0_u32, |value, digit| {
+                            if !digit.is_ascii_digit() {
+                                return None;
+                            }
+                            value.checked_mul(10)?.checked_add(u32::from(digit - b'0'))
+                        }) else {
+                            return false;
+                        };
+                        *target = value;
+                        true
+                    });
+                    if native
+                        && normal_date(
+                            i128::from(values[0]),
+                            values[1].min(255) as u8,
+                            values[2].min(255) as u8,
+                        )
+                        && values[1] <= 12
+                        && values[2] <= 31
+                        && values[3] < 24
+                        && values[4] < 60
+                        && values[5] < 60
+                    {
+                        self.temporal(Temporal::Datetime {
+                            year: i128::from(values[0]),
+                            month: values[1] as u8,
+                            day: values[2] as u8,
+                            second: values[3] * 3600 + values[4] * 60 + values[5],
+                            nanosecond: 0,
+                        })?
+                    } else {
+                        let length = parts.iter().enumerate().try_fold(
+                            5_usize,
+                            |length, (index, part)| {
                                 length
                                     .checked_add(part.len().max(if index == 0 { 4 } else { 2 }))
                                     .ok_or(WireError::Limit {
                                         required: usize::MAX,
                                         limit: self.limit,
                                     })
-                            })?;
-                    let (prefix, width) = length_prefix(length);
-                    self.append(&prefix[..width])?;
-                    temporal::write_components_text(&mut self.output, *parts, self.limit)?;
-                    253
+                            },
+                        )?;
+                        let (prefix, width) = length_prefix(length);
+                        self.append(&prefix[..width])?;
+                        temporal::write_components_text(&mut self.output, *parts, self.limit)?;
+                        253
+                    }
                 }
             }
         };
@@ -773,7 +781,10 @@ mod tests {
             .unwrap();
         writer
             .write(
-                ValueRef::CalendarComponents(&[b"2026", b"13", b"32", b"24", b"60", b"61"]),
+                ValueRef::CalendarComponents {
+                    parts: &[b"2026", b"13", b"32", b"24", b"60", b"61"],
+                    offset_seconds: None,
+                },
                 &context(),
             )
             .unwrap();

@@ -197,6 +197,13 @@ pub enum Temporal {
 }
 
 impl Temporal {
+    /// Write one already normalized native value as a SQL literal.
+    /// # Errors
+    /// Returns invalid formatting or the actual destination capacity failure.
+    pub fn write_literal(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError> {
+        self.stamp(true)?.finish(output, limit)
+    }
+
     fn stamp(self, quoted: bool) -> Result<Stamp, ScalarError> {
         let mut stamp = Stamp::new();
         if quoted {
@@ -423,6 +430,96 @@ pub fn write_components_text(
     limit: usize,
 ) -> Result<(), ScalarError> {
     components(output, parts, limit, false)
+}
+
+/// Normalize an explicitly offset Gregorian calendar without Python's narrow
+/// year range. Since offsets are shorter than one day, only adjacent calendar
+/// fields change; no huge epoch multiplication or floating point is needed.
+/// # Errors
+/// Rejects invalid components, offsets or checked native-year overflow.
+pub fn components_utc(parts: [&[u8]; 6], offset: i32) -> Result<Temporal, ScalarError> {
+    if !(-86_399..=86_399).contains(&offset) {
+        return Err(ScalarError::Range(
+            "UTC offset must be strictly within 24 hours",
+        ));
+    }
+    let mut values = [0_i128; 6];
+    for (part, value) in parts.into_iter().zip(&mut values) {
+        if part.is_empty() {
+            return Err(ScalarError::Range("calendar component is empty"));
+        }
+        *value = part
+            .iter()
+            .try_fold(0_i128, |value, digit| {
+                if !digit.is_ascii_digit() {
+                    return None;
+                }
+                value.checked_mul(10)?.checked_add(i128::from(digit - b'0'))
+            })
+            .ok_or(ScalarError::Range(
+                "calendar component exceeds its exact native range",
+            ))?;
+    }
+    let [mut year, month, day, hour, minute, second] = values;
+    if !(1..=12).contains(&month)
+        || !(0..24).contains(&hour)
+        || !(0..60).contains(&minute)
+        || !(0..60).contains(&second)
+    {
+        return Err(ScalarError::Range(
+            "calendar month or clock component is invalid",
+        ));
+    }
+    let mut month = month as u8;
+    let mut day = u8::try_from(day)
+        .ok()
+        .filter(|day| *day != 0 && *day <= month_days(year, month))
+        .ok_or(ScalarError::Range(
+            "calendar day is invalid for the actual month and year",
+        ))?;
+    let local_second = (hour * 3600 + minute * 60 + second) as i32;
+    let second = local_second - offset;
+    if second < 0 {
+        if day > 1 {
+            day -= 1;
+        } else {
+            if month == 1 {
+                year = year.checked_sub(1).ok_or_else(range)?;
+                month = 12;
+            } else {
+                month -= 1;
+            }
+            day = month_days(year, month);
+        }
+    } else if second >= 86_400 {
+        if day < month_days(year, month) {
+            day += 1;
+        } else {
+            day = 1;
+            if month == 12 {
+                year = year.checked_add(1).ok_or_else(range)?;
+                month = 1;
+            } else {
+                month += 1;
+            }
+        }
+    }
+    Ok(Temporal::Datetime {
+        year,
+        month,
+        day,
+        second: second.rem_euclid(86_400) as u32,
+        nanosecond: 0,
+    })
+}
+
+fn month_days(year: i128, month: u8) -> u8 {
+    match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    }
 }
 
 fn components(
