@@ -1700,6 +1700,7 @@ def collect(args: argparse.Namespace) -> None:
                 if a is not None:
                     a.close()
     config_output = {"calls": parameters, "cycles": args.cycles,
+                     "specified_output_changes": output_contracts,
                      "warmup_calls": args.warmup_calls,
                      "target_ms": args.target_ms, "minimum_ms": args.minimum_ms,
                      "runner_sha256": metadata["runner_sha256"], "cases": metadata["cases"]}

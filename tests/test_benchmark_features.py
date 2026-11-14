@@ -518,3 +518,64 @@ def test_output_changes_require_exact_native_input_output_and_spec_evidence(runn
     for reference_hash, candidate_hash in (("other-native", "new-native"), ("old-native", "other-native")):
         with pytest.raises(RuntimeError, match="exact validated policy contract"):
             runner.comparison_semantics(case, old, new, {"decimal-policy": entry}, reference_hash, candidate_hash)
+
+
+def test_calibration_roundtrip_keeps_exact_output_policy_contract(
+    runner: Any, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise the controller handoff, with no synthetic timing claims."""
+    from argparse import Namespace
+
+    case = runner.Case("escape/decimal-handoff", 7)
+    old: dict[str, object] = {"type": "native-owner", "sha256": "12.5"}
+    new: dict[str, object] = {"type": "native-owner", "sha256": "12.500"}
+    entry = {"input_identity": case.identity(), "reference_native_sha256": "A",
+             "candidate_native_sha256": "B", "reference_output": old,
+             "candidate_output": new, "requirement_refs": ["DEC01"],
+             "functional_evidence": ["independent-controller-oracle"]}
+    seed = tmp_path / "seed.json"
+    seed.write_text(json.dumps({"calls": {case.id: 1}, "warmup_calls": 1,
+                               "specified_output_changes": {case.id: entry}}))
+
+    class Worker:
+        def __init__(self, package: str, *_args: object, warmup_calls: int) -> None:
+            self.package = package
+            self.process = SimpleNamespace(pid=1 if package == "A" else 2)
+            self.ready = {"ready": {"artifact_sha256": package, "warmup_calls": warmup_calls,
+                                     "start_unix_ns": 1}}
+
+        def sample(self, _case_id: str, n: int, _role: str, **_kwargs: object) -> dict[str, object]:
+            return {"output": old if self.package == "A" else new,
+                    "wall_ns": n * 2_000_000, "cpu_ns": n * 2_000_000,
+                    "snapshot_ns": 0, "cpu_quality": True,
+                    "clock": {"margin_ns": 0, "timer_read_allowance_ns": 0}}
+
+        def prepare(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(runner, "catalog", lambda: [case])
+    monkeypatch.setattr(runner, "Worker", Worker)
+
+    def package_identity(package: str) -> dict[str, str]:
+        return {"sha256": package}
+
+    monkeypatch.setattr(runner, "package_identity", package_identity)
+    output = tmp_path / "calibration"
+    runner.collect(Namespace(command="calibrate", case=[case.id], prefix=[], legacy=False,
+                             output=output, config=seed, reference="A", candidate="B",
+                             cycles=1, seconds=5, target_ms=2, minimum_ms=1, warmup_calls=1))
+    saved = json.loads((output / "config.json").read_text())
+    assert saved["specified_output_changes"] == {case.id: entry}
+    groups = [json.loads(line) for line in (output / "groups.jsonl").read_text().splitlines()]
+    assert len(groups) == 2
+    assert all(group["comparison_semantics"] == "SPECIFIED_OUTPUT_CHANGE" for group in groups)
+    measured = tmp_path / "measurement"
+    runner.collect(Namespace(command="run", case=[case.id], prefix=[], legacy=False,
+                             output=measured, config=output / "config.json", reference="A", candidate="B",
+                             cycles=1, seconds=5, target_ms=2, minimum_ms=1, warmup_calls=1))
+    measured_groups = [json.loads(line) for line in (measured / "groups.jsonl").read_text().splitlines()]
+    assert len(measured_groups) == 2
+    assert all(group["comparison_semantics"] == "SPECIFIED_OUTPUT_CHANGE" for group in measured_groups)
