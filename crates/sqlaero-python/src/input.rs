@@ -662,11 +662,25 @@ fn codec_error(
     text: &str,
     encoding: &str,
     error: CodecError,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyErr {
     let py = source.py();
     match error {
         CodecError::Encode { offset, point } => {
-            let start = text[..offset].chars().count();
+            let Some(prefix) = text.get(..offset) else {
+                return errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "text codec returned an invalid source byte position",
+                );
+            };
+            let mut start = 0usize;
+            if let Err(error) = unicode::native_fragments(py, prefix, budget, |_, fragment| {
+                start += fragment.chars().count();
+                Ok(())
+            }) {
+                return error;
+            }
             match errors::message(
                 py,
                 format_args!("character U+{point:04X} is not representable in MySQL {encoding}"),
@@ -752,7 +766,7 @@ pub(crate) fn sql_utf8(
         context
             .codec
             .encode(&source[start..end], request, context.limit)
-            .map_err(|error| native_codec_error(py, source, context, error, start))?;
+            .map_err(|error| native_codec_error(py, source, context, error, start, Some(budget)))?;
         check(py, budget)?;
         start = end;
     }
@@ -767,20 +781,26 @@ fn native_codec_error(
     context: &Context,
     error: CodecError,
     base: usize,
+    budget: Option<&dyn Checkpoint>,
 ) -> PyErr {
+    let unlimited = control::Control::unlimited();
+    let source_control = budget.unwrap_or(&unlimited);
     match error {
-        CodecError::Encode { offset, point } => match PyString::from_bytes(py, source.as_bytes()) {
-            Ok(original) => codec_error(
-                &original,
-                source,
-                context.codec.name(),
-                CodecError::Encode {
-                    offset: base + offset,
-                    point,
-                },
-            ),
-            Err(error) => error,
-        },
+        CodecError::Encode { offset, point } => {
+            match unicode::from_utf8(py, source, source_control) {
+                Ok(original) => codec_error(
+                    &original,
+                    source,
+                    context.codec.name(),
+                    CodecError::Encode {
+                        offset: base + offset,
+                        point,
+                    },
+                    Some(source_control),
+                ),
+                Err(error) => error,
+            }
+        }
         CodecError::Wire(error) => errors::wire(py, error),
         error => errors::client_format(
             py,
@@ -801,7 +821,9 @@ pub(crate) fn text_utf8(
 ) -> PyResult<()> {
     let convert_error = |error: ValueError, start: usize| -> PyErr {
         match error {
-            ValueError::Encoding(error) => native_codec_error(py, source, context, error, start),
+            ValueError::Encoding(error) => {
+                native_codec_error(py, source, context, error, start, budget)
+            }
             error => sink::failure(py, error),
         }
     };
@@ -840,7 +862,7 @@ pub(crate) fn text(
         return context
             .codec
             .literal(text, output, context.no_backslash_escapes, context.limit)
-            .map_err(|error| codec_error(source, text, context.codec.name(), error));
+            .map_err(|error| codec_error(source, text, context.codec.name(), error, budget));
     }
     if quoted {
         writer::append(output, b"'", context.limit).map_err(|error| errors::wire(py, error))?;
@@ -874,7 +896,7 @@ pub(crate) fn text(
                 },
                 error => error,
             };
-            codec_error(source, text, context.codec.name(), error)
+            codec_error(source, text, context.codec.name(), error, budget)
         })?;
         start = end;
     }

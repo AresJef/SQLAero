@@ -117,3 +117,46 @@ impl GetSet {
         }
     }
 }
+
+/// A short canonical receiver header shares the actual Python instance state.
+/// Native-backed providers never enter this object.__new__ route.
+pub(crate) fn receiver_view<'py>(
+    value: &Bound<'py, PyAny>,
+    base: &Bound<'py, PyType>,
+    object_new: &Bound<'py, PyAny>,
+    budget: &dyn Checkpoint,
+) -> PyResult<Bound<'py, PyAny>> {
+    if value.get_type().is(base) {
+        return Ok(value.clone());
+    }
+    let py = value.py();
+    control::callback(py, Some(budget), || {
+        // object.__new__ refuses native bases requiring additional C
+        // state. This route is only used for qualified Python-state provider
+        // bases; native-backed arrays use retained public getters below.
+        let view = object_new.call1((base,))?;
+        // SAFETY: documented object dictionary APIs return/retain owning
+        // references and bypass child attribute hooks. The exact base
+        // receiver shares the original state, not a copied value array or
+        // alternative value. No provider-private memory layout is read.
+        let dictionary = unsafe {
+            Bound::from_owned_ptr_or_err(
+                py,
+                pyo3::ffi::PyObject_GenericGetDict(value.as_ptr(), std::ptr::null_mut()),
+            )
+        }?;
+        // SAFETY: view is a fresh exact Python-state base receiver and
+        // dictionary is an owning actual dict from the public getter above.
+        let status = unsafe {
+            pyo3::ffi::PyObject_GenericSetDict(
+                view.as_ptr(),
+                dictionary.as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
+        if status != 0 {
+            return Err(PyErr::fetch(py));
+        }
+        Ok(view)
+    })
+}

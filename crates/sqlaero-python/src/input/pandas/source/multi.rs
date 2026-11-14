@@ -78,7 +78,9 @@ pub(super) fn prepare<'py>(
             })?;
         let level = registry.receiver(&level, base.bind(py), budget)?;
         let dtype = control::callback(py, Some(budget), || errors::attribute(&level, c"dtype"))?;
-        control::callback(py, Some(budget), || registry.family(&dtype))?;
+        control::callback(py, Some(budget), || {
+            registry.validate_declared(&dtype, budget)
+        })?;
         let labels = control::callback(py, Some(budget), || level.len())?;
         let codes = control::callback(py, Some(budget), || raw_codes.get_item(&key))?;
         let codes = numpy_source(&numpy, &codes, budget, length)?;

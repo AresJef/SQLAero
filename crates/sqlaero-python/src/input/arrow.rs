@@ -38,7 +38,7 @@ use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
 
 mod cdata;
 mod dictionary;
-mod names;
+pub(super) mod names;
 mod offset;
 mod projection;
 mod schema;
@@ -1037,6 +1037,22 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
     crate::input::source::cell_destinations!();
 }
 
+impl<'py> Prepared<'py> {
+    /// Join complete logical provider names to the same positional C Data
+    /// reader. This retains metadata, never target-formatted values.
+    pub(super) fn polars_names(
+        &mut self,
+        dtype: Bound<'py, PyAny>,
+        table: Option<Bound<'py, PyAny>>,
+    ) {
+        self.names = names::Source::polars(dtype, table);
+    }
+
+    pub(super) fn source_names(&mut self, names: names::Source<'py>) {
+        self.names = names;
+    }
+}
+
 fn consume_schema(py: Python<'_>, dtype: &DataType, target: &mut dyn Target) -> PyResult<()> {
     target.checkpoint(py, 1)?;
     match dtype {
@@ -1499,19 +1515,41 @@ fn byte_codec_error(
         let mut position = 0;
         while position < length {
             super::check(py, budget)?;
-            let end = (position + super::WORK_BYTES).min(length);
-            {
+            let end = {
                 let source = byte_slice(py, array, index)?;
-                let chunk = source.get(position..end).ok_or_else(|| {
-                    invalid(py, "Arrow value changed during encoding-error diagnosis")
-                })?;
-                owned.extend_from_slice(chunk);
+                if source.len() != length {
+                    None
+                } else {
+                    let mut end = (position + super::WORK_BYTES).min(length);
+                    for _ in 0..3 {
+                        if end < length && source[end] & 0xc0 == 0x80 {
+                            end += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    owned.extend_from_slice(&source[position..end]);
+                    Some(end)
+                }
             }
+            .ok_or_else(|| invalid(py, "Arrow value changed during encoding-error diagnosis"))?;
+            // Validate each complete owned fragment after the external borrow
+            // ends. Error creation/checkpoints never borrow producer bytes.
+            utf8(py, &owned[position..end], position)?;
             position = end;
         }
-        let original = PyString::from_bytes(py, &owned)?;
-        let text = original.to_str()?;
-        Ok(super::codec_error(&original, text, encoding, error))
+        // SAFETY: the disjoint complete-character fragments above cover all
+        // owned bytes and each passed UTF-8 validation. No second unbounded
+        // validation or Python UTF-8-cache conversion is needed.
+        let text = unsafe { std::str::from_utf8_unchecked(&owned) };
+        let original = super::unicode::from_utf8(py, text, budget)?;
+        Ok(super::codec_error(
+            &original,
+            text,
+            encoding,
+            error,
+            Some(budget),
+        ))
     })();
     match original {
         Ok(error) | Err(error) => error,

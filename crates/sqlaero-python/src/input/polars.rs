@@ -1,17 +1,17 @@
 //! Public Polars C exports, with Object values separated before any export.
 
-use crate::input::control::Checkpoint;
+use crate::input::cell::Target;
+use crate::input::control::{self, Checkpoint};
 use std::ffi::CStr;
 use std::sync::OnceLock;
 
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyList, PyString};
-use sqlaero_core::bind::Context;
+use pyo3::types::{PyDict, PyList, PyString, PyType};
 use sqlaero_core::error::ClientErrorCode;
 
 use super::arrow;
-use super::source::{CellWriter, PreparedSource, Shape};
+use super::source::{Child, PreparedSource, Selected, Shape};
 use crate::errors;
 
 #[expect(
@@ -23,6 +23,10 @@ enum Column<'py> {
     Object(Bound<'py, PyAny>),
 }
 
+#[expect(
+    clippy::large_enum_variant,
+    reason = "the prepared source is already boxed at its outer boundary; keep its ordinary native reader inline without a second heap allocation"
+)]
 enum Storage<'py> {
     Native(arrow::Prepared<'py>),
     Object(Bound<'py, PyAny>),
@@ -35,6 +39,7 @@ pub(crate) struct Prepared<'py> {
     storage: Storage<'py>,
     shape: Shape,
     owner: Bound<'py, PyAny>,
+    names: Option<arrow::names::Source<'py>>,
 }
 
 struct Dtypes {
@@ -49,13 +54,30 @@ struct Dtypes {
 /// are prepared separately so an unrelated value does not prepare dtype APIs.
 pub(crate) struct PolarsTypes {
     module: Py<PyAny>,
-    series: Py<PyAny>,
-    frame: Py<PyAny>,
+    series: Py<PyType>,
+    frame: Py<PyType>,
+    object_new: Py<PyAny>,
     dtypes: OnceLock<Dtypes>,
 }
 
 fn invalid(py: Python<'_>, message: impl AsRef<str>) -> PyErr {
     errors::builtin_message::<PyTypeError>(py, message)
+}
+
+fn export_name(
+    name: &Bound<'_, PyAny>,
+    location: std::fmt::Arguments<'_>,
+    budget: &dyn Checkpoint,
+) -> PyResult<()> {
+    if super::unicode::contains_nul(name.cast::<PyString>()?, budget)? {
+        return Err(errors::builtin_format::<PyTypeError>(
+            name.py(),
+            format_args!(
+                "Polars {location} contains NUL; the supported native C Data exporter cannot safely export this name and can abort the process. The source was rejected before export; its name and values were not changed"
+            ),
+        ));
+    }
+    Ok(())
 }
 
 impl Dtypes {
@@ -140,6 +162,13 @@ impl Dtypes {
             let fields = errors::attribute(dtype, c"fields")?.cast_into::<PyList>()?;
             for index in 0..fields.len() {
                 let field = fields.get_item(index)?;
+                let name =
+                    control::callback(py, Some(budget), || errors::attribute(&field, c"name"))?;
+                export_name(
+                    &name,
+                    format_args!("schema field {index} at depth {depth}"),
+                    budget,
+                )?;
                 self.validate(
                     &errors::attribute(&field, c"dtype")?,
                     false,
@@ -171,8 +200,9 @@ impl PolarsTypes {
         let frame_type = errors::attribute(&module, c"DataFrame")?;
         Ok(Some(Self {
             module: module.unbind(),
-            series: series_type.unbind(),
-            frame: frame_type.unbind(),
+            series: series_type.cast_into::<PyType>()?.unbind(),
+            frame: frame_type.cast_into::<PyType>()?.unbind(),
+            object_new: errors::attribute(py.get_type::<PyAny>().as_any(), c"__new__")?.unbind(),
             dtypes: OnceLock::new(),
         }))
     }
@@ -204,35 +234,50 @@ impl PolarsTypes {
         let series_type = self.series.bind(py);
         let frame_type = self.frame.bind(py);
         let dtype = value.get_type();
-        let series = dtype.is(series_type);
-        if !series && !dtype.is(frame_type) {
+        let series = dtype.is(series_type) || super::actual_instance(value, series_type);
+        if !series && !dtype.is(frame_type) && !super::actual_instance(value, frame_type) {
             return Ok(None);
         }
 
         // Public clone creates a private COW header, not a full data snapshot. The
         // metadata inspected below and the export come from that same header.
-        let snapshot = value.call_method0(c"clone")?;
-        super::check(py, budget)?;
-        if !snapshot.get_type().is(&dtype) {
+        let base = if series { series_type } else { frame_type };
+        let receiver =
+            super::attribute::receiver_view(value, base, self.object_new.bind(py), budget)?;
+        let snapshot = control::callback(py, Some(budget), || receiver.call_method0(c"clone"))?;
+        if !snapshot.get_type().is(base) {
             return Err(invalid(py, "Polars clone returned a different source type"));
         }
         let types = self.dtypes(py, budget)?;
+        let mut names = None;
         let (shape, storage) = if series {
             let shape = Shape::Vector {
-                length: snapshot.len()?,
+                length: control::callback(py, Some(budget), || snapshot.len())?,
             };
-            let dtype = errors::attribute(&snapshot, c"dtype")?;
+            let dtype =
+                control::callback(py, Some(budget), || errors::attribute(&snapshot, c"dtype"))?;
             let storage = if types.validate(&dtype, true, 0, budget)? {
                 Storage::Object(snapshot)
             } else {
-                Storage::Native(arrow::prepare_exported(value, &snapshot, shape, budget)?)
+                let name =
+                    control::callback(py, Some(budget), || errors::attribute(&snapshot, c"name"))?;
+                export_name(&name, format_args!("Series name"), budget)?;
+                let mut source = arrow::prepare_exported(value, &snapshot, shape, budget)?;
+                source.polars_names(dtype, None);
+                Storage::Native(source)
             };
             (shape, storage)
         } else {
-            let rows: usize = errors::attribute(&snapshot, c"height")?.extract()?;
-            let columns: usize = errors::attribute(&snapshot, c"width")?.extract()?;
+            let rows: usize = control::callback(py, Some(budget), || {
+                errors::attribute(&snapshot, c"height")?.extract()
+            })?;
+            let columns: usize = control::callback(py, Some(budget), || {
+                errors::attribute(&snapshot, c"width")?.extract()
+            })?;
             let shape = Shape::Table { rows, columns };
-            let dtypes = errors::attribute(&snapshot, c"dtypes")?.cast_into::<PyList>()?;
+            let dtypes =
+                control::callback(py, Some(budget), || errors::attribute(&snapshot, c"dtypes"))?
+                    .cast_into::<PyList>()?;
             if dtypes.len() != columns {
                 return Err(invalid(py, "Polars dtype count does not match its width"));
             }
@@ -241,9 +286,11 @@ impl PolarsTypes {
                 object |= types.validate(&dtypes.get_item(index)?, true, 0, budget)?;
             }
             if object {
-                let sources = snapshot
-                    .call_method0(c"get_columns")?
-                    .cast_into::<PyList>()?;
+                let mut prepared_names =
+                    arrow::names::Source::polars(dtypes.clone().into_any(), Some(snapshot.clone()));
+                let sources =
+                    control::callback(py, Some(budget), || snapshot.call_method0(c"get_columns"))?
+                        .cast_into::<PyList>()?;
                 if sources.len() != columns {
                     return Err(invalid(py, "Polars column count does not match its width"));
                 }
@@ -253,30 +300,53 @@ impl PolarsTypes {
                     .map_err(|_| errors::memory_error(py))?;
                 for index in 0..columns {
                     let column = sources.get_item(index)?;
-                    if !column.get_type().is(series_type) || column.len()? != rows {
+                    if !column.get_type().is(series_type)
+                        || control::callback(py, Some(budget), || column.len())? != rows
+                    {
                         return Err(invalid(
                             py,
                             "Polars column does not match its prepared table",
                         ));
                     }
-                    let dtype = errors::attribute(&column, c"dtype")?;
+                    let dtype = control::callback(py, Some(budget), || {
+                        errors::attribute(&column, c"dtype")
+                    })?;
+                    prepared_names.bind_polars_column(index, column.clone(), budget)?;
                     prepared.push(if types.validate(&dtype, true, 0, budget)? {
                         Column::Object(column)
                     } else {
-                        Column::Native(arrow::prepare_exported(
+                        let name = prepared_names.acquire_field(index, budget)?;
+                        export_name(
+                            &name,
+                            format_args!("column name at position {index}"),
+                            budget,
+                        )?;
+                        let mut source = arrow::prepare_exported(
                             &column,
                             &column,
                             Shape::Vector { length: rows },
                             budget,
-                        )?)
+                        )?;
+                        source.polars_names(dtype, None);
+                        Column::Native(source)
                     });
                 }
+                names = Some(prepared_names);
                 (shape, Storage::Columns(prepared))
             } else {
-                (
-                    shape,
-                    Storage::Native(arrow::prepare_exported(value, &snapshot, shape, budget)?),
-                )
+                let mut prepared_names =
+                    arrow::names::Source::polars(dtypes.into_any(), Some(snapshot.clone()));
+                for index in 0..columns {
+                    let name = prepared_names.acquire_field(index, budget)?;
+                    export_name(
+                        &name,
+                        format_args!("column name at position {index}"),
+                        budget,
+                    )?;
+                }
+                let mut source = arrow::prepare_exported(value, &snapshot, shape, budget)?;
+                source.source_names(prepared_names);
+                (shape, Storage::Native(source))
             }
         };
         super::check(py, budget)?;
@@ -284,6 +354,7 @@ impl PolarsTypes {
             storage,
             shape,
             owner: value.clone(),
+            names,
         }))
     }
 }
@@ -297,16 +368,76 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         self.shape
     }
 
+    fn prepare_field_names(&mut self, budget: &dyn Checkpoint) -> PyResult<bool> {
+        if let Storage::Native(source) = &mut self.storage {
+            return source.prepare_field_names(budget);
+        }
+        if let (Shape::Table { columns, .. }, Some(names)) = (self.shape, &mut self.names) {
+            names.prepare_fields(0, columns, budget)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn field_name(&self, column: usize) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if let Storage::Native(source) = &self.storage {
+            return source.field_name(column);
+        }
+        self.names
+            .as_ref()
+            .map(|names| names.field(0, column))
+            .transpose()
+            .map(Option::flatten)
+    }
+
+    fn schema(&self, target: &mut dyn Target) -> PyResult<()> {
+        match &self.storage {
+            Storage::Native(source) => source.schema(target),
+            Storage::Object(_) => Ok(()),
+            Storage::Columns(columns) => {
+                for column in columns {
+                    target.checkpoint(self.owner.py(), 1)?;
+                    if let Column::Native(source) = column {
+                        source.schema(target)?;
+                    }
+                }
+                Ok(())
+            }
+        }
+    }
+
+    fn child<'a>(&'a mut self, index: usize, budget: &dyn Checkpoint) -> PyResult<Child<'a, 'py>> {
+        if matches!(self.storage, Storage::Columns(_)) {
+            let shape = self.child_shape(index)?;
+            return Ok(Child::Native(Selected::new(self, index, shape)));
+        }
+        match &mut self.storage {
+            Storage::Native(source) => source.child(index, budget),
+            Storage::Object(series) => Ok(Child::Python(object_value(series, index, budget)?)),
+            Storage::Columns(_) => {
+                unreachable!("column rows were selected before borrowing storage")
+            }
+        }
+    }
+
+    fn consume_cell(
+        &mut self,
+        row: usize,
+        column: usize,
+        target: &mut dyn Target,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        self.consume_cell_to(row, column, target, budget)
+    }
+
     crate::input::source::cell_destinations!();
 }
 
-fn write_object(
-    series: &Bound<'_, PyAny>,
+fn object_value<'py>(
+    series: &Bound<'py, PyAny>,
     row: usize,
-    output: &mut (impl crate::input::sink::Destination + ?Sized),
     budget: &dyn Checkpoint,
-    visitor: &mut dyn CellWriter,
-) -> PyResult<()> {
+) -> PyResult<Bound<'py, PyAny>> {
     super::check(series.py(), budget)?;
     // SAFETY: the attached constructor returns an owned exact int or its
     // original error; no infallible Rust-tuple argument conversion is used.
@@ -314,42 +445,39 @@ fn write_object(
         Bound::<PyAny>::from_owned_ptr_or_err(series.py(), pyo3::ffi::PyLong_FromSize_t(row))?
     };
     let arguments = crate::output::tuple_from_ready(series.py(), [index])?;
-    let value = series.call_method1(c"item", arguments)?;
-    super::check(series.py(), budget)?;
-    output.python(visitor, &value, None)
+    control::callback(series.py(), Some(budget), || {
+        series.call_method1(c"item", arguments)
+    })
 }
 
 impl<'py> Prepared<'py> {
-    fn write_cell_to(
+    crate::input::cell::destinations!();
+    fn consume_cell_to(
         &mut self,
         row: usize,
         column: usize,
-        output: &mut (impl crate::input::sink::Destination + ?Sized),
-        context: &Context,
+        target: &mut dyn Target,
         budget: &dyn Checkpoint,
-        visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         let py = self.owner.py();
-        visitor.checkpoint(py, 1)?;
+        target.checkpoint(py, 1)?;
         match &mut self.storage {
-            Storage::Native(source) => {
-                output.source_cell(source, row, column, context, budget, visitor)
-            }
+            Storage::Native(source) => source.consume_cell(row, column, target, budget),
             Storage::Object(series) => {
                 if column != 0 {
                     return Err(invalid(py, "Polars Series has only one cell per row"));
                 }
-                write_object(series, row, output, budget, visitor)
+                target.python(&object_value(series, row, budget)?, None)
             }
             Storage::Columns(columns) => {
                 let column = columns
                     .get_mut(column)
                     .ok_or_else(|| invalid(py, "Polars column is outside its prepared table"))?;
                 match column {
-                    Column::Native(source) => {
-                        output.source_cell(source, row, 0, context, budget, visitor)
+                    Column::Native(source) => source.consume_cell(row, 0, target, budget),
+                    Column::Object(series) => {
+                        target.python(&object_value(series, row, budget)?, None)
                     }
-                    Column::Object(series) => write_object(series, row, output, budget, visitor),
                 }
             }
         }

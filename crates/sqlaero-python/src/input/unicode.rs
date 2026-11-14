@@ -7,6 +7,34 @@ use pyo3::types::{PyString, PyStringData, PyStringMethods};
 use sqlaero_transcode::utf8::{self, EncodeError};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
+/// Source C-string admission, independent of target encoding or key policy.
+/// Scan immutable actual str storage in bounded units without a UTF-8 copy.
+pub(crate) fn contains_nul(
+    source: &Bound<'_, PyString>,
+    budget: &dyn Checkpoint,
+) -> PyResult<bool> {
+    let py = source.py();
+    // SAFETY: the owning real str is immutable and live throughout this read,
+    // under the same pinned GIL/NoGIL storage contract as write/same below.
+    let data = unsafe { source.data()? };
+    macro_rules! scan {
+        ($values:expr) => {{
+            for chunk in $values.chunks(super::WORK_BYTES / 4) {
+                super::check(py, budget)?;
+                if chunk.contains(&0) {
+                    return Ok(true);
+                }
+            }
+        }};
+    }
+    match data {
+        PyStringData::Ucs1(values) => scan!(values),
+        PyStringData::Ucs2(values) => scan!(values),
+        PyStringData::Ucs4(values) => scan!(values),
+    }
+    Ok(false)
+}
+
 /// Compare complete immutable base names without Python equality, UTF-8
 /// materialization or JSON key policy. Source schemas may contain surrogates;
 /// only the target's actual name output decides whether they are admissible.

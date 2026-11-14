@@ -58,15 +58,6 @@ pub(crate) trait Destination {
         value: &Bound<'_, PyAny>,
         child: Option<usize>,
     ) -> PyResult<()>;
-    fn source_cell<'py>(
-        &mut self,
-        source: &mut dyn PreparedSource<'py>,
-        row: usize,
-        column: usize,
-        context: &Context,
-        budget: &dyn Checkpoint,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()>;
 
     /// Existing text-only dictionary caches remain on the text path.
     fn text_buffer(&mut self) -> Option<&mut Vec<u8>>;
@@ -154,17 +145,6 @@ impl Destination for Vec<u8> {
         child: Option<usize>,
     ) -> PyResult<()> {
         visitor.python(value, self, child)
-    }
-    fn source_cell<'py>(
-        &mut self,
-        source: &mut dyn PreparedSource<'py>,
-        row: usize,
-        column: usize,
-        context: &Context,
-        budget: &dyn Checkpoint,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        source.write_cell(row, column, self, context, budget, visitor)
     }
     fn text_buffer(&mut self) -> Option<&mut Vec<u8>> {
         Some(self)
@@ -332,17 +312,6 @@ impl Destination for Native<'_> {
         child: Option<usize>,
     ) -> PyResult<()> {
         visitor.native_python(value, self.0, child)
-    }
-    fn source_cell<'py>(
-        &mut self,
-        source: &mut dyn PreparedSource<'py>,
-        row: usize,
-        column: usize,
-        context: &Context,
-        budget: &dyn Checkpoint,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        source.write_parameter_cell(row, column, self.0, context, budget, visitor)
     }
     fn text_buffer(&mut self) -> Option<&mut Vec<u8>> {
         None
@@ -586,19 +555,6 @@ impl Destination for RoleSink<'_> {
         child: Option<usize>,
     ) -> PyResult<()> {
         let role = visitor.python_role(value, self.output, child)?;
-        self.observe(role);
-        Ok(())
-    }
-    fn source_cell<'py>(
-        &mut self,
-        source: &mut dyn PreparedSource<'py>,
-        row: usize,
-        column: usize,
-        context: &Context,
-        budget: &dyn Checkpoint,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        let role = source.write_role_cell(row, column, self.output, context, budget, visitor)?;
         self.observe(role);
         Ok(())
     }

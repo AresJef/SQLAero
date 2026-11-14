@@ -7,7 +7,7 @@ use crate::input::source::Shape;
 use crate::{errors, input};
 use arrow_schema::DataType;
 use pyo3::prelude::*;
-use pyo3::types::PyString;
+use pyo3::types::{PyList, PyString};
 
 /// Only a Struct needs field names. List/Dictionary have one schema child, so
 /// this bounded walk never scans a wide record or any value buffer.
@@ -28,15 +28,22 @@ pub(super) enum Edge {
     Value,
 }
 
-pub(super) enum Source<'py> {
+pub(crate) enum Source<'py> {
     ArrowArray(Bound<'py, PyAny>),
     ArrowTable(Bound<'py, PyAny>),
+    PolarsArray(Bound<'py, PyAny>),
+    PolarsTable {
+        owner: Bound<'py, PyAny>,
+        dtypes: Bound<'py, PyAny>,
+    },
     Ready(Box<Schema<'py>>),
 }
 
-pub(super) struct Schema<'py> {
+pub(crate) struct Schema<'py> {
     _owner: Bound<'py, PyAny>,
     nodes: Vec<Node<'py>>,
+    polars: bool,
+    table: Option<Bound<'py, PyAny>>,
 }
 
 struct Node<'py> {
@@ -45,7 +52,7 @@ struct Node<'py> {
     value: Option<usize>,
 }
 struct Fields<'py> {
-    getter: Bound<'py, PyAny>,
+    getter: Option<Bound<'py, PyAny>>,
     slots: Vec<Field<'py>>,
     names_ready: bool,
 }
@@ -65,17 +72,34 @@ impl<'py> Source<'py> {
         }
     }
 
+    pub(crate) fn polars(dtype: Bound<'py, PyAny>, table: Option<Bound<'py, PyAny>>) -> Self {
+        if let Some(owner) = table {
+            Self::PolarsTable {
+                owner,
+                dtypes: dtype,
+            }
+        } else {
+            Self::PolarsArray(dtype)
+        }
+    }
+
     fn schema(&mut self, budget: &dyn Checkpoint) -> PyResult<&mut Schema<'py>> {
         if !matches!(self, Self::Ready(_)) {
-            let (owner, table) = match self {
-                Self::ArrowArray(value) => (value.clone(), false),
-                Self::ArrowTable(value) => (value.clone(), true),
+            let (owner, attribute, polars, table) = match self {
+                Self::ArrowArray(value) => (value.clone(), Some(c"type"), false, None),
+                Self::ArrowTable(value) => (value.clone(), Some(c"schema"), false, None),
+                Self::PolarsArray(dtype) => (dtype.clone(), None, true, None),
+                Self::PolarsTable { owner, dtypes } => {
+                    (dtypes.clone(), None, true, Some(owner.clone()))
+                }
                 Self::Ready(_) => unreachable!(),
             };
             let py = owner.py();
-            let dtype = control::callback(py, Some(budget), || {
-                errors::attribute(&owner, if table { c"schema" } else { c"type" })
-            })?;
+            let dtype = if let Some(attribute) = attribute {
+                control::callback(py, Some(budget), || errors::attribute(&owner, attribute))?
+            } else {
+                owner.clone()
+            };
             let mut nodes = Vec::new();
             nodes
                 .try_reserve_exact(1)
@@ -90,6 +114,8 @@ impl<'py> Source<'py> {
                 Schema {
                     _owner: owner,
                     nodes,
+                    polars,
+                    table,
                 },
             )?);
         }
@@ -99,7 +125,7 @@ impl<'py> Source<'py> {
         Ok(schema)
     }
 
-    pub(super) fn prepare_fields(
+    pub(crate) fn prepare_fields(
         &mut self,
         node: usize,
         count: usize,
@@ -111,7 +137,7 @@ impl<'py> Source<'py> {
         self.schema(budget)?.prepare_fields(node, count, budget)
     }
 
-    pub(super) fn field(&self, node: usize, index: usize) -> PyResult<Option<Bound<'py, PyAny>>> {
+    pub(crate) fn field(&self, node: usize, index: usize) -> PyResult<Option<Bound<'py, PyAny>>> {
         let Self::Ready(schema) = self else {
             return Ok(None);
         };
@@ -121,6 +147,34 @@ impl<'py> Source<'py> {
             .and_then(|n| n.fields.as_ref())
             .and_then(|fields| fields.slots.get(index))
             .and_then(|field| field.name.clone()))
+    }
+
+    /// Reuse an already acquired canonical column header. It contains source
+    /// metadata only, not a row/value conversion or a target-formatted key.
+    pub(crate) fn bind_polars_column(
+        &mut self,
+        index: usize,
+        source: Bound<'py, PyAny>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        let schema = self.schema(budget)?;
+        schema.fields(0, budget)?;
+        let py = source.py();
+        let field = schema.nodes[0]
+            .fields
+            .as_mut()
+            .and_then(|fields| fields.slots.get_mut(index))
+            .ok_or_else(|| invalid(py, "Polars name column is outside its schema"))?;
+        field.source = Some(source);
+        Ok(())
+    }
+
+    pub(crate) fn acquire_field(
+        &mut self,
+        index: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.schema(budget)?.acquire_name(0, index, budget)
     }
 
     pub(super) fn child(
@@ -144,8 +198,30 @@ impl<'py> Schema<'py> {
         }
         let dtype = current.dtype.clone();
         let py = dtype.py();
-        let count = control::callback(py, Some(budget), || dtype.len())?;
-        let getter = control::callback(py, Some(budget), || errors::attribute(&dtype, c"field"))?;
+        let polars_fields = if self.polars && !(node == 0 && self.table.is_some()) {
+            Some(
+                control::callback(py, Some(budget), || errors::attribute(&dtype, c"fields"))?
+                    .cast_into::<PyList>()?,
+            )
+        } else {
+            None
+        };
+        let count = if let Some(fields) = &polars_fields {
+            fields.len()
+        } else {
+            control::callback(py, Some(budget), || dtype.len())?
+        };
+        let getter = if let Some(table) = self.table.as_ref().filter(|_| node == 0) {
+            Some(control::callback(py, Some(budget), || {
+                errors::attribute(table, c"to_series")
+            })?)
+        } else if self.polars {
+            None
+        } else {
+            Some(control::callback(py, Some(budget), || {
+                errors::attribute(&dtype, c"field")
+            })?)
+        };
         let mut slots = Vec::new();
         slots
             .try_reserve_exact(count)
@@ -154,7 +230,13 @@ impl<'py> Schema<'py> {
             if index.is_multiple_of(64) {
                 input::check(py, budget)?;
             }
-            slots.push(Field::default());
+            slots.push(Field {
+                source: polars_fields
+                    .as_ref()
+                    .map(|fields| fields.get_item(index))
+                    .transpose()?,
+                ..Field::default()
+            });
         }
         self.nodes[node].fields = Some(Fields {
             getter,
@@ -185,7 +267,11 @@ impl<'py> Schema<'py> {
         }
         let index = input::python_index(py, index)?;
         let arguments = crate::output::tuple_from_ready(py, [index])?;
-        let value = control::callback(py, Some(budget), || fields.getter.call1(arguments))?;
+        let getter = fields
+            .getter
+            .as_ref()
+            .ok_or_else(|| invalid(py, "native field source getter is missing"))?;
+        let value = control::callback(py, Some(budget), || getter.call1(arguments))?;
         field.source = Some(value.clone());
         Ok(value)
     }
@@ -212,25 +298,7 @@ impl<'py> Schema<'py> {
             return Ok(());
         }
         for index in 0..count {
-            let field = self.source_field(node, index, budget)?;
-            // Explicitly approved necessary source snapshot: this single public
-            // getter internally copies/decodes one complete name atomically.
-            // No private C++ layout or NUL-terminated substitute is consulted.
-            let name = control::callback(py, Some(budget), || errors::attribute(&field, c"name"));
-            let name = name.inspect_err(|error| {
-                errors::note_format(
-                    py,
-                    error,
-                    format_args!("while reading native schema field name at position {index}"),
-                );
-            })?;
-            name.cast::<PyString>()?;
-            self.nodes[node]
-                .fields
-                .as_mut()
-                .ok_or_else(|| invalid(py, "Arrow name fields disappeared"))?
-                .slots[index]
-                .name = Some(name);
+            self.acquire_name(node, index, budget)?;
         }
         self.nodes[node]
             .fields
@@ -238,6 +306,44 @@ impl<'py> Schema<'py> {
             .ok_or_else(|| invalid(py, "Arrow name fields disappeared"))?
             .names_ready = true;
         Ok(())
+    }
+
+    fn acquire_name(
+        &mut self,
+        node: usize,
+        index: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        self.fields(node, budget)?;
+        let py = self._owner.py();
+        if let Some(name) = self.nodes[node]
+            .fields
+            .as_ref()
+            .and_then(|fields| fields.slots.get(index))
+            .and_then(|field| field.name.clone())
+        {
+            return Ok(name);
+        }
+        let field = self.source_field(node, index, budget)?;
+        // Explicitly approved necessary source snapshot: this single public
+        // getter internally copies/decodes one complete name atomically.
+        // No private C++ layout or NUL-terminated substitute is consulted.
+        let name = control::callback(py, Some(budget), || errors::attribute(&field, c"name"));
+        let name = name.inspect_err(|error| {
+            errors::note_format(
+                py,
+                error,
+                format_args!("while reading native schema field name at position {index}"),
+            );
+        })?;
+        name.cast::<PyString>()?;
+        self.nodes[node]
+            .fields
+            .as_mut()
+            .ok_or_else(|| invalid(py, "Arrow name fields disappeared"))?
+            .slots[index]
+            .name = Some(name.clone());
+        Ok(name)
     }
 
     fn child(&mut self, node: usize, edge: Edge, budget: &dyn Checkpoint) -> PyResult<usize> {
@@ -263,12 +369,21 @@ impl<'py> Schema<'py> {
         if let Some(node) = cached {
             return Ok(node);
         }
-        let dtype = if let Some(field) = source {
-            control::callback(py, Some(budget), || errors::attribute(&field, c"type"))?
+        let dtype = if self.polars && node == 0 && self.table.is_some() {
+            self.nodes[0].dtype.cast::<PyList>()?.get_item(match edge {
+                Edge::Field(index) => index,
+                Edge::Value => {
+                    return Err(invalid(py, "table schema has no anonymous value child"));
+                }
+            })?
+        } else if let Some(field) = source {
+            control::callback(py, Some(budget), || {
+                errors::attribute(&field, if self.polars { c"dtype" } else { c"type" })
+            })?
         } else {
             let parent = self.nodes[node].dtype.clone();
             control::callback(py, Some(budget), || {
-                errors::attribute(&parent, c"value_type")
+                errors::attribute(&parent, if self.polars { c"inner" } else { c"value_type" })
             })?
         };
         self.nodes

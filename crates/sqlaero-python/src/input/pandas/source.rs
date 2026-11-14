@@ -1,7 +1,7 @@
 //! Public column preparation and row-wise writes, without Python row objects.
 
 use crate::errors;
-use crate::input::attribute::GetSet;
+use crate::input::attribute::{GetSet, receiver_view};
 use crate::input::cell::Target;
 use crate::input::control::{self, Checkpoint};
 use crate::input::source::{PreparedSource, Shape};
@@ -21,7 +21,7 @@ use std::fmt::Write;
 
 /// Fixed public dtype families. Unsupported extension schemas never disappear
 /// merely because an array is empty or every value is missing.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum Family {
     Nullable,
     PythonString,
@@ -407,6 +407,54 @@ impl SourceTypes {
         ))
     }
 
+    /// Admit declared label families before looking at codes. Missing rows do
+    /// not erase an unsupported schema, and no unused label array is read.
+    fn validate_declared(
+        &self,
+        dtype: &Bound<'_, PyAny>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Family> {
+        let root = self.family(dtype)?;
+        if root != Family::Categorical {
+            return Ok(root);
+        }
+        let py = dtype.py();
+        let mut current = dtype.clone();
+        let mut retained = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+        loop {
+            crate::input::check(py, budget)?;
+            seen.try_reserve(1).map_err(|_| errors::memory_error(py))?;
+            if !seen.insert(current.as_ptr() as usize) {
+                return Err(invalid(
+                    py,
+                    "declared Pandas categorical schema contains a cycle",
+                ));
+            }
+            retained
+                .try_reserve(1)
+                .map_err(|_| errors::memory_error(py))?;
+            retained.push(current.clone());
+            if self.family(&current)? != Family::Categorical {
+                return Ok(root);
+            }
+            let categories = control::callback(py, Some(budget), || {
+                errors::attribute(&current, c"categories")
+            })?;
+            let base = self
+                .native_indices
+                .iter()
+                .rev()
+                .find(|base| inherits(&categories, base.bind(py)))
+                .ok_or_else(|| {
+                    invalid(py, "Pandas categorical labels have no supported Index base")
+                })?;
+            let receiver = self.receiver(&categories, base.bind(py), budget)?;
+            current =
+                control::callback(py, Some(budget), || errors::attribute(&receiver, c"dtype"))?;
+        }
+    }
+
     fn column<'py>(
         &self,
         storage: &Bound<'py, PyAny>,
@@ -439,6 +487,10 @@ impl SourceTypes {
                             invalid(py, "Pandas categorical labels have no supported Index base")
                         })?;
                     let categories = self.receiver(&categories, base.bind(py), budget)?;
+                    let label_dtype = control::callback(py, Some(budget), || {
+                        errors::attribute(&categories, c"dtype")
+                    })?;
+                    self.validate_declared(&label_dtype, budget)?;
                     let labels = categories.len()?;
                     Ok(Column::Categorical(crate::input::boxed(
                         py,
@@ -549,7 +601,7 @@ impl SourceTypes {
                 let codes = errors::attribute(storage, c"codes")?;
                 let categories = errors::attribute(storage, c"categories")?;
                 let dtype = errors::attribute(&categories, c"dtype")?;
-                self.family(&dtype)?;
+                self.validate_declared(&dtype, budget)?;
                 let labels = categories.len()?;
                 let codes = numpy_source(api, &codes, budget, length)?;
                 // Standard Index values may use the already validated native
@@ -1225,47 +1277,4 @@ impl<'py> PandasSource<'py> {
         target.checkpoint(py, 1)?;
         source.consume(row, target, budget, &self.numpy)
     }
-}
-
-/// A short canonical receiver header shares the actual Python instance state.
-/// Native-backed providers never enter this object.__new__ route.
-fn receiver_view<'py>(
-    value: &Bound<'py, PyAny>,
-    base: &Bound<'py, PyType>,
-    object_new: &Bound<'py, PyAny>,
-    budget: &dyn Checkpoint,
-) -> PyResult<Bound<'py, PyAny>> {
-    if value.get_type().is(base) {
-        return Ok(value.clone());
-    }
-    let py = value.py();
-    control::callback(py, Some(budget), || {
-        // object.__new__ refuses native bases requiring additional C
-        // state. This route is only used for known Python-state Pandas
-        // bases; native-backed arrays use retained public getters below.
-        let view = object_new.call1((base,))?;
-        // SAFETY: documented object dictionary APIs return/retain owning
-        // references and bypass child attribute hooks. The exact base
-        // receiver shares the original state, not a copied value array or
-        // alternative value. No provider-private memory layout is read.
-        let dictionary = unsafe {
-            Bound::from_owned_ptr_or_err(
-                py,
-                pyo3::ffi::PyObject_GenericGetDict(value.as_ptr(), std::ptr::null_mut()),
-            )
-        }?;
-        // SAFETY: view is a fresh exact Python-state base receiver and
-        // dictionary is an owning actual dict from the public getter above.
-        let status = unsafe {
-            pyo3::ffi::PyObject_GenericSetDict(
-                view.as_ptr(),
-                dictionary.as_ptr(),
-                std::ptr::null_mut(),
-            )
-        };
-        if status != 0 {
-            return Err(PyErr::fetch(py));
-        }
-        Ok(view)
-    })
 }

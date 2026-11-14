@@ -213,7 +213,7 @@ fn identifier_write(
                     },
                     error => error,
                 };
-                super::codec_error(source, text, context.codec.name(), error)
+                super::codec_error(source, text, context.codec.name(), error, Some(budget))
             })?;
         start = end;
     }

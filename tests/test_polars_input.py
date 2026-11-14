@@ -198,10 +198,17 @@ def test_polars_nested_classification_keeps_labels_and_parent_validity(dtype: ob
     if kind == "list":
         value = pl.Series([["b", None, "a"], None, []], dtype=pl.List(dtype))
         expected = [b"\x03SELECT ('b',NULL,'a')", b"\x03SELECT NULL", b"\x03SELECT ()"]
+        # Final discussion8.10 selects an outer row once. With itemize=True,
+        # the first actual list supplies three positions, not one fragment.
+        with pytest.raises(_sqlaero.ProgrammingError, match="expects 1 positions"):
+            _sqlaero._bind_sql("SELECT %s", value, many=True)
     else:
         value = pl.Series([{"label": "b"}, None, {"label": None}], dtype=pl.Struct([pl.Field("label", dtype)]))
         expected = [b"\x03SELECT ('b')", b"\x03SELECT NULL", b"\x03SELECT (NULL)"]
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == expected
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [
+            b"\x03SELECT 'b'", b"\x03SELECT NULL", b"\x03SELECT NULL"
+        ]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == expected
 
 
 def test_polars_nested_columns_keep_one_cell_and_struct_schema_order() -> None:
