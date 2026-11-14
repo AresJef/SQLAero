@@ -1589,7 +1589,9 @@ impl Visit<'_> {
     }
 
     fn enter(&mut self, py: Python<'_>, identity: usize) -> PyResult<()> {
-        if self.active_depth + self.native_depth >= 64 || self.active.contains(&identity) {
+        if self.active_depth + self.native_depth >= 64
+            || crate::input::transparent::contains(py, &self.active, identity, Some(self.budget))?
+        {
             return Err(errors::client_format(
                 py,
                 ClientErrorCode::ContainerNesting,
@@ -1605,6 +1607,27 @@ impl Visit<'_> {
         self.active.push(identity);
         self.active_depth += 1;
         Ok(())
+    }
+
+    fn enter_transparent(
+        &mut self,
+        source: &crate::input::transparent::Value<'_>,
+    ) -> PyResult<usize> {
+        let py = source.payload().py();
+        if source.intersects(&self.active, Some(self.budget))? {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::ContainerNesting,
+                "transparent source input contains a true cycle; current request was not sent",
+            ));
+        }
+        let previous = self.active.len();
+        self.active
+            .try_reserve(source.len())
+            .map_err(|_| errors::memory_error(py))?;
+        self.active.extend(source.identities());
+        // These owners emit no container and do not consume output depth.
+        Ok(previous)
     }
     /// Defer a leaf's diagnostic index until failure. Containers still keep
     /// their actual ancestry while traversing; successful scalars need no
@@ -1681,7 +1704,7 @@ impl Visit<'_> {
                 .map(|()| project(FragmentRole::Row))
         } else {
             self.native_or_unsupported(value, output, child)
-                .map(|()| project(FragmentRole::Row))
+                .map(project)
         }
     }
 
@@ -1762,12 +1785,18 @@ impl Visit<'_> {
         value: &Bound<'_, PyAny>,
         output: &mut Vec<u8>,
         child: Option<usize>,
-    ) -> PyResult<()> {
+    ) -> PyResult<FragmentRole> {
         let py = value.py();
         if let Some(index) = child {
             self.push_index(py, index)?;
         }
         let result = (|| {
+            if let Some(source) = self.types.transparent(value, Some(self.budget))? {
+                let previous = self.enter_transparent(&source)?;
+                let result = self.value_role(source.payload(), output, None);
+                self.active.truncate(previous);
+                return result;
+            }
             let Some(mut source) = source::prepare(value, self.types, self.budget)? else {
                 return Err(crate::input::unsupported(value));
             };
@@ -1775,7 +1804,7 @@ impl Visit<'_> {
             let result = self.native_value(source.as_mut(), output);
             self.active.pop();
             self.active_depth -= 1;
-            result
+            result.map(|()| FragmentRole::Row)
         })();
         if let Err(error) = &result {
             self.failed_value(value, None, error);
@@ -1901,6 +1930,12 @@ impl CellWriter for Visit<'_> {
                 Some(self.budget),
             )? {
                 return Ok(());
+            }
+            if let Some(source) = self.types.transparent(value, Some(self.budget))? {
+                let previous = self.enter_transparent(&source)?;
+                let result = self.native_python(source.payload(), sink, child);
+                self.active.truncate(previous);
+                return result;
             }
             if Sequence::from(value, self.types, &self.active, Some(self.budget))?.is_some()
                 || source::prepare(value, self.types, self.budget)?.is_some()

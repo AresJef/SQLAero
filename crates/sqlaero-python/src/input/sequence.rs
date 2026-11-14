@@ -190,7 +190,7 @@ impl<'py> Sequence<'py> {
         let Some(kind) = kind(value, types) else {
             return Ok(None);
         };
-        if active.contains(&(value.as_ptr() as usize)) {
+        if super::transparent::contains(value.py(), active, value.as_ptr() as usize, budget)? {
             return Err(errors::client(
                 value.py(),
                 sqlaero_core::error::ClientErrorCode::ContainerNesting,

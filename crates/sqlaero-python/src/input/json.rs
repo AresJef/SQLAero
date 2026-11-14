@@ -203,6 +203,22 @@ impl Serialize<'_> {
                 .write(native, &self.options)
                 .map_err(|error| failure(py, error));
         }
+        if let Some(source) = self.types.transparent(value, self.budget)? {
+            if source.intersects(&self.active, self.budget)? {
+                return Err(errors::builtin_message::<PyValueError>(
+                    py,
+                    "transparent JSON source contains a true cycle",
+                ));
+            }
+            let previous = self.active.len();
+            self.active
+                .try_reserve(source.len())
+                .map_err(|_| errors::memory_error(py))?;
+            self.active.extend(source.identities());
+            let result = self.value_at(source.payload(), path);
+            self.active.truncate(previous);
+            return result;
+        }
         let detail = self.types.diagnostic(value)?;
         Err(errors::builtin_format::<PyTypeError>(
             py,
@@ -213,7 +229,7 @@ impl Serialize<'_> {
     fn container(&mut self, value: &Bound<'_, PyAny>, kind: Kind, path: &Path<'_>) -> PyResult<()> {
         let py = value.py();
         let identity = value.as_ptr() as usize;
-        if self.active.contains(&identity) {
+        if super::transparent::contains(py, &self.active, identity, self.budget)? {
             return Err(errors::builtin_message::<PyValueError>(
                 py,
                 "JSON input contains a true cycle",
@@ -343,7 +359,7 @@ impl Serialize<'_> {
     ) -> PyResult<()> {
         let py = source.py();
         let identity = source.as_ptr() as usize;
-        if self.active.contains(&identity) {
+        if super::transparent::contains(py, &self.active, identity, self.budget)? {
             return Err(errors::builtin_message::<PyValueError>(
                 py,
                 "JSON input contains a true cycle",

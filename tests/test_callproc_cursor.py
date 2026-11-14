@@ -518,6 +518,10 @@ def out_placeholder_arguments(source: str, receipt: int) -> object:
     if source == 'json-invalid-payload':
         # The source-level OUT rejection must precede JSON serialization.
         return (receipt, sqlaero.JSON(object()))
+    if source in ('enum-null', 'enum-invalid-payload'):
+        from enum import Enum
+        value = None if source == 'enum-null' else object()
+        return (receipt, Enum('OutSlot', {'VALUE': value}).VALUE)
     if source.startswith('numpy-'):
         np = pytest.importorskip('numpy')
         if source == 'numpy-NaT':
@@ -562,6 +566,7 @@ def target_command_counts(connection: Any) -> dict[str, int]:
 @pytest.mark.parametrize('source', [
     'decimal-NaN', 'decimal-Infinity', 'decimal--Infinity', 'decimal-sNaN',
     'float-nan', 'integer', 'json-null', 'json-invalid-payload',
+    'enum-null', 'enum-invalid-payload',
     'numpy-NaT', 'numpy-timedelta-NaT', 'numpy-object-NaT',
     'numpy-record-NaT', 'pandas-NA', 'pandas-NaT', 'pandas-nullable',
     'arrow-null', 'arrow-list-containing-null', 'polars-null',

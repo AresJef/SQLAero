@@ -35,6 +35,7 @@ pub(crate) mod sequence;
 pub(crate) mod source;
 pub(crate) mod standard;
 pub(crate) mod temporal;
+pub(crate) mod transparent;
 pub(crate) mod unicode;
 
 /// Allocate one boundary-owned strategy fallibly, using the same global
@@ -87,12 +88,37 @@ pub(crate) struct ScalarTypes {
     struct_time: Py<PyType>,
     sequences: sequence::Types,
     uuid: std::sync::OnceLock<identifier::UuidType>,
+    enum_type: std::sync::OnceLock<Py<PyType>>,
     numpy: std::sync::OnceLock<numpy::NumpyTypes>,
     pandas: std::sync::OnceLock<pandas::PandasTypes>,
     polars: std::sync::OnceLock<polars::PolarsTypes>,
 }
 
 impl ScalarTypes {
+    fn enum_type<'py>(
+        &self,
+        py: Python<'py>,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<Option<&Bound<'py, PyType>>> {
+        if self.enum_type.get().is_none() {
+            if !provider_loaded(py, b"enum")? {
+                return Ok(None);
+            }
+            let candidate = control::callback(py, budget, || transparent::prepare_type(py))?;
+            let _ = self.enum_type.set(candidate);
+            checkpoint(py, budget)?;
+        }
+        Ok(self.enum_type.get().map(|typ| typ.bind(py)))
+    }
+
+    pub(crate) fn transparent<'py>(
+        &self,
+        value: &Bound<'py, PyAny>,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<Option<transparent::Value<'py>>> {
+        transparent::read(value, self, budget)
+    }
+
     /// Describe only the failed input, with bounded text and no arbitrary repr
     /// or tzinfo callback. Failure to obtain this optional detail is ignored by
     /// callers so it cannot replace the real conversion exception.
@@ -141,6 +167,7 @@ impl ScalarTypes {
             native_decimal,
             sequences: sequence::Types::new(py)?,
             uuid: std::sync::OnceLock::new(),
+            enum_type: std::sync::OnceLock::new(),
             utc: errors::attribute(&timezone, c"utc")?.unbind(),
             datetime_offset: errors::attribute(py.get_type::<PyDateTime>().as_any(), c"utcoffset")?
                 .unbind(),
