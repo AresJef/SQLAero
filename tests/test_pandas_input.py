@@ -136,7 +136,7 @@ def test_pandas_python_string_null_normalization_keeps_both_missing_conventions_
 
 
 @pytest.mark.parametrize("error_type", [MemoryError, KeyboardInterrupt])
-def test_pandas_python_string_late_numpy_failure_keeps_the_original_and_row(monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]) -> None:
+def test_pandas_python_string_storage_bypasses_obsolete_numpy_conversion(monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]) -> None:
     value = pd.array(["ok"] * 1025, dtype=pd.StringDtype(storage="python"))
     original = error_type("original Python StringArray block conversion")
     to_numpy = pd.arrays.StringArray.to_numpy
@@ -151,11 +151,8 @@ def test_pandas_python_string_late_numpy_failure_keeps_the_original_and_row(monk
         return to_numpy(array, *args, **kwargs)
 
     monkeypatch.setattr(pd.arrays.StringArray, "to_numpy", convert)
-    with pytest.raises(error_type) as caught:
-        _sqlaero._bind_sql("SELECT %s", value, many=True)
-    assert caught.value is original
-    assert lengths == [1024, 1]
-    assert "args[1024]" in "\n".join(getattr(caught.value, "__notes__", []))
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 'ok'"] * 1025
+    assert lengths == []
 
 
 def test_pandas_standalone_arrow_extension_array_reuses_native_arrow() -> None:
@@ -186,7 +183,7 @@ def test_pandas_range_index_uses_values_and_ignores_its_name() -> None:
 
 def test_pandas_multi_index_tuple_is_one_logical_cell() -> None:
     value = pd.MultiIndex.from_tuples([(1, "a"), (2, "b")], names=[object(), object()])
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT (1,'a')", b"\x03SELECT (2,'b')"]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == [b"\x03SELECT (1,'a')", b"\x03SELECT (2,'b')"]
 
 
 @pytest.mark.parametrize("reverse", [False, True])
@@ -206,7 +203,7 @@ def test_pandas_multi_index_codes_keep_nulls_slices_and_one_tuple_cell(reverse: 
         ([b"'a'", b"'b'"][b] if b >= 0 else b"NULL") + b")"
         for a, b in pairs
     ]
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT " + row for row in rows]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == [b"\x03SELECT " + row for row in rows]
     assert _sqlaero._encode_value(value).to_bytes() == b"(" + b",".join(rows) + b")"
 
 
@@ -217,17 +214,17 @@ def test_pandas_multi_index_unusual_code_keeps_original_late_getter_behavior(cod
         codes=[[0] * 39 + [code], [0] * 40], verify_integrity=False,
     )
     if code == -2:
-        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == (
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == (
             [b"\x03SELECT (10,'a')"] * 39 + [b"\x03SELECT (20,'a')"]
         )
     else:
         with pytest.raises(IndexError) as caught:
-            _sqlaero._bind_sql("SELECT %s", value, many=True)
+            _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False)
         assert "args[39]" in "\n".join(getattr(caught.value, "__notes__", ()))
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_pandas_multi_index_real_subclass_values_hook_stays_once(fail: bool) -> None:
+def test_pandas_multi_index_subclass_replacement_values_are_ignored(fail: bool) -> None:
     calls: list[int] = []
     original = RuntimeError("actual MultiIndex values hook")
     class Index(pd.MultiIndex):
@@ -242,16 +239,11 @@ def test_pandas_multi_index_real_subclass_values_hook_stays_once(fail: bool) -> 
             return result
     value = Index(levels=[[1], ["ignored"]], codes=[[0] * 33, [0] * 33])
     assert type(value) is Index
-    if fail:
-        with pytest.raises(RuntimeError) as caught:
-            _sqlaero._encode_value(value)
-        assert caught.value is original
-    else:
-        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT (7,'hook')"] * 33
-    assert calls == [1]
+    assert _sqlaero._bind_sql("SELECT %s,%s", value, many=True) == [b"\x03SELECT 1,'ignored'"] * 33
+    assert calls == []
 
 
-def test_pandas_multi_index_gets_all_labels_before_converting_them(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pandas_multi_index_labels_ignore_replacement_getters_and_str(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     class Label(str):
         def __str__(self) -> str:
@@ -269,8 +261,8 @@ def test_pandas_multi_index_gets_all_labels_before_converting_them(monkeypatch: 
             events.append("get:" + str(indices[id(index)]))
         return getter(index, key)
     monkeypatch.setattr(pd.Index, "__getitem__", observed)
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT ('a','b')"] * 33
-    assert events == ["get:0", "get:1"] * 33
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == [b"\x03SELECT ('a','b')"] * 33
+    assert events == []
 
 
 @pytest.mark.parametrize(("dtype", "numbers"), [
@@ -295,7 +287,7 @@ def test_pandas_multi_index_signed_widths_keep_random_codes_and_object_labels(dt
         b"\x03SELECT (" + str(numbers[a]).encode() + b"," + [b"'a'", b"'b'"][b] + b")"
         for a, b in pairs
     ]
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == expected
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == expected
 
 
 @pytest.mark.parametrize(("many", "itemize"), [(False, False), (False, True), (True, False), (True, True)])
@@ -306,8 +298,8 @@ def test_pandas_multi_index_signed_and_object_values_keep_all_binding_roles(many
     )
     cells = [b"(9,'a')", b"(-7,'b')"] * 17
     if many:
-        sql = "SELECT %s"
-        expected = [b"\x03SELECT " + cell for cell in cells]
+        sql = "SELECT %s,%s" if itemize else "SELECT %s"
+        expected = [b"\x03SELECT " + (cell[1:-1] if itemize else cell) for cell in cells]
     elif itemize:
         sql = "SELECT " + ",".join(["%s"] * len(cells))
         expected = [b"\x03SELECT " + b",".join(cells)]
@@ -326,7 +318,7 @@ def test_pandas_multi_index_signed_leaf_keeps_unsigned_and_float_values_exact() 
         ],
         codes=[[0, 1] * 17, [1, 0] * 17, [0, 1] * 17],
     )
-    rows = _sqlaero._bind_sql("SELECT %s", value, many=True)
+    rows = _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False)
     expected_signed = [b"-9223372036854775808", b"9223372036854775807"] * 17
     expected_unsigned = [b"18446744073709551615", b"0"] * 17
     expected_float = ["-0x0.0p+0", "0x1.999999999999ap-4"] * 17
@@ -336,7 +328,7 @@ def test_pandas_multi_index_signed_leaf_keeps_unsigned_and_float_values_exact() 
         assert float(third).hex() == floating
 
 
-def test_pandas_multi_index_signed_and_object_gets_every_label_before_conversion(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pandas_multi_index_native_and_object_labels_ignore_replacements(monkeypatch: pytest.MonkeyPatch) -> None:
     events: list[str] = []
     class Label(str):
         def __str__(self) -> str:
@@ -354,50 +346,48 @@ def test_pandas_multi_index_signed_and_object_gets_every_label_before_conversion
             events.append("get:" + targets[id(index)])
         return getter(index, key)
     monkeypatch.setattr(pd.Index, "__getitem__", observed)
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT (7,'a','b')"] * 35
-    assert events == ["get:a", "get:b"] * 35
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == [b"\x03SELECT (7,'a','b')"] * 35
+    assert events == []
 
 
 @pytest.mark.parametrize("error_type", [MemoryError, KeyboardInterrupt])
-def test_pandas_multi_index_later_object_getter_error_precedes_tuple_output_limit(monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]) -> None:
-    value = pd.MultiIndex(
-        levels=[pd.Index([7], dtype=np.int64), pd.Index(["a"], dtype=object)],
-        codes=[[0] * 35, [0] * 35],
-    )
-    target = value.levels[1]
-    original = error_type("original later MultiIndex label getter")
-    getter = pd.Index.__getitem__
-    def observed(index: Any, key: Any) -> Any:
-        if index is target:
-            raise original
-        return getter(index, key)
-    monkeypatch.setattr(pd.Index, "__getitem__", observed)
-    # The SQL prefix fits, but even '(' would exceed this limit. The original
-    # later label getter still wins: all labels precede any tuple output.
+def test_pandas_multi_index_actual_temporal_error_keeps_original_and_position(monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]) -> None:
+    from datetime import datetime, timedelta, tzinfo
+    armed = False
+    original = error_type("original actual MultiIndex temporal protocol")
+    class Zone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta:
+            if armed:
+                raise original
+            return timedelta(0)
+    labels = pd.Index([datetime(2024, 1, 1, tzinfo=Zone())], dtype=object)
+    value = pd.MultiIndex(levels=[pd.Index([7]), labels], codes=[[0] * 35, [0] * 35])
+    armed = True
     with pytest.raises(error_type) as caught:
-        _sqlaero._bind_sql("SELECT %s", value, many=True, limit=len(b"\x03SELECT "))
+        _sqlaero._bind_sql("SELECT %s,%s", value, many=True)
     assert caught.value is original
+    assert "args[0][1]" in "\n".join(getattr(caught.value, "__notes__", ()))
 
 
-def test_pandas_multi_index_signed_leaf_is_owned_before_later_object_getter(monkeypatch: pytest.MonkeyPatch) -> None:
-    value = pd.MultiIndex(
-        levels=[pd.Index([7], dtype=np.int64), pd.Index(["a"], dtype=object)],
-        codes=[[0] + [-1] * 34, [0] * 35],
-    )
-    target = value.levels[1]
+def test_pandas_multi_index_native_leaf_is_owned_before_temporal_callback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import datetime, timedelta, tzinfo
+    armed = False
+    changed = False
+    numbers: Any = None
+    class Zone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta:
+            nonlocal changed
+            if armed and not changed:
+                changed = True
+                numbers[0] = 99
+            return timedelta(0)
+    label = datetime(2024, 1, 1, tzinfo=Zone())
+    value = pd.MultiIndex(levels=[pd.Index([7]), pd.Index([label], dtype=object)], codes=[[0] + [-1] * 34, [0] * 35])
     numbers = value.levels[0].to_numpy(copy=False)
     numbers.setflags(write=True)
-    getter = pd.Index.__getitem__
-    changed = False
-    def observed(index: Any, key: Any) -> Any:
-        nonlocal changed
-        if index is target and not changed:
-            changed = True
-            numbers[0] = 99
-        return getter(index, key)
-    monkeypatch.setattr(pd.Index, "__getitem__", observed)
-    rows = _sqlaero._bind_sql("SELECT %s", value, many=True)
-    assert rows == [b"\x03SELECT (7,'a')"] + [b"\x03SELECT (NULL,'a')"] * 34
+    armed = True
+    rows = _sqlaero._bind_sql("SELECT %s,%s", value, many=True)
+    assert rows == [b"\x03SELECT 7,'2024-01-01 00:00:00'"] + [b"\x03SELECT NULL,'2024-01-01 00:00:00'"] * 34
     assert changed
 
 
@@ -412,10 +402,10 @@ def test_pandas_multi_index_whole_row_fallback_does_not_prepare_signed_labels(mo
     monkeypatch.setattr(pd.arrays.NumpyExtensionArray, "to_numpy", unexpected)
     if code == 3:
         with pytest.raises(IndexError):
-            _sqlaero._bind_sql("SELECT %s", value, many=True)
+            _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False)
     else:
         first = b"NULL" if code == -1 else b"20"
-        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == (
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == (
             [b"\x03SELECT (" + first + b",'a')"] + [b"\x03SELECT (NULL,'a')"] * 34
         )
 
@@ -426,7 +416,7 @@ def test_pandas_multi_index_native_signed_limit_error_keeps_the_child_position()
         codes=[[0] * 35, [0] * 35],
     )
     with pytest.raises(_sqlaero.OperationalError) as caught:
-        _sqlaero._bind_sql("SELECT %s", value, many=True, limit=len(b"\x03SELECT (123"))
+        _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False, limit=len(b"\x03SELECT (123"))
     assert "args[0][0]" in "\n".join(getattr(caught.value, "__notes__", []))
 
 
@@ -462,7 +452,7 @@ def test_pandas_complex_multi_index_levels_keep_the_original_tuple_reader(kind: 
         literal = b"(1,2)"
     value = pd.MultiIndex(levels=[level, pd.Index(["a"], dtype=object)], codes=[[0] * 33, [0] * 33])
     expected = b"\x03SELECT (" + literal + b",'a')"
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [expected] * 33
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == [expected] * 33
 
 
 @pytest.mark.parametrize("unit", ["s", "ms", "us", "ns"])
@@ -527,7 +517,7 @@ def test_pandas_unsupported_declared_extension_schema_is_not_hidden_by_empty_val
         _sqlaero._encode_value(value)
 
 
-def test_pandas_series_subclass_values_hook_runs_once_and_defines_values() -> None:
+def test_pandas_series_subclass_reads_actual_values_without_replacement_hook() -> None:
     calls: list[int] = []
     class Series(pd.Series):
         @property
@@ -535,29 +525,26 @@ def test_pandas_series_subclass_values_hook_runs_once_and_defines_values() -> No
             calls.append(1)
             return np.array([7, 8], dtype=np.int64)
     value = Series([1, 2])
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 7", b"\x03SELECT 8"]
-    assert calls == [1]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 1", b"\x03SELECT 2"]
+    assert calls == []
 
 
-def test_pandas_series_subclass_original_values_exception_is_preserved() -> None:
+def test_pandas_series_subclass_replacement_values_error_is_not_called() -> None:
     marker = RuntimeError("original values failure")
     class Series(pd.Series):
         @property
         def values(self):
             raise marker
-    with pytest.raises(RuntimeError) as caught:
-        _sqlaero._encode_value(Series([1]))
-    assert caught.value is marker
+    assert _sqlaero._encode_value(Series([1])).to_bytes() == b"(1)"
 
 
 @pytest.mark.parametrize("values", [np.zeros((2, 1)), np.array([1]), [1, 2]])
-def test_pandas_series_subclass_values_are_shape_and_type_checked(values: object) -> None:
+def test_pandas_series_subclass_replacement_storage_cannot_change_shape(values: object) -> None:
     class Series(pd.Series):
         @property
         def values(self):
             return values
-    with pytest.raises(TypeError):
-        _sqlaero._encode_value(Series([1, 2]))
+    assert _sqlaero._encode_value(Series([1, 2])).to_bytes() == b"(1,2)"
 
 
 def test_pandas_nullable_blocks_preserve_values_across_block_boundaries() -> None:
@@ -604,7 +591,7 @@ def run(index):
     barrier.wait(timeout=10)
     for _ in range(16):
         for source, expected in sources:
-            assert _sqlaero._bind_sql('SELECT %s',source,many=True) == expected
+            assert _sqlaero._bind_sql('SELECT %s',source,many=True,itemize=False) == expected
     return index
 with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
     assert sorted(pool.map(run,range(4))) == list(range(4))
@@ -731,7 +718,7 @@ assert getattr(sys, '_is_gil_enabled', lambda: True)() == before
 
 
 @pytest.mark.parametrize("count", [1023, 1024, 1025])
-def test_pandas_nullable_native_preparation_remains_bounded_to_current_piece(monkeypatch: pytest.MonkeyPatch, count: int) -> None:
+def test_pandas_nullable_native_storage_needs_no_python_block_conversion(monkeypatch: pytest.MonkeyPatch, count: int) -> None:
     pytest.importorskip("pyarrow")
     value = pd.array([None if index % 17 == 0 else index for index in range(count)], dtype="Int64")
     lengths: list[int] = []
@@ -747,7 +734,7 @@ def test_pandas_nullable_native_preparation_remains_bounded_to_current_piece(mon
     monkeypatch.setattr(pd.arrays.IntegerArray, "isna", masked)
     expected = [b"\x03SELECT " + (b"NULL" if index % 17 == 0 else str(index).encode()) for index in range(count)]
     assert _sqlaero._bind_sql("SELECT %s", value, many=True) == expected
-    assert lengths == ([count] if count <= 1024 else [1024, 1])
+    assert lengths == []
 
 
 @pytest.mark.parametrize("reverse", [False, True])
@@ -808,7 +795,7 @@ def test_pandas_nullable_native_float_keeps_subnormals_extremes_and_invalid_slot
 
 
 @pytest.mark.parametrize("error_type", [MemoryError, KeyboardInterrupt])
-def test_pandas_nullable_preparation_keeps_original_error_without_fallback(monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]) -> None:
+def test_pandas_nullable_storage_bypasses_replacement_export_and_mask_errors(monkeypatch: pytest.MonkeyPatch, error_type: type[BaseException]) -> None:
     pytest.importorskip("pyarrow")
     value = pd.array([1, None, 3] * 12, dtype="Int64")
     calls: list[str] = []
@@ -821,15 +808,11 @@ def test_pandas_nullable_preparation_keeps_original_error_without_fallback(monke
         raise original
     monkeypatch.setattr(pd.arrays.IntegerArray, "__arrow_array__", exported)
     monkeypatch.setattr(pd.arrays.IntegerArray, "isna", masked)
-    with pytest.raises(error_type) as caught:
-        _sqlaero._bind_sql("SELECT %s", value, many=True)
-    assert caught.value is original
-    # I44 exercises mask; the candidate exercises Arrow. Either route makes
-    # exactly one failed preparation, never a second try after a real error.
-    assert len(calls) == 1
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 1", b"\x03SELECT NULL", b"\x03SELECT 3"] * 12
+    assert calls == []
 
 
-def test_pandas_nullable_late_block_error_keeps_original_cause_and_row(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pandas_nullable_multiple_native_blocks_need_no_python_conversion(monkeypatch: pytest.MonkeyPatch) -> None:
     pytest.importorskip("pyarrow")
     value = pd.array(range(1025), dtype="Int64")
     calls: list[str] = []
@@ -848,15 +831,12 @@ def test_pandas_nullable_late_block_error_keeps_original_cause_and_row(monkeypat
         return original_mask(array)
     monkeypatch.setattr(pd.arrays.IntegerArray, "__arrow_array__", exported)
     monkeypatch.setattr(pd.arrays.IntegerArray, "isna", masked)
-    with pytest.raises(MemoryError) as caught:
-        _sqlaero._bind_sql("SELECT %s", value, many=True)
-    assert caught.value is original
-    assert len(calls) == 2
-    assert "args[1024]" in "\n".join(getattr(caught.value, "__notes__", []))
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT " + str(index).encode() for index in range(1025)]
+    assert calls == []
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_pandas_nullable_real_array_subclass_keeps_its_mask_and_conversion_hooks(fail: bool) -> None:
+def test_pandas_nullable_real_subclass_uses_actual_data_and_mask(fail: bool) -> None:
     pytest.importorskip("pyarrow")
     calls: list[str] = []
     original = RuntimeError("original nullable subclass mask")
@@ -876,39 +856,25 @@ def test_pandas_nullable_real_array_subclass_keeps_its_mask_and_conversion_hooks
     value = pd.Series(Array(np.arange(36, dtype=np.int64), np.zeros(36, dtype=np.bool_)))
     assert type(value.array) is Array
     calls.clear()
-    if fail:
-        with pytest.raises(RuntimeError) as caught:
-            _sqlaero._bind_sql("SELECT %s", value, many=True)
-        assert caught.value is original
-        assert calls == ["mask"]
-    else:
-        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT " + str(index).encode() for index in range(36)]
-        assert calls == ["mask", "numpy"]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT " + str(index).encode() for index in range(36)]
+    assert calls == []
 
 
 def test_pandas_nullable_block_preparation_uses_the_original_operation_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    from datetime import datetime, timedelta, tzinfo
     import time
-    pytest.importorskip("pyarrow")
     value = pd.array(range(1025), dtype="Int64")
-    # Prepare optional type identities before starting the tested budget.
     assert _sqlaero._encode_value(pd.array([1], dtype="Int64")).to_bytes() == b"(1)"
-    calls: list[str] = []
-    original_arrow = pd.arrays.IntegerArray.__arrow_array__
-    original_mask = pd.arrays.IntegerArray.isna
-    def exported(array: Any, type: Any = None) -> Any:
-        calls.append("arrow")
-        time.sleep(0.1)
-        return original_arrow(array, type=type)
-    def masked(array: Any) -> Any:
-        calls.append("mask")
-        time.sleep(0.1)
-        return original_mask(array)
-    monkeypatch.setattr(pd.arrays.IntegerArray, "__arrow_array__", exported)
-    monkeypatch.setattr(pd.arrays.IntegerArray, "isna", masked)
+    calls: list[int] = []
+    class Zone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta:
+            calls.append(1)
+            time.sleep(0.1)
+            return timedelta(0)
     with pytest.raises(_sqlaero.OperationalTimeoutError) as caught:
-        _sqlaero._bind_sql("SELECT %s", value, many=True, timeout_ns=50_000_000)
+        _sqlaero._bind_sql("SELECT %s,%s", [datetime(2024, 1, 1, tzinfo=Zone()), value], timeout_ns=50_000_000)
     assert caught.value.is_server_error is False
-    assert len(calls) == 1
+    assert calls == [1]
 
 
 def test_pandas_nullable_native_blocks_keep_the_original_signal_exception(request: pytest.FixtureRequest) -> None:
@@ -1000,11 +966,14 @@ assert _sqlaero._bind_sql('SELECT %s',value,many=True)==[b'\x03SELECT 7',b'\x03S
     pd.arrays.SparseArray([1, 2]),
 ])
 def test_pandas_internal_or_excluded_array_classes_do_not_gain_standalone_entry(value: object) -> None:
-    with pytest.raises(TypeError):
-        _sqlaero._encode_value(value)
+    if isinstance(value, (pd.arrays.NumpyExtensionArray, pd.arrays.DatetimeArray, pd.arrays.TimedeltaArray)):
+        assert _sqlaero._encode_value(value).to_bytes().startswith(b"(")
+    else:
+        with pytest.raises(TypeError):
+            _sqlaero._encode_value(value)
 
 
-def test_pandas_active_subclass_cycle_is_rejected_before_repeating_values_hook() -> None:
+def test_pandas_active_actual_subclass_cycle_is_rejected_without_values_hook() -> None:
     calls: list[int] = []
     storage = np.empty(1, dtype=object)
     class Series(pd.Series):
@@ -1013,19 +982,21 @@ def test_pandas_active_subclass_cycle_is_rejected_before_repeating_values_hook()
             calls.append(1)
             return storage
     value = Series([None], dtype=object)
+    value.iloc[0] = value
     storage[0] = value
     assert storage[0] is value
     try:
         with pytest.raises(DataError) as caught:
             _sqlaero._encode_value(value)
         assert caught.value.code == 65543
-        assert calls == [1]
+        assert calls == []
     finally:
         storage[0] = None
+        value.iloc[0] = None
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_pandas_actual_index_subclass_honors_values_once_and_keeps_its_exception(fail: bool) -> None:
+def test_pandas_actual_index_subclass_reads_base_values_without_replacement(fail: bool) -> None:
     calls: list[int] = []
     original = RuntimeError("original Index values conversion")
     class Index(pd.RangeIndex):
@@ -1037,13 +1008,8 @@ def test_pandas_actual_index_subclass_honors_values_once_and_keeps_its_exception
             return np.array([7, 8], dtype=np.int64)
     value = Index(2)
     assert type(value) is Index
-    if fail:
-        with pytest.raises(RuntimeError) as caught:
-            _sqlaero._encode_value(value)
-        assert caught.value is original
-    else:
-        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 7", b"\x03SELECT 8"]
-    assert calls == [1]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 0", b"\x03SELECT 1"]
+    assert calls == []
 
 
 def test_pandas_categorical_index_uses_labels_and_missing_instead_of_codes_or_names() -> None:
@@ -1234,7 +1200,7 @@ def test_pandas_object_category_repeats_required_protocols_and_preserves_origina
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_pandas_category_labels_real_index_subclass_keeps_getter_and_error(fail: bool) -> None:
+def test_pandas_category_label_subclass_reads_base_values_without_getter(fail: bool) -> None:
     calls: list[int] = []
     original = KeyboardInterrupt("category label Index getter")
     class Labels(pd.RangeIndex):
@@ -1248,18 +1214,12 @@ def test_pandas_category_labels_real_index_subclass_keeps_getter_and_error(fail:
     value = pd.Categorical.from_codes([0, 1, 2] * 12, categories=labels)
     assert type(value.categories) is Labels
     calls.clear()
-    if fail:
-        with pytest.raises(KeyboardInterrupt) as caught:
-            _sqlaero._bind_sql("SELECT %s", value, many=True)
-        assert caught.value is original
-        assert calls == ([0, 1, 2] * 11)
-    else:
-        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 0", b"\x03SELECT 1", b"\x03SELECT 2"] * 12
-        assert calls == [0, 1, 2] * 12
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 0", b"\x03SELECT 1", b"\x03SELECT 2"] * 12
+    assert calls == []
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_pandas_real_categorical_index_subclass_keeps_values_once(fail: bool) -> None:
+def test_pandas_real_categorical_index_subclass_ignores_replacement_values(fail: bool) -> None:
     calls: list[int] = []
     original = MemoryError("CategoricalIndex values original")
     class Index(pd.CategoricalIndex):
@@ -1271,13 +1231,8 @@ def test_pandas_real_categorical_index_subclass_keeps_values_once(fail: bool) ->
             return np.full(35, 17, dtype=np.int64)
     value = Index(["ignored"] * 35)
     assert type(value) is Index
-    if fail:
-        with pytest.raises(MemoryError) as caught:
-            _sqlaero._bind_sql("SELECT %s", value, many=True)
-        assert caught.value is original
-    else:
-        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 17"] * 35
-    assert calls == [1]
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 'ignored'"] * 35
+    assert calls == []
 
 
 @pytest.mark.parametrize("first", [-2, -1])
@@ -1298,7 +1253,7 @@ def test_pandas_category_bad_code_or_all_nulls_do_not_request_label_array(monkey
 
 
 @pytest.mark.parametrize("returned", ["index", "category"])
-def test_pandas_category_unexpected_public_label_array_falls_back_without_recursion(monkeypatch: pytest.MonkeyPatch, returned: str) -> None:
+def test_pandas_category_malformed_public_label_storage_is_rejected(monkeypatch: pytest.MonkeyPatch, returned: str) -> None:
     value = pd.Categorical.from_codes([0, 1] * 17, categories=pd.Index([7, 9]))
     original: Any = pd.Index.array
     target = value.categories
@@ -1307,7 +1262,8 @@ def test_pandas_category_unexpected_public_label_array_falls_back_without_recurs
             return target if returned == "index" else value
         return original.__get__(index, type(index))
     monkeypatch.setattr(pd.Index, "array", property(array))
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 7", b"\x03SELECT 9"] * 17
+    with pytest.raises(TypeError, match="Pandas .*storage"):
+        _sqlaero._bind_sql("SELECT %s", value, many=True)
 
 
 def test_pandas_native_category_keeps_late_bad_code_and_output_limit() -> None:
@@ -1350,11 +1306,10 @@ def test_pandas_dataframe_arrow_columns_keep_distinct_chunk_boundaries_and_slice
     assert _sqlaero._bind_sql("SELECT %s,%s", value.iloc[1:]) == expected[1:]
 
 
-def test_pandas_dataframe_subclasses_do_not_gain_an_unapproved_entry() -> None:
+def test_pandas_dataframe_subclass_uses_approved_actual_base_storage() -> None:
     class Frame(pd.DataFrame):
         pass
-    with pytest.raises(TypeError):
-        _sqlaero._encode_value(Frame([[1, 2]]))
+    assert _sqlaero._bind_sql("SELECT %s,%s", Frame([[1, 2]])) == [b"\x03SELECT 1,2"]
 
 
 def test_pandas_primitive_source_revalidates_before_reading_beyond_its_owned_run() -> None:

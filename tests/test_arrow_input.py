@@ -316,7 +316,7 @@ def test_arrow_dictionary_chunks_with_shared_values_keep_their_own_keys(labels_c
 def test_arrow_dictionary_nested_labels_keep_their_logical_value_and_validity() -> None:
     labels = pa.array([[1, None], None, []], type=pa.list_(pa.int64()))
     value = pa.DictionaryArray.from_arrays(pa.array([2, 0, None, 1], type=pa.int16()), labels)
-    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True, itemize=False) == [
         b"\x03SELECT ()", b"\x03SELECT (1,NULL)", b"\x03SELECT NULL", b"\x03SELECT NULL"
     ]
 
@@ -340,10 +340,10 @@ def test_arrow_nested_cells_keep_one_parameter_and_schema_order() -> None:
         [{"last": 2, "first": 1}, None],
         type=pa.struct([("first", pa.int64()), ("last", pa.int64())]),
     )
-    assert _sqlaero._bind_sql("SELECT %s", lists, many=True) == [
+    assert _sqlaero._bind_sql("SELECT %s", lists, many=True, itemize=False) == [
         b"\x03SELECT (1,NULL)", b"\x03SELECT NULL", b"\x03SELECT ()"
     ]
-    assert _sqlaero._bind_sql("SELECT %s", structs, many=True) == [
+    assert _sqlaero._bind_sql("SELECT %s", structs, many=True, itemize=False) == [
         b"\x03SELECT (1,2)", b"\x03SELECT NULL"
     ]
 

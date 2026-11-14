@@ -60,11 +60,11 @@ def test_natural_table_and_record_projection_uses_shared_shapes() -> None:
             assert escape(table, many=many) == [("1", "2"), ("3", "4")]
             assert escape(table, many=many, itemize=False) == ["(1,2)", "(3,4)"]
         record = np.array([(1, 2)], dtype=[("z", "i4"), ("a", "i4")])[0]
-        assert escape(record, many=many) == ("1", "2")
-        assert escape(record, many=many, itemize=False) == "(1,2)"
+        assert escape(record, many=many) == (["1", "2"] if many else ("1", "2"))
+        assert escape(record, many=many, itemize=False) == (["1", "2"] if many else "(1,2)")
         empty_record = np.empty(1, dtype=[])[0]
-        assert escape(empty_record, many=many) == ()
-        assert escape(empty_record, many=many, itemize=False) == "()"
+        assert escape(empty_record, many=many) == ([()] if many else ())
+        assert escape(empty_record, many=many, itemize=False) == ([()] if many else "()")
     assert escape([record], many=True) == [("1", "2")]
 
 

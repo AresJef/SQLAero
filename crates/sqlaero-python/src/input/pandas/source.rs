@@ -11,7 +11,7 @@ use crate::input::{
 };
 use pyo3::exceptions::{PyIndexError, PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyModule, PyTuple, PyType};
+use pyo3::types::{PyModule, PyTuple, PyType};
 use sqlaero_core::bind::value::ValueRef;
 use sqlaero_transcode::temporal::TimeUnit;
 use std::ffi::CStr;
@@ -43,7 +43,6 @@ pub(super) struct SourceTypes {
     dtypes: Vec<(Py<PyType>, Family)>,
     string_dtype: Py<PyType>,
     numpy_dtype: Py<PyType>,
-    numpy_extension: Py<PyType>,
     object_new: Py<PyAny>,
     native_arrays: Vec<NativeArray>,
     name_api: Py<PyTuple>,
@@ -178,9 +177,6 @@ impl SourceTypes {
             dtypes,
             string_dtype: super::exact_type(module, c"StringDtype")?,
             numpy_dtype: super::exact_type(&numpy, c"dtype")?,
-            numpy_extension: errors::attribute(&array_module, c"NumpyExtensionArray")?
-                .cast_into::<PyType>()?
-                .unbind(),
             object_new: object_new.unbind(),
             native_arrays,
             name_api,
@@ -567,17 +563,13 @@ impl SourceTypes {
             return Ok(Column::Numpy(array));
         }
         let length = storage.len()?;
-        if storage.get_type().is(self.numpy_extension.bind(py)) {
-            // The public canonical wrapper has a NumpyEADtype facade. Its
-            // to_numpy result, not that facade's class/name, establishes the
-            // actual dtype and ownership. This internal bridge does not make
-            // standalone NumpyExtensionArray a new accepted root input.
-            return converted_numpy_column(storage, api, budget, length);
-        }
         let dtype = errors::attribute(storage, c"dtype")?;
         let family = self.family(&dtype)?;
         match family {
-            Family::Numpy => converted_numpy_column(storage, api, budget, length),
+            Family::Numpy => Err(invalid(
+                py,
+                "Pandas NumPy storage requires a supported actual base array",
+            )),
             Family::Nullable => {
                 if !self
                     .arrays
@@ -627,9 +619,8 @@ impl SourceTypes {
                 let declared = self.declared_schema(&dtype, api, budget)?;
                 let labels = categories.len()?;
                 let codes = numpy_source(api, &codes, budget, length)?;
-                // Standard Index values may use the already validated native
-                // storage contract. Object labels and real Index subclasses
-                // retain their actual scalar getter and conversion protocols.
+                // Labels retain the same qualified base-storage contract.
+                // Only actual cell values run their admitted protocols.
                 Ok(Column::Categorical(crate::input::boxed(
                     py,
                     Category {
@@ -1205,19 +1196,6 @@ fn numpy_source<'py>(
     Ok(source)
 }
 
-fn converted_numpy_column<'py>(
-    storage: &Bound<'py, PyAny>,
-    api: &NumpyArrayApi,
-    budget: &dyn crate::input::control::Checkpoint,
-    length: usize,
-) -> PyResult<Column<'py>> {
-    let py = storage.py();
-    let keywords = errors::dictionary(py)?;
-    keywords.set_item(pyo3::types::PyString::from_bytes(py, b"copy")?, false)?;
-    let output = call_keywords(storage, c"to_numpy", &keywords)?;
-    let source = numpy_source(api, &output, budget, length)?;
-    Ok(Column::Numpy(source))
-}
 fn inherits(value: &Bound<'_, PyAny>, base: &Bound<'_, PyType>) -> bool {
     // SAFETY: both are live actual type objects; inspect the real MRO.
     unsafe {
@@ -1235,16 +1213,6 @@ fn native_integer(value: &Bound<'_, PyAny>) -> PyResult<Option<i128>> {
 
 fn invalid(py: Python<'_>, message: &str) -> PyErr {
     errors::builtin_message::<PyTypeError>(py, message)
-}
-fn call_keywords<'py>(
-    value: &Bound<'py, PyAny>,
-    method: &CStr,
-    keywords: &Bound<'py, PyDict>,
-) -> PyResult<Bound<'py, PyAny>> {
-    errors::attribute(value, method)?.call(
-        crate::output::tuple_from_ready(value.py(), [])?,
-        Some(keywords),
-    )
 }
 fn full_slice(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
     // SAFETY: the attached constructor retains None and reports actual NULL.
