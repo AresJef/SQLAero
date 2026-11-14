@@ -1,5 +1,9 @@
 """Native Arrow cells expose structure once; targets choose row/JSON layout."""
 
+# pyright: reportPrivateUsage=false
+from typing import Any
+
+
 import json
 import struct
 import pytest
@@ -42,7 +46,7 @@ def test_dictionary_reuse_rechecks_actual_sql_mode_between_requests(label: str) 
 
 @pytest.mark.parametrize("dtype", [pa.list_(pa.int64()), pa.large_list(pa.int64()), pa.list_(pa.int64(), 2)])
 @pytest.mark.parametrize("chunked", [False, True])
-def test_list_cells_preserve_structure_and_parent_null(dtype, chunked: bool) -> None:
+def test_list_cells_preserve_structure_and_parent_null(dtype: Any, chunked: bool) -> None:
     value = pa.array([[7, None], None, [8, 9]], type=dtype)
     if chunked:
         value = pa.chunked_array([value.slice(0, 1), value.slice(1, 0), value.slice(1)])
@@ -58,7 +62,7 @@ def test_nested_list_shape_does_not_become_another_root_batch() -> None:
 
 
 def test_each_dictionary_chunk_uses_its_own_nested_labels() -> None:
-    def dictionary(labels, keys):
+    def dictionary(labels: list[object], keys: list[int | None]):
         return pa.DictionaryArray.from_arrays(pa.array(keys, type=pa.int8()), pa.array(labels, type=pa.list_(pa.int64())))
     value = pa.chunked_array([dictionary([[7], [8, 9]], [1, None, 0]), dictionary([[10], []], [0, 1])])
     assert json_dumps(value) == b"[[8,9],null,[7],[10],[]]"

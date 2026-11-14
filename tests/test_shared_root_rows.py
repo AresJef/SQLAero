@@ -1,5 +1,10 @@
 """Root many selects rows once; each selected value keeps its own structure."""
 
+from typing import Any
+
+# pyright: reportPrivateUsage=false
+
+
 from collections.abc import Callable
 
 import pytest
@@ -37,7 +42,7 @@ def test_root_record_fields_use_the_same_outer_many_rule(
     assert json_dumps(value) == b'{"id":7,"name":"ab"}'
 
 
-def pairs(kind: str) -> object:
+def pairs(kind: str) -> Any:
     if kind in ("record", "masked_record"):
         value = np.array([(7, 8), (9, 10)], dtype=[("a", "i8"), ("b", "i8")])
     elif kind in ("object", "masked_object"):

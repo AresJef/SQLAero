@@ -1,5 +1,10 @@
 """Native import preserves offsets, ownership and bounded controllable work."""
 
+# pyright: reportPrivateUsage=false
+from typing import Any
+from types import FrameType
+
+
 from decimal import Decimal
 from datetime import datetime, timedelta, tzinfo
 import gc
@@ -28,13 +33,14 @@ def unaligned(data: bytes):
     (pa.decimal256(76, 3), b"".join(n.to_bytes(32, "little", signed=True) for n in [12500, -12500, 0]), ["12.500", "-12.500", "0.000"]),
 ])
 @pytest.mark.parametrize("sliced", [False, True])
-def test_unaligned_primitive_buffers_keep_actual_values(dtype, payload: bytes, expected: list, sliced: bool) -> None:
+def test_unaligned_primitive_buffers_keep_actual_values(dtype: Any, payload: bytes, expected: list[int | float | str], sliced: bool) -> None:
     source = pa.Array.from_buffers(dtype, 3, [None, unaligned(payload)])
     if sliced:
         source, expected = source.slice(1), expected[1:]
     assert json.loads(json_dumps(source)) == expected
     # Decimal SQL is a numeric value, while JSON preserves its scale as text.
     sql = _sqlaero._escape_projection(source)
+    assert isinstance(sql, tuple)
     if pa.types.is_decimal(dtype):
         assert [Decimal(item) for item in sql] == [Decimal(item) for item in expected]
     elif pa.types.is_integer(dtype) or pa.types.is_floating(dtype):
@@ -93,7 +99,7 @@ def test_long_native_preparation_preserves_original_signal(kind: str) -> None:
     original = RuntimeError("original signal during native source preparation")
     deliveries = 0
 
-    def interrupt(number, frame) -> None:
+    def interrupt(number: int, frame: FrameType | None) -> None:
         nonlocal deliveries
         if frame is None or frame.f_code is not test_long_native_preparation_preserves_original_signal.__code__:
             return
@@ -102,7 +108,7 @@ def test_long_native_preparation_preserves_original_signal(kind: str) -> None:
         raise original
 
     class Arm(tzinfo):
-        def utcoffset(self, value):
+        def utcoffset(self, value: Any):
             alarm.start(0.001, 0.001, wait_ready=True)
             return timedelta(0)
 

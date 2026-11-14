@@ -1,5 +1,8 @@
 """Source protocols revalidate actual owners without inventing execution facts."""
 
+# pyright: reportPrivateUsage=false
+
+
 from datetime import datetime, timedelta, tzinfo
 from datetime import time as clock_time
 import time
@@ -61,7 +64,7 @@ def test_medium_values_charge_cumulative_byte_work_before_final_publication(kind
 @pytest.mark.parametrize("source_kind", ["datetime", "struct-time", "json-dict", "json-time"])
 @pytest.mark.parametrize("raises", [False, True], ids=["returns", "raises"])
 def test_source_callback_cannot_execute_after_transaction_retires_its_cursor(
-    label: str, kind: Any, prepared: bool, entry: str, source_kind: str, raises: bool,
+    label: str, kind: type[Cursor] | type[DictCursor] | type[SSCursor] | type[SSDictCursor], prepared: bool, entry: str, source_kind: str, raises: bool,
 ) -> None:
     name = "shared_control_" + uuid4().hex[:16]
     procedure = name + "_p"

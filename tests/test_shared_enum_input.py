@@ -1,5 +1,8 @@
 """Enum transparency preserves the current value position and real base value."""
 
+# pyright: reportPrivateUsage=false
+
+
 from enum import Enum, Flag, IntEnum, IntFlag, StrEnum
 import json
 import os

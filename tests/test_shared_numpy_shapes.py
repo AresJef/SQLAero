@@ -1,5 +1,8 @@
 """Scalar and axis facts preserve root layout independently of target policy."""
 
+# pyright: reportPrivateUsage=false
+
+
 import pytest
 from sqlaero import _sqlaero, json_dumps
 from sqlaero.errors import SQLAeroError
@@ -70,7 +73,7 @@ def test_zero_dimensional_prepared_input_preserves_one_position(many: bool, item
 @pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("cursor", [Cursor, DictCursor, SSCursor, SSDictCursor])
 @pytest.mark.parametrize("prepared", [False, True])
-def test_actual_zero_dimensional_inputs_write_exactly_one_row_each_time(label: str, cursor, prepared: bool) -> None:
+def test_actual_zero_dimensional_inputs_write_exactly_one_row_each_time(label: str, cursor: type[Cursor] | type[DictCursor] | type[SSCursor] | type[SSDictCursor], prepared: bool) -> None:
     with live(label) as connection:
         with connection.cursor(cursor, prepared=prepared) as current:
             current.execute("CREATE TEMPORARY TABLE scalar_zero_dim (id INT AUTO_INCREMENT PRIMARY KEY, value BIGINT)")

@@ -1,5 +1,10 @@
 """Independent scalar fixtures for approved NumPy type-table boundaries."""
 
+# pyright: reportPrivateUsage=false
+from typing import Any
+from collections.abc import Callable
+
+
 import json
 import math
 
@@ -24,7 +29,7 @@ INTEGERS = [
 
 
 @pytest.mark.parametrize(("base", "minimum", "maximum"), INTEGERS)
-def test_numpy_integer_table_values_boundaries_and_keys(base, minimum, maximum) -> None:
+def test_numpy_integer_table_values_boundaries_and_keys(base: type[Any], minimum: int, maximum: int) -> None:
     for number in (7, minimum, maximum):
         source = base(number)
         expected = str(number)
@@ -37,7 +42,7 @@ def test_numpy_integer_table_values_boundaries_and_keys(base, minimum, maximum) 
 
 
 @pytest.mark.parametrize(("base", "minimum", "maximum"), INTEGERS)
-def test_numpy_integer_table_source_overflow_is_not_library_validation(base, minimum, maximum, record_property) -> None:
+def test_numpy_integer_table_source_overflow_is_not_library_validation(base: type[Any], minimum: int, maximum: int, record_property: Callable[[str, object], None]) -> None:
     record_property("verification_boundary", "provider-construction-only")
     record_property("provider_versions", "numpy=" + np.__version__)
     # The two unsigned64 rows explicitly use -2; narrower unsigned rows use -1.
@@ -48,8 +53,8 @@ def test_numpy_integer_table_source_overflow_is_not_library_validation(base, min
 
 
 @pytest.mark.parametrize(("base", "minimum", "maximum"), INTEGERS)
-def test_numpy_integer_table_true_subclass_uses_base_value(base, minimum, maximum) -> None:
-    def forbidden(*args, **kwargs):
+def test_numpy_integer_table_true_subclass_uses_base_value(base: type[Any], minimum: int, maximum: int) -> None:
+    def forbidden(*args: object, **kwargs: object):
         raise AssertionError("real NumPy integer must retain its actual base value")
     Child = type("StoredInteger", (base,), dict(__int__=forbidden, __index__=forbidden,
                                                __str__=forbidden, item=forbidden))
@@ -60,7 +65,7 @@ def test_numpy_integer_table_true_subclass_uses_base_value(base, minimum, maximu
 
 
 @pytest.mark.parametrize(("number", "sql", "document"), [(True, "1", b"true"), (False, "0", b"false")])
-def test_numpy_boolean_table_values_and_key_role(number, sql, document) -> None:
+def test_numpy_boolean_table_values_and_key_role(number: int | float, sql: Any, document: bytes) -> None:
     source = np.bool_(number)
     assert _sqlaero._escape_projection(source) == sql
     assert json_dumps(source) == document
@@ -69,7 +74,7 @@ def test_numpy_boolean_table_values_and_key_role(number, sql, document) -> None:
         json_dumps({source: "ab"})
 
 
-def test_numpy_boolean_table_conditional_subclass_source(record_property) -> None:
+def test_numpy_boolean_table_conditional_subclass_source(record_property: Callable[[str, object], None]) -> None:
     try:
         Child = type("StoredBoolean", (np.bool_,), {})
     except TypeError as error:
@@ -88,11 +93,12 @@ def test_numpy_boolean_table_conditional_subclass_source(record_property) -> Non
 
 @pytest.mark.parametrize("base", [np.float16, np.float32, np.float64], ids=["034","035","036"])
 @pytest.mark.parametrize("number", [2.5, 0.1, -0.0])
-def test_numpy_float_table_preserves_the_promoted_value_and_category(base, number) -> None:
+def test_numpy_float_table_preserves_the_promoted_value_and_category(base: type[Any], number: int | float) -> None:
     source = base(number)
     # NumPy's public scalar conversion independently provides the exact promoted value.
     expected = float(source)
     sql = _sqlaero._escape_projection(source)
+    assert isinstance(sql, str)
     assert "e" in sql.lower() and float(sql).hex() == expected.hex()
     actual = json.loads(json_dumps(source))
     assert type(actual) is float and actual.hex() == expected.hex()
@@ -103,7 +109,7 @@ def test_numpy_float_table_preserves_the_promoted_value_and_category(base, numbe
 
 @pytest.mark.parametrize("base", [np.float16, np.float32, np.float64], ids=["034","035","036"])
 @pytest.mark.parametrize("number", [math.nan, math.inf, -math.inf])
-def test_numpy_float_table_nonfinite_policy_does_not_change_sql(base, number) -> None:
+def test_numpy_float_table_nonfinite_policy_does_not_change_sql(base: type[Any], number: int | float) -> None:
     source = base(number)
     assert _sqlaero._escape_projection(source) == "NULL"
     assert json_dumps(source) == b"null"
@@ -122,10 +128,11 @@ def test_numpy_float_table_nonfinite_policy_does_not_change_sql(base, number) ->
     ("u4","f4",0x00000001,"0x1p-149"),
     ("u4","f4",0x3f800001,"0x1.000002p0"),
 ], ids=["034-08","034-09","034-10","034-11","035-08","035-09","035-10","035-11"])
-def test_numpy_float_table_fixed_bits_do_not_flush_or_use_a_short_source_string(unsigned, floating, bits, expected_hex) -> None:
+def test_numpy_float_table_fixed_bits_do_not_flush_or_use_a_short_source_string(unsigned: str, floating: str, bits: int, expected_hex: str) -> None:
     source = np.array([bits], dtype=unsigned).view(floating)[0]
     expected = float.fromhex(expected_hex)
-    assert float(_sqlaero._escape_projection(source)).hex() == expected.hex()
+    sql = _sqlaero._escape_projection(source)
+    assert isinstance(sql, str) and float(sql).hex() == expected.hex()
     actual = json.loads(json_dumps(source))
     assert type(actual) is float and actual.hex() == expected.hex()
     assert math.copysign(1, actual) == math.copysign(1, expected)
@@ -134,7 +141,7 @@ def test_numpy_float_table_fixed_bits_do_not_flush_or_use_a_short_source_string(
 @pytest.mark.parametrize(("text", "sql", "document"), [
     ("ab", "'ab'", b'"ab"'), ("", "''", b'""'), ("a\0b", "'a\\0b'", b'"a\\u0000b"'),
 ], ids=["037-01","037-02","037-03"])
-def test_numpy_text_table_keeps_the_complete_real_unicode(text, sql, document) -> None:
+def test_numpy_text_table_keeps_the_complete_real_unicode(text: str, sql: Any, document: bytes) -> None:
     source = np.str_(text)
     assert _sqlaero._escape_projection(source) == sql
     assert json_dumps(source) == document
@@ -152,7 +159,7 @@ def test_numpy_text_table_rejects_real_surrogate_codepoints() -> None:
     (b"ab", "CAST(X'6162' AS BINARY)"), (b"", "CAST(X'' AS BINARY)"),
     (b"a\0b\0", "CAST(X'61006200' AS BINARY)"),
 ], ids=["038-01","038-02","038-03"])
-def test_numpy_binary_table_uses_actual_source_length_without_guessing_json(value, expected) -> None:
+def test_numpy_binary_table_uses_actual_source_length_without_guessing_json(value: Any, expected: Any) -> None:
     source = np.bytes_(value)
     assert _sqlaero._escape_projection(source) == expected
     with pytest.raises(TypeError):
@@ -162,8 +169,8 @@ def test_numpy_binary_table_uses_actual_source_length_without_guessing_json(valu
 @pytest.mark.parametrize(("base", "value", "sql", "document"), [
     (np.str_, "ab", "'ab'", b'"ab"'), (np.bytes_, b"ab", "CAST(X'6162' AS BINARY)", None),
 ], ids=["037-05","038-04"])
-def test_numpy_text_binary_table_real_subclasses_ignore_replacements(base, value, sql, document) -> None:
-    def forbidden(*args, **kwargs):
+def test_numpy_text_binary_table_real_subclasses_ignore_replacements(base: type[Any], value: Any, sql: Any, document: bytes | None) -> None:
+    def forbidden(*args: object, **kwargs: object):
         raise AssertionError("use actual text/binary base storage")
     Child = type("StoredText", (base,), dict(__str__=forbidden, __bytes__=forbidden))
     source = Child(value)
@@ -197,7 +204,7 @@ def test_numpy_text_binary_table_real_subclasses_ignore_replacements(base, value
     pytest.param(np.timedelta64(1000,"ns"), "'00:00:00.000001'", b'"PT0.000001S"', id="040-20"),
     pytest.param(np.timedelta64(-1001,"ns"), "'-00:00:00.000001'", b'"-PT0.000001001S"', id="040-21"),
 ],)
-def test_numpy_temporal_table_remaining_exact_policy_pairs(source, sql, document) -> None:
+def test_numpy_temporal_table_remaining_exact_policy_pairs(source: Any, sql: Any, document: bytes) -> None:
     assert _sqlaero._escape_projection(source) == sql
     assert json_dumps(source) == document
 
@@ -207,8 +214,8 @@ def test_numpy_temporal_table_remaining_exact_policy_pairs(source, sql, document
      "'2026-11-12 08:09:10.123456'", b'"2026-11-12T08:09:10.123456789"'),
     (np.timedelta64, np.timedelta64(-1,"ns"), "'00:00:00'", b'"-PT0.000000001S"'),
 ], ids=["039-23","040-22"])
-def test_numpy_temporal_table_conditional_subclass_source(base, value, sql, document, record_property) -> None:
-    def forbidden(*args, **kwargs):
+def test_numpy_temporal_table_conditional_subclass_source(base: type[Any], value: Any, sql: Any, document: bytes, record_property: Callable[[str, object], None]) -> None:
+    def forbidden(*args: object, **kwargs: object):
         raise AssertionError("a real temporal subclass cannot replace its value")
     Child = type("StoredTemporal", (base,), dict(__str__=forbidden, item=forbidden))
     source = Child(value)
@@ -222,7 +229,7 @@ def test_numpy_temporal_table_conditional_subclass_source(base, value, sql, docu
 
 
 @pytest.mark.parametrize("base", [np.datetime64, np.timedelta64], ids=["039-17","040-16"])
-def test_numpy_temporal_table_real_nat_is_valid_in_strict_json(base) -> None:
+def test_numpy_temporal_table_real_nat_is_valid_in_strict_json(base: type[Any]) -> None:
     source = base("NaT", "ns")
     assert _sqlaero._escape_projection(source) == "NULL"
     assert json_dumps(source, allow_nan=False) == b"null"

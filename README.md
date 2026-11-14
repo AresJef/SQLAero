@@ -132,8 +132,9 @@ Memory-size settings accept byte integers or forms such as `64MB` / `64MiB`.
 Named placeholders are not supported. Scalar inputs include None, bool, int,
 float, Decimal, str, bytes, date, datetime, time, timedelta and struct_time.
 Lists, tuples, dictionary values and views, sets, frozensets and ranges provide
-positional, nested and batch structure. Approved real built-in subclasses use
-their documented conversion protocols; arbitrary duck types are rejected.
+positional, nested and batch structure. Approved real built-in subclasses read
+actual base storage. Only explicitly documented protocols, such as tzinfo and
+struct_time integer fields, execute application code; arbitrary duck types are rejected.
 Optional NumPy, Pandas, PyArrow and Polars inputs are described below.
 For mutable binary sources, callers may synchronize their own access and pass
 an already created immutable `bytes` value. Escape performs no implicit conversion.
@@ -171,36 +172,60 @@ before execution handoff retain the old result and counters.
 ### Optional typed Escape inputs
 
 These packages remain optional: ordinary SQLAero import and execution do not
-import them. Use the provider's canonical classes and keep the entire source
-stable until execute returns, including external buffer aliases.
+import them. The shared-transcode development candidate is still undergoing its
+own acceptance checks; historical Beta evidence does not validate this candidate.
+Use qualified provider storage and keep it stable until the call returns,
+including external buffer aliases.
 
 | Provider | Supported input families | Native representation |
 | --- | --- | --- |
-| NumPy | Fixed-width signed/unsigned integers, float16/32/64, bool, str_/bytes_, datetime64/timedelta64; exact 1D/2D ndarray; np.record | Real strides and byte order, schema field order, original time unit and multiplier |
-| Pandas | NA/NaT, Timestamp/Timedelta, Series, Index and approved index subclasses, exact DataFrame; Categorical and nullable integer/float/bool/string/Arrow extension arrays | Public per-column storage, masks, actual category labels and Arrow chunks |
+| NumPy | Fixed-width signed/unsigned integers, float16/32/64, bool, str_/bytes_, datetime64/timedelta64; qualified ndarray subclasses, existing memmap, record/void with fields, recarray and MaskedArray | Real axes/strides/byte order, original field order, masks, time unit and multiplier; target-specific dtype and dimension admission |
+| Pandas | NA/NaT, Timestamp/Timedelta, Series, approved Index families and DataFrame, including qualified real subclasses; approved categorical, nullable and extension arrays | Public per-column storage, masks, actual category labels and Arrow chunks |
 | PyArrow | Canonical CPU Array, ChunkedArray, RecordBatch, Table and DictionaryArray | Public C Data/Stream ownership, validity, offsets, chunks and supported recursive List/Array/Struct/Dictionary values |
-| Polars | Exact Series and DataFrame, including supported category/Enum and nested types; top-level Object | Public native Arrow export; Object values use the shared Python value visitor |
+| Polars | Qualified Series and DataFrame, including supported category/Enum and nested types; top-level Object | Public native Arrow export; Object values use the shared Python value visitor |
 
-One-dimensional sources follow `many`/`itemize`; two-dimensional tables are row
-sources even with `many=False`. Record fields form one logical row. Nested
-containers and typed values remain a single SQL parameter fragment; they are
-not converted to JSON or expanded using the SQL placeholder count. Empty typed
-vectors and zero-row tables mean zero positions. A nonempty table with no
-columns retains every logical row. A zero-field record is one row: it supplies
-zero positions with `itemize=True`, or one `()` fragment with `itemize=False`.
-Ordinary empty containers follow their documented `many`/`itemize` rules.
+One-dimensional value and record series follow the same root `many`/`itemize`
+rules as a list. With `many=False` they supply one parameter row; with
+`many=True` each outer element supplies a row. Natural two-dimensional tables
+remain row sources even with `many=False`. A root record follows its field
+sequence, including `many=True`; after a row is selected, `many` is not applied
+again inside its fields. A nonstructured 0D Object remains one value, even when
+that value contains a list or record. Nested structures are SQL fragments in
+text mode, not JSON documents or inferred extra placeholders; prepared positions
+still bind single values and reject such fragments.
+
+An empty root sequence has zero positions with `itemize=True`, or one `()`
+fragment with `itemize=False`. With `many=True`, an empty root produces the
+single zero-parameter call represented by `[()]`, for either itemize option.
+Zero-row tables also keep that zero-parameter call. Nonempty zero-column tables
+retain every actual row. Empty records keep their record/field identity.
 
 Floating inputs preserve their binary source value when widened to float64,
-including negative zero. Missing/nonfinite inputs become NULL. Temporal values
-keep necessary source fractional digits up to nanoseconds; target column
-precision, rounding and SQL mode are enforced by MySQL. Decimal literals retain
-up to 65 necessary digits without imposing a target column's scale limit.
-Custom Arrow extensions/device storage, structured ndarrays other than record
-scalars, ndarray subclasses, Polars LazyFrame/Expr/nested Object, bytearray and
-memoryview remain outside this input contract. Provider wheel availability is
+including negative zero. Missing/nonfinite inputs become NULL. Source time facts
+retain their full precision, while both MySQL text and prepared parameters
+truncate to microseconds locally without rounding. Negative durations truncate
+toward zero; pre-epoch datetimes first decompose into calendar seconds. Server
+column ranges and remaining SQL semantics stay with MySQL. Decimal literals
+retain source fractional scale and up to 65 necessary digits.
+Custom Arrow extensions/device storage, unapproved dtype combinations,
+Polars LazyFrame/Expr/nested Object, bytearray and memoryview remain outside this
+input contract. Ordinary SQL arrays are limited to their approved 0D/1D/2D
+roles; structured 2D+ arrays are rejected by MySQL, while JSON retains their axes.
+Provider wheel availability is
 separate from the kernel's 48 GIL/NoGIL platform/runtime combinations: fixed
 PyArrow 26.0.0 has no official Windows ARM64 wheel, and the fixed Polars 2.1.0
-runtime has no free-threaded wheel.
+runtime has no free-threaded wheel. Polars sources with NUL-containing names
+which its native exporter cannot safely export are rejected before export;
+qualified PyArrow complete NUL-containing field names remain supported.
+
+### JSON serialization and SQL text parameters
+
+The shared-transcode candidate provides `json_dumps(obj, *, allow_nan=True)`,
+returning compact UTF-8 `bytes` independently of a Connection, and lazy
+`JSON(obj, *, allow_nan=True)` for one SQL text parameter. The serializer retains
+JSON target precision; only the subsequent SQL text encoding uses connection
+settings. See the [JSON input guide](docs/shared-transcode-json.md) for value,
+structure, error, ownership and source-call boundaries.
 
 Rows default to tuples. `connection.cursor(dict)` selects `DictCursor`;
 `streaming=True` selects `SSCursor` or `SSDictCursor` for the chosen row format.

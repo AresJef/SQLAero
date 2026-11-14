@@ -1,5 +1,8 @@
 """Full source ticks feed independent MySQL microsecond and JSON policies."""
 
+# pyright: reportPrivateUsage=false
+
+
 import pytest
 from datetime import datetime, timedelta
 from uuid import uuid4
@@ -76,7 +79,9 @@ def test_database_receives_truncated_values_and_json_keeps_source_precision(
     with live(label) as connection:
         with connection.cursor() as setup:
             setup.execute("SELECT @@SESSION.sql_mode")
-            modes = [value for value in setup.fetchone()[0].split(",") if value != "TIME_TRUNCATE_FRACTIONAL"]
+            mode_row = setup.fetchone()
+            assert mode_row is not None and isinstance(mode_row[0], str)
+            modes = [value for value in mode_row[0].split(",") if value != "TIME_TRUNCATE_FRACTIONAL"]
             if truncate_mode:
                 modes.append("TIME_TRUNCATE_FRACTIONAL")
             setup.execute("SET SESSION sql_mode=%s", (",".join(modes),))

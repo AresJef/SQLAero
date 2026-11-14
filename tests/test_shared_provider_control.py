@@ -1,5 +1,8 @@
 """Cold provider discovery and required metadata share actual owner control."""
 
+# pyright: reportPrivateUsage=false
+
+
 import json
 import pathlib
 import subprocess

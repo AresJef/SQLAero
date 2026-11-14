@@ -17,7 +17,7 @@ from test_public_connection import live, requires_mysql
     (0x12345678123456781234567812345678, "12345678-1234-5678-1234-567812345678"),
     ((1 << 128) - 1, "ffffffff-ffff-ffff-ffff-ffffffffffff"),
 ], ids=["zero", "sample", "maximum"])
-def test_actual_uuid_and_json_column_values(label: str, kind, prepared: bool, number: int, expected: str) -> None:
+def test_actual_uuid_and_json_column_values(label: str, kind: type[Cursor] | type[DictCursor] | type[SSCursor] | type[SSDictCursor], prepared: bool, number: int, expected: str) -> None:
     table = "uuid_write_" + uuid4().hex[:12]
     with live(label) as connection:
         with connection.cursor() as setup:

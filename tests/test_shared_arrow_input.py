@@ -1,5 +1,11 @@
 """Shared Arrow facts reach native targets without Python scalar conversion."""
 
+# pyright: reportPrivateUsage=false
+
+
+from typing import Any
+from collections.abc import Callable
+
 import json
 import math
 
@@ -12,7 +18,7 @@ pa = pytest.importorskip("pyarrow")
 
 @pytest.mark.parametrize("kind", [pa.int8, pa.int16, pa.int32, pa.int64, pa.uint8, pa.uint16, pa.uint32, pa.uint64])
 @pytest.mark.parametrize("chunked", [False, True])
-def test_native_integer_values_and_masks(kind, chunked: bool) -> None:
+def test_native_integer_values_and_masks(kind: Callable[[], Any], chunked: bool) -> None:
     value = pa.array([7, None, 8], type=kind())
     if chunked:
         value = pa.chunked_array([value.slice(0, 1), value.slice(1, 0), value.slice(1)])
@@ -21,7 +27,7 @@ def test_native_integer_values_and_masks(kind, chunked: bool) -> None:
 
 
 @pytest.mark.parametrize("kind", [pa.float32, pa.float64])
-def test_native_float_bits_and_nonfinite_policy(kind) -> None:
+def test_native_float_bits_and_nonfinite_policy(kind: Callable[[], Any]) -> None:
     value = pa.array([-0.0, 0.5, None, float("nan"), float("inf")], type=kind())
     result = json.loads(json_dumps(value))
     assert math.copysign(1.0, result[0]) == -1.0
@@ -32,14 +38,14 @@ def test_native_float_bits_and_nonfinite_policy(kind) -> None:
 
 @pytest.mark.parametrize("kind", [pa.string, pa.large_string, pa.string_view])
 @pytest.mark.parametrize("length", [0, 7, 40000])
-def test_native_utf8_complete_values_and_sliced_offsets(kind, length: int) -> None:
+def test_native_utf8_complete_values_and_sliced_offsets(kind: Callable[[], Any], length: int) -> None:
     text = "ab\0\n\"\\\U0001f642" * length
     value = pa.array(["ignored", text, None, "tail"], type=kind()).slice(1, 2)
     assert json.loads(json_dumps(value)) == [text, None]
 
 
 @pytest.mark.parametrize("kind", [pa.binary, pa.large_binary, pa.binary_view, lambda: pa.binary(2)])
-def test_binary_schema_is_rejected_even_when_no_actual_value(kind) -> None:
+def test_binary_schema_is_rejected_even_when_no_actual_value(kind: Callable[[], Any]) -> None:
     for value in (pa.array([], type=kind()), pa.array([None], type=kind())):
         with pytest.raises(TypeError, match="binary"):
             json_dumps(value)

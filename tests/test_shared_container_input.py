@@ -1,5 +1,11 @@
 """Real container storage is shared; target layout never calls replacements."""
 
+# pyright: reportPrivateUsage=false
+from typing import Any
+from typing import cast
+from collections.abc import Callable
+
+
 import pytest
 import os
 from pathlib import Path
@@ -46,9 +52,9 @@ def test_true_subclass_root_layout_reuses_the_same_actual_elements(base: type, m
 def test_cycle_identity_does_not_depend_on_a_normalized_copy(base: type) -> None:
     source = hostile(base, [] if base is list else {})
     if base is list:
-        list.append(source, source)
+        list[object].append(cast(list[object], source), source)
     else:
-        dict.__setitem__(source, "self", source)
+        dict[str, object].__setitem__(cast(dict[str, object], source), "self", source)
     with pytest.raises(Exception, match="cycle"):
         _sqlaero._encode_value(source)
     with pytest.raises(ValueError, match="cycle"):
@@ -65,11 +71,11 @@ def test_an_unregistered_iterable_does_not_gain_implicit_support() -> None:
 
 
 @pytest.mark.parametrize(("projection", "sql", "json"), [
-    (dict.keys, b"('a','b')", b'["a","b"]'),
-    (dict.values, b"(7,8)", b"[7,8]"),
-    (dict.items, b"(7,8)", b'[["a",7],["b",8]]'),
+    (dict[str, object].keys, b"('a','b')", b'["a","b"]'),
+    (dict[str, object].values, b"(7,8)", b"[7,8]"),
+    (dict[str, object].items, b"(7,8)", b'[["a",7],["b",8]]'),
 ])
-def test_dict_views_keep_their_real_projection_without_forwarding_overrides(projection, sql: bytes, json: bytes) -> None:
+def test_dict_views_keep_their_real_projection_without_forwarding_overrides(projection: Callable[[Any], object], sql: bytes, json: bytes) -> None:
     value = hostile(dict, {"a": 7, "b": 8})
     view = projection(value)
     assert _sqlaero._encode_value(view).to_bytes() == sql
@@ -123,8 +129,10 @@ def test_long_key_compares_and_escapes_full_suffixes() -> None:
 
 def test_shared_stable_subclass_containers_have_independent_concurrent_outputs() -> None:
     source = hostile(dict, {"first": hostile(list, [7, 8]), "second": {7}})
+    def read(_index: int) -> bytes:
+        return json_dumps(source)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        outputs = list(pool.map(lambda _index: json_dumps(source), range(64)))
+        outputs = list(pool.map(read, range(64)))
     assert outputs == [b'{"first":[7,8],"second":[7]}'] * 64
 
 

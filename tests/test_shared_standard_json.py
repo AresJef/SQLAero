@@ -41,7 +41,7 @@ def test_standard_temporal_json(value: object, expected: bytes) -> None:
 def test_temporal_real_subclasses_ignore_replaced_fields_and_display(base: type, args: tuple[int, ...], expected: bytes) -> None:
     def forbidden(*_args: object) -> object:
         raise AssertionError("base storage must not call subclass replacements")
-    attrs = {name: property(forbidden) for name in ("year", "month", "day", "hour", "minute", "second", "microsecond", "days", "seconds", "microseconds")}
+    attrs: dict[str, object] = {name: property(forbidden) for name in ("year", "month", "day", "hour", "minute", "second", "microsecond", "days", "seconds", "microseconds")}
     attrs.update(__str__=forbidden, isoformat=forbidden, utcoffset=forbidden)
     Child = type("Child", (base,), attrs)
     assert json_dumps(Child(*args)) == expected

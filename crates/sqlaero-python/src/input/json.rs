@@ -19,9 +19,19 @@ use sqlaero_core::json::{Error, Options, Writer};
 use sqlaero_transcode::diagnostic::{Coordinate, Path};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
-/// A lazy JSON text parameter. The payload reference and allow_nan are read-only;
-/// payload contents may be changed between calls. Serialization happens during
-/// Escape, under the current call's ownership and error checks.
+/// Wrap obj as one lazy JSON text parameter.
+///
+/// data and allow_nan are read-only; mutable contents may change between calls.
+/// Every Escape call serializes current contents without caching a document.
+/// Keep mutable/provider storage stable during a call, including with NoGIL.
+///
+/// Serialization is connection-independent UTF-8. Escape then applies the
+/// actual MySQL encoding and quoting to that one text value. It is not a SQL
+/// fragment or a native MySQL JSON parameter; SQL determines interpretation.
+///
+/// allow_nan is an exact bool: True maps nonfinite float/Decimal to null;
+/// False raises ValueError. Real missing values remain null. Nested JSON
+/// wrappers are rejected; pass their data explicitly.
 #[pyclass(name = "JSON", module = "sqlaero._sqlaero")]
 pub(crate) struct Json {
     data: Option<Py<PyAny>>,
@@ -510,9 +520,23 @@ pub(crate) fn mysql<D: Destination + ?Sized>(
     super::text_utf8(py, &text, output, context, budget)
 }
 
-/// Serialize obj as compact UTF-8 JSON and return built-in bytes. allow_nan
-/// must be a keyword-only bool; default True maps nonfinite numbers to null, False
-/// raises ValueError. JSON wrappers are rejected; pass wrapped.data explicitly.
+/// Return one complete compact UTF-8 JSON document as built-in bytes.
+///
+/// No Connection, SQL mode, SQL timeout or MySQL packet quota is consulted.
+/// allow_nan is a keyword-only exact bool: True maps nonfinite float/Decimal
+/// to null; False raises ValueError. Real missing values remain null. Pass
+/// wrapped.data rather than JSON wrappers. Subclasses use actual base storage.
+///
+/// Decimal uses representation-preserving strings; temporal precision and
+/// array/object/table structure follow the documented target policy.
+/// Unsupported types raise TypeError; cycles, excessive output nesting and
+/// colliding keys raise ValueError; actual surrogate codepoints raise
+/// UnicodeEncodeError. Original source/signal exceptions propagate unchanged.
+/// No partial document is returned.
+///
+/// Keep mutable/provider storage stable. Native work checks signals
+/// cooperatively; necessary public source/ownership calls can be atomic.
+/// This does not promise an instant cancellation delay.
 #[pyfunction]
 #[pyo3(pass_module, signature = (obj, *, allow_nan=config::Argument::default()), text_signature = "($module, obj, *, allow_nan=True)")]
 pub(crate) fn json_dumps<'py>(

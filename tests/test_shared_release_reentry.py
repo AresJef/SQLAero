@@ -15,7 +15,7 @@ from test_public_connection import live, requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("kind", [Cursor, DictCursor, SSCursor, SSDictCursor])
 @pytest.mark.parametrize("prepared", [False, True])
-def test_later_source_protocol_is_not_called_after_metadata_finalizer_retires_cursor(label: str, kind, prepared: bool) -> None:
+def test_later_source_protocol_is_not_called_after_metadata_finalizer_retires_cursor(label: str, kind: type[Cursor] | type[DictCursor] | type[SSCursor] | type[SSDictCursor], prepared: bool) -> None:
     name = "release_reentry_" + uuid4().hex[:12]
     with live(label) as connection:
         with connection.cursor() as setup:
@@ -39,16 +39,16 @@ def test_later_source_protocol_is_not_called_after_metadata_finalizer_retires_cu
                 def __del__(self) -> None:
                     if not retired:
                         finish()
-            Point = namedtuple("Point", "stamp")
+            Point = namedtuple("Point", "stamp")  # pyright: ignore[reportUntypedNamedTuple]  # Exercise collections' real factory.
             Point._fields = (Field("stamp"),)
             class Change(tzinfo):
-                def utcoffset(self, dt):
+                def utcoffset(self, dt: datetime | None):
                     # The reader already owns the old immutable metadata. Its
                     # final release, after this callback returns, invokes Field.
                     Point._fields = ("stamp",)
                     return timedelta(0)
             class Later(tzinfo):
-                def utcoffset(self, dt):
+                def utcoffset(self, dt: datetime | None):
                     later.append("offset")
                     return timedelta(0)
             value = JSON([Point(datetime(2024, 1, 1, tzinfo=Change())),

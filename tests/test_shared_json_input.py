@@ -1,5 +1,8 @@
 """Public JSON output and shared input-reading contracts, independent of MySQL."""
 
+# pyright: reportPrivateUsage=false
+
+
 import gc
 import inspect
 import json
@@ -120,7 +123,7 @@ def test_large_integer_returns_to_signal_control_during_native_work() -> None:
         assert not hasattr(sys, '_is_gil_enabled') or sys._is_gil_enabled() == (not sysconfig_free)
     """)
     # Import mode must stay unchanged; do not turn the GIL on to pass the probe.
-    free = hasattr(sys, "_is_gil_enabled") and not sys._is_gil_enabled()
+    free = hasattr(sys, "_is_gil_enabled") and not getattr(sys, "_is_gil_enabled")()
     script = "sysconfig_free = " + repr(free) + "\n" + script
     env = dict(os.environ)
     env["PYTHONPATH"] = str(Path(__file__).parent) + os.pathsep + env.get("PYTHONPATH", "")

@@ -1,5 +1,9 @@
 """Categories reuse the module-owned reader and preserve actual label values."""
 
+# pyright: reportPrivateUsage=false
+from typing import Any
+
+
 import json
 from datetime import datetime, timedelta, tzinfo
 import pytest
@@ -39,7 +43,7 @@ def test_composite_object_labels_use_ordinary_selected_row_rules() -> None:
 def test_all_missing_or_bad_first_code_does_not_acquire_labels(monkeypatch: pytest.MonkeyPatch) -> None:
     original = RuntimeError("unused label array was requested")
     value = pd.Categorical.from_codes([-1, -1], categories=pd.Index([7, 8]))
-    def forbidden(self):
+    def forbidden(self: Any):
         raise original
     monkeypatch.setattr(pd.Index, "array", property(forbidden))
     assert json_dumps(value, allow_nan=False) == b"[null,null]"
@@ -48,7 +52,7 @@ def test_all_missing_or_bad_first_code_does_not_acquire_labels(monkeypatch: pyte
 
 def test_label_subclass_replacement_getters_do_not_replace_actual_values() -> None:
     class ActualIndex(pd.Index):
-        def __getitem__(self, index):
+        def __getitem__(self, index: int):
             raise AssertionError("replacement label getter ran")
         @property
         def array(self):
@@ -61,10 +65,10 @@ def test_label_subclass_replacement_getters_do_not_replace_actual_values() -> No
 
 def test_required_timezone_protocol_repeats_and_original_error_propagates() -> None:
     original = MemoryError("actual categorical datetime protocol")
-    calls = []
+    calls: list[object] = []
     armed = False
     class Zone(tzinfo):
-        def utcoffset(self, value):
+        def utcoffset(self, value: Any):
             if armed:
                 calls.append(value)
                 if len(calls) == 3:

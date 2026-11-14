@@ -7,7 +7,17 @@ from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as
 
 @final
 class JSON:
-    """Lazy JSON text parameter; contents are serialized by Escape at each call."""
+    """Wrap obj as one lazy JSON text parameter.
+
+    data and allow_nan are read-only; mutable contents may change between calls.
+    Every Escape call serializes current contents, then applies the MySQL
+    encoding and quoting. SQL determines server interpretation; this is not
+    a SQL fragment or a native MySQL JSON parameter.
+
+    allow_nan is an exact bool: True maps nonfinite float/Decimal to null;
+    False raises ValueError. Real missing values remain null. Nested JSON
+    wrappers are rejected. Keep mutable/provider storage stable during a call.
+    """
     def __new__(cls, obj: object, *, allow_nan: bool = True) -> Self: ...
     @property
     def data(self) -> object:
@@ -19,7 +29,22 @@ class JSON:
         ...
 
 def json_dumps(obj: object, *, allow_nan: bool = True) -> bytes:
-    """Serialize compact UTF-8 JSON. Options require exact bool; pass wrapped.data, not JSON wrappers."""
+    """Return one complete compact UTF-8 JSON document as built-in bytes.
+
+    Independent of Connection, SQL mode, SQL timeouts and packet quotas.
+    allow_nan is an exact bool: True maps nonfinite float/Decimal to null;
+    False raises ValueError. Real missing values remain null. Pass wrapped.data
+    rather than a JSON wrapper. Subclasses use actual base storage.
+
+    Decimal uses representation-preserving strings; temporal precision and
+    array/object/table structure follow the documented target policy.
+    Unsupported types raise TypeError; cycles, output depth and colliding keys
+    raise ValueError; actual surrogate codepoints raise UnicodeEncodeError.
+    Original source/signal exceptions propagate; no partial document is returned.
+
+    Keep mutable/provider storage stable. Native work checks signals
+    cooperatively; necessary public source/ownership calls can be atomic.
+    """
     ...
 
 @final
@@ -272,6 +297,20 @@ def _encode_scalar(data: object, *, utc_confirmed: bool = True,
                    limit: int = 67108864, charset: str | None = None,
                    no_backslash: bool = False) -> bytes:
     """Exercise the real native scalar reader and SQL writer."""
+    ...
+def _encode_native_scalar(data: object, *, utc_confirmed: bool = True,
+                          limit: int = 67108864, charset: str | None = None,
+                          no_backslash: bool = False) -> bytes:
+    """Exercise the production shared scalar contract through its SQL sink."""
+    ...
+def _encode_native_rows(data: object, *, many: bool = False, itemize: bool = True,
+                       charset: str | None = None, no_backslash: bool = False) -> list[bytes]:
+    """Observe each actual native parameter row without sending a request."""
+    ...
+def _escape_projection(data: object, *, many: bool = False, itemize: bool = True,
+                       charset: str | None = None,
+                       no_backslash: bool = False) -> str | tuple[str, ...] | list[str | tuple[str, ...]]:
+    """Observe the real auxiliary projection; this is a private test boundary."""
     ...
 class _EncodedValue:
     """Own native diagnostic output without constructing Python SQL text."""

@@ -1,5 +1,8 @@
 """The same checked ndarray cells feed JSON without Python scalar materialization."""
 
+# pyright: reportPrivateUsage=false
+
+
 import json
 
 import pytest

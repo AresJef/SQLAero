@@ -13,7 +13,7 @@ np = pytest.importorskip("numpy")
 @pytest.mark.parametrize("cursor", [Cursor, DictCursor, SSCursor, SSDictCursor])
 @pytest.mark.parametrize("prepared", [False, True])
 @pytest.mark.parametrize("event", ["acquire", "release", "raise"])
-def test_public_buffer_window_preserves_actual_owner_and_original_error(label: str, cursor, prepared: bool, event: str) -> None:
+def test_public_buffer_window_preserves_actual_owner_and_original_error(label: str, cursor: type[Cursor] | type[DictCursor] | type[SSCursor] | type[SSDictCursor], prepared: bool, event: str) -> None:
     original = MemoryError("original buffer source error after retirement")
     with live(label) as connection:
         with connection.cursor() as setup:
@@ -41,7 +41,7 @@ def test_public_buffer_window_preserves_actual_owner_and_original_error(label: s
             def base(self) -> None:
                 return None
             @property
-            def __array_interface__(self) -> dict:
+            def __array_interface__(self) -> dict[str, object]:
                 return self.data.__array_interface__
             def provide(self, _flags: int) -> memoryview:
                 if self.enabled:
@@ -64,8 +64,8 @@ def test_public_buffer_window_preserves_actual_owner_and_original_error(label: s
         # Construct through NumPy's public array-interface owner first. PEP688
         # construction otherwise hides it in an opaque CPython buffer wrapper.
         # Public buffer support is then available for the physical interval.
-        Owner.__buffer__ = Owner.provide
-        Owner.__release_buffer__ = Owner.release
+        setattr(Owner, "__buffer__", Owner.provide)
+        setattr(Owner, "__release_buffer__", Owner.release)
         owner.enabled = True
         try:
             caught: Exception | None = None

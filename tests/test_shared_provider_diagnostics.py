@@ -1,5 +1,9 @@
 """Native provider diagnostics retain full original text with bounded work."""
 
+# pyright: reportPrivateUsage=false
+from types import FrameType
+
+
 import signal
 import pytest
 from sqlaero import _sqlaero
@@ -9,7 +13,7 @@ pa = pytest.importorskip("pyarrow")
 
 @pytest.mark.parametrize("kind", ["utf8", "large", "view", "dictionary"])
 @pytest.mark.parametrize("prefix", ["a", "é", "中"])
-def test_long_encoding_error_keeps_full_source_and_character_coordinates(kind, prefix) -> None:
+def test_long_encoding_error_keeps_full_source_and_character_coordinates(kind: str, prefix: str) -> None:
     count = 256 * 1024 + 1
     source = prefix * count + "🙂\0tail"
     dtype = pa.string() if kind in ("utf8", "dictionary") else pa.large_string() if kind == "large" else pa.string_view()
@@ -41,7 +45,7 @@ def test_original_signal_is_preserved_while_reconstructing_the_error_payload() -
     original = InterruptedDiagnostic("original diagnostic signal")
     _sqlaero._bind_sql("SELECT %s", pa.array(["a"]), charset="ascii")
     value = pa.array(["🙂" + "a" * (16 * 1024 * 1024)])
-    def interrupt(signum, frame):
+    def interrupt(signum: int, frame: FrameType | None):
         raise original
     previous = signal.signal(signal.SIGALRM, interrupt)
     signal.setitimer(signal.ITIMER_REAL, 0.005)

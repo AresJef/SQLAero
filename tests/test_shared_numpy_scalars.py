@@ -1,5 +1,8 @@
 """Qualified NumPy scalar subclasses use canonical native storage and releases."""
 
+# pyright: reportPrivateUsage=false
+
+
 import pytest
 from sqlaero import _sqlaero, json_dumps
 
@@ -28,7 +31,7 @@ def test_numpy_real_subclasses_ignore_replaced_conversion_metadata_and_buffer(
     def forbidden(*_args: object, **_kwargs: object) -> object:
         calls.append("override")
         raise AssertionError("canonical native storage must bypass this override")
-    attrs = {name: forbidden for name in
+    attrs: dict[str, object] = {name: forbidden for name in
              ("__int__", "__index__", "__float__", "__str__", "item", "__array__", "__buffer__", "__release_buffer__")}
     attrs["dtype"] = property(forbidden)
     Child = type("ActualScalar", (base,), attrs)
@@ -43,9 +46,9 @@ def test_numpy_real_subclasses_ignore_replaced_conversion_metadata_and_buffer(
 @pytest.mark.parametrize("base", [np.float16, np.float32, np.float64])
 @pytest.mark.parametrize("number", [float("nan"), float("inf"), -float("inf")])
 def test_numpy_subclass_nonfinite_values_share_the_existing_policies(base: type, number: float) -> None:
-    class Child(base):
-        def __float__(self) -> float:
-            raise AssertionError("must read actual floating base storage")
+    def forbidden(self: object) -> float:
+        raise AssertionError("must read actual floating base storage")
+    Child = type("Child", (base,), {"__float__": forbidden})
     value = Child(number)
     assert _sqlaero._encode_value(value).to_bytes() == b"NULL"
     assert json_dumps(value) == b"null"
@@ -54,12 +57,11 @@ def test_numpy_subclass_nonfinite_values_share_the_existing_policies(base: type,
 
 
 def test_fake_numpy_class_does_not_open_an_arbitrary_buffer_protocol() -> None:
-    class Fake:
-        @property
-        def __class__(self) -> type:
-            return np.int64
-        def __buffer__(self, _flags: int) -> memoryview:
-            raise AssertionError("a fake class must not enter a source protocol")
+    def claimed_class(self: object) -> type:
+        return np.int64
+    def forbidden(self: object, _flags: int) -> memoryview:
+        raise AssertionError("a fake class must not enter a source protocol")
+    Fake = type("Fake", (), {"__class__": property(claimed_class), "__buffer__": forbidden})
     for convert in (_sqlaero._encode_value, json_dumps):
         with pytest.raises(TypeError):
             convert(Fake())

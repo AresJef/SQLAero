@@ -1,5 +1,9 @@
 """Polars uses shared native facts, complete names, and actual base storage."""
 
+# pyright: reportPrivateUsage=false
+from typing import Any
+
+
 from decimal import Decimal
 import json
 import subprocess
@@ -32,29 +36,30 @@ pl = pytest.importorskip("polars")
      [{"id": 7, "name": "ab"}, None, {"id": None, "name": None}],
      [{"id": 7, "name": "ab"}, None, {"id": None, "name": None}]),
 ])
-def test_logical_values_enter_the_same_json_target(dtype, values, expected) -> None:
+def test_logical_values_enter_the_same_json_target(dtype: Any, values: Any, expected: Any) -> None:
     source = pl.Series("ignored", values, dtype=dtype)
     assert json.loads(json_dumps(source)) == expected
 
 
 @pytest.mark.parametrize("kind", ["series", "frame"])
-def test_supported_real_subclasses_ignore_replacement_storage_and_conversion_hooks(kind) -> None:
+def test_supported_real_subclasses_ignore_replacement_storage_and_conversion_hooks(kind: str) -> None:
     base = pl.Series if kind == "series" else pl.DataFrame
 
     class Child(base):
         def clone(self):
             raise AssertionError("replacement clone")
 
-        def __arrow_c_stream__(self, *args):
+        def __arrow_c_stream__(self, *args: object):
             raise AssertionError("replacement export")
 
         def __len__(self):
             raise AssertionError("replacement length")
 
-        def __getattribute__(self, name):
+        def __getattribute__(self, name: str) -> Any:
             if name in ("_s", "_df", "__dict__", "dtype", "dtypes", "name", "columns", "height", "width", "shape"):
                 raise AssertionError("replacement attribute " + name)
-            return super().__getattribute__(name)
+            parent: Any = super()
+            return parent.__getattribute__(name)
 
     source = Child("ignored", [7, 8]) if kind == "series" else Child({"id": [7, 8]})
     assert json_dumps(source) == (b"[7,8]" if kind == "series" else b'[{"id":7},{"id":8}]')
@@ -62,7 +67,7 @@ def test_supported_real_subclasses_ignore_replacement_storage_and_conversion_hoo
 
 
 @pytest.mark.parametrize("kind", ["frame", "object_frame", "struct", "list", "array"])
-def test_unsafe_nul_name_export_is_rejected_before_entering_producer_callback(kind) -> None:
+def test_unsafe_nul_name_export_is_rejected_before_entering_producer_callback(kind: str) -> None:
     # A faulty producer export can abort at its C callback. Keep this source
     # boundary counterexample in an isolated process so other cases finish.
     code = "from tests.test_shared_polars_input import complete_names_case; complete_names_case(" + repr(kind) + ")"
@@ -90,7 +95,7 @@ def complete_names_case(kind: str) -> None:
 
 
 @pytest.mark.parametrize("empty", [False, True])
-def test_root_series_name_safety_precedes_native_export_even_without_rows(empty) -> None:
+def test_root_series_name_safety_precedes_native_export_even_without_rows(empty: bool) -> None:
     source = pl.Series("a\0x", [] if empty else [7], dtype=pl.Int64)
     for operation in (json_dumps, _sqlaero._escape_projection):
         with pytest.raises(TypeError, match="Series name contains NUL"):
@@ -113,14 +118,14 @@ def test_object_only_sources_do_not_enter_the_unsafe_native_export() -> None:
 
 
 @pytest.mark.parametrize("kind", ["native", "object"])
-def test_empty_rows_and_actual_zero_field_rows_keep_their_shape(kind) -> None:
+def test_empty_rows_and_actual_zero_field_rows_keep_their_shape(kind: str) -> None:
     source = pl.DataFrame({"id": pl.Series([7, 8], dtype=pl.Object if kind == "object" else pl.Int64)})
     assert json_dumps(source.slice(0, 0)) == b"[]"
     assert json_dumps(source.drop("id")) == b"[{},{}]"
 
 
 @pytest.mark.parametrize("dtype,values", [(pl.Binary, [b"a", None]), (pl.Binary, []), (pl.Binary, [None])])
-def test_binary_declared_schema_is_mysql_only_even_without_a_valid_value(dtype, values) -> None:
+def test_binary_declared_schema_is_mysql_only_even_without_a_valid_value(dtype: Any, values: Any) -> None:
     source = pl.Series(values, dtype=dtype)
     with pytest.raises(TypeError, match="[Bb]inary|bytes"):
         json_dumps(source)
@@ -141,14 +146,14 @@ def test_provider_rejects_wide_time_at_construction_before_driver_consumption() 
 
 
 @pytest.mark.parametrize("kind", ["struct", "list"])
-def test_selected_struct_and_list_rows_use_the_common_many_layout(kind) -> None:
+def test_selected_struct_and_list_rows_use_the_common_many_layout(kind: str) -> None:
     source = pl.Series([{"id": 7, "name": "ab"}, {"id": 8, "name": "cd"}]) if kind == "struct" else pl.Series([[7, 8], [9, 10]])
     expected = [b"\x03SELECT 7,'ab'", b"\x03SELECT 8,'cd'"] if kind == "struct" else [b"\x03SELECT 7,8", b"\x03SELECT 9,10"]
     assert _sqlaero._bind_sql("SELECT %s,%s", source, many=True) == expected
 
 
 @pytest.mark.parametrize("size", [0, 2])
-def test_unapproved_declared_schema_is_not_admitted_by_empty_or_null_values(size) -> None:
+def test_unapproved_declared_schema_is_not_admitted_by_empty_or_null_values(size: int) -> None:
     source = pl.Series([None] * size, dtype=pl.Int128)
     with pytest.raises(TypeError, match="unsupported.*dtype"):
         json_dumps(source)

@@ -1,5 +1,8 @@
 """Qualified ndarray base storage bypasses replacement Python accessors."""
 
+# pyright: reportPrivateUsage=false
+
+
 import gc
 import json
 import pathlib

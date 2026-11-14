@@ -1,5 +1,8 @@
 """Field facts are shared, while targets own record shape and value policy."""
 
+# pyright: reportPrivateUsage=false
+
+
 from datetime import datetime, timezone
 import json
 from typing import NoReturn
@@ -131,6 +134,7 @@ def test_record_arrays_preserve_axes_and_fields(recarray: bool, shape: tuple[int
     source = source.reshape(shape)
     if recarray:
         source = source.view(np.recarray)
+    expected: object
     if shape == (2,):
         expected = [{"id": 7, "name": "ab"}, {"id": 8, "name": "cd"}]
     elif shape == (1, 2):
@@ -138,7 +142,7 @@ def test_record_arrays_preserve_axes_and_fields(recarray: bool, shape: tuple[int
     elif shape == (2, 1, 1):
         expected = [[[{"id": 7, "name": "ab"}]], [[{"id": 8, "name": "cd"}]]]
     else:
-        expected = [[]]
+        expected = [list[object]()]
     assert json.loads(json_dumps(source)) == expected
     if len(shape) >= 2:
         with pytest.raises(ValueError, match="axes"):

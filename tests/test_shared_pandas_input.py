@@ -1,8 +1,11 @@
 """Pandas sources expose actual native facts to both immediate targets."""
 
+# pyright: reportPrivateUsage=false
+
+
 from collections.abc import Callable
 import json
-from typing import Any
+from typing import Any, cast
 from datetime import timezone, timedelta
 from zoneinfo import ZoneInfo
 
@@ -52,7 +55,7 @@ def test_real_pandas_subclasses_ignore_all_replacement_attribute_access(kind: st
         "categorical": lambda: pd.Categorical(["ab", None]),
     }
     value = factories[kind]()
-    base = type(value)
+    base = cast(type[Any], type(value))
     child = type("ActualChild", (base,), {"__slots__": ()})
     value.__class__ = child
     calls: list[str] = []

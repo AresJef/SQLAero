@@ -147,9 +147,14 @@ def test_native_object_cells_publish_actual_writer_roles() -> None:
     array = np.empty(2, dtype=object)
     array[:] = [(1, 2), (3, 4)]
     for vector in (array, pd.Series([(1, 2), (3, 4)])):
-        assert plan("INSERT t VALUES %s", vector, many=True) == [
+        assert plan("INSERT t VALUES (%s,%s)", vector, many=True) == [
             (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
         ]
+        assert plan("INSERT t VALUES %s", vector, many=True, itemize=False) == [
+            (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
+        ]
+        with pytest.raises(ProgrammingError):
+            plan("INSERT t VALUES %s", vector, many=True)
     for table in (np.array([[1, 2], [3, 4]]), pd.DataFrame({"a": [1, 3], "b": [2, 4]})):
         assert plan("INSERT t VALUES %s", table, itemize=False) == [
             (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
@@ -158,9 +163,15 @@ def test_native_object_cells_publish_actual_writer_roles() -> None:
 
 def test_nested_arrow_cells_publish_actual_writer_roles() -> None:
     pa: Any = pytest.importorskip("pyarrow")
-    assert plan("INSERT t VALUES %s", pa.array([[1, 2], [3, 4]]), many=True) == [
+    source = pa.array([[1, 2], [3, 4]])
+    assert plan("INSERT t VALUES (%s,%s)", source, many=True) == [
         (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
     ]
+    assert plan("INSERT t VALUES %s", source, many=True, itemize=False) == [
+        (b"\x03INSERT t VALUES (1,2),(3,4)", 0, 2, True),
+    ]
+    with pytest.raises(ProgrammingError):
+        plan("INSERT t VALUES %s", source, many=True)
 
 
 def test_original_multiple_groups_cannot_be_split_to_satisfy_request_limit() -> None:
@@ -202,7 +213,15 @@ def test_prepared_display_native_structures_and_empty_roles_match_parameter_sink
     np: Any = pytest.importorskip("numpy")
     from sqlaero.errors import NotSupportedError
 
-    assert plan("SELECT 1", np.empty(0), itemize=False, prepared=True) == [(b"\x03SELECT 1", 0, 0, True)]
+    # many=False is one empty argument row; an empty many=True source has
+    # no source rows but still performs its synthetic zero-parameter call.
+    assert plan("SELECT 1", [], prepared=True) == [(b"\x03SELECT 1", 0, 1, True)]
+    assert plan("SELECT 1", np.empty(0), prepared=True) == [(b"\x03SELECT 1", 0, 1, True)]
+    assert plan("SELECT 1", np.empty(0), many=True, itemize=False, prepared=True) == [(b"\x03SELECT 1", 0, 0, True)]
+    with pytest.raises(ProgrammingError):
+        plan("SELECT 1", np.empty(0), itemize=False, prepared=True)
+    with pytest.raises(NotSupportedError):
+        plan("SELECT %s", np.empty(0), itemize=False, prepared=True)
     assert plan("SELECT %s", np.array([[1], [2]]), prepared=True) == [
         (b"\x03SELECT 1", 0, 1, False), (b"\x03SELECT 2", 1, 2, True),
     ]
@@ -232,15 +251,15 @@ def test_prepared_display_checks_native_packet_size_without_capping_readable_sql
     assert plan("SELECT %s", 1, prepared=True, limit=22) == [(b"\x03SELECT 1", 0, 1, True)]
 
 
-def test_prepared_display_invokes_the_value_protocol_once_for_both_destinations() -> None:
+def test_prepared_display_reads_base_values_and_invokes_approved_protocol_once() -> None:
     class Number(int):
         calls = 0
         def __int__(self) -> int:
             self.calls += 1
             return 7
     source = Number(1)
-    assert plan("SELECT %s", source, prepared=True) == [(b"\x03SELECT 7", 0, 1, True)]
-    assert source.calls == 1
+    assert plan("SELECT %s", source, prepared=True) == [(b"\x03SELECT 1", 0, 1, True)]
+    assert source.calls == 0
     zone = CountingZone()
     source_time = datetime(2024, 1, 2, 3, 4, 5, tzinfo=zone)
     assert plan("SELECT %s", source_time, prepared=True) == [(b"\x03SELECT '2024-01-02 02:04:05'", 0, 1, True)]

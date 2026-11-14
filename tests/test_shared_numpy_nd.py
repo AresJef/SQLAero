@@ -1,10 +1,13 @@
 """Higher native array axes are JSON structure, never implicit SQL rows."""
 
+# pyright: reportPrivateUsage=false
+
+
 import json
 import math
 
 import pytest
-from sqlaero import Cursor, DictCursor, _sqlaero, json_dumps
+from sqlaero import Cursor, DictCursor, SSCursor, SSDictCursor, _sqlaero, json_dumps
 from test_public_connection import live, requires_mysql
 
 np = pytest.importorskip("numpy")
@@ -34,7 +37,7 @@ def test_three_axes_real_subclass_uses_qualified_base_storage(dtype: str) -> Non
     class Child(np.ndarray):
         pass
     source = np.arange(8, dtype="i8").reshape(2, 2, 2).astype(dtype).view(Child)
-    def forbidden(*_args, **_kwargs):
+    def forbidden(*_args: object, **_kwargs: object):
         raise AssertionError("must not invoke source overrides")
     for name in ["__getitem__", "__iter__", "__buffer__", "__release_buffer__", "view", "tolist"]:
         setattr(Child, name, forbidden)
@@ -85,7 +88,7 @@ def test_unsafe_strided_coordinate_is_rejected_before_native_payload_read() -> N
 @pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("kind", [Cursor, DictCursor])
 @pytest.mark.parametrize("prepared", [False, True])
-def test_sql_rejects_higher_axes_locally_and_keeps_the_old_trusted_result(label: str, kind, prepared: bool) -> None:
+def test_sql_rejects_higher_axes_locally_and_keeps_the_old_trusted_result(label: str, kind: type[Cursor] | type[DictCursor] | type[SSCursor] | type[SSDictCursor], prepared: bool) -> None:
     with live(label) as connection, connection.cursor(kind, prepared=prepared) as cursor:
         cursor.execute("SELECT 7 AS value")
         old_columns = cursor.columns

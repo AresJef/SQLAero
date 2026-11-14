@@ -1,5 +1,8 @@
 """All JSON families use coordinates rather than per-type tracing adapters."""
 
+# pyright: reportPrivateUsage=false
+
+
 from datetime import datetime, tzinfo
 import math
 
@@ -40,7 +43,7 @@ def test_value_and_key_failures_keep_distinct_source_coordinates(source: object,
 def test_the_original_protocol_exception_is_kept_and_located_once() -> None:
     original = MemoryError("actual offset protocol error")
     class Zone(tzinfo):
-        def utcoffset(self, dt):
+        def utcoffset(self, dt: datetime | None):
             raise original
     with pytest.raises(MemoryError) as caught:
         json_dumps({"orders": [{"created": datetime(2026, 1, 2, tzinfo=Zone())}]})

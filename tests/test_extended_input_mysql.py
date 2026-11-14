@@ -1,7 +1,7 @@
 """Installed Escape inputs through the public Cursor and owned MySQL servers."""
 # pyright: reportPrivateUsage=false
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, tzinfo
 from decimal import Decimal, ROUND_HALF_UP, localcontext
 import pytest
 from sqlaero import Cursor
@@ -44,7 +44,7 @@ def test_zero_field_record_executes_one_real_default_row(
     record = np.zeros(1, dtype=[]).view(np.recarray)[0]
     with live(label) as connection, connection.cursor() as cursor:
         cursor.execute("CREATE TEMPORARY TABLE empty_record_input (id BIGINT AUTO_INCREMENT PRIMARY KEY, value INT DEFAULT 7)")
-        sql = "INSERT INTO empty_record_input () VALUES ()" if itemize else "INSERT INTO empty_record_input () VALUES %s"
+        sql = "INSERT INTO empty_record_input () VALUES ()" if many or itemize else "INSERT INTO empty_record_input () VALUES %s"
         assert cursor.execute(sql, record, many=many, itemize=itemize) == 1
         assert cursor.row_count == 1 and cursor.lastrowid == 1
         cursor.execute("SELECT id,value FROM empty_record_input")
@@ -130,7 +130,7 @@ def test_arrow_decimal256_signed_boundaries_round_trip_exactly_through_mysql(lab
 @requires_mysql
 @pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("truncate", [False, True])
-def test_source_nanoseconds_reach_mysql_for_datetime_and_time(label: str, truncate: bool) -> None:
+def test_source_nanoseconds_are_truncated_before_mysql_for_both_server_modes(label: str, truncate: bool) -> None:
     np = pytest.importorskip("numpy")
     with live(label) as connection, connection.cursor() as cursor:
         mode = "STRICT_ALL_TABLES" + (",TIME_TRUNCATE_FRACTIONAL" if truncate else "")
@@ -138,7 +138,9 @@ def test_source_nanoseconds_reach_mysql_for_datetime_and_time(label: str, trunca
         stamp = np.datetime64("2024-01-02T03:04:05.123456789", "ns")
         duration = np.timedelta64(123456789, "ns")
         cursor.execute("SELECT CAST(%s AS DATETIME(6)),CAST(%s AS TIME(6))", (stamp, duration))
-        microsecond = 123456 if truncate else 123457
+        # MySQL text/prepared truncate locally; server fractional mode cannot
+        # round a nanosecond fraction which is no longer sent to the server.
+        microsecond = 123456
         assert cursor.fetchone() == (datetime(2024, 1, 2, 3, 4, 5, microsecond), timedelta(microseconds=microsecond))
         cursor.execute("CREATE TEMPORARY TABLE temporal_input_probe (d DATETIME(6), t TIME(6))")
         cursor.execute("INSERT INTO temporal_input_probe VALUES (%s,%s)", (stamp, duration))
@@ -293,11 +295,13 @@ def test_typed_table_rollover_preserves_every_actual_row(label: str, provider: s
 @pytest.mark.parametrize("provider", ["numpy", "pandas", "polars"])
 def test_typed_later_callback_failure_keeps_original_and_confirmed_prefix(label: str, provider: str) -> None:
     original = MemoryError("actual later typed-cell conversion failure")
-    class Broken(int):
-        def __int__(self) -> int:
+    class BrokenZone(tzinfo):
+        def utcoffset(self, dt: datetime | None) -> timedelta:
             raise original
     rows: list[tuple[int, object]] = [(index, "x" * 100) for index in range(100)]
-    rows[70] = (70, Broken(7))
+    # Real int subclasses now read base storage; the approved tzinfo protocol
+    # remains an actual callback and preserves the original late-error test.
+    rows[70] = (70, datetime(2026, 11, 12, tzinfo=BrokenZone()))
     source = table_input(provider, rows, objects=True)
     with live(label, max_allowed_packet="2KB") as connection, connection.cursor() as cursor:
         cursor.execute("CREATE TEMPORARY TABLE typed_failure_probe (id INT PRIMARY KEY,value VARCHAR(128))")

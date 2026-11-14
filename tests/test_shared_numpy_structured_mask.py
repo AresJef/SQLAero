@@ -1,5 +1,8 @@
 """Structured masks preserve valid records and mask each actual field."""
 
+# pyright: reportPrivateUsage=false
+
+
 import json
 from datetime import datetime, timedelta, tzinfo
 

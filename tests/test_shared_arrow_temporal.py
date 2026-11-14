@@ -1,5 +1,10 @@
 """Arrow temporal and fixed Decimal facts preserve source precision and sign."""
 
+# pyright: reportPrivateUsage=false
+from typing import Any
+from collections.abc import Callable
+
+
 from decimal import Decimal
 import json
 import struct
@@ -42,7 +47,7 @@ def test_timezone_metadata_is_not_truncated_at_c_data_nul(zone: str, container: 
 @pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("kind", [Cursor, DictCursor, SSCursor, SSDictCursor])
 @pytest.mark.parametrize("prepared", [False, True])
-def test_complete_timezone_fact_keeps_mysql_aware_session_guard(label: str, kind, prepared: bool) -> None:
+def test_complete_timezone_fact_keeps_mysql_aware_session_guard(label: str, kind: type[Cursor] | type[DictCursor] | type[SSCursor] | type[SSDictCursor], prepared: bool) -> None:
     value = pa.array([0], type=pa.timestamp("ns", "\x00bad"))
     with live(label) as connection, connection.cursor(kind, prepared=prepared) as current:
         # MySQL consumes the UTC instant, not the source's local-zone name.
@@ -82,7 +87,7 @@ def test_complete_timezone_fact_keeps_mysql_aware_session_guard(label: str, kind
     (pa.time64("ns"), -900, "-00:00:00.000000900"),
 ])
 @pytest.mark.parametrize("chunked", [False, True])
-def test_actual_temporal_ticks_are_not_boxed_or_truncated(dtype, ticks: int, expected: str, chunked: bool) -> None:
+def test_actual_temporal_ticks_are_not_boxed_or_truncated(dtype: Any, ticks: int, expected: str, chunked: bool) -> None:
     # Public buffers preserve actual physical ticks, including wide/negative
     # clock values whose Python time constructor cannot represent them.
     width = dtype.bit_width
@@ -99,10 +104,11 @@ def test_actual_temporal_ticks_are_not_boxed_or_truncated(dtype, ticks: int, exp
     (3, "0.000", "0.000"),
     (-2, "12300", "1.23E+4"),
 ])
-def test_native_decimal_scale_is_a_fact_not_sql_or_json_policy(factory, scale: int, value: str, expected: str) -> None:
+def test_native_decimal_scale_is_a_fact_not_sql_or_json_policy(factory: Callable[..., Any], scale: int, value: str, expected: str) -> None:
     array = pa.array([Decimal(value), None], type=factory(8, scale))
     assert json.loads(json_dumps(array)) == [expected, None]
     sql = _sqlaero._escape_projection(array)
+    assert isinstance(sql, tuple)
     assert Decimal(sql[0]) == Decimal(value)
     assert sql[1] == "NULL"
 

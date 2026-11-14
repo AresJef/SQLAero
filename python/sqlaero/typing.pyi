@@ -9,9 +9,12 @@ cannot all be expressed as a Python type alias.
 from collections.abc import ItemsView, KeysView, ValuesView
 from datetime import date, time, timedelta
 from decimal import Decimal
+from enum import Enum
 from os import PathLike
 from time import struct_time
 from typing import Any, Literal, Protocol, TypeAlias
+from uuid import UUID
+from ._sqlaero import JSON
 
 class _ArrayInput(Protocol):
     """NumPy values and Pandas one-dimensional public storage surfaces."""
@@ -68,6 +71,7 @@ class _PandasMissingTimeInput(Protocol):
 # not become a top-level member of the union or erase unsupported root errors.
 EscapeInput: TypeAlias = (
     None | bool | int | float | str | bytes | Decimal | date | time | timedelta | struct_time
+    | UUID | Enum | JSON
     | list[Any] | tuple[object, ...] | dict[Any, Any] | set[Any] | frozenset[object] | range
     | KeysView[object] | ValuesView[object] | ItemsView[object, object]
     | _ArrayInput | _FrameInput | _PolarsSeriesInput | _ArrowArrayInput | _ArrowTableInput

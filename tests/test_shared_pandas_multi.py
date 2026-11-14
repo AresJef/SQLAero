@@ -1,5 +1,9 @@
 """MultiIndex native rows share the ordinary one-dimensional root policy."""
 
+# pyright: reportPrivateUsage=false
+from typing import Any
+
+
 import json
 import math
 import pytest
@@ -29,7 +33,7 @@ def test_missing_codes_are_actual_null_even_with_strict_nonfinite_option(length:
 
 def test_numeric_rows_do_not_construct_python_index_scalars_or_tuples(monkeypatch: pytest.MonkeyPatch) -> None:
     source = pd.MultiIndex(levels=[pd.Index([2**64 - 1], dtype="uint64"), pd.Index([-0.0, 0.5], dtype="float64")], codes=[[0] * 40, [n % 2 for n in range(40)]])
-    def forbidden(*args, **kwargs):
+    def forbidden(*args: object, **kwargs: object):
         raise AssertionError("unneeded Python Index scalar/tuple getter ran")
     monkeypatch.setattr(pd.Index, "__getitem__", forbidden)
     monkeypatch.setattr(pd.MultiIndex, "__getitem__", forbidden)
@@ -42,7 +46,7 @@ def test_numeric_rows_do_not_construct_python_index_scalars_or_tuples(monkeypatc
 def test_real_multiindex_and_level_subclasses_read_actual_base_storage() -> None:
     source = pd.MultiIndex.from_tuples([(7, "ab"), (8, "cd")])
     class ActualMulti(pd.MultiIndex):
-        def __getitem__(self, value):
+        def __getitem__(self, value: Any):
             raise AssertionError("replacement tuple getter ran")
         @property
         def values(self):

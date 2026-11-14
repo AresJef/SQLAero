@@ -1,5 +1,8 @@
 """The two targets consume only the struct_time facts they actually require."""
 
+# pyright: reportPrivateUsage=false
+
+
 from datetime import datetime
 import json
 from time import struct_time
@@ -86,7 +89,7 @@ def test_struct_time_json_errors_point_to_the_actual_unused_sql_field() -> None:
 @pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("kind", [Cursor, DictCursor, SSCursor, SSDictCursor])
 @pytest.mark.parametrize("prepared", [False, True])
-def test_struct_time_utc_database_result_and_session_guard(label: str, kind, prepared: bool) -> None:
+def test_struct_time_utc_database_result_and_session_guard(label: str, kind: type[Cursor] | type[DictCursor] | type[SSCursor] | type[SSDictCursor], prepared: bool) -> None:
     value = struct_time(BASE, {"tm_gmtoff": 28800})
     with live(label) as connection, connection.cursor(kind, prepared=prepared) as current:
         current.execute("SELECT CAST(%s AS DATETIME) AS stamp", (value,))

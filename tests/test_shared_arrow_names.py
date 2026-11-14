@@ -1,5 +1,8 @@
 """Full, length-aware Arrow names join native values by schema position."""
 
+# pyright: reportPrivateUsage=false
+
+
 import json
 import pytest
 from sqlaero import _sqlaero, json_dumps
@@ -7,7 +10,7 @@ from sqlaero import _sqlaero, json_dumps
 pa = pytest.importorskip("pyarrow")
 
 
-def record(names=("a\0x", "a\0y"), *, missing=False):
+def record(names: tuple[str, ...]=("a\0x", "a\0y"), *, missing: bool=False):
     return pa.StructArray.from_arrays([pa.array([7]), pa.array([8])], names=list(names), mask=pa.array([missing]))
 
 
@@ -39,7 +42,7 @@ def test_complete_nul_names_are_distinct_and_keep_native_field_positions(kind: s
 
 
 @pytest.mark.parametrize("names", [("a", "a"), ("a\0x", "a\0x")])
-def test_actual_duplicate_complete_names_fail_only_for_actual_objects(names) -> None:
+def test_actual_duplicate_complete_names_fail_only_for_actual_objects(names: tuple[str, ...]) -> None:
     inner = record(names)
     with pytest.raises(ValueError, match="collid"):
         json_dumps(inner)

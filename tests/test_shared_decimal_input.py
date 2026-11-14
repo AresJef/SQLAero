@@ -1,6 +1,9 @@
 """Independent DEC01/GDA expectations at both public JSON and SQL exits."""
 
-from decimal import Decimal, localcontext
+# pyright: reportPrivateUsage=false
+
+
+from decimal import Decimal, DecimalTuple, localcontext
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
@@ -61,7 +64,7 @@ def test_decimal_real_subclass_ignores_every_replacement_value_method() -> None:
             raise AssertionError("must use canonical base storage")
         def __str__(self) -> str:
             raise AssertionError("subclass str")
-        def as_tuple(self) -> object:
+        def as_tuple(self) -> DecimalTuple:
             raise AssertionError("subclass as_tuple")
         def __float__(self) -> float:
             raise AssertionError("subclass float")
@@ -145,7 +148,7 @@ assert json_dumps(Decimal('1.20')) == b'"1.20"'
 @pytest.mark.parametrize("label", ["84", "97"])
 @pytest.mark.parametrize("kind", [Cursor, DictCursor, SSCursor, SSDictCursor])
 @pytest.mark.parametrize("prepared", [False, True])
-def test_database_exact_values_scale_sensitive_expression_and_json(label: str, kind, prepared: bool) -> None:
+def test_database_exact_values_scale_sensitive_expression_and_json(label: str, kind: type[Cursor] | type[DictCursor] | type[SSCursor] | type[SSDictCursor], prepared: bool) -> None:
     with live(label) as connection:
         with connection.cursor() as setup:
             setup.execute("CREATE TEMPORARY TABLE decimal_facts (amount DECIMAL(20,5), doc JSON)")
@@ -160,5 +163,9 @@ def test_database_exact_values_scale_sensitive_expression_and_json(label: str, k
             assert cursor.fetchone() == expected and cursor.fetchone() is None
             cursor.execute("SELECT CAST(%s AS CHAR) AS value", (Decimal("1.2300"),))
             row = cursor.fetchone()
-            assert (row["value"] if kind in (DictCursor, SSDictCursor) else row[0]) == "1.2300"
+            assert row is not None
+            if kind in (DictCursor, SSDictCursor):
+                assert isinstance(row, dict) and row["value"] == "1.2300"
+            else:
+                assert isinstance(row, tuple) and row[0] == "1.2300"
             assert cursor.fetchone() is None

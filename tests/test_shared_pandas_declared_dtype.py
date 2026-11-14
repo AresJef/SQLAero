@@ -1,5 +1,10 @@
 """Target schema admission is independent of missing category/level codes."""
 
+# pyright: reportPrivateUsage=false
+from typing import Any
+from collections.abc import Callable
+
+
 import pytest
 from sqlaero import _sqlaero, json_dumps
 
@@ -11,7 +16,7 @@ pa = pytest.importorskip("pyarrow")
 @pytest.mark.parametrize("family", ["complex", "arrow_binary", "arrow_unknown"])
 @pytest.mark.parametrize("kind", ["category", "multi"])
 @pytest.mark.parametrize("empty", [False, True])
-def test_unused_declared_schema_is_admitted_without_acquiring_label_values(family, kind, empty, monkeypatch, record_property) -> None:
+def test_unused_declared_schema_is_admitted_without_acquiring_label_values(family: str, kind: str, empty: bool, monkeypatch: pytest.MonkeyPatch, record_property: Callable[[str, object], None]) -> None:
     if family == "complex":
         labels = pd.Index(np.array([] if empty else [1 + 2j], dtype="complex128"))
     else:
@@ -29,7 +34,7 @@ def test_unused_declared_schema_is_admitted_without_acquiring_label_values(famil
         record_property("provider_error", str(error))
         record_property("provider_versions", f"pandas={pd.__version__};pyarrow={pa.__version__}")
         return
-    def forbidden(self):
+    def forbidden(self: Any):
         raise AssertionError("unreferenced label values were acquired")
     monkeypatch.setattr(pd.Index, "array", property(forbidden))
     with pytest.raises(TypeError, match="dtype|schema|[Bb]inary"):
@@ -41,20 +46,20 @@ def test_unused_declared_schema_is_admitted_without_acquiring_label_values(famil
             _sqlaero._escape_projection(value)
 
 
-def test_generic_object_labels_are_not_eagerly_examined_when_unused(monkeypatch) -> None:
+def test_generic_object_labels_are_not_eagerly_examined_when_unused(monkeypatch: pytest.MonkeyPatch) -> None:
     labels = pd.Index([object()], dtype=object)
     value = pd.Categorical.from_codes([-1, -1], categories=labels)
-    def forbidden(self):
+    def forbidden(self: Any):
         raise AssertionError("unreferenced Object labels were acquired")
     monkeypatch.setattr(pd.Index, "array", property(forbidden))
     assert json_dumps(value) == b"[null,null]"
 
 
 @pytest.mark.parametrize("dtype", ["string[python]", "string[pyarrow]", "Int64", "datetime64[ns]"])
-def test_supported_declared_labels_do_not_need_their_value_array_when_unused(dtype, monkeypatch) -> None:
+def test_supported_declared_labels_do_not_need_their_value_array_when_unused(dtype: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     labels = pd.Index(pd.array(["a"] if dtype.startswith("string") else [7], dtype=dtype))
     value = pd.Categorical.from_codes([-1, -1], categories=labels)
-    def forbidden(self):
+    def forbidden(self: Any):
         raise AssertionError("unreferenced typed labels were acquired")
     monkeypatch.setattr(pd.Index, "array", property(forbidden))
     assert json_dumps(value) == b"[null,null]"

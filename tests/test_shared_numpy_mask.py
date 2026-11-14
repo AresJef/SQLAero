@@ -1,5 +1,8 @@
 """Actual mask facts precede payload reads and never become fill values."""
 
+# pyright: reportPrivateUsage=false
+
+
 from datetime import datetime, tzinfo
 import math
 from typing import NoReturn

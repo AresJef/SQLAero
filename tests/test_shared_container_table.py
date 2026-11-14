@@ -1,5 +1,10 @@
 """Independent container examples from types 013-022 of the approved table."""
 
+# pyright: reportPrivateUsage=false
+from typing import Any
+from collections.abc import Callable
+
+
 from collections import namedtuple
 from decimal import Decimal
 import json
@@ -12,9 +17,9 @@ from sqlaero import _sqlaero, json_dumps
 from sqlaero.errors import DataError, SQLAeroError
 
 
-Point = namedtuple("Point", "x y")
-Box = namedtuple("Box", "payload")
-Empty = namedtuple("Empty", "")
+Point = namedtuple("Point", "x y")  # pyright: ignore[reportUntypedNamedTuple]  # Exercise collections' real factory.
+Box = namedtuple("Box", "payload")  # pyright: ignore[reportUntypedNamedTuple]  # Exercise collections' real factory.
+Empty = namedtuple("Empty", "")  # pyright: ignore[reportUntypedNamedTuple]  # Exercise collections' real factory.
 
 
 @pytest.mark.parametrize(("value", "sql", "document"), [
@@ -39,13 +44,13 @@ Empty = namedtuple("Empty", "")
     pytest.param({"007": 7, 7: 8}, ("7", "8"), b'{"007":7,"7":8}', id="016-16"),
     pytest.param({"a": 7, "b": 8}.keys(), ("'a'", "'b'"), b'["a","b"]', id="017-01"),
     pytest.param({True: 7}.keys(), ("1",), b"[true]", id="017-02"),
-    pytest.param({}.keys(), (), b"[]", id="017-03"),
+    pytest.param(dict[str, object]().keys(), (), b"[]", id="017-03"),
     pytest.param({"a": 7, "b": 8}.values(), ("7", "8"), b"[7,8]", id="018-01"),
     pytest.param({"a": None}.values(), ("NULL",), b"[null]", id="018-02"),
-    pytest.param({}.values(), (), b"[]", id="018-03"),
+    pytest.param(dict[str, object]().values(), (), b"[]", id="018-03"),
     pytest.param({"a": 7, "b": 8}.items(), ("7", "8"), b'[["a",7],["b",8]]', id="019-01"),
     pytest.param({True: 7}.items(), ("7",), b"[[true,7]]", id="019-02"),
-    pytest.param({}.items(), (), b"[]", id="019-03"),
+    pytest.param(dict[str, object]().items(), (), b"[]", id="019-03"),
     pytest.param({None: 7}.items(), ("7",), b"[[null,7]]", id="019-06"),
     pytest.param(range(3), ("0", "1", "2"), b"[0,1,2]", id="020-01"),
     pytest.param(range(5, 0, -2), ("5", "3", "1"), b"[5,3,1]", id="020-02"),
@@ -57,7 +62,7 @@ def test_container_table_exact_target_exits(value: object, sql: object, document
 
 
 @pytest.mark.parametrize("base", [list, tuple], ids=["013-08", "014-06"])
-def test_container_table_many_selects_only_the_outer_row(base: type) -> None:
+def test_container_table_many_selects_only_the_outer_row(base: type[Any]) -> None:
     value = base([(7, "ab"), (8, "cd")])
     assert _sqlaero._escape_projection(value) == ("(7,'ab')", "(8,'cd')")
     assert _sqlaero._escape_projection(value, many=True) == [("7", "'ab'"), ("8", "'cd'")]
@@ -95,7 +100,7 @@ def test_dictionary_table_full_key_policy_does_not_mutate_source_mapping() -> No
 def test_items_table_many_projects_values_and_preserves_empty_call() -> None:
     assert _sqlaero._escape_projection({"a": 7, "b": 8}.items(), many=True) == ["7", "8"]
     for itemize in (False, True):
-        assert _sqlaero._escape_projection({}.items(), many=True, itemize=itemize) == [()]
+        assert _sqlaero._escape_projection(dict[str, object]().items(), many=True, itemize=itemize) == [()]
     assert _sqlaero._escape_projection({b"a": 7}.items()) == ("7",)
     with pytest.raises(TypeError):
         json_dumps({b"a": 7}.items())
@@ -109,7 +114,7 @@ def test_range_table_applies_the_numeric_limit_only_to_mysql() -> None:
 
 
 @pytest.mark.parametrize("base", [set, frozenset], ids=["021", "022"])
-def test_set_table_uses_real_iteration_without_sorting_or_flattening(base: type) -> None:
+def test_set_table_uses_real_iteration_without_sorting_or_flattening(base: type[Any]) -> None:
     source = base([7, 8])
     actual_order = list(base.__iter__(source))
     assert _sqlaero._escape_projection(source) == tuple(str(v) for v in actual_order)
@@ -132,7 +137,7 @@ def test_container_table_invalid_leaf_and_cycle_keep_real_locations() -> None:
         with pytest.raises(TypeError) as caught:
             convert([7, bytearray(b"ab")])
         assert "[1]" in "\n".join(caught.value.__notes__)
-    source = [7]
+    source: list[object] = [7]
     source.append(source)
     with pytest.raises(SQLAeroError, match="cycle"):
         _sqlaero._escape_projection(source)
@@ -146,9 +151,9 @@ def test_container_table_invalid_leaf_and_cycle_keep_real_locations() -> None:
 @pytest.mark.parametrize(("factory", "document"), [
     (list, b"[]"), (tuple, b"[]"), (dict, b"{}"), (set, b"[]"),
     (frozenset, b"[]"), (lambda: range(0), b"[]"), (Empty, b"{}"),
-    (lambda: {}.keys(), b"[]"), (lambda: {}.values(), b"[]"), (lambda: {}.items(), b"[]"),
+    (lambda: dict[str, object]().keys(), b"[]"), (lambda: dict[str, object]().values(), b"[]"), (lambda: dict[str, object]().items(), b"[]"),
 ])
-def test_empty_container_table_root_keeps_one_zero_parameter_call(factory, document) -> None:
+def test_empty_container_table_root_keeps_one_zero_parameter_call(factory: Callable[..., Any], document: bytes) -> None:
     source = factory()
     assert _sqlaero._escape_projection(source) == ()
     assert _sqlaero._escape_projection(source, itemize=False) == "()"

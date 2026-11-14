@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from collections.abc import Callable
 from threading import Event
+from time import struct_time
 from types import FrameType
 from typing import Any
 from uuid import uuid4
@@ -39,11 +40,11 @@ def test_auxiliary_snapshot_allows_fetch_sql_and_another_projection_during_conve
 ) -> None:
     entered, release = Event(), Event()
 
-    class PausedInt(int):
-        def __int__(self) -> int:
+    class PausedYear:
+        def __index__(self) -> int:
             entered.set()
             assert release.wait(5), "the observer did not release input conversion"
-            return 7
+            return 2024
 
     with live(label) as connection, public_cursor(connection, kind) as cursor:
         with connection.cursor() as setup:
@@ -52,9 +53,10 @@ def test_auxiliary_snapshot_allows_fetch_sql_and_another_projection_during_conve
         columns, description = cursor.columns, cursor.description
         assert connection.escape(VALUE) == OLD_LITERAL
         with ThreadPoolExecutor(max_workers=1) as executor:
-            pending = executor.submit(cursor.mogrify, "SELECT %s,%s", (PausedInt(7), VALUE))
+            stamp = struct_time((PausedYear(), 1, 2, 3, 4, 5, 1, 2, -1))
+            pending = executor.submit(cursor.mogrify, "SELECT %s,%s", (stamp, VALUE))
             try:
-                assert entered.wait(5), "mogrify did not enter the supported int protocol"
+                assert entered.wait(5), "mogrify did not enter struct_time's supported index protocol"
                 assert connection.escape(VALUE) == OLD_LITERAL
                 assert cursor.fetchone() == public_row(kind, 41)
                 assert cursor.fetchall() == (public_row(kind, 42),)
@@ -66,7 +68,7 @@ def test_auxiliary_snapshot_allows_fetch_sql_and_another_projection_during_conve
                 assert cursor.row_count == 2 and cursor.fetchall() == ()
             finally:
                 release.set()
-            assert pending.result(timeout=5) == "SELECT 7," + OLD_LITERAL
+            assert pending.result(timeout=5) == "SELECT '2024-01-02 03:04:05'," + OLD_LITERAL
         assert cursor.mogrify("SELECT %s", VALUE) == "SELECT " + NEW_LITERAL
 
 
@@ -79,8 +81,8 @@ def test_auxiliary_input_failure_does_not_claim_sql_or_destroy_the_saved_referen
     entered, release = Event(), Event()
     original = MemoryError("one supported auxiliary input protocol failed")
 
-    class FailedInt(int):
-        def __int__(self) -> int:
+    class FailedYear:
+        def __index__(self) -> int:
             entered.set()
             assert release.wait(5), "the observer did not release failed input conversion"
             raise original
@@ -89,7 +91,8 @@ def test_auxiliary_input_failure_does_not_claim_sql_or_destroy_the_saved_referen
         business.execute("SELECT 41 AS v UNION ALL SELECT 42")
         columns, description = business.columns, business.description
         with ThreadPoolExecutor(max_workers=1) as executor:
-            pending = executor.submit(connection.escape, FailedInt(7))
+            stamp = struct_time((FailedYear(), 1, 2, 3, 4, 5, 1, 2, -1))
+            pending = executor.submit(connection.escape, stamp)
             try:
                 assert entered.wait(5)
                 if finish == "close":
@@ -135,13 +138,13 @@ def test_actual_signal_interrupts_only_the_auxiliary_conversion(
         completed = 0
         observed: list[int] = []
 
-        class AdaptedInt(int):
-            def __int__(self) -> int:
+        class AdaptedYear:
+            def __index__(self) -> int:
                 nonlocal converted
                 converted = True
-                return 7
+                return 2024
 
-        parameters = (AdaptedInt(7), source)
+        parameters = (struct_time((AdaptedYear(), 1, 2, 3, 4, 5, 1, 2, -1)), source)
         # A fixed finite exposure follows the existing cold TLS-display probe;
         # this is not an assumed 2ms OS-dispatch SLA or an unbounded retry.
         attempts = range(64)

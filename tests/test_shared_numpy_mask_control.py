@@ -1,5 +1,8 @@
 """Mask identity and owner checks share the existing operation boundaries."""
 
+# pyright: reportPrivateUsage=false
+
+
 from datetime import datetime, timedelta, tzinfo
 
 import pytest
