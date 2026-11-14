@@ -14,19 +14,11 @@ use super::arrow;
 use super::source::{Child, PreparedSource, Selected, Shape};
 use crate::errors;
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "native columns are the ordinary case; retain the existing inline reader rather than add a heap allocation and indirection to every Polars column"
-)]
 enum Column<'py> {
     Native(arrow::Prepared<'py>),
     Object(Bound<'py, PyAny>),
 }
 
-#[expect(
-    clippy::large_enum_variant,
-    reason = "the prepared source is already boxed at its outer boundary; keep its ordinary native reader inline without a second heap allocation"
-)]
 enum Storage<'py> {
     Native(arrow::Prepared<'py>),
     Object(Bound<'py, PyAny>),

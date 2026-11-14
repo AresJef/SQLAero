@@ -6,6 +6,7 @@
 //! release owner; no Python rows, callbacks or normalized value tree are built.
 
 use super::invalid;
+use super::schema::{Field, View as TypeView};
 use crate::errors;
 use crate::input::control::Checkpoint;
 use arrow_array::ffi::FFI_ArrowArray;
@@ -46,7 +47,7 @@ struct Read<'a> {
 pub(super) fn import(
     py: Python<'_>,
     source: FFI_ArrowArray,
-    dtype: &DataType,
+    dtype: &Field,
     budget: &dyn Checkpoint,
 ) -> PyResult<ArrayRef> {
     let owner = Arc::new(source);
@@ -193,7 +194,7 @@ impl Read<'_> {
         &self,
         py: Python<'_>,
         node: Header,
-        dtype: &DataType,
+        dtype: &Field,
         window: Option<(usize, usize)>,
         depth: usize,
     ) -> PyResult<ArrayRef> {
@@ -217,12 +218,12 @@ impl Read<'_> {
         };
         add(py, offset, len)?;
         let children = size(py, node.n_children)?;
-        if matches!(dtype, DataType::Null) {
+        if matches!(dtype.data_type(), TypeView::Scalar(DataType::Null)) {
             return Ok(ArrayRef::Leaf(Arc::new(NullArray::new(len))));
         }
         let nulls = self.nulls(py, node, offset, len)?;
-        match dtype {
-            DataType::Struct(fields) => {
+        match dtype.data_type() {
+            TypeView::Struct(fields) => {
                 if children != fields.len() {
                     return Err(invalid(
                         py,
@@ -237,22 +238,22 @@ impl Read<'_> {
                     arrays.push(self.array(
                         py,
                         self.child(py, node, index)?,
-                        field.data_type(),
+                        field,
                         Some((offset, len)),
                         depth + 1,
                     )?);
                 }
                 Ok(ArrayRef::Record(Arc::new(Record {
-                    dtype: dtype.clone(),
+                    dtype: dtype.kind.clone(),
                     len,
                     nulls,
                     columns: arrays,
                 })))
             }
-            DataType::List(_) | DataType::LargeList(_) => {
+            TypeView::List(_) | TypeView::LargeList(_) => {
                 self.list(py, node, dtype, (offset, len), nulls, depth)
             }
-            DataType::FixedSizeList(field, width) => {
+            TypeView::FixedSizeList(field, width) => {
                 if children != 1 {
                     return Err(invalid(py, "Arrow fixed list must have one child"));
                 }
@@ -261,19 +262,19 @@ impl Read<'_> {
                 let values = self.array(
                     py,
                     self.child(py, node, 0)?,
-                    field.data_type(),
+                    field,
                     Some((mul(py, offset, width_usize)?, mul(py, len, width_usize)?)),
                     depth + 1,
                 )?;
                 Ok(ArrayRef::Sequence(Arc::new(Sequence {
-                    dtype: dtype.clone(),
+                    dtype: dtype.kind.clone(),
                     len,
                     nulls,
                     offsets: Offsets::Fixed(width_usize),
                     values,
                 })))
             }
-            DataType::Dictionary(key, value) => {
+            TypeView::Dictionary(key, value) => {
                 if children != 0 || node.dictionary.is_null() {
                     return Err(invalid(
                         py,
@@ -293,13 +294,15 @@ impl Read<'_> {
                 // checked against its own current dictionary. No unsafe native
                 // constructor promises that unvisited keys are in range.
                 Ok(ArrayRef::Dictionary(Arc::new(Dictionary {
-                    dtype: dtype.clone(),
+                    dtype: dtype.kind.clone(),
                     keys,
                     values,
                 })))
             }
-            _ if children != 0 => Err(invalid(py, "Arrow scalar C array has unexpected children")),
-            _ => self.leaf(py, node, dtype, (offset, len), nulls),
+            TypeView::Scalar(_) if children != 0 => {
+                Err(invalid(py, "Arrow scalar C array has unexpected children"))
+            }
+            TypeView::Scalar(value) => self.leaf(py, node, value, (offset, len), nulls),
         }
     }
 
@@ -307,7 +310,7 @@ impl Read<'_> {
         &self,
         py: Python<'_>,
         node: Header,
-        dtype: &DataType,
+        dtype: &Field,
         window: (usize, usize),
         nulls: Option<NullBuffer>,
         depth: usize,
@@ -316,21 +319,15 @@ impl Read<'_> {
             return Err(invalid(py, "Arrow list must have one child"));
         }
         let (offset, len) = window;
-        let (field, width) = match dtype {
-            DataType::List(field) => (field, 4),
-            DataType::LargeList(field) => (field, 8),
+        let (field, width) = match dtype.data_type() {
+            TypeView::List(field) => (field, 4),
+            TypeView::LargeList(field) => (field, 8),
             _ => return Err(invalid(py, "Arrow list physical layout differs")),
         };
         let offsets = self.offsets(py, node, width, offset, len)?;
-        let values = self.array(
-            py,
-            self.child(py, node, 0)?,
-            field.data_type(),
-            None,
-            depth + 1,
-        )?;
+        let values = self.array(py, self.child(py, node, 0)?, field, None, depth + 1)?;
         Ok(ArrayRef::Sequence(Arc::new(Sequence {
-            dtype: dtype.clone(),
+            dtype: dtype.kind.clone(),
             len,
             nulls,
             offsets,
@@ -392,7 +389,14 @@ impl Read<'_> {
                 let width = dtype
                     .primitive_width()
                     .ok_or_else(|| invalid(py, "unsupported native Arrow scalar layout"))?;
-                (2, mul(py, end, width)?, width)
+                // Native alignment can be less than byte width (notably
+                // i256). Copy only when the actual typed reader requires it.
+                let alignment = match width {
+                    16 => align_of::<i128>(),
+                    32 => align_of::<arrow_buffer::i256>(),
+                    _ => width,
+                };
+                (2, mul(py, end, width)?, alignment)
             }
         };
         if count != expected {

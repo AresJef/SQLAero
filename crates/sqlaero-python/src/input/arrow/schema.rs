@@ -6,13 +6,66 @@
 
 use crate::errors;
 use crate::input::control::Checkpoint;
-use arrow_schema::{DataType, Field, TimeUnit, ffi::FFI_ArrowSchema};
+use arrow_schema::{DataType, TimeUnit, ffi::FFI_ArrowSchema};
 use pyo3::prelude::*;
 use smallvec::SmallVec;
 use sqlaero_core::error::ClientErrorCode;
 use std::ffi::{c_char, c_void};
 use std::ptr;
 use std::sync::Arc;
+
+/// Own only source schema facts. Compound children stay in their fallibly
+/// prepared Vec; they are not bulk-copied into a second immutable field table.
+pub(crate) struct Field {
+    pub(super) kind: Arc<Type>,
+    _flags: i64,
+}
+pub(crate) enum Type {
+    Scalar(DataType),
+    Struct(Vec<Field>),
+    List(Field),
+    LargeList(Field),
+    FixedSizeList(Field, i32),
+    Dictionary(DataType, Field),
+}
+#[derive(Clone, Copy)]
+pub(crate) enum View<'a> {
+    Scalar(&'a DataType),
+    Struct(&'a [Field]),
+    List(&'a Field),
+    LargeList(&'a Field),
+    FixedSizeList(&'a Field, &'a i32),
+    Dictionary(&'a DataType, &'a Field),
+}
+impl Field {
+    pub(super) fn data_type(&self) -> View<'_> {
+        self.kind.view()
+    }
+}
+impl Type {
+    pub(super) fn view(&self) -> View<'_> {
+        match self {
+            Self::Scalar(value) => View::Scalar(value),
+            Self::Struct(value) => View::Struct(value),
+            Self::List(value) => View::List(value),
+            Self::LargeList(value) => View::LargeList(value),
+            Self::FixedSizeList(value, width) => View::FixedSizeList(value, width),
+            Self::Dictionary(key, value) => View::Dictionary(key, value),
+        }
+    }
+}
+impl<'a> View<'a> {
+    pub(super) fn scalar(self) -> Option<&'a DataType> {
+        if let Self::Scalar(value) = self {
+            Some(value)
+        } else {
+            None
+        }
+    }
+    pub(super) fn is_scalar(self, expected: &DataType) -> bool {
+        self.scalar().is_some_and(|actual| actual == expected)
+    }
+}
 
 #[derive(Clone, Copy)]
 #[repr(C)]
@@ -123,16 +176,16 @@ fn build(
                 .try_reserve_exact(count)
                 .map_err(|_| errors::memory_error(py))?;
             for index in 0..count {
-                fields.push(Arc::new(descend(
+                fields.push(descend(
                     py,
                     child(py, &node, index)?,
                     super::names::Edge::Field(index),
                     path,
                     logical,
                     budget,
-                )?));
+                )?);
             }
-            DataType::Struct(fields.into())
+            Type::Struct(fields)
         }
         "+l" | "+L" => {
             if count != 1 {
@@ -141,18 +194,18 @@ fn build(
                     "Arrow list schema must have exactly one child",
                 ));
             }
-            let field = Arc::new(descend(
+            let field = descend(
                 py,
                 child(py, &node, 0)?,
                 super::names::Edge::Value,
                 path,
                 logical,
                 budget,
-            )?);
+            )?;
             if format == "+l" {
-                DataType::List(field)
+                Type::List(field)
             } else {
-                DataType::LargeList(field)
+                Type::LargeList(field)
             }
         }
         value if value.starts_with("+w:") => {
@@ -165,15 +218,15 @@ fn build(
             let width = value[3..]
                 .parse::<i32>()
                 .map_err(|_| super::invalid(py, "Arrow fixed list schema has an invalid width"))?;
-            DataType::FixedSizeList(
-                Arc::new(descend(
+            Type::FixedSizeList(
+                descend(
                     py,
                     child(py, &node, 0)?,
                     super::names::Edge::Value,
                     path,
                     logical,
                     budget,
-                )?),
+                )?,
                 width,
             )
         }
@@ -206,7 +259,7 @@ fn build(
                     arc_text(py, &text, budget)
                 })
                 .transpose()?;
-            DataType::Timestamp(unit, zone)
+            Type::Scalar(DataType::Timestamp(unit, zone))
         }
         _ => {
             // Every admitted non-timestamp scalar format is a small canonical
@@ -225,9 +278,9 @@ fn build(
             // UTF-8, no children or dictionary. It is never dropped as an FFI
             // owner; the constant-size scalar parser cannot traverse the root.
             let view = unsafe { &*ptr::from_ref(&scalar).cast::<FFI_ArrowSchema>() };
-            DataType::try_from(view).map_err(|error| {
+            Type::Scalar(DataType::try_from(view).map_err(|error| {
                 errors::builtin_format::<pyo3::exceptions::PyTypeError>(py, format_args!("{error}"))
-            })?
+            })?)
         }
     };
     if !node.dictionary.is_null() {
@@ -241,9 +294,18 @@ fn build(
             logical,
             budget,
         )?;
-        dtype = DataType::Dictionary(Box::new(dtype), Box::new(value.data_type().clone()));
+        let Type::Scalar(key) = dtype else {
+            return Err(super::invalid(
+                py,
+                "Arrow Dictionary key must be a scalar integer",
+            ));
+        };
+        dtype = Type::Dictionary(key, value);
     }
-    Ok(Field::new("", dtype, node.flags & 2 != 0).with_dict_is_ordered(node.flags & 1 != 0))
+    Ok(Field {
+        kind: Arc::new(dtype),
+        _flags: node.flags,
+    })
 }
 
 /// Arrow's public metadata type uses Arc<str>. Its standard immutable-owner

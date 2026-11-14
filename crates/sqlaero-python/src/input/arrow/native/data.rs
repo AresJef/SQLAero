@@ -2,6 +2,7 @@
 //! retain buffers and children without rebuilding them through recursive
 //! ArrayData constructors or promising that unchecked dictionary keys are valid.
 
+use super::super::schema::{Type, View as TypeView};
 use arrow_array::{Array, ArrayRef as Leaf};
 use arrow_buffer::{Buffer, NullBuffer, ScalarBuffer};
 use arrow_schema::DataType;
@@ -19,13 +20,13 @@ pub(crate) enum ArrayRef {
 }
 
 pub(crate) struct Record {
-    pub(super) dtype: DataType,
+    pub(super) dtype: Arc<Type>,
     pub(super) len: usize,
     pub(super) nulls: Option<NullBuffer>,
     pub(super) columns: Vec<ArrayRef>,
 }
 pub(crate) struct Sequence {
-    pub(super) dtype: DataType,
+    pub(super) dtype: Arc<Type>,
     pub(super) len: usize,
     pub(super) nulls: Option<NullBuffer>,
     pub(super) offsets: Offsets,
@@ -37,7 +38,7 @@ pub(super) enum Offsets {
     Fixed(usize),
 }
 pub(crate) struct Dictionary {
-    pub(super) dtype: DataType,
+    pub(super) dtype: Arc<Type>,
     pub(super) keys: Leaf,
     pub(super) values: ArrayRef,
 }
@@ -56,14 +57,14 @@ pub(crate) struct View {
 }
 
 impl ArrayRef {
-    pub(crate) fn data_type(&self) -> &DataType {
+    pub(crate) fn data_type(&self) -> TypeView<'_> {
         match self {
-            Self::Leaf(value) => value.data_type(),
-            Self::Record(value) => &value.dtype,
-            Self::Sequence(value) => &value.dtype,
-            Self::Dictionary(value) => &value.dtype,
-            Self::Bytes(value) => &value.dtype,
-            Self::View(value) => &value.dtype,
+            Self::Leaf(value) => TypeView::Scalar(value.data_type()),
+            Self::Record(value) => value.dtype.view(),
+            Self::Sequence(value) => value.dtype.view(),
+            Self::Dictionary(value) => value.dtype.view(),
+            Self::Bytes(value) => TypeView::Scalar(&value.dtype),
+            Self::View(value) => TypeView::Scalar(&value.dtype),
         }
     }
     pub(crate) fn len(&self) -> usize {

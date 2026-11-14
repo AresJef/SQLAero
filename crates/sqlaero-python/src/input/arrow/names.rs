@@ -2,22 +2,22 @@
 //! JSON key policy. A stable schema is prepared lazily within this one call.
 
 use super::invalid;
+use super::schema::View;
 use crate::input::control::{self, Checkpoint};
 use crate::input::source::Shape;
 use crate::{errors, input};
-use arrow_schema::DataType;
 use pyo3::prelude::*;
 use pyo3::types::{PyList, PyString};
 
 /// Only a Struct needs field names. List/Dictionary have one schema child, so
 /// this bounded walk never scans a wide record or any value buffer.
-pub(super) fn needed(dtype: &DataType) -> bool {
+pub(super) fn needed(dtype: View<'_>) -> bool {
     match dtype {
-        DataType::Struct(_) => true,
-        DataType::List(child) | DataType::LargeList(child) | DataType::FixedSizeList(child, _) => {
+        View::Struct(_) => true,
+        View::List(child) | View::LargeList(child) | View::FixedSizeList(child, _) => {
             needed(child.data_type())
         }
-        DataType::Dictionary(_, value) => needed(value),
+        View::Dictionary(_, value) => needed(value.data_type()),
         _ => false,
     }
 }

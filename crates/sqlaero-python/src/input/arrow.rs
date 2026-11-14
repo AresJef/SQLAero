@@ -20,7 +20,7 @@ use arrow_array::{
 };
 use arrow_buffer::{ArrowNativeType, BooleanBuffer, NullBuffer, ScalarBuffer};
 use arrow_data::{ByteView, validate_binary_view};
-use arrow_schema::{DataType, Field, TimeUnit as ArrowTimeUnit, ffi::FFI_ArrowSchema};
+use arrow_schema::{DataType, TimeUnit as ArrowTimeUnit, ffi::FFI_ArrowSchema};
 use pyo3::exceptions::{PyBufferError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString, PyTuple, PyType};
@@ -42,6 +42,7 @@ mod offset;
 mod projection;
 mod schema;
 use projection::consume as consume_value;
+use schema::{Field, View as TypeView};
 
 /// The five fields of the public Arrow C Stream ABI. Apache's record-batch
 /// reader requires a Struct root, while this input also accepts primitive
@@ -165,7 +166,7 @@ impl<'py> Read<'_, 'py> {
     fn child(
         &mut self,
         edge: names::Edge,
-        dtype: &DataType,
+        dtype: TypeView<'_>,
         wanted: bool,
         budget: &dyn Checkpoint,
     ) -> PyResult<usize> {
@@ -177,13 +178,13 @@ impl<'py> Read<'_, 'py> {
     }
     fn dictionary(
         &mut self,
-        mut dtype: &DataType,
+        mut dtype: TypeView<'_>,
         wanted: bool,
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
-        while let DataType::Dictionary(_, value) = dtype {
-            self.node = self.child(names::Edge::Value, value, wanted, budget)?;
-            dtype = value;
+        while let TypeView::Dictionary(_, value) = dtype {
+            self.node = self.child(names::Edge::Value, value.data_type(), wanted, budget)?;
+            dtype = value.data_type();
         }
         Ok(())
     }
@@ -220,7 +221,7 @@ impl Int64Views {
             return Ok(None);
         }
         let views = match shape {
-            Shape::Vector { .. } if matches!(array.data_type(), DataType::Int64) => {
+            Shape::Vector { .. } if array.data_type().is_scalar(&DataType::Int64) => {
                 let values = array
                     .as_any()
                     .downcast_ref::<Int64Array>()
@@ -228,7 +229,7 @@ impl Int64Views {
                 Self::Vector(values.clone())
             }
             Shape::Table { columns, .. } if columns != 0 => {
-                let DataType::Struct(fields) = array.data_type() else {
+                let TypeView::Struct(fields) = array.data_type() else {
                     return Ok(None);
                 };
                 // Nullable Struct parents and nested Struct vectors retain
@@ -240,7 +241,7 @@ impl Int64Views {
                     if index != 0 && index.is_multiple_of(64) {
                         super::check(py, budget)?;
                     }
-                    if !matches!(field.data_type(), DataType::Int64) {
+                    if !field.data_type().is_scalar(&DataType::Int64) {
                         return Ok(None);
                     }
                 }
@@ -322,7 +323,7 @@ struct BooleanReader {
 
 impl BooleanReader {
     fn prepare(array: &ArrayRef) -> Option<Self> {
-        if !matches!(array.data_type(), DataType::Boolean) {
+        if !array.data_type().is_scalar(&DataType::Boolean) {
             return None;
         }
         // A future physical mismatch keeps the generic value's late failure.
@@ -364,11 +365,11 @@ fn native_fast_path(
     if !matches!(shape, Shape::Vector { length } if length >= 32) || array.len() < 32 {
         return Ok(None);
     }
-    if !matches!(array.data_type(), DataType::Float32) {
+    if !array.data_type().is_scalar(&DataType::Float32) {
         if let Some(reader) = BooleanReader::prepare(array) {
             return Ok(Some(FastPath::Boolean(reader)));
         }
-        if matches!(array.data_type(), DataType::Float64) {
+        if array.data_type().is_scalar(&DataType::Float64) {
             // Keep any future physical mismatch on the generic value path;
             // an unused or NULL value must not acquire an earlier type error.
             let Some(values) = array.as_any().downcast_ref::<Float64Array>() else {
@@ -586,7 +587,7 @@ pub(crate) fn prepare_exported<'py>(
         let field = schema::import(py, &schema, &mut names, budget)?;
         validate_field(py, &field, 0, budget)?;
         super::check(py, budget)?;
-        let array = native::import(py, array, field.data_type(), budget)?;
+        let array = native::import(py, array, &field, budget)?;
         validate_root_shape(py, &array, shape)?;
         let fast_path = native_fast_path(py, &array, shape, budget)?
             .map(|views| super::boxed(py, views))
@@ -658,7 +659,7 @@ pub(crate) fn prepare_exported<'py>(
 fn validate_table_schema(py: Python<'_>, field: &Field, shape: Shape) -> PyResult<()> {
     if let Shape::Table { columns, .. } = shape {
         match field.data_type() {
-            DataType::Struct(fields) if fields.len() == columns => {}
+            TypeView::Struct(fields) if fields.len() == columns => {}
             _ => {
                 return Err(invalid(
                     py,
@@ -675,7 +676,7 @@ fn validate_root_shape(py: Python<'_>, array: &ArrayRef, shape: Shape) -> PyResu
         Shape::Vector { length } if array.len() == length => Ok(()),
         Shape::Table { rows, columns }
             if array.len() == rows
-                && matches!(array.data_type(), DataType::Struct(fields) if fields.len() == columns) =>
+                && matches!(array.data_type(), TypeView::Struct(fields) if fields.len() == columns) =>
         {
             Ok(())
         }
@@ -700,57 +701,54 @@ fn validate_field(
             "Arrow schema exceeds 64 nested container levels",
         ));
     }
-    if field.metadata().contains_key("ARROW:extension:name") {
-        return Err(invalid(
-            py,
-            "Arrow extension storage is outside the supported input contract",
-        ));
-    }
     match field.data_type() {
-        DataType::Null
-        | DataType::Boolean
-        | DataType::Int8
-        | DataType::Int16
-        | DataType::Int32
-        | DataType::Int64
-        | DataType::UInt8
-        | DataType::UInt16
-        | DataType::UInt32
-        | DataType::UInt64
-        | DataType::Float32
-        | DataType::Float64
-        | DataType::Utf8
-        | DataType::LargeUtf8
-        | DataType::Utf8View
-        | DataType::Binary
-        | DataType::LargeBinary
-        | DataType::BinaryView
-        | DataType::Date32
-        | DataType::Date64
-        | DataType::Timestamp(_, _)
-        | DataType::Duration(_)
-        | DataType::Decimal32(_, _)
-        | DataType::Decimal64(_, _)
-        | DataType::Decimal128(_, _)
-        | DataType::Decimal256(_, _) => Ok(()),
-        DataType::Time32(ArrowTimeUnit::Second | ArrowTimeUnit::Millisecond)
-        | DataType::Time64(ArrowTimeUnit::Microsecond | ArrowTimeUnit::Nanosecond) => Ok(()),
-        DataType::FixedSizeBinary(width) if *width >= 0 => Ok(()),
-        DataType::List(child) | DataType::LargeList(child) => {
+        TypeView::Scalar(dtype) => match dtype {
+            DataType::Null
+            | DataType::Boolean
+            | DataType::Int8
+            | DataType::Int16
+            | DataType::Int32
+            | DataType::Int64
+            | DataType::UInt8
+            | DataType::UInt16
+            | DataType::UInt32
+            | DataType::UInt64
+            | DataType::Float32
+            | DataType::Float64
+            | DataType::Utf8
+            | DataType::LargeUtf8
+            | DataType::Utf8View
+            | DataType::Binary
+            | DataType::LargeBinary
+            | DataType::BinaryView
+            | DataType::Date32
+            | DataType::Date64
+            | DataType::Timestamp(_, _)
+            | DataType::Duration(_)
+            | DataType::Decimal32(_, _)
+            | DataType::Decimal64(_, _)
+            | DataType::Decimal128(_, _)
+            | DataType::Decimal256(_, _) => Ok(()),
+            DataType::Time32(ArrowTimeUnit::Second | ArrowTimeUnit::Millisecond)
+            | DataType::Time64(ArrowTimeUnit::Microsecond | ArrowTimeUnit::Nanosecond) => Ok(()),
+            DataType::FixedSizeBinary(width) if *width >= 0 => Ok(()),
+            _ => Err(invalid(py, "unsupported Arrow logical input dtype")),
+        },
+        TypeView::List(child) | TypeView::LargeList(child) => {
             validate_field(py, child, depth + 1, budget)
         }
-        DataType::FixedSizeList(child, width) if *width >= 0 => {
+        TypeView::FixedSizeList(child, width) if *width >= 0 => {
             validate_field(py, child, depth + 1, budget)
         }
-        DataType::Struct(fields) => {
+        TypeView::Struct(fields) => {
             for child in fields {
                 validate_field(py, child, depth + 1, budget)?;
             }
             Ok(())
         }
-        DataType::Dictionary(key, value) => {
+        TypeView::Dictionary(key, value) => {
             if !matches!(
-                key.as_ref(),
+                key,
                 DataType::Int8
                     | DataType::Int16
                     | DataType::Int32
@@ -765,12 +763,7 @@ fn validate_field(
                     "Arrow dictionary key must be an 8/16/32/64-bit integer",
                 ));
             }
-            validate_field(
-                py,
-                &Field::new("", value.as_ref().clone(), true),
-                depth + 1,
-                budget,
-            )
+            validate_field(py, value, depth + 1, budget)
         }
         _ => Err(invalid(py, "unsupported Arrow logical input dtype")),
     }
@@ -845,7 +838,7 @@ impl Prepared<'_> {
                             "Arrow stream ended before its declared row count",
                         ));
                     }
-                    let array = native::import(py, raw, self.field.data_type(), budget)?;
+                    let array = native::import(py, raw, &self.field, budget)?;
                     let next_end = end
                         .checked_add(array.len())
                         .ok_or_else(|| invalid(py, "Arrow stream length overflows usize"))?;
@@ -1039,32 +1032,33 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
     crate::input::source::cell_destinations!();
 }
 
-fn consume_schema(py: Python<'_>, dtype: &DataType, target: &mut dyn Target) -> PyResult<()> {
+fn consume_schema(py: Python<'_>, dtype: TypeView<'_>, target: &mut dyn Target) -> PyResult<()> {
     if binary_schema(dtype, &mut || target.checkpoint(py, 1))? {
         target.schema(py, Schema::Binary)?;
     }
     Ok(())
 }
-
-fn binary_schema(dtype: &DataType, check: &mut impl FnMut() -> PyResult<()>) -> PyResult<bool> {
+fn binary_schema(dtype: TypeView<'_>, check: &mut impl FnMut() -> PyResult<()>) -> PyResult<bool> {
     check()?;
     match dtype {
-        DataType::Binary
-        | DataType::LargeBinary
-        | DataType::BinaryView
-        | DataType::FixedSizeBinary(_) => Ok(true),
-        DataType::List(child) | DataType::LargeList(child) | DataType::FixedSizeList(child, _) => {
-            binary_schema(child.data_type(), check)
-        }
-        DataType::Struct(fields) => {
-            for field in fields {
-                if binary_schema(field.data_type(), check)? {
+        TypeView::Scalar(
+            DataType::Binary
+            | DataType::LargeBinary
+            | DataType::BinaryView
+            | DataType::FixedSizeBinary(_),
+        ) => Ok(true),
+        TypeView::List(child)
+        | TypeView::LargeList(child)
+        | TypeView::FixedSizeList(child, _)
+        | TypeView::Dictionary(_, child) => binary_schema(child.data_type(), check),
+        TypeView::Struct(fields) => {
+            for child in fields {
+                if binary_schema(child.data_type(), check)? {
                     return Ok(true);
                 }
             }
             Ok(false)
         }
-        DataType::Dictionary(_, value) => binary_schema(value, check),
         _ => Ok(false),
     }
 }
@@ -1148,7 +1142,11 @@ fn consume_scalar<'py>(
                 .value(index)
         };
     }
-    match array.data_type() {
+    match array
+        .data_type()
+        .scalar()
+        .ok_or_else(|| invalid(py, "Arrow compound reached the scalar input boundary"))?
+    {
         DataType::Null => target.scalar(py, ValueRef::Null),
         DataType::Boolean => target.scalar(py, ValueRef::Boolean(native!(BooleanArray))),
         DataType::Int8 => target.scalar(py, ValueRef::Signed(i64::from(native!(Int8Array)))),
@@ -1279,7 +1277,7 @@ fn consume_scalar<'py>(
         }
         _ => Err(invalid(
             py,
-            "this Arrow logical family's shared cell migration is not connected yet",
+            "unsupported Arrow scalar at the shared input boundary",
         )),
     }
 }
@@ -1389,8 +1387,8 @@ fn consume_bytes(
     budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     let text = matches!(
-        array.data_type(),
-        DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View
+        array.data_type().scalar(),
+        Some(DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View)
     );
     let (length, short) = {
         let source = byte_slice(py, array, index)?;
@@ -1598,7 +1596,7 @@ fn dictionary_label<'a>(
         }};
     }
     match array.data_type() {
-        DataType::Dictionary(key, _) => match key.as_ref() {
+        TypeView::Dictionary(key, _) => match key {
             DataType::Int8 => label!(Int8Type),
             DataType::Int16 => label!(Int16Type),
             DataType::Int32 => label!(Int32Type),

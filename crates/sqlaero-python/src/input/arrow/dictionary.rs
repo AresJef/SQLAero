@@ -1,4 +1,5 @@
 //! Retained native dictionary coordinates, never target-formatted labels.
+use super::schema::View as TypeView;
 use super::{ArrayRef, native};
 use super::{dictionary_label, invalid};
 use crate::errors;
@@ -47,7 +48,7 @@ impl KeyReader {
             }};
         }
         match array.data_type() {
-            DataType::Dictionary(key, _) => match key.as_ref() {
+            TypeView::Dictionary(key, _) => match key {
                 DataType::Int8 => keys!(Int8Type, Int8),
                 DataType::Int16 => keys!(Int16Type, Int16),
                 DataType::Int32 => keys!(Int32Type, Int32),
@@ -100,9 +101,9 @@ pub(super) struct Reader {
     mask: u8,
     columns: Vec<Option<Labels>>,
 }
-fn text_dictionary(dtype: &DataType) -> bool {
-    matches!(dtype, DataType::Dictionary(_, values)
-        if matches!(values.as_ref(), DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View))
+fn text_dictionary(dtype: TypeView<'_>) -> bool {
+    matches!(dtype, TypeView::Dictionary(_, values)
+        if matches!(values.data_type().scalar(), Some(DataType::Utf8 | DataType::LargeUtf8 | DataType::Utf8View)))
 }
 impl Reader {
     pub(super) fn clear_chunk(&mut self) {
@@ -111,7 +112,7 @@ impl Reader {
         }
     }
 
-    pub(super) fn prepare(dtype: &DataType, shape: Shape) -> Option<Self> {
+    pub(super) fn prepare(dtype: TypeView<'_>, shape: Shape) -> Option<Self> {
         let rows = match shape {
             Shape::Vector { length } => length,
             Shape::Table { rows, .. } => rows,
@@ -122,7 +123,7 @@ impl Reader {
         }
         let mask = if matches!(shape, Shape::Table { .. }) {
             match dtype {
-                DataType::Struct(fields) => {
+                TypeView::Struct(fields) => {
                     fields
                         .iter()
                         .take(COLUMNS)

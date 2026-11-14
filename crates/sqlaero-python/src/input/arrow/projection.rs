@@ -2,9 +2,8 @@
 //! and array; it never builds Python rows or a normalized Rust value tree.
 
 use super::native::Sequence;
-use super::{
-    ArrayRef, DataType, Read, StructArray, consume_scalar, dictionary_label, invalid, names,
-};
+use super::schema::View as TypeView;
+use super::{ArrayRef, Read, StructArray, consume_scalar, dictionary_label, invalid, names};
 use crate::input::cell::Target;
 use crate::input::control::Checkpoint;
 use crate::input::source::{PreparedSource, Shape};
@@ -30,7 +29,7 @@ fn resolve<'a>(
         if index >= array.len() {
             return Err(invalid(py, "Arrow child index is outside its array"));
         }
-        if array.is_null(index) || !matches!(array.data_type(), DataType::Dictionary(_, _)) {
+        if array.is_null(index) || !matches!(array.data_type(), TypeView::Dictionary(_, _)) {
             return Ok((array, index));
         }
         // Ordinary scalar work is already charged by the target. Transparent
@@ -45,14 +44,14 @@ fn kind<'a>(py: Python<'_>, array: &'a ArrayRef, index: usize) -> PyResult<Kind<
         return Ok(Kind::Scalar);
     }
     let (values, start, end) = match array.data_type() {
-        DataType::Struct(_) => {
+        TypeView::Struct(_) => {
             return array
                 .as_any()
                 .downcast_ref::<StructArray>()
                 .map(Kind::Record)
                 .ok_or_else(|| invalid(py, "Arrow Struct physical type differs"));
         }
-        DataType::List(_) | DataType::LargeList(_) | DataType::FixedSizeList(_, _) => {
+        TypeView::List(_) | TypeView::LargeList(_) | TypeView::FixedSizeList(_, _) => {
             let values = array
                 .as_any()
                 .downcast_ref::<Sequence>()
