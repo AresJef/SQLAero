@@ -4,9 +4,7 @@ use crate::errors;
 use crate::input::attribute::GetSet;
 use crate::input::cell::Target;
 use crate::input::control::{self, Checkpoint};
-use crate::input::sink::{self, Destination};
-use crate::input::source::{CellWriter, PreparedSource, Shape};
-use crate::input::temporal::TimeUnit;
+use crate::input::source::{PreparedSource, Shape};
 use crate::input::{
     arrow,
     numpy::{NumpyArrayApi, NumpySource, NumpyTypes},
@@ -14,10 +12,11 @@ use crate::input::{
 use pyo3::exceptions::{PyIndexError, PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyModule, PyTuple, PyType};
-use smallvec::SmallVec;
-use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::ValueRef;
+use sqlaero_transcode::temporal::TimeUnit;
 use std::ffi::CStr;
+
+mod multi;
 use std::fmt::Write;
 
 /// Fixed public dtype families. Unsupported extension schemas never disappear
@@ -32,6 +31,7 @@ enum Family {
     Numpy,
 }
 
+#[pyclass(frozen, module = "sqlaero._sqlaero", name = "_PandasSources")]
 pub(super) struct SourceTypes {
     series: Py<PyType>,
     index: Py<PyType>,
@@ -202,6 +202,7 @@ impl SourceTypes {
         value: &Bound<'py, PyAny>,
         numpy: &NumpyTypes,
         budget: &dyn crate::input::control::Checkpoint,
+        catalog: &Py<Self>,
     ) -> PyResult<Option<Box<dyn PreparedSource<'py> + 'py>>> {
         let py = value.py();
         let original = value.clone();
@@ -218,7 +219,7 @@ impl SourceTypes {
         crate::input::check(py, budget)?;
         let api = numpy.array_api(py);
         if is_array {
-            let column = self.column(value, &api, budget)?;
+            let column = self.column(value, &api, budget, catalog)?;
             let length = column.length()?;
             let mut columns = Vec::new();
             columns
@@ -256,7 +257,7 @@ impl SourceTypes {
         let value = &receiver;
         let typ = value.get_type();
         let (shape, columns) = if is_frame {
-            self.frame(value, &api, budget)?
+            self.frame(value, &api, budget, catalog)?
         } else {
             // In particular, native PeriodIndex/IntervalIndex and a Sparse
             // Series must not enter the subclass values path and hide their
@@ -264,60 +265,17 @@ impl SourceTypes {
             self.family(&errors::attribute(value, c"dtype")?)?;
             let length = value.len()?;
             let column = if typ.is(self.range.bind(py)) {
-                let start = errors::attribute(value, c"start")?;
-                let step = errors::attribute(value, c"step")?;
-                // The exact RangeIndex's public coordinates are Python ints.
-                // Only values too wide for i128 use its public scalar getter.
-                let native = match native_integer(&start)? {
-                    Some(start) => native_integer(&step)?.map(|step| (start, step)),
-                    None => None,
-                };
-                Column::Range {
-                    owner: value.clone(),
-                    length,
-                    native,
-                }
+                self.index_column(value, &api, budget, catalog)?
             } else if typ.is(self.multi.bind(py)) {
-                let levels = errors::attribute(value, c"levels")?;
-                let mut candidates = SmallVec::<[Bound<'py, PyAny>; 8]>::new();
-                let mut eligible = length >= 32;
-                for level in levels.try_iter()? {
-                    crate::input::check(py, budget)?;
-                    let level = level?;
-                    self.family(&errors::attribute(&level, c"dtype")?)?;
-                    if eligible && candidates.len() < 8 {
-                        candidates.push(level);
-                    } else {
-                        eligible = false;
-                    }
-                }
-                if eligible
-                    && let Some(levels) =
-                        self.multi_column(value, &candidates, length, &api, budget)?
-                {
-                    let source = crate::input::boxed(
-                        py,
-                        Multi {
-                            owner: value.clone(),
-                            length,
-                            levels,
-                            numpy: api,
-                            numpy_extension: self.numpy_extension.bind(py).clone(),
-                        },
-                    )?;
-                    crate::input::check(py, budget)?;
-                    return Ok(Some(source));
-                } else {
-                    Column::Python {
-                        owner: value.clone(),
-                        length,
-                    }
-                }
+                return Ok(Some(crate::input::boxed(
+                    py,
+                    multi::prepare(catalog, original, value.clone(), length, api, budget)?,
+                )?));
             } else if is_series || is_index {
                 let storage = errors::attribute(value, c"array")?;
-                self.column(&storage, &api, budget)?
+                self.column(&storage, &api, budget, catalog)?
             } else {
-                self.column(value, &api, budget)?
+                self.column(value, &api, budget, catalog)?
             };
             if column.length()? != length {
                 return Err(invalid(
@@ -347,97 +305,12 @@ impl SourceTypes {
         )?))
     }
 
-    fn multi_column<'py>(
-        &self,
-        owner: &Bound<'py, PyAny>,
-        levels: &[Bound<'py, PyAny>],
-        length: usize,
-        api: &NumpyArrayApi,
-        budget: &dyn crate::input::control::Checkpoint,
-    ) -> PyResult<Option<Vec<MultiLevel<'py>>>> {
-        let py = owner.py();
-        if levels.is_empty() {
-            return Ok(None);
-        }
-        let mut signed = SmallVec::<[Option<Bound<'py, PyAny>>; 8]>::new();
-        for level in levels {
-            crate::input::check(py, budget)?;
-            if !level.get_type().is(self.index.bind(py)) {
-                return Ok(None);
-            }
-            let storage = errors::attribute(level, c"array")?;
-            if !storage.get_type().is(self.numpy_extension.bind(py)) {
-                return Ok(None);
-            }
-            let dtype = errors::attribute(level, c"dtype")?;
-            let kind = errors::attribute(&dtype, c"kind")?;
-            let kind = kind.extract::<&str>()?;
-            // Object labels still use the public getter and original visitor.
-            // Inferring their values here would scan unreferenced labels.
-            if !matches!(kind, "i" | "u" | "f" | "b" | "O") {
-                return Ok(None);
-            }
-            signed.push(
-                if kind == "i"
-                    && matches!(
-                        errors::attribute(&dtype, c"itemsize")?.extract::<usize>()?,
-                        1 | 2 | 4 | 8
-                    )
-                {
-                    Some(storage)
-                } else {
-                    None
-                },
-            );
-        }
-        let codes = errors::attribute(owner, c"codes")?;
-        if codes.len()? != levels.len() {
-            return Ok(None);
-        }
-        let mut prepared = Vec::new();
-        prepared
-            .try_reserve_exact(levels.len())
-            .map_err(|_| errors::memory_error(py))?;
-        for (position, code) in codes.try_iter()?.enumerate() {
-            crate::input::check(py, budget)?;
-            if position >= levels.len() {
-                return Ok(None);
-            }
-            let code = code?;
-            if !api.accepts(&code)
-                || errors::attribute(&code, c"ndim")?.extract::<usize>()? != 1
-                || code.len()? != length
-            {
-                return Ok(None);
-            }
-            let dtype = errors::attribute(&code, c"dtype")?;
-            if errors::attribute(&dtype, c"kind")?.extract::<&str>()? != "i"
-                || !matches!(
-                    errors::attribute(&dtype, c"itemsize")?.extract::<usize>()?,
-                    1 | 2 | 4 | 8
-                )
-            {
-                return Ok(None);
-            }
-            prepared.push(MultiLevel {
-                owner: levels[position].clone(),
-                length: levels[position].len()?,
-                codes: numpy_source(api, &code, budget, length)?,
-                prepare_signed: signed[position].take(),
-                signed: None,
-            });
-        }
-        if prepared.len() != levels.len() {
-            return Ok(None);
-        }
-        Ok(Some(prepared))
-    }
-
     fn frame<'py>(
         &self,
         value: &Bound<'py, PyAny>,
         api: &NumpyArrayApi,
         budget: &dyn crate::input::control::Checkpoint,
+        catalog: &Py<Self>,
     ) -> PyResult<(Shape, Vec<Column<'py>>)> {
         let py = value.py();
         let shape = errors::attribute(value, c"shape")?.cast_into::<PyTuple>()?;
@@ -462,7 +335,7 @@ impl SourceTypes {
             let series = iloc.get_item(key)?;
             let storage = errors::attribute(&series, c"array")?;
             let column = self
-                .column(&storage, api, budget)
+                .column(&storage, api, budget, catalog)
                 .map_err(|error| column_error(py, error, index))?;
             if column.length()? != rows {
                 return Err(invalid(
@@ -479,6 +352,32 @@ impl SourceTypes {
             },
             columns,
         ))
+    }
+
+    fn index_column<'py>(
+        &self,
+        index: &Bound<'py, PyAny>,
+        api: &NumpyArrayApi,
+        budget: &dyn Checkpoint,
+        catalog: &Py<Self>,
+    ) -> PyResult<Column<'py>> {
+        let py = index.py();
+        if index.get_type().is(self.range.bind(py)) {
+            let length = control::callback(py, Some(budget), || index.len())?;
+            let start = control::callback(py, Some(budget), || errors::attribute(index, c"start"))?;
+            let step = control::callback(py, Some(budget), || errors::attribute(index, c"step"))?;
+            let native = match native_integer(&start)? {
+                Some(start) => native_integer(&step)?.map(|step| (start, step)),
+                None => None,
+            };
+            return Ok(Column::Range {
+                owner: index.clone(),
+                length,
+                native,
+            });
+        }
+        let storage = control::callback(py, Some(budget), || errors::attribute(index, c"array"))?;
+        self.column(&storage, api, budget, catalog)
     }
 
     fn family(&self, dtype: &Bound<'_, PyAny>) -> PyResult<Family> {
@@ -513,6 +412,7 @@ impl SourceTypes {
         storage: &Bound<'py, PyAny>,
         api: &NumpyArrayApi,
         budget: &dyn crate::input::control::Checkpoint,
+        catalog: &Py<Self>,
     ) -> PyResult<Column<'py>> {
         let py = storage.py();
         crate::input::check(py, budget)?;
@@ -547,7 +447,7 @@ impl SourceTypes {
                             categories,
                             labels,
                             length,
-                            prepare_native: None,
+                            catalog: catalog.clone_ref(py),
                             native: None,
                         },
                     )?))
@@ -649,41 +549,12 @@ impl SourceTypes {
                 let codes = errors::attribute(storage, c"codes")?;
                 let categories = errors::attribute(storage, c"categories")?;
                 let dtype = errors::attribute(&categories, c"dtype")?;
-                let family = self.family(&dtype)?;
+                self.family(&dtype)?;
                 let labels = categories.len()?;
                 let codes = numpy_source(api, &codes, budget, length)?;
                 // Standard Index values may use the already validated native
                 // storage contract. Object labels and real Index subclasses
                 // retain their actual scalar getter and conversion protocols.
-                let native = if length >= 32
-                    && self
-                        .arrays
-                        .first()
-                        .is_some_and(|typ| storage.get_type().is(typ.bind(py)))
-                    && categories.get_type().is(self.index.bind(py))
-                {
-                    match family {
-                        Family::Numpy
-                            if matches!(
-                                errors::attribute(&dtype, c"kind")?.extract::<&str>()?,
-                                "i" | "u" | "f" | "b"
-                            ) =>
-                        {
-                            Some((self.numpy_extension.bind(py).clone(), family))
-                        }
-                        // Python strings still prepare mask/Object blocks;
-                        // short columns cannot amortize that fixed work.
-                        Family::PythonString if length >= 512 => {
-                            self.arrays.get(4).map(|typ| (typ.bind(py).clone(), family))
-                        }
-                        Family::Arrow if dtype.get_type().is(self.string_dtype.bind(py)) => {
-                            self.arrays.get(5).map(|typ| (typ.bind(py).clone(), family))
-                        }
-                        _ => None,
-                    }
-                } else {
-                    None
-                };
                 Ok(Column::Categorical(crate::input::boxed(
                     py,
                     Category {
@@ -691,7 +562,7 @@ impl SourceTypes {
                         categories,
                         labels,
                         length,
-                        prepare_native: native,
+                        catalog: catalog.clone_ref(py),
                         native: None,
                     },
                 )?))
@@ -789,7 +660,7 @@ impl<'py> PreparedSource<'py> for PandasSource<'py> {
         budget: &dyn Checkpoint,
     ) -> PyResult<Option<Bound<'py, PyAny>>> {
         if matches!(self.shape, Shape::Vector { .. }) {
-            self.columns[0].python_child(index, budget)
+            self.columns[0].python_child(index, budget, &self.numpy)
         } else {
             Ok(None)
         }
@@ -819,10 +690,6 @@ enum Column<'py> {
         length: usize,
         native: Option<(i128, i128)>,
     },
-    Python {
-        owner: Bound<'py, PyAny>,
-        length: usize,
-    },
     Categorical(Box<Category<'py>>),
     Time {
         ticks: NumpySource<'py>,
@@ -845,9 +712,7 @@ impl Column<'_> {
             Self::Masked(source) => Ok(source.length),
             Self::String { length, .. } => Ok(*length),
             Self::Categorical(source) => Ok(source.length),
-            Self::Range { length, .. }
-            | Self::Python { length, .. }
-            | Self::Time { length, .. } => Ok(*length),
+            Self::Range { length, .. } | Self::Time { length, .. } => Ok(*length),
         }
     }
 
@@ -902,12 +767,6 @@ impl Column<'_> {
                 })?;
                 target.python(&value, None)
             }
-            Self::Python { owner, .. } => {
-                let value = control::callback(owner.py(), Some(budget), || {
-                    owner.get_item(crate::input::python_index(owner.py(), row)?)
-                })?;
-                target.python(&value, None)
-            }
             Self::Categorical(source) => source.consume(row, target, budget, api),
             Self::Time { ticks, offset, .. } => {
                 let py = ticks.owner().py();
@@ -917,7 +776,7 @@ impl Column<'_> {
                         value,
                         unit,
                         multiplier,
-                        kind: crate::input::temporal::TimeKind::DateTime,
+                        kind: sqlaero_transcode::temporal::TimeKind::DateTime,
                     } => {
                         let offset_micros = if target.needs_local_offsets() {
                             Some(offset.read(value, unit, multiplier, budget)?)
@@ -945,17 +804,71 @@ impl Column<'_> {
 }
 
 impl<'py> Column<'py> {
+    /// Acquire only the current row's owned facts before any target output.
+    /// Native variable-width sources remain retained projections; numeric and
+    /// Object storage is copied/owned before a later source protocol can run.
+    fn capture(&mut self, row: usize, budget: &dyn Checkpoint) -> PyResult<multi::Leaf<'py>> {
+        match self {
+            Self::Numpy(data) => {
+                if data.is_object() {
+                    return data
+                        .object_child(row, 0, budget)?
+                        .map(multi::Leaf::Python)
+                        .ok_or_else(|| {
+                            invalid(
+                                data.owner().py(),
+                                "MultiIndex Object label has no actual owning reference",
+                            )
+                        });
+                }
+                Ok(data
+                    .scalar_at(row, 0, budget)?
+                    .map_or(multi::Leaf::Deferred(row), multi::Leaf::Native))
+            }
+            Self::String { data, .. } => {
+                let value = data.object_child(row, 0, budget)?.ok_or_else(|| {
+                    invalid(
+                        data.owner().py(),
+                        "Pandas string label has no actual owning reference",
+                    )
+                })?;
+                if value.is_none()
+                    || value
+                        .cast::<pyo3::types::PyFloat>()
+                        .is_ok_and(|number| number.value().is_nan())
+                {
+                    Ok(multi::Leaf::Native(ValueRef::Null))
+                } else {
+                    Ok(multi::Leaf::Python(value))
+                }
+            }
+            Self::Masked(source) => {
+                source.state.validate(budget)?;
+                let missing = source.mask.missing(row, 0, budget)?;
+                source.state.validate(budget)?;
+                if missing {
+                    source.data.validate_layout(budget)?;
+                    Ok(multi::Leaf::Native(ValueRef::Null))
+                } else {
+                    Ok(source
+                        .data
+                        .scalar_at(row, 0, budget)?
+                        .map_or(multi::Leaf::Deferred(row), multi::Leaf::Native))
+                }
+            }
+            _ => Ok(multi::Leaf::Deferred(row)),
+        }
+    }
+
     fn python_child(
         &mut self,
         row: usize,
         budget: &dyn Checkpoint,
+        api: &NumpyArrayApi,
     ) -> PyResult<Option<Bound<'py, PyAny>>> {
         match self {
             Self::Numpy(source) => source.object_child(row, 0, budget),
-            Self::Python { owner, .. } => control::callback(owner.py(), Some(budget), || {
-                owner.get_item(crate::input::python_index(owner.py(), row)?)
-            })
-            .map(Some),
+            Self::Categorical(source) => source.python_child(row, budget, api),
             _ => Ok(None),
         }
     }
@@ -1063,22 +976,16 @@ struct Category<'py> {
     categories: Bound<'py, PyAny>,
     labels: usize,
     length: usize,
-    prepare_native: Option<(Bound<'py, PyType>, Family)>,
+    catalog: Py<SourceTypes>,
     native: Option<Box<Column<'py>>>,
 }
 
 impl<'py> Category<'py> {
-    fn consume(
-        &mut self,
-        row: usize,
-        target: &mut dyn Target,
-        budget: &dyn crate::input::control::Checkpoint,
-        api: &NumpyArrayApi,
-    ) -> PyResult<()> {
+    fn code(&mut self, row: usize, budget: &dyn Checkpoint) -> PyResult<Option<usize>> {
         let py = self.categories.py();
         let code = self.codes.signed_at(row, budget)?;
         if code == -1 {
-            return target.scalar(py, ValueRef::Null);
+            return Ok(None);
         }
         let code = usize::try_from(code)
             .ok()
@@ -1089,208 +996,73 @@ impl<'py> Category<'py> {
                     "Pandas categorical code must be -1 or a valid categories position",
                 )
             })?;
-        // Resolve only after an actual valid reference. An all-missing input
-        // or bad first code must not export/read otherwise unused labels.
-        if let Some((typ, family)) = self.prepare_native.take() {
-            let storage = errors::attribute(&self.categories, c"array")?;
-            crate::input::check(py, budget)?;
-            if storage.get_type().is(&typ) {
-                if storage.len()? != self.labels {
-                    return Err(invalid(
-                        py,
-                        "Pandas categorical label storage length changed during encoding",
-                    ));
-                }
-                let source = match family {
-                    Family::Numpy => {
-                        let keywords = errors::dictionary(py)?;
-                        keywords
-                            .set_item(pyo3::types::PyString::from_bytes(py, b"copy")?, false)?;
-                        let converted = call_keywords(&storage, c"to_numpy", &keywords)?;
-                        crate::input::check(py, budget)?;
-                        let native = if api.accepts(&converted) {
-                            let dtype = errors::attribute(&converted, c"dtype")?;
-                            let kind = errors::attribute(&dtype, c"kind")?;
-                            let width =
-                                errors::attribute(&dtype, c"itemsize")?.extract::<usize>()?;
-                            matches!(
-                                (kind.extract::<&str>()?, width),
-                                ("i" | "u", 1 | 2 | 4 | 8) | ("f", 2 | 4 | 8) | ("b", 1)
-                            )
-                        } else {
-                            false
-                        };
-                        if !native {
-                            let label = self
-                                .categories
-                                .get_item(crate::input::python_index(py, code)?)?;
-                            return target.python(&label, None);
-                        }
-                        Column::Numpy(numpy_source(api, &converted, budget, self.labels)?)
-                    }
-                    Family::PythonString => {
-                        let data = GetSet::new(&typ, c"_ndarray", Some(budget))?.get(&storage)?;
-                        Column::String {
-                            data: numpy_source(api, &data, budget, self.labels)?,
-                            length: self.labels,
-                        }
-                    }
-                    Family::Arrow => {
-                        let exported = errors::attribute(&storage, c"__arrow_array__")?.call0()?;
-                        crate::input::check(py, budget)?;
-                        // Category codes are random access. A forward-only
-                        // stream cannot stand in for a label table; select a
-                        // single public array, or leave this column generic.
-                        let exported = if exported.hasattr(c"__arrow_c_array__")? {
-                            Some(exported)
-                        } else if exported.hasattr(c"num_chunks")?
-                            && errors::attribute(&exported, c"num_chunks")?.extract::<usize>()? == 1
-                        {
-                            let chunk = exported.call_method1(c"chunk", (0,))?;
-                            if chunk.hasattr(c"__arrow_c_array__")? {
-                                Some(chunk)
-                            } else {
-                                None
-                            }
-                        } else {
-                            None
-                        };
-                        let Some(exported) = exported else {
-                            let label = self
-                                .categories
-                                .get_item(crate::input::python_index(py, code)?)?;
-                            return target.python(&label, None);
-                        };
-                        Column::Arrow(arrow::prepare_exported(
-                            &storage,
-                            &exported,
-                            Shape::Vector {
-                                length: self.labels,
-                            },
-                            budget,
-                        )?)
-                    }
-                    _ => {
-                        return Err(invalid(py, "Pandas categorical label strategy is invalid"));
-                    }
-                };
-                self.native = Some(crate::input::boxed(py, source)?);
-            }
-        }
-        if let Some(source) = &mut self.native {
-            return source.consume(code, target, budget, api);
-        }
-        let label = self
-            .categories
-            .get_item(crate::input::python_index(py, code)?)?;
-        target.python(&label, None)
+        Ok(Some(code))
     }
-}
 
-struct MultiLevel<'py> {
-    owner: Bound<'py, PyAny>,
-    length: usize,
-    codes: NumpySource<'py>,
-    prepare_signed: Option<Bound<'py, PyAny>>,
-    signed: Option<Box<NumpySource<'py>>>,
-}
-
-impl<'py> MultiLevel<'py> {
-    fn value(
+    fn python_child(
         &mut self,
-        position: usize,
+        row: usize,
+        budget: &dyn Checkpoint,
         api: &NumpyArrayApi,
-        numpy_extension: &Bound<'py, PyType>,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let Some(code) = self.code(row, budget)? else {
+            return Ok(None);
+        };
+        self.prepare_labels(api, budget)?;
+        self.native
+            .as_mut()
+            .ok_or_else(|| {
+                invalid(
+                    self.categories.py(),
+                    "Pandas categorical labels were not prepared",
+                )
+            })?
+            .python_child(code, budget, api)
+    }
+
+    fn prepare_labels(&mut self, api: &NumpyArrayApi, budget: &dyn Checkpoint) -> PyResult<()> {
+        if self.native.is_some() {
+            return Ok(());
+        }
+        let py = self.categories.py();
+        // Retain the single module/interpreter-owned registry; this source has
+        // neither a copied type catalog nor an alternative label-value reader.
+        let mut source = self.catalog.bind(py).get().index_column(
+            &self.categories,
+            api,
+            budget,
+            &self.catalog,
+        )?;
+        if source.length()? != self.labels {
+            return Err(invalid(
+                py,
+                "Pandas categorical label storage length changed during encoding",
+            ));
+        }
+        if let Column::Arrow(source) = &mut source {
+            source.enable_random(budget)?;
+        }
+        self.native = Some(crate::input::boxed(py, source)?);
+        Ok(())
+    }
+
+    fn consume(
+        &mut self,
+        row: usize,
+        target: &mut dyn Target,
         budget: &dyn crate::input::control::Checkpoint,
-    ) -> PyResult<OwnedLeaf<'py>> {
-        let py = self.owner.py();
-        // The caller has checked every code in this actual row. Preparing a
-        // signed label reader now cannot mask the original whole-row fallback
-        // for a missing, negative or out-of-range code.
-        if let Some(storage) = self.prepare_signed.take()
-            && storage.get_type().is(numpy_extension)
-        {
-            crate::input::check(py, budget)?;
-            let keywords = errors::dictionary(py)?;
-            keywords.set_item(pyo3::types::PyString::from_bytes(py, b"copy")?, false)?;
-            let converted = call_keywords(&storage, c"to_numpy", &keywords)?;
-            crate::input::check(py, budget)?;
-            if api.accepts(&converted) {
-                let dtype = errors::attribute(&converted, c"dtype")?;
-                if errors::attribute(&dtype, c"kind")?.extract::<&str>()? == "i"
-                    && matches!(
-                        errors::attribute(&dtype, c"itemsize")?.extract::<usize>()?,
-                        1 | 2 | 4 | 8
-                    )
-                {
-                    self.signed = Some(crate::input::boxed(
-                        py,
-                        numpy_source(api, &converted, budget, self.length)?,
-                    )?);
-                }
-            }
-        }
-        if let Some(source) = &mut self.signed {
-            return Ok(OwnedLeaf::Signed(source.signed_at(position, budget)?));
-        }
-        self.owner
-            .get_item(crate::input::python_index(py, position)?)
-            .map(OwnedLeaf::Python)
-    }
-}
-
-/// At most eight current-row leaves, all acquired before any tuple output or
-/// conversion. This is neither a recursive value tree nor a SQL/value cache.
-enum OwnedLeaf<'py> {
-    Signed(i64),
-    Python(Bound<'py, PyAny>),
-}
-
-impl OwnedLeaf<'_> {
-    fn write(
-        &self,
-        py: Python<'_>,
-        index: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
-        visitor: &mut dyn CellWriter,
+        api: &NumpyArrayApi,
     ) -> PyResult<()> {
-        match self {
-            Self::Python(value) => output.python(visitor, value, Some(index)),
-            Self::Signed(value) => {
-                visitor.push_index(py, index)?;
-                let result = visitor.checkpoint(py, 1).and_then(|()| {
-                    sink::integer(output, *value, context).map_err(|error| sink::failure(py, error))
-                });
-                if result.is_ok() {
-                    visitor.pop_index();
-                }
-                result
-            }
-        }
+        let py = self.categories.py();
+        let Some(code) = self.code(row, budget)? else {
+            return target.scalar(py, ValueRef::Null);
+        };
+        self.prepare_labels(api, budget)?;
+        self.native
+            .as_mut()
+            .ok_or_else(|| invalid(py, "Pandas categorical labels were not prepared"))?
+            .consume(code, target, budget, api)
     }
-}
-
-struct Multi<'py> {
-    owner: Bound<'py, PyAny>,
-    length: usize,
-    levels: Vec<MultiLevel<'py>>,
-    numpy: NumpyArrayApi,
-    numpy_extension: Bound<'py, PyType>,
-}
-
-impl<'py> PreparedSource<'py> for Multi<'py> {
-    fn owner(&self) -> &Bound<'py, PyAny> {
-        &self.owner
-    }
-
-    fn shape(&self) -> Shape {
-        Shape::Vector {
-            length: self.length,
-        }
-    }
-
-    crate::input::source::cell_destinations!();
 }
 
 struct Masked<'py> {
@@ -1452,71 +1224,6 @@ impl<'py> PandasSource<'py> {
         })?;
         target.checkpoint(py, 1)?;
         source.consume(row, target, budget, &self.numpy)
-    }
-}
-
-impl<'py> Multi<'py> {
-    fn write_cell_to(
-        &mut self,
-        row: usize,
-        column: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
-        budget: &dyn crate::input::control::Checkpoint,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        let py = self.owner.py();
-        if row >= self.length {
-            return Err(errors::builtin_message::<PyIndexError>(
-                py,
-                "Pandas row is outside its prepared shape",
-            ));
-        }
-        if column != 0 {
-            return Err(errors::builtin_message::<PyIndexError>(
-                py,
-                "Pandas column is outside its prepared shape",
-            ));
-        }
-        // Match the original PandasSource boundary checkpoint; the tuple
-        // checkpoint below remains separate after all labels are acquired.
-        visitor.checkpoint(py, 1)?;
-        // Both inline buffers are bounded by the qualified eight-level plan.
-        // Read this actual row only, before any label getter or SQL write.
-        let mut positions = SmallVec::<[usize; 8]>::new();
-        for level in &mut self.levels {
-            let code = level.codes.signed_at(row, budget)?;
-            let Some(position) = usize::try_from(code)
-                .ok()
-                .filter(|position| *position < level.length)
-            else {
-                // Includes -1: preserve the original np.nan leaf and all
-                // diagnostics, as well as unusual negative-code semantics.
-                let value = self.owner.get_item(crate::input::python_index(py, row)?)?;
-                return output.python(visitor, &value, None);
-            };
-            positions.push(position);
-        }
-        let mut labels = SmallVec::<[OwnedLeaf<'_>; 8]>::new();
-        for (level, position) in self.levels.iter_mut().zip(positions) {
-            labels.push(level.value(position, &self.numpy, &self.numpy_extension, budget)?);
-        }
-        // The original MultiIndex getter obtains every label before its tuple
-        // reaches Visit. Keep that order, without constructing a Python tuple.
-        visitor.checkpoint(py, 1)?;
-        visitor.enter_native(py)?;
-        let result = (|| {
-            output.fragment(py, b"(", context)?;
-            for (index, label) in labels.iter().enumerate() {
-                if index != 0 {
-                    output.fragment(py, b",", context)?;
-                }
-                label.write(py, index, output, context, visitor)?;
-            }
-            output.fragment(py, b")", context)
-        })();
-        visitor.leave_native();
-        result
     }
 }
 

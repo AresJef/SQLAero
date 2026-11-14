@@ -15,10 +15,10 @@ use crate::input::buffer::Canonical;
 use crate::input::cell::{Schema, Target};
 use crate::input::control::Checkpoint;
 use crate::input::source::{PreparedSource, Shape};
-use crate::input::temporal::{TimeKind, TimeUnit};
 use pyo3::exceptions::{PyBufferError, PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::PyString;
+use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
 use sqlaero_transcode::value::ScalarRef;
 
 const RAW_BLOCK_ITEMS: usize = 1024;
@@ -475,6 +475,46 @@ impl<'py> NumpySource<'py> {
             2 => i64::from(i16::from_ne_bytes([bytes[0], bytes[1]])),
             4 => i64::from(i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
             _ => i64::from_ne_bytes(bytes),
+        })
+    }
+
+    /// Copy one native scalar fact without constructing a Python numeric
+    /// object. Non-scalar storage remains with its existing immediate reader.
+    pub(crate) fn scalar_at(
+        &mut self,
+        row: usize,
+        column: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<ScalarRef<'static>>> {
+        let ArrayKind::Scalar(kind) = self.kind else {
+            return Ok(None);
+        };
+        let bytes = self.cell_bytes(row, column, budget)?;
+        self.scalar_fact(kind, bytes, budget).map(Some)
+    }
+
+    fn scalar_fact(
+        &mut self,
+        kind: Kind,
+        b: [u8; 8],
+        budget: &dyn Checkpoint,
+    ) -> PyResult<ScalarRef<'static>> {
+        Ok(match kind {
+            Kind::I8 => ScalarRef::Signed(i64::from(i8::from_ne_bytes([b[0]]))),
+            Kind::I16 => ScalarRef::Signed(i64::from(i16::from_ne_bytes([b[0], b[1]]))),
+            Kind::I32 => ScalarRef::Signed(i64::from(i32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
+            Kind::I64 => ScalarRef::Signed(i64::from_ne_bytes(b)),
+            Kind::U8 => ScalarRef::Unsigned(u64::from(b[0])),
+            Kind::U16 => ScalarRef::Unsigned(u64::from(u16::from_ne_bytes([b[0], b[1]]))),
+            Kind::U32 => {
+                ScalarRef::Unsigned(u64::from(u32::from_ne_bytes([b[0], b[1], b[2], b[3]])))
+            }
+            Kind::U64 => ScalarRef::Unsigned(u64::from_ne_bytes(b)),
+            Kind::F16 => ScalarRef::Float(half_to_f64(u16::from_ne_bytes([b[0], b[1]]))),
+            Kind::F32 => ScalarRef::Float(f64::from(f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
+            Kind::F64 => ScalarRef::Float(f64::from_ne_bytes(b)),
+            Kind::Bool => ScalarRef::Boolean(b[0] != 0),
+            Kind::DateTime | Kind::Duration => self.temporal_fact(i64::from_ne_bytes(b), budget)?,
         })
     }
 
@@ -1224,23 +1264,7 @@ impl NumpySource<'_> {
             }
         };
         let b = self.cell_bytes(row, column, budget)?;
-        let value = match kind {
-            Kind::I8 => ScalarRef::Signed(i64::from(i8::from_ne_bytes([b[0]]))),
-            Kind::I16 => ScalarRef::Signed(i64::from(i16::from_ne_bytes([b[0], b[1]]))),
-            Kind::I32 => ScalarRef::Signed(i64::from(i32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
-            Kind::I64 => ScalarRef::Signed(i64::from_ne_bytes(b)),
-            Kind::U8 => ScalarRef::Unsigned(u64::from(b[0])),
-            Kind::U16 => ScalarRef::Unsigned(u64::from(u16::from_ne_bytes([b[0], b[1]]))),
-            Kind::U32 => {
-                ScalarRef::Unsigned(u64::from(u32::from_ne_bytes([b[0], b[1], b[2], b[3]])))
-            }
-            Kind::U64 => ScalarRef::Unsigned(u64::from_ne_bytes(b)),
-            Kind::F16 => ScalarRef::Float(half_to_f64(u16::from_ne_bytes([b[0], b[1]]))),
-            Kind::F32 => ScalarRef::Float(f64::from(f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
-            Kind::F64 => ScalarRef::Float(f64::from_ne_bytes(b)),
-            Kind::Bool => ScalarRef::Boolean(b[0] != 0),
-            Kind::DateTime | Kind::Duration => self.temporal_fact(i64::from_ne_bytes(b), budget)?,
-        };
+        let value = self.scalar_fact(kind, b, budget)?;
         output.scalar(py, value)
     }
 }

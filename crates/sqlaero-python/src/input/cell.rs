@@ -11,6 +11,22 @@ use pyo3::types::PyString;
 use sqlaero_core::bind::Context;
 use sqlaero_transcode::value::ScalarRef;
 
+/// A target failure produced without invoking Python while an external native
+/// source is borrowed. Normalize it only after that borrow has ended.
+pub(crate) enum NativeFailure {
+    Mysql(sqlaero_core::bind::value::ValueError),
+    Json(sqlaero_core::json::Error),
+}
+
+impl NativeFailure {
+    pub(crate) fn python(self, py: Python<'_>) -> PyErr {
+        match self {
+            Self::Mysql(error) => sink::failure(py, error),
+            Self::Json(error) => super::json::failure(py, error),
+        }
+    }
+}
+
 /// Native source schema information, independent of any target's admission.
 pub(crate) enum Schema {
     Binary,
@@ -32,11 +48,19 @@ pub(crate) trait Target {
     ) -> PyResult<()>;
     fn schema(&mut self, py: Python<'_>, schema: Schema) -> PyResult<()>;
     fn checkpoint(&mut self, py: Python<'_>, work: usize) -> PyResult<()>;
-    fn scalar(&mut self, py: Python<'_>, value: ScalarRef<'_>) -> PyResult<()>;
+    fn native_scalar(&mut self, value: ScalarRef<'_>) -> Result<(), NativeFailure>;
+    fn scalar(&mut self, py: Python<'_>, value: ScalarRef<'_>) -> PyResult<()> {
+        self.native_scalar(value).map_err(|error| error.python(py))
+    }
+    fn native_text_start(&mut self, length: usize) -> Result<(), NativeFailure>;
+    fn native_text_fragment(&mut self, value: &str) -> Result<(), NativeFailure>;
+    fn native_text_end(&mut self) -> Result<(), NativeFailure>;
+    fn text_encoding(&self) -> &'static str;
     fn python(&mut self, value: &Bound<'_, PyAny>, child: Option<usize>) -> PyResult<()>;
     fn text(&mut self, value: &Bound<'_, PyString>, budget: &dyn Checkpoint) -> PyResult<()>;
     fn text_utf8(&mut self, py: Python<'_>, value: &str, budget: &dyn Checkpoint) -> PyResult<()>;
     fn text_minimum(&self, py: Python<'_>, characters: usize) -> PyResult<()>;
+    fn binary_minimum(&self, py: Python<'_>, length: usize) -> PyResult<()>;
     fn bytes_start(&mut self, py: Python<'_>, length: usize) -> PyResult<()>;
     fn bytes_fragment(&mut self, py: Python<'_>, value: &[u8]) -> PyResult<()>;
     fn bytes_end(&mut self, py: Python<'_>) -> PyResult<()>;
@@ -65,8 +89,28 @@ impl<D: Destination + ?Sized> Target for Mysql<'_, D> {
         self.visitor.checkpoint(py, work)
     }
     #[inline(always)]
-    fn scalar(&mut self, py: Python<'_>, value: ScalarRef<'_>) -> PyResult<()> {
-        sink::emit(self.output, py, value, self.context)
+    fn native_scalar(&mut self, value: ScalarRef<'_>) -> Result<(), NativeFailure> {
+        self.output
+            .write(value, self.context)
+            .map_err(NativeFailure::Mysql)
+    }
+    fn native_text_start(&mut self, length: usize) -> Result<(), NativeFailure> {
+        self.output
+            .text_start(Some(length), self.context)
+            .map_err(NativeFailure::Mysql)
+    }
+    fn native_text_fragment(&mut self, value: &str) -> Result<(), NativeFailure> {
+        self.output
+            .text_fragment(value, self.context)
+            .map_err(NativeFailure::Mysql)
+    }
+    fn native_text_end(&mut self) -> Result<(), NativeFailure> {
+        self.output
+            .text_end(self.context)
+            .map_err(NativeFailure::Mysql)
+    }
+    fn text_encoding(&self) -> &'static str {
+        self.context.codec.name()
     }
     fn python(&mut self, value: &Bound<'_, PyAny>, child: Option<usize>) -> PyResult<()> {
         self.output.python(self.visitor, value, child)
@@ -80,6 +124,11 @@ impl<D: Destination + ?Sized> Target for Mysql<'_, D> {
     fn text_minimum(&self, py: Python<'_>, characters: usize) -> PyResult<()> {
         self.output
             .check_text_minimum(characters, self.context)
+            .map_err(|error| crate::errors::wire(py, error))
+    }
+    fn binary_minimum(&self, py: Python<'_>, length: usize) -> PyResult<()> {
+        self.output
+            .check_binary_width(length, self.context)
             .map_err(|error| crate::errors::wire(py, error))
     }
     fn bytes_start(&mut self, py: Python<'_>, length: usize) -> PyResult<()> {

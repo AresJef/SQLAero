@@ -3,6 +3,9 @@
 //! Admission and the choice of plain/scientific notation belong to each target.
 //! A source may borrow its canonical ASCII coefficient instead of copying it.
 
+mod binary;
+pub use binary::Coefficient;
+
 /// The actual nonfinite source category, before a target's null policy.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Special {

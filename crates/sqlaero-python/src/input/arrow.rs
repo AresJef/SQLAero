@@ -4,6 +4,7 @@ use crate::input::control::Checkpoint;
 use std::ffi::{c_char, c_int, c_void};
 use std::ptr;
 
+use super::cell::{NativeFailure, Schema, Target};
 use super::sink::{self, Destination};
 use arrow_array::ffi::{FFI_ArrowArray, from_ffi_and_data_type};
 use arrow_array::types::{
@@ -13,12 +14,12 @@ use arrow_array::{
     Array, ArrayRef, BinaryArray, BinaryViewArray, BooleanArray, Date32Array, Date64Array,
     Decimal32Array, Decimal64Array, Decimal128Array, Decimal256Array, DictionaryArray,
     DurationMicrosecondArray, DurationMillisecondArray, DurationNanosecondArray,
-    DurationSecondArray, FixedSizeBinaryArray, FixedSizeListArray, Float32Array, Float64Array,
-    Int8Array, Int16Array, Int32Array, Int64Array, LargeBinaryArray, LargeListArray,
-    LargeStringArray, ListArray, StringArray, StringViewArray, StructArray, Time32MillisecondArray,
-    Time32SecondArray, Time64MicrosecondArray, Time64NanosecondArray, TimestampMicrosecondArray,
-    TimestampMillisecondArray, TimestampNanosecondArray, TimestampSecondArray, UInt8Array,
-    UInt16Array, UInt32Array, UInt64Array, make_array,
+    DurationSecondArray, FixedSizeBinaryArray, Float32Array, Float64Array, Int8Array, Int16Array,
+    Int32Array, Int64Array, LargeBinaryArray, LargeStringArray, StringArray, StringViewArray,
+    StructArray, Time32MillisecondArray, Time32SecondArray, Time64MicrosecondArray,
+    Time64NanosecondArray, TimestampMicrosecondArray, TimestampMillisecondArray,
+    TimestampNanosecondArray, TimestampSecondArray, UInt8Array, UInt16Array, UInt32Array,
+    UInt64Array, make_array,
 };
 use arrow_buffer::{ArrowNativeType, BooleanBuffer, NullBuffer, ScalarBuffer};
 use arrow_data::{ByteView, validate_binary_view};
@@ -32,12 +33,15 @@ use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
 
 use super::source::{CellWriter, PreparedSource, Shape};
-use super::temporal::{self, TimeKind, TimeUnit};
 use crate::errors;
+use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
 
 mod cdata;
 mod dictionary;
+mod offset;
+mod projection;
 mod schema;
+use projection::consume as consume_value;
 
 /// The five fields of the public Arrow C Stream ABI. Apache's record-batch
 /// reader requires a Struct root, while this input also accepts primitive
@@ -112,6 +116,11 @@ impl Drop for StreamAbi {
     }
 }
 
+/// Optional random-label history keeps ordinary inline source headers small.
+struct RetainedChunks {
+    chunks: Vec<(usize, ArrayRef)>,
+}
+
 enum Storage {
     Single(ArrayRef),
     Stream {
@@ -119,6 +128,7 @@ enum Storage {
         current: Option<ArrayRef>,
         start: usize,
         end: usize,
+        retained: Option<Box<RetainedChunks>>,
     },
 }
 
@@ -130,6 +140,7 @@ pub(crate) struct Prepared<'py> {
     field: Field,
     shape: Shape,
     owner: Bound<'py, PyAny>,
+    offsets: Option<Box<offset::Offsets<'py>>>,
 }
 
 /// These strategies are mutually exclusive for one validated source schema.
@@ -574,6 +585,7 @@ pub(crate) fn prepare_exported<'py>(
             field,
             shape,
             owner: owner.clone(),
+            offsets: None,
         });
     }
     let capsule = exported.call_method0(c"__arrow_c_stream__")?;
@@ -619,6 +631,7 @@ pub(crate) fn prepare_exported<'py>(
             current: None,
             start: 0,
             end: 0,
+            retained: None,
         },
         fast_path: dictionary::Cache::for_schema(&field, shape)
             .map(|cache| super::boxed(py, FastPath::Dictionary(cache)))
@@ -626,6 +639,7 @@ pub(crate) fn prepare_exported<'py>(
         field,
         shape,
         owner: owner.clone(),
+        offsets: None,
     })
 }
 
@@ -738,6 +752,20 @@ fn validate_field(py: Python<'_>, field: &Field, depth: usize) -> PyResult<()> {
 }
 
 impl Prepared<'_> {
+    /// Qualified categorical labels need native random access. Retain only
+    /// already visited chunk owners, never values, Python rows or SQL bytes.
+    /// Ordinary streaming inputs keep their one-current-chunk release policy.
+    pub(crate) fn enable_random(&mut self, budget: &dyn Checkpoint) -> PyResult<()> {
+        let py = self.owner.py();
+        super::check(py, budget)?;
+        if let Storage::Stream { retained, .. } = &mut self.storage
+            && retained.is_none()
+        {
+            *retained = Some(super::boxed(py, RetainedChunks { chunks: Vec::new() })?);
+        }
+        Ok(())
+    }
+
     fn current_array(
         &mut self,
         row: usize,
@@ -751,8 +779,22 @@ impl Prepared<'_> {
                 current,
                 start,
                 end,
+                retained,
             } => {
                 if row < *start {
+                    if let Some(retained) = retained {
+                        // Numeric binary search takes at most pointer-width
+                        // steps and never scans labels or exported values.
+                        let after = retained.chunks.partition_point(|(start, _)| *start <= row);
+                        if let Some((begin, array)) = after
+                            .checked_sub(1)
+                            .and_then(|index| retained.chunks.get(index))
+                            && row - *begin < array.len()
+                        {
+                            self.fast_path = None;
+                            return Ok((array.clone(), row - *begin));
+                        }
+                    }
                     return Err(invalid(py, "Arrow stream cannot replay an earlier chunk"));
                 }
                 while current.is_none() || row >= *end {
@@ -801,6 +843,16 @@ impl Prepared<'_> {
                                 .map(|views| super::boxed(py, views))
                                 .transpose()?
                         };
+                    if let Some(retained) = retained
+                        && let Some(previous) = current.as_ref()
+                        && !previous.is_empty()
+                    {
+                        retained
+                            .chunks
+                            .try_reserve(1)
+                            .map_err(|_| errors::memory_error(py))?;
+                        retained.chunks.push((*start, previous.clone()));
+                    }
                     *start = *end;
                     *end = next_end;
                     *current = Some(array);
@@ -827,7 +879,281 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         self.shape
     }
 
+    fn schema(&self, target: &mut dyn Target) -> PyResult<()> {
+        consume_schema(self.owner.py(), self.field.data_type(), target)
+    }
+
+    fn child<'a>(
+        &'a mut self,
+        index: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<super::source::Child<'a, 'py>> {
+        let shape = match self.shape {
+            Shape::Table { rows, columns } if index < rows => Shape::Vector { length: columns },
+            Shape::Vector { length } if index < length => {
+                let (array, local) = self.current_array(index, budget)?;
+                projection::shape(&self.owner, &array, local, budget)?
+            }
+            _ => {
+                return Err(invalid(
+                    self.owner.py(),
+                    "Arrow child is outside its prepared shape",
+                ));
+            }
+        };
+        Ok(super::source::Child::Native(super::source::Selected::new(
+            self, index, shape,
+        )))
+    }
+
+    fn consume_child(
+        &mut self,
+        index: usize,
+        row: usize,
+        column: usize,
+        target: &mut dyn Target,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        if matches!(self.shape, Shape::Table { .. }) {
+            if column != 0 {
+                return Err(invalid(
+                    self.owner.py(),
+                    "Arrow table row has only one positional axis",
+                ));
+            }
+            return self.consume_cell(index, row, target, budget);
+        }
+        let (array, local) = self.current_array(index, budget)?;
+        projection::consume_child(
+            &self.owner,
+            &array,
+            local,
+            row,
+            column,
+            target,
+            budget,
+            &mut self.offsets,
+        )
+    }
+
+    fn consume_cell(
+        &mut self,
+        row: usize,
+        column: usize,
+        target: &mut dyn Target,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        let py = self.owner.py();
+        target.checkpoint(py, 1)?;
+        let (array, index) = self.current_array(row, budget)?;
+        let table = match self.shape {
+            Shape::Table { columns, .. } if column < columns => true,
+            Shape::Vector { .. } if column == 0 => false,
+            _ => return Err(invalid(py, "Arrow cell is outside its prepared shape")),
+        };
+        consume_value(
+            &self.owner,
+            cell_array(py, &array, table, column)?,
+            index,
+            target,
+            budget,
+            &mut self.offsets,
+        )
+    }
+
     crate::input::source::cell_destinations!();
+}
+
+fn consume_schema(py: Python<'_>, dtype: &DataType, target: &mut dyn Target) -> PyResult<()> {
+    target.checkpoint(py, 1)?;
+    match dtype {
+        DataType::Binary
+        | DataType::LargeBinary
+        | DataType::BinaryView
+        | DataType::FixedSizeBinary(_) => target.schema(py, Schema::Binary),
+        DataType::List(child) | DataType::LargeList(child) | DataType::FixedSizeList(child, _) => {
+            consume_schema(py, child.data_type(), target)
+        }
+        DataType::Struct(fields) => {
+            for field in fields {
+                consume_schema(py, field.data_type(), target)?;
+            }
+            Ok(())
+        }
+        DataType::Dictionary(_, value) => consume_schema(py, value, target),
+        _ => Ok(()),
+    }
+}
+
+fn consume_scalar<'py>(
+    py: Python<'py>,
+    array: &ArrayRef,
+    index: usize,
+    target: &mut dyn Target,
+    budget: &dyn Checkpoint,
+    offsets: &mut Option<Box<offset::Offsets<'py>>>,
+) -> PyResult<()> {
+    target.checkpoint(py, 1)?;
+    if index >= array.len() {
+        return Err(invalid(py, "Arrow child index is outside its array"));
+    }
+    if array.is_null(index) {
+        return target.scalar(py, ValueRef::Null);
+    }
+    macro_rules! native {
+        ($kind:ty) => {
+            array
+                .as_any()
+                .downcast_ref::<$kind>()
+                .ok_or_else(|| invalid(py, "Arrow logical and physical array types differ"))?
+                .value(index)
+        };
+    }
+    match array.data_type() {
+        DataType::Null => target.scalar(py, ValueRef::Null),
+        DataType::Boolean => target.scalar(py, ValueRef::Boolean(native!(BooleanArray))),
+        DataType::Int8 => target.scalar(py, ValueRef::Signed(i64::from(native!(Int8Array)))),
+        DataType::Int16 => target.scalar(py, ValueRef::Signed(i64::from(native!(Int16Array)))),
+        DataType::Int32 => target.scalar(py, ValueRef::Signed(i64::from(native!(Int32Array)))),
+        DataType::Int64 => target.scalar(py, ValueRef::Signed(native!(Int64Array))),
+        DataType::UInt8 => target.scalar(py, ValueRef::Unsigned(u64::from(native!(UInt8Array)))),
+        DataType::UInt16 => target.scalar(py, ValueRef::Unsigned(u64::from(native!(UInt16Array)))),
+        DataType::UInt32 => target.scalar(py, ValueRef::Unsigned(u64::from(native!(UInt32Array)))),
+        DataType::UInt64 => target.scalar(py, ValueRef::Unsigned(native!(UInt64Array))),
+        DataType::Float32 => target.scalar(py, ValueRef::Float(f64::from(native!(Float32Array)))),
+        DataType::Float64 => target.scalar(py, ValueRef::Float(native!(Float64Array))),
+        DataType::Utf8
+        | DataType::LargeUtf8
+        | DataType::Utf8View
+        | DataType::Binary
+        | DataType::LargeBinary
+        | DataType::BinaryView
+        | DataType::FixedSizeBinary(_) => consume_bytes(py, array, index, target, budget),
+        DataType::Date32 => target.scalar(py, ValueRef::DateDays(i64::from(native!(Date32Array)))),
+        DataType::Date64 => {
+            let value = native!(Date64Array);
+            if value % 86_400_000 != 0 {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::NumericRange,
+                    "Arrow date64 is not an integral day",
+                ));
+            }
+            target.scalar(py, ValueRef::DateDays(value / 86_400_000))
+        }
+        DataType::Timestamp(unit, zone) => {
+            let value = match unit {
+                ArrowTimeUnit::Second => native!(TimestampSecondArray),
+                ArrowTimeUnit::Millisecond => native!(TimestampMillisecondArray),
+                ArrowTimeUnit::Microsecond => native!(TimestampMicrosecondArray),
+                ArrowTimeUnit::Nanosecond => native!(TimestampNanosecondArray),
+            };
+            let fact = if let Some(zone) = zone {
+                ValueRef::UtcTicks {
+                    value,
+                    unit: time_unit(unit),
+                    multiplier: 1,
+                    offset_micros: if target.needs_local_offsets() {
+                        if offsets.is_none() {
+                            *offsets = Some(super::boxed(py, offset::Offsets::default())?);
+                        }
+                        Some(
+                            offsets
+                                .as_mut()
+                                .ok_or_else(|| {
+                                    invalid(py, "Arrow timezone source was not prepared")
+                                })?
+                                .read(py, zone, value, unit, budget)?,
+                        )
+                    } else {
+                        None
+                    },
+                }
+            } else {
+                ValueRef::Ticks {
+                    value,
+                    unit: time_unit(unit),
+                    multiplier: 1,
+                    kind: TimeKind::DateTime,
+                }
+            };
+            target.scalar(py, fact)
+        }
+        DataType::Duration(unit) => {
+            let value = match unit {
+                ArrowTimeUnit::Second => native!(DurationSecondArray),
+                ArrowTimeUnit::Millisecond => native!(DurationMillisecondArray),
+                ArrowTimeUnit::Microsecond => native!(DurationMicrosecondArray),
+                ArrowTimeUnit::Nanosecond => native!(DurationNanosecondArray),
+            };
+            target.scalar(
+                py,
+                ValueRef::Ticks {
+                    value,
+                    unit: time_unit(unit),
+                    multiplier: 1,
+                    kind: TimeKind::Duration,
+                },
+            )
+        }
+        DataType::Time32(unit) => {
+            let value = match unit {
+                ArrowTimeUnit::Second => i64::from(native!(Time32SecondArray)),
+                ArrowTimeUnit::Millisecond => i64::from(native!(Time32MillisecondArray)),
+                _ => return Err(invalid(py, "unsupported Arrow time32 unit")),
+            };
+            target.scalar(
+                py,
+                ValueRef::ClockTicks {
+                    value,
+                    unit: time_unit(unit),
+                    multiplier: 1,
+                },
+            )
+        }
+        DataType::Time64(unit) => {
+            let value = match unit {
+                ArrowTimeUnit::Microsecond => native!(Time64MicrosecondArray),
+                ArrowTimeUnit::Nanosecond => native!(Time64NanosecondArray),
+                _ => return Err(invalid(py, "unsupported Arrow time64 unit")),
+            };
+            target.scalar(
+                py,
+                ValueRef::ClockTicks {
+                    value,
+                    unit: time_unit(unit),
+                    multiplier: 1,
+                },
+            )
+        }
+        DataType::Decimal32(_, scale) => {
+            consume_decimal(py, &native!(Decimal32Array).to_le_bytes(), *scale, target)
+        }
+        DataType::Decimal64(_, scale) => {
+            consume_decimal(py, &native!(Decimal64Array).to_le_bytes(), *scale, target)
+        }
+        DataType::Decimal128(_, scale) => {
+            consume_decimal(py, &native!(Decimal128Array).to_le_bytes(), *scale, target)
+        }
+        DataType::Decimal256(_, scale) => {
+            consume_decimal(py, &native!(Decimal256Array).to_le_bytes(), *scale, target)
+        }
+        _ => Err(invalid(
+            py,
+            "this Arrow logical family's shared cell migration is not connected yet",
+        )),
+    }
+}
+
+fn consume_decimal(
+    py: Python<'_>,
+    bytes: &[u8],
+    scale: i8,
+    target: &mut dyn Target,
+) -> PyResult<()> {
+    let value = sqlaero_transcode::decimal::Coefficient::from_signed_le(bytes)
+        .map_err(|message| errors::client(py, ClientErrorCode::NumericRange, message))?;
+    target.scalar(py, value.scalar(scale))
 }
 
 fn cell_array<'a>(
@@ -856,56 +1182,20 @@ fn write_value(
     budget: &dyn Checkpoint,
     visitor: &mut dyn CellWriter,
 ) -> PyResult<()> {
-    visitor.checkpoint(py, 1)?;
-    if index >= array.len() {
-        return Err(invalid(py, "Arrow child index is outside its array"));
-    }
-    if array.is_null(index) {
-        return sink::emit(output, py, ValueRef::Null, context);
-    }
-    macro_rules! native {
-        ($kind:ty) => {
-            array
-                .as_any()
-                .downcast_ref::<$kind>()
-                .ok_or_else(|| invalid(py, "Arrow logical and physical array types differ"))?
-                .value(index)
-        };
-    }
-    match array.data_type() {
-        DataType::Null => sink::emit(output, py, ValueRef::Null, context),
-        DataType::Boolean => output
-            .write(ValueRef::Boolean(native!(BooleanArray)), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::Int8 => sink::integer(output, native!(Int8Array), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::Int16 => sink::integer(output, native!(Int16Array), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::Int32 => sink::integer(output, native!(Int32Array), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::Int64 => sink::integer(output, native!(Int64Array), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::UInt8 => sink::integer(output, native!(UInt8Array), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::UInt16 => sink::integer(output, native!(UInt16Array), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::UInt32 => sink::integer(output, native!(UInt32Array), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::UInt64 => sink::integer(output, native!(UInt64Array), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::Float32 => sink::float(output, f64::from(native!(Float32Array)), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::Float64 => sink::float(output, native!(Float64Array), context)
-            .map_err(|error| sink::failure(py, error)),
-        DataType::Utf8
-        | DataType::LargeUtf8
-        | DataType::Utf8View
-        | DataType::Binary
-        | DataType::LargeBinary
-        | DataType::BinaryView
-        | DataType::FixedSizeBinary(_) => write_bytes(py, array, index, output, context, budget),
-        _ => write_extended(py, array, index, output, context, budget, visitor),
-    }
+    // The SQL text-label cache calls the same native scalar reader. No
+    // independent label conversion or target-private Python catalog exists.
+    consume_scalar(
+        py,
+        array,
+        index,
+        &mut super::cell::Mysql {
+            output,
+            context,
+            visitor,
+        },
+        budget,
+        &mut None,
+    )
 }
 
 /// Borrow only during native reading. No returned slice is retained across a
@@ -991,12 +1281,11 @@ fn utf8_error(py: Python<'_>, error: std::str::Utf8Error, start: usize) -> PyErr
     )
 }
 
-fn write_bytes(
+fn consume_bytes(
     py: Python<'_>,
     array: &ArrayRef,
     index: usize,
-    output: &mut (impl Destination + ?Sized),
-    context: &Context,
+    target: &mut dyn Target,
     budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     let text = matches!(
@@ -1008,43 +1297,48 @@ fn write_bytes(
         let length = source.len();
         let short = if length <= super::WORK_BYTES {
             Some(if text {
-                std::str::from_utf8(source).map(|text| output.write(ValueRef::Text(text), context))
+                std::str::from_utf8(source).map(|value| target.native_scalar(ValueRef::Text(value)))
             } else {
-                Ok(output.write(ValueRef::Bytes(source), context))
+                Ok(target.native_scalar(ValueRef::Bytes(source)))
             })
         } else {
             None
         };
         (length, short)
     };
-    // No external slice reaches Python error diagnosis or a later checkpoint.
+    let failure = |error: NativeFailure, start| match error {
+        NativeFailure::Mysql(ValueError::Encoding(error)) => byte_codec_error(
+            py,
+            array,
+            index,
+            start,
+            error,
+            target.text_encoding(),
+            budget,
+        ),
+        error => error.python(py),
+    };
     if let Some(result) = short {
-        let result = result.map_err(|error| utf8_error(py, error, 0))?;
-        return result.map_err(|error| match error {
-            ValueError::Encoding(error) => {
-                byte_codec_error(py, array, index, 0, error, context.codec.name(), budget)
-            }
-            error => sink::failure(py, error),
-        });
+        return result
+            .map_err(|error| utf8_error(py, error, 0))?
+            .map_err(|error| failure(error, 0));
     }
     if !text {
-        output
-            .check_binary_width(length, context)
-            .map_err(|error| errors::wire(py, error))?;
+        target.binary_minimum(py, length)?;
     }
+    // Allocate a bounded owned fragment before any callback. Only that scratch
+    // reaches Python diagnostics; successful small values were never copied.
     let mut scratch = Vec::new();
     scratch
         .try_reserve(super::WORK_BYTES + 3)
         .map_err(|_| errors::memory_error(py))?;
     super::check(py, budget)?;
     if text {
-        output
-            .text_start(Some(length), context)
-            .map_err(|error| sink::failure(py, error))?;
+        target
+            .native_text_start(length)
+            .map_err(|error| error.python(py))?;
     } else {
-        output
-            .bytes_start(length, context)
-            .map_err(|error| sink::failure(py, error))?;
+        target.bytes_start(py, length)?;
     }
     let mut start = 0;
     while start < length {
@@ -1071,38 +1365,30 @@ fn write_bytes(
             scratch.extend_from_slice(&source[start..end]);
             end
         };
-        // The source borrow ended above. Only Rust-owned scratch bytes reach
-        // encoding, error construction or the next Python signal checkpoint.
         if text {
-            output
-                .text_fragment(utf8(py, &scratch, start)?, context)
-                .map_err(|error| match error {
-                    ValueError::Encoding(error) => byte_codec_error(
+            if let Err(error) = target.native_text_fragment(utf8(py, &scratch, start)?) {
+                return Err(match error {
+                    NativeFailure::Mysql(ValueError::Encoding(error)) => byte_codec_error(
                         py,
                         array,
                         index,
                         start,
                         error,
-                        context.codec.name(),
+                        target.text_encoding(),
                         budget,
                     ),
-                    error => sink::failure(py, error),
-                })?;
+                    error => error.python(py),
+                });
+            }
         } else {
-            output
-                .bytes_fragment(&scratch, context)
-                .map_err(|error| sink::failure(py, error))?;
+            target.bytes_fragment(py, &scratch)?;
         }
         start = end;
     }
     if text {
-        output
-            .text_end(context)
-            .map_err(|error| sink::failure(py, error))
+        target.native_text_end().map_err(|error| error.python(py))
     } else {
-        output
-            .bytes_end(context)
-            .map_err(|error| sink::failure(py, error))
+        target.bytes_end(py)
     }
 }
 
@@ -1159,228 +1445,6 @@ fn byte_codec_error(
     }
 }
 
-fn write_extended(
-    py: Python<'_>,
-    array: &ArrayRef,
-    index: usize,
-    output: &mut (impl Destination + ?Sized),
-    context: &Context,
-    budget: &dyn Checkpoint,
-    visitor: &mut dyn CellWriter,
-) -> PyResult<()> {
-    macro_rules! native {
-        ($kind:ty) => {
-            array
-                .as_any()
-                .downcast_ref::<$kind>()
-                .ok_or_else(|| invalid(py, "Arrow logical and physical array types differ"))?
-                .value(index)
-        };
-    }
-    match array.data_type() {
-        DataType::Date32 => temporal::write_date(
-            py,
-            i64::from(native!(Date32Array)),
-            output,
-            context,
-            Some(budget),
-        ),
-        DataType::Date64 => {
-            let millis = native!(Date64Array);
-            if millis % 86_400_000 != 0 {
-                return Err(errors::client(
-                    py,
-                    ClientErrorCode::NumericRange,
-                    "Arrow date64 is not an integral day",
-                ));
-            }
-            temporal::write_date(py, millis / 86_400_000, output, context, Some(budget))
-        }
-        DataType::Timestamp(unit, timezone) => {
-            if timezone.is_some() && !context.utc_confirmed {
-                return Err(errors::client(
-                    py,
-                    ClientErrorCode::SessionState,
-                    "timezone-aware Arrow input requires a confirmed UTC MySQL session",
-                ));
-            }
-            let ticks = match unit {
-                ArrowTimeUnit::Second => native!(TimestampSecondArray),
-                ArrowTimeUnit::Millisecond => native!(TimestampMillisecondArray),
-                ArrowTimeUnit::Microsecond => native!(TimestampMicrosecondArray),
-                ArrowTimeUnit::Nanosecond => native!(TimestampNanosecondArray),
-            };
-            temporal::write_valid(
-                py,
-                ticks,
-                time_unit(unit),
-                1,
-                TimeKind::DateTime,
-                output,
-                context,
-                Some(budget),
-            )
-        }
-        DataType::Duration(unit) => {
-            let ticks = match unit {
-                ArrowTimeUnit::Second => native!(DurationSecondArray),
-                ArrowTimeUnit::Millisecond => native!(DurationMillisecondArray),
-                ArrowTimeUnit::Microsecond => native!(DurationMicrosecondArray),
-                ArrowTimeUnit::Nanosecond => native!(DurationNanosecondArray),
-            };
-            temporal::write_valid(
-                py,
-                ticks,
-                time_unit(unit),
-                1,
-                TimeKind::Duration,
-                output,
-                context,
-                Some(budget),
-            )
-        }
-        DataType::Time32(unit) => {
-            let ticks = match unit {
-                ArrowTimeUnit::Second => i64::from(native!(Time32SecondArray)),
-                ArrowTimeUnit::Millisecond => i64::from(native!(Time32MillisecondArray)),
-                _ => return Err(invalid(py, "unsupported Arrow time32 unit")),
-            };
-            temporal::write_clock(py, ticks, time_unit(unit), 1, output, context, Some(budget))
-        }
-        DataType::Time64(unit) => {
-            let ticks = match unit {
-                ArrowTimeUnit::Microsecond => native!(Time64MicrosecondArray),
-                ArrowTimeUnit::Nanosecond => native!(Time64NanosecondArray),
-                _ => return Err(invalid(py, "unsupported Arrow time64 unit")),
-            };
-            temporal::write_clock(py, ticks, time_unit(unit), 1, output, context, Some(budget))
-        }
-        DataType::Decimal32(_, scale) => super::decimal_bytes(
-            py,
-            &native!(Decimal32Array).to_le_bytes(),
-            *scale,
-            output,
-            context,
-        ),
-        DataType::Decimal64(_, scale) => super::decimal_bytes(
-            py,
-            &native!(Decimal64Array).to_le_bytes(),
-            *scale,
-            output,
-            context,
-        ),
-        DataType::Decimal128(_, scale) => super::decimal_bytes(
-            py,
-            &native!(Decimal128Array).to_le_bytes(),
-            *scale,
-            output,
-            context,
-        ),
-        DataType::Decimal256(_, scale) => super::decimal_bytes(
-            py,
-            &native!(Decimal256Array).to_le_bytes(),
-            *scale,
-            output,
-            context,
-        ),
-        DataType::List(_) => {
-            let list = array
-                .as_any()
-                .downcast_ref::<ListArray>()
-                .ok_or_else(|| invalid(py, "Arrow List physical type differs"))?;
-            let offsets = list.value_offsets();
-            let start = usize::try_from(offsets[index])
-                .map_err(|_| invalid(py, "Arrow List has a negative start offset"))?;
-            let end = usize::try_from(offsets[index + 1])
-                .map_err(|_| invalid(py, "Arrow List has a negative end offset"))?;
-            write_list(
-                py,
-                list.values(),
-                start,
-                end,
-                output,
-                context,
-                budget,
-                visitor,
-            )
-        }
-        DataType::LargeList(_) => {
-            let list = array
-                .as_any()
-                .downcast_ref::<LargeListArray>()
-                .ok_or_else(|| invalid(py, "Arrow LargeList physical type differs"))?;
-            let offsets = list.value_offsets();
-            let start = usize::try_from(offsets[index])
-                .map_err(|_| invalid(py, "Arrow LargeList has a negative start offset"))?;
-            let end = usize::try_from(offsets[index + 1])
-                .map_err(|_| invalid(py, "Arrow LargeList has a negative end offset"))?;
-            write_list(
-                py,
-                list.values(),
-                start,
-                end,
-                output,
-                context,
-                budget,
-                visitor,
-            )
-        }
-        DataType::FixedSizeList(_, _) => {
-            let list = array
-                .as_any()
-                .downcast_ref::<FixedSizeListArray>()
-                .ok_or_else(|| invalid(py, "Arrow FixedSizeList physical type differs"))?;
-            let width = usize::try_from(list.value_length())
-                .map_err(|_| invalid(py, "Arrow FixedSizeList width is negative"))?;
-            let start = index
-                .checked_mul(width)
-                .ok_or_else(|| invalid(py, "Arrow FixedSizeList offset overflows usize"))?;
-            let end = start
-                .checked_add(width)
-                .ok_or_else(|| invalid(py, "Arrow FixedSizeList end overflows usize"))?;
-            write_list(
-                py,
-                list.values(),
-                start,
-                end,
-                output,
-                context,
-                budget,
-                visitor,
-            )
-        }
-        DataType::Struct(_) => {
-            let fields = array
-                .as_any()
-                .downcast_ref::<StructArray>()
-                .ok_or_else(|| invalid(py, "Arrow Struct physical type differs"))?;
-            write_sequence(
-                py,
-                fields.num_columns(),
-                output,
-                context,
-                visitor,
-                |field, output, visitor| {
-                    write_value(
-                        py,
-                        fields.column(field),
-                        index,
-                        output,
-                        context,
-                        budget,
-                        visitor,
-                    )
-                },
-            )
-        }
-        DataType::Dictionary(_, _) => {
-            let (values, label) = dictionary_label(py, array, index)?;
-            write_value(py, values, label, output, context, budget, visitor)
-        }
-        _ => Err(invalid(py, "unsupported Arrow logical input dtype")),
-    }
-}
-
 /// Resolve one actual key against its own dictionary, for both the ordinary
 /// recursive writer and the bounded native-string label cache.
 fn dictionary_label<'a>(
@@ -1431,84 +1495,6 @@ fn time_unit(unit: &ArrowTimeUnit) -> TimeUnit {
     }
 }
 
-#[expect(
-    clippy::too_many_arguments,
-    reason = "checked child range is written synchronously without an owned intermediate value"
-)]
-fn write_list(
-    py: Python<'_>,
-    values: &ArrayRef,
-    start: usize,
-    end: usize,
-    output: &mut (impl Destination + ?Sized),
-    context: &Context,
-    budget: &dyn Checkpoint,
-    visitor: &mut dyn CellWriter,
-) -> PyResult<()> {
-    if start > end || end > values.len() {
-        return Err(invalid(
-            py,
-            "Arrow list offsets are outside the values array",
-        ));
-    }
-    // Prepare a borrowed typed owner once, without slicing or reading future
-    // cells. A physical mismatch retains the generic value's original timing.
-    let integers = if matches!(values.data_type(), DataType::Int64) {
-        values.as_any().downcast_ref::<Int64Array>()
-    } else {
-        None
-    };
-    write_sequence(
-        py,
-        end - start,
-        output,
-        context,
-        visitor,
-        |index, output, visitor| {
-            let row = start + index;
-            if let Some(integers) = integers {
-                visitor.checkpoint(py, 1)?;
-                if row >= integers.len() {
-                    return Err(invalid(py, "Arrow child index is outside its array"));
-                }
-                if integers.is_null(row) {
-                    sink::emit(output, py, ValueRef::Null, context)
-                } else {
-                    sink::integer(output, integers.value(row), context)
-                        .map_err(|error| sink::failure(py, error))
-                }
-            } else {
-                write_value(py, values, row, output, context, budget, visitor)
-            }
-        },
-    )
-}
-
-fn write_sequence<D: Destination + ?Sized>(
-    py: Python<'_>,
-    width: usize,
-    output: &mut D,
-    context: &Context,
-    visitor: &mut dyn CellWriter,
-    mut value: impl FnMut(usize, &mut D, &mut dyn CellWriter) -> PyResult<()>,
-) -> PyResult<()> {
-    visitor.enter_native(py)?;
-    let result = (|| {
-        output.fragment(py, b"(", context)?;
-        for index in 0..width {
-            visitor.push_index(py, index)?;
-            if index != 0 {
-                output.fragment(py, b",", context)?;
-            }
-            value(index, output, visitor)?;
-            visitor.pop_index();
-        }
-        output.fragment(py, b")", context)
-    })();
-    visitor.leave_native();
-    result
-}
-
 impl<'py> Prepared<'py> {
     fn write_cell_to(
         &mut self,
@@ -1556,17 +1542,31 @@ impl<'py> Prepared<'py> {
                 {
                     cache.write(py, column, value, index, text, context, budget, visitor)
                 } else {
-                    write_value(py, value, index, output, context, budget, visitor)
+                    consume_value(
+                        &self.owner,
+                        value,
+                        index,
+                        &mut super::cell::Mysql {
+                            output,
+                            context,
+                            visitor,
+                        },
+                        budget,
+                        &mut self.offsets,
+                    )
                 }
             }
-            None => write_value(
-                py,
+            None => consume_value(
+                &self.owner,
                 cell_array(py, &array, table, column)?,
                 index,
-                output,
-                context,
+                &mut super::cell::Mysql {
+                    output,
+                    context,
+                    visitor,
+                },
                 budget,
-                visitor,
+                &mut self.offsets,
             ),
         }
     }

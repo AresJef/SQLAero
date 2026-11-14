@@ -14,6 +14,7 @@ use sqlaero_core::bind::value::{ValueError, ValueRef, ValueSink};
 use sqlaero_core::bind::{Context, writer};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
+use sqlaero_transcode::temporal;
 
 pub(crate) mod arrow;
 mod attribute;
@@ -37,7 +38,6 @@ mod scalar_source;
 pub(crate) mod sequence;
 pub(crate) mod source;
 pub(crate) mod standard;
-pub(crate) mod temporal;
 pub(crate) mod transparent;
 pub(crate) mod unicode;
 
@@ -823,145 +823,6 @@ pub(crate) fn text_utf8(
     output
         .text_end(context)
         .map_err(|error| convert_error(error, 0))
-}
-
-/// Write a bounded Arrow/Polars two's-complement coefficient without Python.
-pub(crate) fn decimal_bytes(
-    py: Python<'_>,
-    signed_le: &[u8],
-    scale: i8,
-    output: &mut (impl Destination + ?Sized),
-    context: &Context,
-) -> PyResult<()> {
-    if signed_le.is_empty() || signed_le.len() > 32 {
-        return Err(errors::client(
-            py,
-            ClientErrorCode::NumericRange,
-            "Decimal coefficient must contain between 1 and 32 bytes",
-        ));
-    }
-    // Wider physical storage may contain only redundant i128 sign extension.
-    // The retained low half's sign, not merely uniform high bytes, proves it.
-    let signed_le = if signed_le.len() > 16 {
-        let fill = if signed_le[15] & 0x80 == 0 { 0 } else { 0xff };
-        if signed_le[16..].iter().all(|byte| *byte == fill) {
-            &signed_le[..16]
-        } else {
-            signed_le
-        }
-    } else {
-        signed_le
-    };
-    if signed_le.len() <= 16 {
-        // The source is signed little-endian two's complement. Extending its
-        // actual sign preserves every width, including the i128 minimum.
-        let fill = if signed_le[signed_le.len() - 1] & 0x80 == 0 {
-            0
-        } else {
-            0xff
-        };
-        let mut bytes = [fill; 16];
-        bytes[..signed_le.len()].copy_from_slice(signed_le);
-        let coefficient = i128::from_le_bytes(bytes);
-        let mut buffer = itoa::Buffer::new();
-        let text = match i64::try_from(coefficient) {
-            Ok(value) => buffer.format(value),
-            Err(_) => buffer.format(coefficient),
-        };
-        let negative = coefficient < 0;
-        let ascii = if negative {
-            &text.as_bytes()[1..]
-        } else {
-            text.as_bytes()
-        };
-        // i128 has at most 39 magnitude digits; format the signed value
-        // directly so i128::MIN never needs an overflowing abs conversion.
-        let mut digits = [0u8; 39];
-        for (digit, ascii) in digits.iter_mut().zip(ascii) {
-            *digit = *ascii - b'0';
-        }
-        return emit(
-            output,
-            py,
-            ValueRef::Decimal {
-                negative,
-                digits: &digits[..ascii.len()],
-                exponent: -i64::from(scale),
-            },
-            context,
-        );
-    }
-    decimal_wide(py, signed_le, scale, output, context)
-}
-
-/// Convert bounded wide coefficients in base 10^19 using four native limbs.
-/// Keep the fallback out of the common scalar/narrow writer's code footprint.
-#[inline(never)]
-fn decimal_wide(
-    py: Python<'_>,
-    signed_le: &[u8],
-    scale: i8,
-    output: &mut (impl Destination + ?Sized),
-    context: &Context,
-) -> PyResult<()> {
-    // decimal_bytes already checked 1..=32 bytes. Unsigned two's-complement
-    // magnitude also represents the minimum negative coefficient exactly.
-    let negative = signed_le.last().is_some_and(|byte| byte & 0x80 != 0);
-    let mut magnitude = [0u8; 32];
-    let storage = &mut magnitude[..signed_le.len()];
-    storage.copy_from_slice(signed_le);
-    if negative {
-        let mut carry = 1u16;
-        for byte in storage.iter_mut() {
-            let value = u16::from(!*byte) + carry;
-            *byte = value as u8;
-            carry = value >> 8;
-        }
-    }
-    let mut words = [0u64; 4];
-    for (word, bytes) in words.iter_mut().zip(magnitude.as_chunks::<8>().0) {
-        *word = u64::from_le_bytes(*bytes);
-    }
-    let mut digits = [0u8; 78];
-    let mut start = digits.len();
-    let mut active = words.len();
-    while active != 0 && words[active - 1] == 0 {
-        active -= 1;
-    }
-    if active == 0 {
-        start -= 1;
-    }
-    while active != 0 {
-        let mut remainder = 0u128;
-        for word in words[..active].iter_mut().rev() {
-            // remainder < 10^19 < 2^64, so the complete dividend fits u128,
-            // and its quotient fits u64. No signed abs or truncation is used.
-            let value = (remainder << 64) | u128::from(*word);
-            *word = (value / 10_000_000_000_000_000_000u128) as u64;
-            remainder = value % 10_000_000_000_000_000_000u128;
-        }
-        while active != 0 && words[active - 1] == 0 {
-            active -= 1;
-        }
-        let mut buffer = itoa::Buffer::new();
-        let chunk = buffer.format(remainder as u64);
-        let width = if active == 0 { chunk.len() } else { 19 };
-        start -= width;
-        let tail = start + width - chunk.len();
-        for (digit, ascii) in digits[tail..start + width].iter_mut().zip(chunk.bytes()) {
-            *digit = ascii - b'0';
-        }
-    }
-    emit(
-        output,
-        py,
-        ValueRef::Decimal {
-            negative,
-            digits: &digits[start..],
-            exponent: -i64::from(scale),
-        },
-        context,
-    )
 }
 
 /// The same strict text conversion serves SQL source and quoted value content.

@@ -12,7 +12,7 @@ use pyo3::prelude::*;
 use pyo3::types::{PyInt, PyModule, PyString, PyTuple, PyType};
 use std::ffi::CStr;
 
-use super::temporal::{TimeKind, TimeUnit};
+use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
 
 mod allocation;
 mod array;

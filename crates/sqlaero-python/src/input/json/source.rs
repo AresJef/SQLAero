@@ -1,7 +1,7 @@
 //! JSON consumes the same checked provider cells as both MySQL destinations.
 
 use super::{Serialize, failure};
-use crate::input::cell::{Schema, Target};
+use crate::input::cell::{NativeFailure, Schema, Target};
 use crate::input::control::Checkpoint;
 use crate::input::source::{PreparedSource, Shape};
 use crate::{errors, input};
@@ -44,11 +44,32 @@ impl Target for Cell<'_, '_, '_> {
         }
         Ok(())
     }
-    fn scalar(&mut self, py: Python<'_>, value: ScalarRef<'_>) -> PyResult<()> {
+    fn native_scalar(&mut self, value: ScalarRef<'_>) -> Result<(), NativeFailure> {
         self.state
             .writer
             .write(value, &self.state.options)
-            .map_err(|error| failure(py, error))
+            .map_err(NativeFailure::Json)
+    }
+    fn native_text_start(&mut self, length: usize) -> Result<(), NativeFailure> {
+        self.state
+            .writer
+            .text_start(Some(length), &self.state.options)
+            .map_err(NativeFailure::Json)
+    }
+    fn native_text_fragment(&mut self, value: &str) -> Result<(), NativeFailure> {
+        self.state
+            .writer
+            .text_fragment(value, &self.state.options)
+            .map_err(NativeFailure::Json)
+    }
+    fn native_text_end(&mut self) -> Result<(), NativeFailure> {
+        self.state
+            .writer
+            .text_end(&self.state.options)
+            .map_err(NativeFailure::Json)
+    }
+    fn text_encoding(&self) -> &'static str {
+        "utf-8"
     }
     fn python(&mut self, value: &Bound<'_, PyAny>, child: Option<usize>) -> PyResult<()> {
         match child {
@@ -92,6 +113,9 @@ impl Target for Cell<'_, '_, '_> {
         // Standalone JSON has no connection packet quota. Actual reservations
         // and every target write remain fallible and bounded by work checks.
         Ok(())
+    }
+    fn binary_minimum(&self, py: Python<'_>, _length: usize) -> PyResult<()> {
+        Err(failure(py, Error::Unsupported("binary values")))
     }
     fn bytes_start(&mut self, py: Python<'_>, _length: usize) -> PyResult<()> {
         self.schema(py, Schema::Binary)

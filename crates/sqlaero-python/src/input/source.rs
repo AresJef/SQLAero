@@ -77,6 +77,18 @@ pub(crate) struct Selected<'a, 'py> {
     shape: Shape,
 }
 
+impl<'a, 'py> Selected<'a, 'py> {
+    /// Borrow an already qualified actual child shape. The source remains the
+    /// owner and revalidates its physical cell at consumption, never a writer.
+    pub(crate) fn new(parent: &'a mut dyn PreparedSource<'py>, index: usize, shape: Shape) -> Self {
+        Self {
+            parent,
+            index,
+            shape,
+        }
+    }
+}
+
 impl<'py> PreparedSource<'py> for Selected<'_, 'py> {
     fn owner(&self) -> &Bound<'py, PyAny> {
         self.parent.owner()

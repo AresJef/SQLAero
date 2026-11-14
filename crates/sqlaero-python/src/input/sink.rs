@@ -52,10 +52,6 @@ pub(crate) trait Destination {
     fn bytes_fragment(&mut self, bytes: &[u8], context: &Context) -> Result<(), ValueError>;
     fn bytes_end(&mut self, context: &Context) -> Result<(), ValueError>;
 
-    /// SQL fragments belong only to the text destination. A prepared position
-    /// cannot contain nested rows, sequence syntax or cached SQL literals.
-    fn fragment(&mut self, py: Python<'_>, bytes: &[u8], context: &Context) -> PyResult<()>;
-
     fn python(
         &mut self,
         visitor: &mut dyn CellWriter,
@@ -150,10 +146,6 @@ impl Destination for Vec<u8> {
     }
     fn bytes_end(&mut self, context: &Context) -> Result<(), ValueError> {
         TextSink::new(self).bytes_end(context)
-    }
-    fn fragment(&mut self, py: Python<'_>, bytes: &[u8], context: &Context) -> PyResult<()> {
-        sqlaero_core::bind::writer::append(self, bytes, context.limit)
-            .map_err(|error| errors::wire(py, error))
     }
     fn python(
         &mut self,
@@ -327,9 +319,6 @@ impl Destination for Native<'_> {
     }
     fn bytes_end(&mut self, context: &Context) -> Result<(), ValueError> {
         self.0.bytes_end(context)
-    }
-    fn fragment(&mut self, py: Python<'_>, _: &[u8], _: &Context) -> PyResult<()> {
-        Err(fragment_error(py))
     }
     fn python(
         &mut self,
@@ -584,14 +573,6 @@ impl Destination for RoleSink<'_> {
     }
     fn bytes_end(&mut self, context: &Context) -> Result<(), ValueError> {
         self.output.bytes_end(context)
-    }
-    fn fragment(&mut self, py: Python<'_>, bytes: &[u8], context: &Context) -> PyResult<()> {
-        // Typed providers emit this explicit operation only for row structure.
-        // Literal quoting and binary CAST syntax use typed scalar operations.
-        if bytes == b"(" {
-            self.observe(super::source::FragmentRole::Row);
-        }
-        self.output.fragment(py, bytes, context)
     }
     fn python(
         &mut self,

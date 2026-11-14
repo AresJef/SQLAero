@@ -68,7 +68,7 @@ fn option(argument: config::Argument<'_>) -> PyResult<bool> {
         .map_or(Ok(true), |value| config::boolean(value, "allow_nan"))
 }
 
-fn failure(py: Python<'_>, error: Error) -> PyErr {
+pub(super) fn failure(py: Python<'_>, error: Error) -> PyErr {
     match error {
         Error::Unsupported(name) => errors::builtin_format::<PyTypeError>(
             py,

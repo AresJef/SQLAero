@@ -5,10 +5,10 @@ use crate::input::attribute::GetSet;
 use crate::input::control::Checkpoint;
 use crate::input::numpy::{NumpyScalar, NumpyTypes};
 use crate::input::source::PreparedSource;
-use crate::input::temporal::{TimeKind, TimeUnit};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDateTime, PyModule, PyType, PyTzInfoAccess};
+use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
 use std::ffi::CStr;
 
 mod source;
@@ -33,7 +33,7 @@ pub(crate) struct PandasTypes {
     timedelta: Py<PyType>,
     timestamp_storage: GetSet,
     timedelta_storage: GetSet,
-    sources: source::SourceTypes,
+    sources: Py<source::SourceTypes>,
 }
 
 impl PandasTypes {
@@ -49,7 +49,7 @@ impl PandasTypes {
             timedelta_storage: GetSet::new(timedelta.bind(py), c"asm8", None)?,
             timestamp,
             timedelta,
-            sources: source::SourceTypes::new(&module)?,
+            sources: Py::new(py, source::SourceTypes::new(&module)?)?,
         })
     }
 
@@ -60,7 +60,10 @@ impl PandasTypes {
         numpy: &NumpyTypes,
         budget: &dyn Checkpoint,
     ) -> PyResult<Option<Box<dyn PreparedSource<'py> + 'py>>> {
-        self.sources.prepare(value, numpy, budget)
+        self.sources
+            .bind(value.py())
+            .get()
+            .prepare(value, numpy, budget, &self.sources)
     }
 
     /// Keep missing singletons ahead of datetime subclass handling. asm8

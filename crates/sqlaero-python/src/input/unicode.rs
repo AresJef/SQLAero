@@ -123,6 +123,59 @@ pub(crate) fn from_ucs4<'py>(
         .map_err(Into::into)
 }
 
+/// Publish already owned UTF-8 for a required source protocol or diagnostic.
+/// Long metadata is scanned and initialized in bounded attached work units;
+/// the partially initialized exact str is never visible to a callback.
+pub(crate) fn from_utf8<'py>(
+    py: Python<'py>,
+    value: &str,
+    budget: &dyn super::control::Checkpoint,
+) -> PyResult<Bound<'py, pyo3::types::PyString>> {
+    super::check(py, budget)?;
+    if value.len() <= super::WORK_BYTES {
+        return pyo3::types::PyString::from_bytes(py, value.as_bytes());
+    }
+    let mut count = 0usize;
+    let mut maximum = 0u32;
+    native_fragments(py, value, Some(budget), |_, text| {
+        for point in text.chars() {
+            count = count
+                .checked_add(1)
+                .ok_or_else(|| errors::memory_error(py))?;
+            maximum = maximum.max(u32::from(point));
+        }
+        Ok(())
+    })?;
+    let count = isize::try_from(count).map_err(|_| errors::memory_error(py))?;
+    let maximum = match maximum {
+        0..=0x7f => 0x7f,
+        0x80..=0xff => 0xff,
+        0x100..=0xffff => 0xffff,
+        _ => 0x10ffff,
+    };
+    // SAFETY: exact length and a legal accurate Unicode storage class were
+    // derived above. This unique object remains unpublished until filled.
+    let output =
+        unsafe { Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyUnicode_New(count, maximum)) }?;
+    for (index, point) in value.chars().enumerate() {
+        if index.is_multiple_of(1024) {
+            super::check(py, budget)?;
+        }
+        // SAFETY: every index is within the private, uniquely owned string and
+        // every scalar belongs to its original valid UTF-8 source.
+        if unsafe {
+            pyo3::ffi::PyUnicode_WriteChar(output.as_ptr(), index as isize, u32::from(point))
+        } < 0
+        {
+            return Err(PyErr::fetch(py));
+        }
+    }
+    super::check(py, budget)?;
+    output
+        .cast_into::<pyo3::types::PyString>()
+        .map_err(Into::into)
+}
+
 /// Consume owned UTF-8 in bounded complete-character fragments, independently
 /// of the output syntax or original Python source type.
 pub(crate) fn native_fragments(
