@@ -302,8 +302,8 @@ def test_polars_null_c_import_restores_headers_and_releases_exactly_once(
                     if kind == "import":
                         # Keep every actual pointer/allocated buffer intact,
                         # but omit the Boolean value-buffer declaration. The
-                        # mature cheap validator must reject this safely after
-                        # the neighboring Null header has been normalized.
+                        # importer must reject this safely without changing
+                        # any neighboring Null header or producer pointer.
                         malformed = result.contents.children[1]
                         restore_buffer_count = (malformed, int(malformed.contents.n_buffers))
                         malformed.contents.n_buffers = 1
@@ -348,7 +348,7 @@ def test_polars_null_c_import_restores_headers_and_releases_exactly_once(
     else:
         source = pl.DataFrame({"nulls": pl.Series([None], dtype=pl.Null), "ints": [1]})
     if kind == "import":
-        with pytest.raises(TypeError, match="Expected 1 buffers"):
+        with pytest.raises(TypeError, match="buffer"):
             _sqlaero._encode_value(source)
     elif fail:
         # The first value imports/releases its live C tree before the next

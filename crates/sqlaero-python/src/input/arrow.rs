@@ -6,20 +6,17 @@ use std::ptr;
 
 use super::cell::{NativeFailure, Schema, Target};
 use super::sink::Destination;
-use arrow_array::ffi::{FFI_ArrowArray, from_ffi_and_data_type};
+use arrow_array::ffi::FFI_ArrowArray;
 use arrow_array::types::{
     Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type, UInt16Type, UInt32Type, UInt64Type,
 };
 use arrow_array::{
-    Array, ArrayRef, BinaryArray, BinaryViewArray, BooleanArray, Date32Array, Date64Array,
-    Decimal32Array, Decimal64Array, Decimal128Array, Decimal256Array, DictionaryArray,
-    DurationMicrosecondArray, DurationMillisecondArray, DurationNanosecondArray,
-    DurationSecondArray, FixedSizeBinaryArray, Float32Array, Float64Array, Int8Array, Int16Array,
-    Int32Array, Int64Array, LargeBinaryArray, LargeStringArray, StringArray, StringViewArray,
-    StructArray, Time32MillisecondArray, Time32SecondArray, Time64MicrosecondArray,
-    Time64NanosecondArray, TimestampMicrosecondArray, TimestampMillisecondArray,
-    TimestampNanosecondArray, TimestampSecondArray, UInt8Array, UInt16Array, UInt32Array,
-    UInt64Array, make_array,
+    Array, BooleanArray, Date32Array, Date64Array, Decimal32Array, Decimal64Array, Decimal128Array,
+    Decimal256Array, DurationMicrosecondArray, DurationMillisecondArray, DurationNanosecondArray,
+    DurationSecondArray, Float32Array, Float64Array, Int8Array, Int16Array, Int32Array, Int64Array,
+    Time32MillisecondArray, Time32SecondArray, Time64MicrosecondArray, Time64NanosecondArray,
+    TimestampMicrosecondArray, TimestampMillisecondArray, TimestampNanosecondArray,
+    TimestampSecondArray, UInt8Array, UInt16Array, UInt32Array, UInt64Array,
 };
 use arrow_buffer::{ArrowNativeType, BooleanBuffer, NullBuffer, ScalarBuffer};
 use arrow_data::{ByteView, validate_binary_view};
@@ -36,9 +33,11 @@ use super::source::{CellWriter, PreparedSource, Shape};
 use crate::errors;
 use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
 
-mod cdata;
 mod dictionary;
 pub(super) mod names;
+mod native;
+pub(super) use native::ArrayRef;
+use native::Record as StructArray;
 mod offset;
 mod projection;
 mod schema;
@@ -560,7 +559,7 @@ pub(crate) fn prepare_exported<'py>(
         let array_capsule = pair.get_item(1)?;
         // SAFETY: named PyCapsules are checked by CPython. Both complete C
         // structures are moved once, leaving empty release slots in capsules.
-        let (schema, mut array) = unsafe {
+        let (schema, array) = unsafe {
             let schema =
                 pyo3::ffi::PyCapsule_GetPointer(schema_capsule.as_ptr(), c"arrow_schema".as_ptr())
                     .cast::<FFI_ArrowSchema>();
@@ -587,14 +586,7 @@ pub(crate) fn prepare_exported<'py>(
         let field = schema::import(py, &schema, &mut names, budget)?;
         validate_field(py, &field, 0, budget)?;
         super::check(py, budget)?;
-        cdata::normalize_nulls(py, &mut array, field.data_type(), budget)?;
-        // SAFETY: a canonical CPU producer owns these valid C buffers until
-        // the moved array's release. The importer handles offsets/alignment.
-        let data = unsafe { from_ffi_and_data_type(array, field.data_type().clone()) }
-            .map_err(|error| errors::builtin_format::<PyTypeError>(py, format_args!("{error}")))?;
-        data.validate()
-            .map_err(|error| errors::builtin_format::<PyTypeError>(py, format_args!("{error}")))?;
-        let array = make_array(data);
+        let array = native::import(py, array, field.data_type(), budget)?;
         validate_root_shape(py, &array, shape)?;
         let fast_path = native_fast_path(py, &array, shape, budget)?
             .map(|views| super::boxed(py, views))
@@ -853,18 +845,7 @@ impl Prepared<'_> {
                             "Arrow stream ended before its declared row count",
                         ));
                     }
-                    cdata::normalize_nulls(py, &mut raw, self.field.data_type(), budget)?;
-                    // SAFETY: canonical CPU stream's buffers follow the C
-                    // interface and retain their own moved release callback.
-                    let data =
-                        unsafe { from_ffi_and_data_type(raw, self.field.data_type().clone()) }
-                            .map_err(|error| {
-                                errors::builtin_format::<PyTypeError>(py, format_args!("{error}"))
-                            })?;
-                    data.validate().map_err(|error| {
-                        errors::builtin_format::<PyTypeError>(py, format_args!("{error}"))
-                    })?;
-                    let array = make_array(data);
+                    let array = native::import(py, raw, self.field.data_type(), budget)?;
                     let next_end = end
                         .checked_add(array.len())
                         .ok_or_else(|| invalid(py, "Arrow stream length overflows usize"))?;
@@ -1353,69 +1334,37 @@ pub(crate) fn consume_text_reference(
 /// Python checkpoint; a live conforming producer must keep its exported buffers
 /// allocated for the entire C array lifetime.
 fn byte_slice<'a>(py: Python<'_>, array: &'a ArrayRef, index: usize) -> PyResult<&'a [u8]> {
-    macro_rules! offsets {
-        ($kind:ty) => {{
-            let array = array
-                .as_any()
-                .downcast_ref::<$kind>()
-                .ok_or_else(|| invalid(py, "Arrow logical and physical byte array types differ"))?;
-            let offsets = array.value_offsets();
-            let start = usize::try_from(offsets[index])
-                .map_err(|_| invalid(py, "Arrow byte value has a negative start offset"))?;
-            let end = usize::try_from(offsets[index + 1])
-                .map_err(|_| invalid(py, "Arrow byte value has a negative end offset"))?;
-            array
-                .value_data()
-                .get(start..end)
-                .ok_or_else(|| invalid(py, "Arrow byte value offsets exceed its data buffer"))
-        }};
+    if let Some(bytes) = array.as_any().downcast_ref::<native::Bytes>() {
+        return bytes
+            .value(index)
+            .ok_or_else(|| invalid(py, "Arrow byte value offsets exceed its data buffer"));
     }
-    macro_rules! view {
-        ($kind:ty) => {{
-            let array = array
-                .as_any()
-                .downcast_ref::<$kind>()
-                .ok_or_else(|| invalid(py, "Arrow byte view physical type differs"))?;
-            let view = array
-                .views()
-                .get(index)
-                .ok_or_else(|| invalid(py, "Arrow byte view index exceeds its view buffer"))?;
-            validate_binary_view(std::slice::from_ref(view), array.data_buffers()).map_err(
-                |error| errors::builtin_format::<PyTypeError>(py, format_args!("{error}")),
-            )?;
-            let length = (*view as u32) as usize;
-            if length <= 12 {
-                // SAFETY: the mature binary-view validator above accepted the
-                // inline view, and its byte length is at most the inline bound.
-                Ok(unsafe { <$kind>::inline_value(view, length) })
-            } else {
-                let view = ByteView::from(*view);
-                let start = view.offset as usize;
-                let end = start
-                    .checked_add(length)
-                    .ok_or_else(|| invalid(py, "Arrow byte view length overflows usize"))?;
-                array
-                    .data_buffers()
-                    .get(view.buffer_index as usize)
-                    .and_then(|buffer| buffer.get(start..end))
-                    .ok_or_else(|| invalid(py, "Arrow byte view exceeds its data buffer"))
-            }
-        }};
+    let view_array = array
+        .as_any()
+        .downcast_ref::<native::View>()
+        .ok_or_else(|| invalid(py, "Arrow byte storage physical type differs"))?;
+    let view = view_array
+        .views()
+        .get(index)
+        .ok_or_else(|| invalid(py, "Arrow byte view index exceeds its view buffer"))?;
+    validate_binary_view(std::slice::from_ref(view), view_array.data_buffers())
+        .map_err(|error| errors::builtin_format::<PyTypeError>(py, format_args!("{error}")))?;
+    let length = (*view as u32) as usize;
+    if length <= 12 {
+        // SAFETY: the mature single-view validator accepted this inline view;
+        // the selected length is within its fixed 12-byte inline storage.
+        return Ok(unsafe { arrow_array::BinaryViewArray::inline_value(view, length) });
     }
-    match array.data_type() {
-        DataType::Utf8 => offsets!(StringArray),
-        DataType::LargeUtf8 => offsets!(LargeStringArray),
-        DataType::Binary => offsets!(BinaryArray),
-        DataType::LargeBinary => offsets!(LargeBinaryArray),
-        DataType::Utf8View => view!(StringViewArray),
-        DataType::BinaryView => view!(BinaryViewArray),
-        DataType::FixedSizeBinary(_) => array
-            .as_any()
-            .downcast_ref::<FixedSizeBinaryArray>()
-            .map(|array| array.value(index))
-            .ok_or_else(|| invalid(py, "Arrow fixed binary physical type differs")),
-        _ => Err(invalid(py, "Arrow value is not supported byte storage")),
-    }
+    let view = ByteView::from(*view);
+    let start = view.offset as usize;
+    let end = start
+        .checked_add(length)
+        .ok_or_else(|| invalid(py, "Arrow byte view length overflows usize"))?;
+    view_array
+        .data_buffers()
+        .get(view.buffer_index as usize)
+        .and_then(|buffer| buffer.get(start..end))
+        .ok_or_else(|| invalid(py, "Arrow byte view exceeds its data buffer"))
 }
 
 fn utf8<'a>(py: Python<'_>, bytes: &'a [u8], start: usize) -> PyResult<&'a str> {
@@ -1629,9 +1578,14 @@ fn dictionary_label<'a>(
         ($key:ty) => {{
             let dictionary = array
                 .as_any()
-                .downcast_ref::<DictionaryArray<$key>>()
+                .downcast_ref::<native::Dictionary>()
                 .ok_or_else(|| invalid(py, "Arrow Dictionary physical key type differs"))?;
-            let key = dictionary.keys().value(index);
+            let keys = dictionary
+                .keys()
+                .as_any()
+                .downcast_ref::<arrow_array::PrimitiveArray<$key>>()
+                .ok_or_else(|| invalid(py, "Arrow Dictionary physical key type differs"))?;
+            let key = keys.value(index);
             let label = usize::try_from(key)
                 .map_err(|_| invalid(py, "Arrow Dictionary key is negative or exceeds usize"))?;
             if label >= dictionary.values().len() {

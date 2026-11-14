@@ -57,7 +57,7 @@ impl TextIdentity {
 #[derive(Clone, Copy)]
 pub(crate) struct TextReference<'a> {
     pub(crate) identity: Option<TextIdentity>,
-    pub(crate) values: &'a arrow_array::ArrayRef,
+    pub(crate) values: &'a super::arrow::ArrayRef,
     pub(crate) index: usize,
     pub(crate) channel: usize,
 }

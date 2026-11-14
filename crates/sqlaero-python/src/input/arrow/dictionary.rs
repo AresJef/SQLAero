@@ -1,16 +1,16 @@
 //! Retained native dictionary coordinates, never target-formatted labels.
+use super::{ArrayRef, native};
 use super::{dictionary_label, invalid};
 use crate::errors;
 use crate::input::cell::{TextIdentity, TextReference};
 use crate::input::source::Shape;
+use arrow_array::PrimitiveArray;
 use arrow_array::types::{
     Int8Type, Int16Type, Int32Type, Int64Type, UInt8Type, UInt16Type, UInt32Type, UInt64Type,
 };
-use arrow_array::{ArrayRef, DictionaryArray};
 use arrow_buffer::ScalarBuffer;
 use arrow_schema::DataType;
 use pyo3::prelude::*;
-use std::sync::Arc;
 
 const COLUMNS: usize = 8;
 struct Labels {
@@ -36,9 +36,14 @@ impl KeyReader {
             ($kind:ty, $variant:ident) => {{
                 let dictionary = array
                     .as_any()
-                    .downcast_ref::<DictionaryArray<$kind>>()
+                    .downcast_ref::<native::Dictionary>()
                     .ok_or_else(|| invalid(py, "Arrow Dictionary physical key type differs"))?;
-                Ok(Self::$variant(dictionary.keys().values().clone()))
+                let keys = dictionary
+                    .keys()
+                    .as_any()
+                    .downcast_ref::<PrimitiveArray<$kind>>()
+                    .ok_or_else(|| invalid(py, "Arrow Dictionary physical key type differs"))?;
+                Ok(Self::$variant(keys.values().clone()))
             }};
         }
         match array.data_type() {
@@ -157,7 +162,7 @@ impl Reader {
             .columns
             .get(column)
             .and_then(Option::as_ref)
-            .is_some_and(|labels| Arc::ptr_eq(&labels.source, array))
+            .is_some_and(|labels| labels.source.ptr_eq(array))
         {
             let (values, _) = dictionary_label(py, array, index)?;
             let keys = KeyReader::prepare(py, array)?;

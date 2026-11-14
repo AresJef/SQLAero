@@ -1,13 +1,13 @@
 //! Borrowed native compound cells. A projection retains the original owner
 //! and array; it never builds Python rows or a normalized Rust value tree.
 
+use super::native::Sequence;
 use super::{
-    Array, ArrayRef, DataType, Read, StructArray, consume_scalar, dictionary_label, invalid, names,
+    ArrayRef, DataType, Read, StructArray, consume_scalar, dictionary_label, invalid, names,
 };
 use crate::input::cell::Target;
 use crate::input::control::Checkpoint;
 use crate::input::source::{PreparedSource, Shape};
-use arrow_array::{FixedSizeListArray, LargeListArray, ListArray};
 use pyo3::prelude::*;
 
 enum Kind<'a> {
@@ -52,43 +52,15 @@ fn kind<'a>(py: Python<'_>, array: &'a ArrayRef, index: usize) -> PyResult<Kind<
                 .map(Kind::Record)
                 .ok_or_else(|| invalid(py, "Arrow Struct physical type differs"));
         }
-        DataType::List(_) => {
+        DataType::List(_) | DataType::LargeList(_) | DataType::FixedSizeList(_, _) => {
             let values = array
                 .as_any()
-                .downcast_ref::<ListArray>()
-                .ok_or_else(|| invalid(py, "Arrow List physical type differs"))?;
-            let offsets = values.value_offsets();
-            (
-                values.values(),
-                usize::try_from(offsets[index]).ok(),
-                usize::try_from(offsets[index + 1]).ok(),
-            )
-        }
-        DataType::LargeList(_) => {
-            let values = array
-                .as_any()
-                .downcast_ref::<LargeListArray>()
-                .ok_or_else(|| invalid(py, "Arrow LargeList physical type differs"))?;
-            let offsets = values.value_offsets();
-            (
-                values.values(),
-                usize::try_from(offsets[index]).ok(),
-                usize::try_from(offsets[index + 1]).ok(),
-            )
-        }
-        DataType::FixedSizeList(_, _) => {
-            let values = array
-                .as_any()
-                .downcast_ref::<FixedSizeListArray>()
-                .ok_or_else(|| invalid(py, "Arrow FixedSizeList physical type differs"))?;
-            let width = usize::try_from(values.value_length())
-                .map_err(|_| invalid(py, "Arrow FixedSizeList width is negative"))?;
-            let start = index.checked_mul(width);
-            (
-                values.values(),
-                start,
-                start.and_then(|n| n.checked_add(width)),
-            )
+                .downcast_ref::<Sequence>()
+                .ok_or_else(|| invalid(py, "Arrow list physical type differs"))?;
+            let (start, end) = values
+                .range(index)
+                .ok_or_else(|| invalid(py, "Arrow list offsets are outside the values array"))?;
+            (values.values(), Some(start), Some(end))
         }
         _ => return Ok(Kind::Scalar),
     };
