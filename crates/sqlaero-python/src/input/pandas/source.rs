@@ -1144,7 +1144,7 @@ impl<'py> PandasSource<'py> {
         let length = match self.shape {
             Shape::Vector { length } => length,
             Shape::Table { rows, .. } => rows,
-            Shape::Record { .. } => {
+            Shape::Record { .. } | Shape::Scalar => {
                 return Err(invalid(py, "Pandas source cannot have record shape"));
             }
         };

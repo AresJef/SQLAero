@@ -114,6 +114,9 @@ impl Serialize<'_> {
         let result = (|| {
             source.schema(&mut Cell { state: self, path })?;
             match source.shape() {
+                Shape::Scalar => {
+                    self.typed_cell(source.as_mut(), 0, 0, path, budget)?;
+                }
                 Shape::Vector { length } => {
                     self.writer
                         .array_start()

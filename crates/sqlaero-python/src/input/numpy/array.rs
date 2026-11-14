@@ -128,15 +128,17 @@ impl<'py> NumpySource<'py> {
             ));
         }
         let dimensions = errors::attribute(&view, c"ndim")?.extract::<usize>()?;
-        if !(1..=2).contains(&dimensions) {
+        if dimensions > 2 {
             return Err(errors::builtin_message::<PyValueError>(
                 py,
-                "NumPy input supports exactly one or two dimensions",
+                "NumPy MySQL input supports zero, one or two dimensions",
             ));
         }
         let coordinates = errors::attribute(&view, c"shape")?;
         let coordinates = coordinates.cast::<PyTuple>()?;
-        let shape = if dimensions == 1 {
+        let shape = if dimensions == 0 {
+            Shape::Scalar
+        } else if dimensions == 1 {
             Shape::Vector {
                 length: coordinates.get_item(0)?.extract()?,
             }
@@ -213,6 +215,7 @@ impl<'py> NumpySource<'py> {
     ) -> PyResult<[u8; 8]> {
         let mut bytes = [0u8; 8];
         let (rows, columns) = match self.shape {
+            Shape::Scalar => (1, 1),
             Shape::Vector { length } => (length, 1),
             Shape::Table { rows, columns } => (rows, columns),
             Shape::Record { .. } => (0, 0),
@@ -300,6 +303,7 @@ impl<'py> NumpySource<'py> {
             ));
         }
         let (dimensions, lengths) = match self.shape {
+            Shape::Scalar => (0, [1, 1]),
             Shape::Vector { length } => (1, [length, 1]),
             Shape::Table { rows, columns } => (2, [rows, columns]),
             Shape::Record { .. } => {
@@ -326,8 +330,7 @@ impl<'py> NumpySource<'py> {
             && raw.len >= 0
             && Some(raw.len as usize) == length
             && !raw.buf.is_null()
-            && !raw.shape.is_null()
-            && !raw.strides.is_null()
+            && (dimensions == 0 || (!raw.shape.is_null() && !raw.strides.is_null()))
             && raw.suboffsets.is_null();
         let mut strides = [0isize; 2];
         if valid {
@@ -501,6 +504,7 @@ impl<'py> NumpySource<'py> {
             && (1..=RAW_BLOCK_BYTES).contains(&self.width);
         if eligible {
             let (rows, columns) = match self.shape {
+                Shape::Scalar => (1, 1),
                 Shape::Vector { length } => (length, 1),
                 Shape::Table { rows, columns } => (rows, columns),
                 Shape::Record { .. } => (0, 0),
@@ -553,10 +557,13 @@ impl<'py> NumpySource<'py> {
         // earlier S/U snapshot exists. In particular, Unicode's exceptional
         // scalar fallback must not inherit a cached empty-fragment shortcut.
         self.copy_source_range(row, column, 0, &mut [])?;
-        let row = crate::input::python_index(py, row)?;
         match self.shape {
-            Shape::Vector { .. } => self.owner.get_item(row),
+            Shape::Scalar => self
+                .owner
+                .get_item(crate::output::tuple_from_ready(py, [])?),
+            Shape::Vector { .. } => self.owner.get_item(crate::input::python_index(py, row)?),
             Shape::Table { .. } => {
+                let row = crate::input::python_index(py, row)?;
                 let column = crate::input::python_index(py, column)?;
                 self.owner
                     .get_item(crate::output::tuple_from_ready(py, [row, column])?)

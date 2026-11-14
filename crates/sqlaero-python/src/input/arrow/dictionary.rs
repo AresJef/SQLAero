@@ -148,7 +148,7 @@ impl Cache {
         let rows = match shape {
             Shape::Vector { length } => length,
             Shape::Table { rows, .. } => rows,
-            Shape::Record { .. } => 0,
+            Shape::Record { .. } | Shape::Scalar => 0,
         };
         // A short input cannot amortize the cache's fixed strategy/table
         // allocation. Keep those existing paths free of new preparation work.

@@ -3,6 +3,9 @@
 /// Logical shape prepared from a source, without a target binding decision.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Shape {
+    /// One logical value with no outer container axis, including a plain 0D
+    /// array. A payload container does not replan the original root layout.
+    Scalar,
     /// A one-dimensional logical sequence, irrespective of physical chunks.
     Vector {
         /// Number of logical values, excluding physical chunk boundaries.

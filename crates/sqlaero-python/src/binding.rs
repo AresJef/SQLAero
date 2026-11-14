@@ -615,7 +615,7 @@ impl<'py> Rows<'py> {
                 .is_some_and(|source| match source.shape() {
                     Shape::Table { .. } => true,
                     Shape::Vector { .. } => self.many,
-                    Shape::Record { .. } => false,
+                    Shape::Record { .. } | Shape::Scalar => false,
                 })
     }
     pub(crate) fn remaining(&self) -> usize {
@@ -661,7 +661,7 @@ impl<'py> Rows<'py> {
         };
         let (count, empty) = match native.as_ref().map(|v| v.shape()) {
             Some(Shape::Vector { length }) => (if many { length.max(1) } else { 1 }, length == 0),
-            Some(Shape::Record { .. }) => (1, false),
+            Some(Shape::Record { .. } | Shape::Scalar) => (1, false),
             Some(Shape::Table { rows, .. }) => (rows.max(1), rows == 0),
             None => (
                 outer.as_ref().map_or(1, |v| v.len().max(1)),
@@ -995,7 +995,11 @@ impl Row<'_, '_> {
             _ => None,
         };
         if let Some(native) = native.as_ref() {
-            visit.enter(py, self.value.as_ptr() as usize)?;
+            visit.enter_source(
+                py,
+                self.value.as_ptr() as usize,
+                native.source.shape() != Shape::Scalar,
+            )?;
             if matches!(
                 (native.source.shape(), native.row),
                 (Shape::Table { .. }, Some(_))
@@ -1010,6 +1014,7 @@ impl Row<'_, '_> {
             let result = if let Some(native) = native.as_deref_mut() {
                 let shape = native.source.shape();
                 let coordinates = match (self.itemize, shape, native.row) {
+                    (_, Shape::Scalar, _) => Some((0, 0, false)),
                     (_, Shape::Vector { .. }, Some(row)) => Some((row, 0, false)),
                     (true, Shape::Vector { .. }, None) => Some((index, 0, true)),
                     (true, Shape::Record { .. }, _) => Some((0, index, true)),
@@ -1334,7 +1339,11 @@ impl Row<'_, '_> {
             _ => None,
         };
         if let Some(native) = native.as_ref() {
-            visit.enter(py, self.value.as_ptr() as usize)?;
+            visit.enter_source(
+                py,
+                self.value.as_ptr() as usize,
+                native.source.shape() != Shape::Scalar,
+            )?;
             if matches!(
                 (native.source.shape(), native.row),
                 (Shape::Table { .. }, Some(_))
@@ -1373,6 +1382,7 @@ impl Row<'_, '_> {
                 let mut sink = call::DiscardValue;
                 if let Some(native) = native.as_deref_mut() {
                     let (source_row, column) = match (native.source.shape(), native.row) {
+                        (Shape::Scalar, _) => (0, 0),
                         (Shape::Vector { .. }, Some(row)) => (row, 0),
                         (Shape::Vector { .. }, None) => (index, 0),
                         (Shape::Record { .. }, _) => (0, index),
@@ -1396,8 +1406,11 @@ impl Row<'_, '_> {
             } else if let Some(native) = native.as_deref_mut() {
                 let shape = native.source.shape();
                 let source_row = native.row;
-                if self.itemize {
+                if shape == Shape::Scalar {
+                    visit.native_cell::<TRACK_ROLE>(native.source.source(), 0, 0, output)
+                } else if self.itemize {
                     let coordinates = match (shape, source_row) {
+                        (Shape::Scalar, _) => (0, 0),
                         (Shape::Vector { .. }, Some(row)) => (row, 0),
                         (Shape::Vector { .. }, None) => (index, 0),
                         (Shape::Record { .. }, _) => (0, index),
@@ -1433,6 +1446,9 @@ impl Row<'_, '_> {
                         Shape::Table { columns, .. } => visit
                             .native_row(native.source.source(), row, columns, output)
                             .map(|()| FragmentRole::Row),
+                        Shape::Scalar => {
+                            visit.native_cell::<TRACK_ROLE>(native.source.source(), 0, 0, output)
+                        }
                         Shape::Record { .. } => visit
                             .native_value(native.source.source(), output)
                             .map(|()| FragmentRole::Row),
@@ -1589,7 +1605,11 @@ impl Visit<'_> {
     }
 
     fn enter(&mut self, py: Python<'_>, identity: usize) -> PyResult<()> {
-        if self.active_depth + self.native_depth >= 64
+        self.enter_source(py, identity, true)
+    }
+
+    fn enter_source(&mut self, py: Python<'_>, identity: usize, container: bool) -> PyResult<()> {
+        if (container && self.active_depth + self.native_depth >= 64)
             || crate::input::transparent::contains(py, &self.active, identity, Some(self.budget))?
         {
             return Err(errors::client_format(
@@ -1605,7 +1625,7 @@ impl Visit<'_> {
             .try_reserve(1)
             .map_err(|_| errors::memory_error(py))?;
         self.active.push(identity);
-        self.active_depth += 1;
+        self.active_depth += usize::from(container);
         Ok(())
     }
 
@@ -1812,11 +1832,17 @@ impl Visit<'_> {
             let Some(mut source) = source::prepare(value, self.types, self.budget)? else {
                 return Err(crate::input::unsupported(value));
             };
-            self.enter(py, value.as_ptr() as usize)?;
-            let result = self.native_value(source.as_mut(), output);
+            let container = source.shape() != Shape::Scalar;
+            self.enter_source(py, value.as_ptr() as usize, container)?;
+            let result = if container {
+                self.native_value(source.as_mut(), output)
+                    .map(|()| FragmentRole::Row)
+            } else {
+                self.native_cell::<true>(source.as_mut(), 0, 0, output)
+            };
             self.active.pop();
-            self.active_depth -= 1;
-            result.map(|()| FragmentRole::Row)
+            self.active_depth -= usize::from(container);
+            result
         })();
         if let Err(error) = &result {
             self.failed_value(value, None, error);
@@ -1835,6 +1861,7 @@ impl Visit<'_> {
         let py = source.owner().py();
         let context = self.context;
         match source.shape() {
+            Shape::Scalar => source.write_cell(0, 0, output, &context, self.budget, self),
             Shape::Vector { length } => {
                 writer::append(output, b"(", self.context.limit)
                     .map_err(|e| errors::wire(py, e))?;
