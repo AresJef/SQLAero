@@ -16,6 +16,7 @@ use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
 
 pub(crate) mod arrow;
+mod attribute;
 mod buffer;
 pub(crate) mod cell;
 pub(crate) mod control;

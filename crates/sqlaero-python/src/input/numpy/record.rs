@@ -1,5 +1,6 @@
 //! Canonical records retain schema field order and their original identity.
 
+use super::NumpyArrayApi;
 use super::allocation::Allocation;
 use crate::errors;
 use crate::input::control::Checkpoint;
@@ -7,7 +8,7 @@ use crate::input::sink::Destination;
 use crate::input::source::{CellWriter, PreparedSource, Shape};
 use pyo3::exceptions::{PyIndexError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyString, PyTuple, PyType};
+use pyo3::types::{PyString, PyTuple};
 use sqlaero_core::bind::Context;
 
 /// Public field access owns the current value before any recursive callback.
@@ -20,7 +21,7 @@ pub(crate) struct RecordSource<'py> {
 impl<'py> RecordSource<'py> {
     pub(super) fn new(
         value: &Bound<'py, PyAny>,
-        array_type: &Py<PyType>,
+        api: &NumpyArrayApi,
         budget: &dyn Checkpoint,
         exact_void: bool,
     ) -> PyResult<Option<Self>> {
@@ -43,7 +44,7 @@ impl<'py> RecordSource<'py> {
         Ok(Some(Self {
             owner: value.clone(),
             fields,
-            allocation: Allocation::new(value, array_type, budget)?,
+            allocation: Allocation::new(value, api, budget)?,
         }))
     }
 }

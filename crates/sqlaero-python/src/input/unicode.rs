@@ -7,6 +7,78 @@ use pyo3::types::{PyString, PyStringData, PyStringMethods};
 use sqlaero_transcode::utf8::{self, EncodeError};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
+/// Preserve an exceptional native UCS4 value in a private Python error payload.
+/// Normal serialization never creates this intermediate Python string. Every
+/// source copy finishes before public Unicode writes or a shared checkpoint;
+/// the incomplete string is not published or passed to callbacks.
+pub(crate) fn from_ucs4<'py>(
+    py: Python<'py>,
+    count: usize,
+    swap: bool,
+    budget: &dyn super::control::Checkpoint,
+    mut read: impl FnMut(usize, &mut [u8]) -> PyResult<()>,
+) -> PyResult<Bound<'py, pyo3::types::PyString>> {
+    super::check(py, budget)?;
+    let size = isize::try_from(count).map_err(|_| crate::errors::memory_error(py))?;
+    // PyUnicode_New needs the real storage class. An overstated maxchar can
+    // make equal ordinary strings compare unequal. Only this exceptional path
+    // makes a bounded native scan before allocating the canonical payload.
+    let mut chunk = [0u8; 4096];
+    let mut start = 0;
+    let mut maximum = 0;
+    while start < count {
+        super::check(py, budget)?;
+        let length = (count - start).min(chunk.len() / 4);
+        read(start, &mut chunk[..length * 4])?;
+        for bytes in chunk[..length * 4].as_chunks::<4>().0 {
+            let point = u32::from_ne_bytes(*bytes);
+            maximum = maximum.max(if swap { point.swap_bytes() } else { point });
+        }
+        start += length;
+    }
+    let maxchar = match maximum {
+        0..=0x7f => 0x7f,
+        0x80..=0xff => 0xff,
+        0x100..=0xffff => 0xffff,
+        0x10000..=0x10ffff => 0x10ffff,
+        _ => {
+            return Err(errors::builtin_message::<pyo3::exceptions::PyValueError>(
+                py,
+                "native UCS4 source contains a codepoint outside Unicode's range",
+            ));
+        }
+    };
+    // SAFETY: size is nonnegative and maxchar is a legal Unicode maximum. The
+    // new exact str stays uniquely owned and private until every character has
+    // been initialized with the public setter (surrogates are valid str data).
+    let output =
+        unsafe { Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyUnicode_New(size, maxchar)) }?;
+    start = 0;
+    while start < count {
+        super::check(py, budget)?;
+        let length = (count - start).min(chunk.len() / 4);
+        read(start, &mut chunk[..length * 4])?;
+        for (index, bytes) in chunk[..length * 4].as_chunks::<4>().0.iter().enumerate() {
+            let point = u32::from_ne_bytes(*bytes);
+            let point = if swap { point.swap_bytes() } else { point };
+            // SAFETY: index is inside this unique unpublished Unicode object.
+            // The public API validates the codepoint and preserves its actual
+            // error for a physically invalid value beyond Unicode's range.
+            if unsafe {
+                pyo3::ffi::PyUnicode_WriteChar(output.as_ptr(), (start + index) as isize, point)
+            } < 0
+            {
+                return Err(PyErr::fetch(py));
+            }
+        }
+        start += length;
+    }
+    super::check(py, budget)?;
+    output
+        .cast_into::<pyo3::types::PyString>()
+        .map_err(Into::into)
+}
+
 /// Consume owned UTF-8 in bounded complete-character fragments, independently
 /// of the output syntax or original Python source type.
 pub(crate) fn native_fragments(

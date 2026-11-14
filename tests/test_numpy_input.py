@@ -86,40 +86,44 @@ assert getattr(sys, '_is_gil_enabled', lambda: True)() == before
 def test_numpy_allocation_callback_keeps_its_actual_argument_error_and_retry(kind: str) -> None:
     script = r'''
 import sys
-import weakref
 import numpy as np
 from sqlaero import _sqlaero as native
 
 state = getattr(sys, '_is_gil_enabled', lambda: True)()
 encoder = native._prepare_encoder()
 assert encoder.encode(np.int64(7)).to_bytes() == b'7'
+original = MemoryError('actual allocation-owner callback')
+calls = []
+class Owner:
+    def __init__(self, data):
+        self.data = data
+        self.failing = False
+    @property
+    def __array_interface__(self):
+        return self.data.__array_interface__
+    @property
+    def base(self):
+        if self.failing:
+            calls.append('base')
+            raise original
+        return self.data
 if sys.argv[1] == 'array':
-    value = np.array([1, 2], dtype=np.int64)
+    owner = Owner(np.array([1, 2], dtype=np.int64))
+    value = np.asarray(owner)
     expected = b'(1,2)'
 else:
-    value = np.array([(7, 'a')], dtype=[('i', 'i8'), ('s', 'U16')]).view(np.recarray)[0]
+    owner = Owner(np.array([(7, 'a')], dtype=[('i', 'i8'), ('s', 'U16')]))
+    value = np.asarray(owner).view(np.recarray)[0]
     expected = b"(7,'a')"
-
-original = MemoryError('actual allocation-owner callback')
-reference = weakref.ref
-calls = []
-def fail(owner, *args, **kwargs):
-    if isinstance(owner, np.ndarray):
-        calls.append(owner)
-        raise original
-    return reference(owner, *args, **kwargs)
-
-weakref.ref = fail
+owner.failing = True
 try:
-    try:
-        encoder.encode(value)
-    except MemoryError as caught:
-        assert caught is original
-    else:
-        raise AssertionError('the real owner callback was skipped')
-finally:
-    weakref.ref = reference
-assert len(calls) == 1
+    encoder.encode(value)
+except MemoryError as caught:
+    assert caught is original
+else:
+    raise AssertionError('the actual allocation-owner protocol was skipped')
+assert calls == ['base']
+owner.failing = False
 assert encoder.encode(value).to_bytes() == expected
 assert getattr(sys, '_is_gil_enabled', lambda: True)() == state
 '''
@@ -362,7 +366,6 @@ def test_numpy_record_public_getter_retains_object_identity_and_cycle_protection
 
 
 @pytest.mark.parametrize("value", [
-    np.array([1, 2]).view(np.matrix),
     np.zeros((1,), dtype=[("a", "i8")]),
     np.zeros((1, 1, 1)),
 ])

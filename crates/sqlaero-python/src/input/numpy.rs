@@ -58,7 +58,7 @@ pub(crate) struct NumpyTypes {
     datetime_data: Py<PyAny>,
     datetime_dtype_get: Py<PyAny>,
     duration_dtype_get: Py<PyAny>,
-    array: Py<PyType>,
+    arrays: NumpyArrayApi,
     record: Py<PyType>,
     void: Py<PyType>,
 }
@@ -66,23 +66,124 @@ pub(crate) struct NumpyTypes {
 /// The two owned public API references needed by bounded column re-preparation.
 /// Scalar caches are not borrowed across the lifetime of a prepared source.
 pub(crate) struct NumpyArrayApi {
-    array: Py<PyType>,
+    array: Canonical,
+    dtype: super::attribute::GetSet,
+    base: super::attribute::GetSet,
+    flags: super::attribute::GetSet,
+    schemas: Py<PyTuple>,
+    masked: Py<PyType>,
     datetime_data: Py<PyAny>,
+    item: pyo3::ffi::binaryfunc,
 }
 
 impl NumpyArrayApi {
-    /// Recognize an exact ndarray without preparing or reading it twice.
-    pub(crate) fn accepts(&self, value: &Bound<'_, PyAny>) -> bool {
-        value.get_type().is(self.array.bind(value.py()))
+    fn new(
+        module: &Bound<'_, PyModule>,
+        numeric: &[(Canonical, Kind)],
+        datetime_data: &Bound<'_, PyAny>,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<Self> {
+        let py = module.py();
+        let array = exact_type(module, c"ndarray", budget)?;
+        let buffer = Canonical::new(array.clone_ref(py), py)?;
+        let dtype = super::attribute::GetSet::new(array.bind(py), c"dtype", budget)?;
+        let base = super::attribute::GetSet::new(array.bind(py), c"base", budget)?;
+        let flags = super::attribute::GetSet::new(array.bind(py), c"flags", budget)?;
+        let ma =
+            super::control::callback(py, budget, || errors::attribute(module.as_any(), c"ma"))?;
+        let masked =
+            super::control::callback(py, budget, || errors::attribute(&ma, c"MaskedArray"))?
+                .cast_into::<PyType>()?
+                .unbind();
+        let constructor =
+            super::control::callback(py, budget, || errors::attribute(module.as_any(), c"dtype"))?;
+        let mut schemas = Vec::new();
+        schemas
+            .try_reserve_exact(numeric.len() + 4)
+            .map_err(|_| errors::memory_error(py))?;
+        for (canonical, _) in numeric {
+            let args = crate::output::tuple_from_ready(py, [canonical.typ(py).clone().into_any()])?;
+            let value = super::control::callback(py, budget, || constructor.call1(args))?;
+            schemas.push(value.get_type().into_any().unbind());
+        }
+        for name in [c"str_", c"bytes_", c"object_", c"void"] {
+            let typ = exact_type(module, name, budget)?;
+            let args = crate::output::tuple_from_ready(py, [typ.into_bound(py).into_any()])?;
+            let value = super::control::callback(py, budget, || constructor.call1(args))?;
+            schemas.push(value.get_type().into_any().unbind());
+        }
+        // SAFETY: this retained immutable native ndarray type owns the public
+        // mapping subscript slot. Its exact signature is binaryfunc.
+        let item = unsafe {
+            pyo3::ffi::PyType_GetSlot(array.bind(py).as_ptr().cast(), pyo3::ffi::Py_mp_subscript)
+        };
+        if item.is_null() {
+            return Err(errors::builtin_message::<PyTypeError>(
+                py,
+                "canonical ndarray must have a public subscript slot",
+            ));
+        }
+        // SAFETY: Py_mp_subscript has this documented non-null callback type.
+        let item =
+            unsafe { std::mem::transmute::<*mut std::ffi::c_void, pyo3::ffi::binaryfunc>(item) };
+        Ok(Self {
+            array: buffer,
+            dtype,
+            base,
+            flags,
+            schemas: crate::output::tuple_from_ready_vec(py, schemas)?.unbind(),
+            masked,
+            datetime_data: datetime_data.clone().unbind(),
+            item,
+        })
     }
 
-    /// Prepare an exact ndarray through the same checked primitive reader.
+    fn clone_ref(&self, py: Python<'_>) -> Self {
+        Self {
+            array: self.array.clone_ref(py),
+            dtype: self.dtype.clone_ref(py),
+            base: self.base.clone_ref(py),
+            flags: self.flags.clone_ref(py),
+            schemas: self.schemas.clone_ref(py),
+            masked: self.masked.clone_ref(py),
+            datetime_data: self.datetime_data.clone_ref(py),
+            item: self.item,
+        }
+    }
+
+    /// Recognize qualified base storage without invoking replacement methods.
+    pub(crate) fn accepts(&self, value: &Bound<'_, PyAny>) -> bool {
+        super::actual_instance(value, self.array.typ(value.py()))
+            && !super::actual_instance(value, self.masked.bind(value.py()))
+    }
+
+    /// Prepare through one canonical checked reader; mask never falls through.
     pub(crate) fn prepare<'py>(
         &self,
         value: &Bound<'py, PyAny>,
         budget: &dyn Checkpoint,
     ) -> PyResult<Option<NumpySource<'py>>> {
-        prepare_array(value, &self.array, &self.datetime_data, budget)
+        if !super::actual_instance(value, self.array.typ(value.py())) {
+            return Ok(None);
+        }
+        if super::actual_instance(value, self.masked.bind(value.py())) {
+            return Err(errors::builtin_message::<PyTypeError>(
+                value.py(),
+                "MaskedArray requires the dedicated mask-aware source path",
+            ));
+        }
+        super::control::callback(value.py(), Some(budget), || {
+            NumpySource::new(value, self, budget)
+        })
+        .map(Some)
+    }
+
+    fn supports_dtype(&self, dtype: &Bound<'_, PyAny>) -> bool {
+        let actual = dtype.get_type();
+        self.schemas
+            .bind(dtype.py())
+            .iter()
+            .any(|typ| typ.is(&actual))
     }
 }
 
@@ -129,12 +230,13 @@ impl NumpyTypes {
                 "NumPy datetime_data API must be callable before preparing input",
             ));
         }
+        let arrays = NumpyArrayApi::new(&module, &numeric, &datetime_data, budget)?;
         Ok(Self {
             numeric,
             datetime_data: datetime_data.unbind(),
             datetime_dtype_get: dtype_get(&module, c"datetime64", budget)?,
             duration_dtype_get: dtype_get(&module, c"timedelta64", budget)?,
-            array: exact_type(&module, c"ndarray", budget)?,
+            arrays,
             record: exact_type(&module, c"record", budget)?,
             void: exact_type(&module, c"void", budget)?,
         })
@@ -146,15 +248,12 @@ impl NumpyTypes {
         value: &Bound<'py, PyAny>,
         budget: &dyn Checkpoint,
     ) -> PyResult<Option<NumpySource<'py>>> {
-        prepare_array(value, &self.array, &self.datetime_data, budget)
+        self.arrays.prepare(value, budget)
     }
 
     /// Own only the array preparation API used by a provider's bounded blocks.
     pub(crate) fn array_api(&self, py: Python<'_>) -> NumpyArrayApi {
-        NumpyArrayApi {
-            array: self.array.clone_ref(py),
-            datetime_data: self.datetime_data.clone_ref(py),
-        }
+        self.arrays.clone_ref(py)
     }
 
     /// A canonical record is one logical row, not a general structured array.
@@ -168,7 +267,7 @@ impl NumpyTypes {
             return Ok(None);
         }
         super::check(value.py(), budget)?;
-        let source = RecordSource::new(value, &self.array, budget, exact_void)?;
+        let source = RecordSource::new(value, &self.arrays, budget, exact_void)?;
         super::check(value.py(), budget)?;
         Ok(source)
     }
@@ -269,31 +368,6 @@ impl NumpyTypes {
             super::control::callback(value.py(), budget, || get.bind(value.py()).call1(args))?;
         temporal_dtype_metadata(&dtype, &self.datetime_data, budget)
     }
-}
-
-fn prepare_array<'py>(
-    value: &Bound<'py, PyAny>,
-    array: &Py<PyType>,
-    datetime_data: &Py<PyAny>,
-    budget: &dyn Checkpoint,
-) -> PyResult<Option<NumpySource<'py>>> {
-    if !value.get_type().is(array.bind(value.py())) {
-        return Ok(None);
-    }
-    super::check(value.py(), budget)?;
-    let source = NumpySource::new(value, array, datetime_data, budget)?;
-    super::check(value.py(), budget)?;
-    Ok(Some(source))
-}
-
-fn temporal_metadata(
-    value: &Bound<'_, PyAny>,
-    datetime_data: &Py<PyAny>,
-    budget: Option<&dyn Checkpoint>,
-) -> PyResult<(TimeUnit, u64)> {
-    let dtype =
-        super::control::callback(value.py(), budget, || errors::attribute(value, c"dtype"))?;
-    temporal_dtype_metadata(&dtype, datetime_data, budget)
 }
 
 fn temporal_dtype_metadata(

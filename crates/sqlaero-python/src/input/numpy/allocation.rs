@@ -1,11 +1,14 @@
 //! Resolve and retain the physical buffer owner independently of logical shape.
 
+use super::NumpyArrayApi;
+use crate::errors;
+use crate::input::attribute::GetSet;
+use crate::input::buffer::Canonical;
 pub(super) use crate::input::buffer::Export;
 use crate::input::control::Checkpoint;
-use crate::{errors, output};
 use pyo3::exceptions::{PyAttributeError, PyBufferError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyCapsule, PyMemoryView, PyType};
+use pyo3::types::{PyByteArray, PyBytes, PyCapsule, PyMemoryView};
 
 /// Keep an owning buffer or a native producer's valid contiguous interval,
 /// plus every inspected identity. A strided view's logical nbytes alone never
@@ -13,7 +16,9 @@ use pyo3::types::{PyCapsule, PyMemoryView, PyType};
 pub(super) struct Allocation<'py> {
     root: Bound<'py, PyAny>,
     origin: usize,
-    dtype: Option<(Bound<'py, PyAny>, Bound<'py, PyAny>)>,
+    dtype: Option<(GetSet, Bound<'py, PyAny>)>,
+    array: Canonical,
+    native_root: bool,
     zero_only: bool,
     _chain: Vec<Bound<'py, PyAny>>,
     _resize_guards: Vec<Bound<'py, PyAny>>,
@@ -22,14 +27,10 @@ pub(super) struct Allocation<'py> {
 impl<'py> Allocation<'py> {
     pub(super) fn new(
         value: &Bound<'py, PyAny>,
-        array_type: &Py<PyType>,
+        api: &NumpyArrayApi,
         budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
         let py = value.py();
-        let base_descriptor = errors::attribute(array_type.bind(py).as_any(), c"base")?;
-        let base_get = errors::attribute(&base_descriptor, c"__get__")?;
-        let weakref = errors::module(py, c"weakref")?;
-        let reference = errors::attribute(weakref.as_any(), c"ref")?;
         let mut current = value.clone();
         let mut chain = Vec::new();
         let mut guards = Vec::new();
@@ -52,24 +53,40 @@ impl<'py> Allocation<'py> {
             let is_array = unsafe {
                 pyo3::ffi::PyType_IsSubtype(
                     current.get_type().as_ptr().cast(),
-                    array_type.bind(py).as_ptr().cast(),
+                    api.array.typ(py).as_ptr().cast(),
                 ) != 0
             };
             let next = if is_array {
                 guards
                     .try_reserve(1)
                     .map_err(|_| errors::memory_error(py))?;
-                guards.push(reference.call1(output::tuple_from_ready(py, [current.clone()])?)?);
+                // SAFETY: the live source supports weak references. The public
+                // constructor either owns a callback-free weakref or preserves
+                // its original allocation/type exception; no Python hook runs.
+                let guard = unsafe {
+                    Bound::from_owned_ptr_or_err(
+                        py,
+                        pyo3::ffi::PyWeakref_NewRef(current.as_ptr(), std::ptr::null_mut()),
+                    )
+                }?;
+                guards.push(guard);
                 // Use NumPy's canonical descriptor even for an allocation
                 // owner's subclass; no user-overridden base property can
                 // disguise an as_strided/DummyArray chain as owning storage.
-                Some(base_get.call1(output::tuple_from_ready(py, [current.clone()])?)?)
+                Some(api.base.get(&current)?)
             } else if current.is_exact_instance_of::<PyMemoryView>() {
-                Some(errors::attribute(&current, c"obj")?)
+                Some(crate::input::control::callback(py, Some(budget), || {
+                    errors::attribute(&current, c"obj")
+                })?)
             } else {
-                match errors::attribute(&current, c"base") {
+                match crate::input::control::callback(py, Some(budget), || {
+                    errors::attribute(&current, c"base")
+                }) {
                     Ok(base) => Some(base),
-                    Err(error) if error.is_instance_of::<PyAttributeError>(py) => None,
+                    Err(error) if error.is_instance_of::<PyAttributeError>(py) => {
+                        crate::input::check(py, budget)?;
+                        None
+                    }
                     Err(error) => return Err(error),
                 }
             };
@@ -92,31 +109,32 @@ impl<'py> Allocation<'py> {
                 }
             }
             if is_array {
-                let descriptor = errors::attribute(array_type.bind(py).as_any(), c"flags")?;
-                let getter = errors::attribute(&descriptor, c"__get__")?;
-                let flags = getter.call1(output::tuple_from_ready(py, [current.clone()])?)?;
+                let flags = api.flags.get(&current)?;
                 if !native_producer && !errors::attribute(&flags, c"owndata")?.extract::<bool>()? {
                     return Err(errors::builtin_message::<PyBufferError>(
                         py,
                         "NumPy allocation bounds cannot be proved: terminal ndarray does not own its storage",
                     ));
                 }
-                let descriptor = errors::attribute(array_type.bind(py).as_any(), c"dtype")?;
-                let getter = errors::attribute(&descriptor, c"__get__")?;
-                let prepared = getter.call1(output::tuple_from_ready(py, [current.clone()])?)?;
-                dtype = Some((getter, prepared));
+                let prepared = api.dtype.get(&current)?;
+                dtype = Some((api.dtype.clone_ref(py), prepared));
             }
             break;
         }
         let mut zero_only = false;
         // Only an address survives this scope; its export is already released
         // before root selection can run Python or replace `current`.
-        let origin = match contiguous_origin(&current) {
+        let origin = match contiguous_origin(&current, &api.array, budget) {
             Ok(origin) => origin,
             Err(original) if original.is_instance_of::<PyTypeError>(py) => {
+                crate::input::check(py, budget)?;
                 // Take only native address/length facts, then release the
                 // source export before a producer's Python protocol is called.
-                let source = Export::acquire(value, pyo3::ffi::PyBUF_STRIDES)?;
+                let source = if crate::input::actual_instance(value, api.array.typ(py)) {
+                    api.array.acquire(value, pyo3::ffi::PyBUF_STRIDES)?
+                } else {
+                    Export::acquire(value, pyo3::ffi::PyBUF_STRIDES)?
+                };
                 let address = source.raw.buf as usize;
                 let empty = source.raw.len == 0;
                 drop(source);
@@ -124,20 +142,25 @@ impl<'py> Allocation<'py> {
                     crate::input::arrow::allocation_buffer(&current, address, budget)?
                 {
                     current = buffer;
-                    contiguous_origin(&current)?
+                    contiguous_origin(&current, &api.array, budget)?
                 } else if empty {
                     // No source byte may be read from this fallback. Future
                     // exports must remain zero length, not merely same origin.
                     current = value.clone();
                     zero_only = true;
-                    contiguous_origin(&current)?
+                    contiguous_origin(&current, &api.array, budget)?
                 } else {
                     return Err(original);
                 }
             }
             Err(error) => return Err(error),
         };
+        let native_root = super::super::actual_instance(&current, api.array.typ(py))
+            || current.is_exact_instance_of::<PyBytes>()
+            || current.is_exact_instance_of::<PyByteArray>();
         Ok(Self {
+            array: api.array.clone_ref(py),
+            native_root,
             root: current,
             origin,
             dtype,
@@ -153,17 +176,26 @@ impl<'py> Allocation<'py> {
     pub(super) fn export(&self) -> PyResult<Export<'_, 'py>> {
         let py = self.root.py();
         if let Some((getter, prepared)) = &self.dtype {
-            let current = getter.call1(output::tuple_from_ready(py, [self.root.clone()])?)?;
+            let current = getter.get(&self.root)?;
             if !current.is(prepared) {
                 return Err(bounds_error(py));
             }
         }
-        let export = Export::acquire(&self.root, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?;
+        let export = if crate::input::actual_instance(&self.root, self.array.typ(py)) {
+            self.array
+                .acquire(&self.root, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
+        } else {
+            Export::acquire(&self.root, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
+        };
         if export.raw.buf as usize != self.origin || self.zero_only && export.raw.len != 0 {
             drop(export);
             return Err(bounds_error(py));
         }
         Ok(export)
+    }
+
+    pub(super) fn native_root(&self) -> bool {
+        self.native_root
     }
 
     /// Records are one contiguous logical value. Check their entire stored
@@ -186,11 +218,21 @@ impl<'py> Allocation<'py> {
     }
 }
 
-fn contiguous_origin(value: &Bound<'_, PyAny>) -> PyResult<usize> {
-    let export = Export::acquire(value, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?;
-    let origin = export.raw.buf as usize;
-    drop(export);
-    Ok(origin)
+fn contiguous_origin(
+    value: &Bound<'_, PyAny>,
+    array: &Canonical,
+    budget: &dyn Checkpoint,
+) -> PyResult<usize> {
+    crate::input::control::callback(value.py(), Some(budget), || {
+        let export = if crate::input::actual_instance(value, array.typ(value.py())) {
+            array.acquire(value, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
+        } else {
+            Export::acquire(value, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
+        };
+        let origin = export.raw.buf as usize;
+        drop(export);
+        Ok(origin)
+    })
 }
 
 pub(super) fn bounds_error(py: Python<'_>) -> PyErr {

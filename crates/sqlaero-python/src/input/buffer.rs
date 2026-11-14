@@ -6,6 +6,23 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 use std::mem::MaybeUninit;
 
+/// Run one bounded acquire/copy/release window. All raw exports must be gone
+/// when invoke returns. Known canonical non-callback roots retain their fast
+/// path; unknown producer protocols use the original shared Control before and
+/// after the complete ownership window, never while an export is being read.
+pub(crate) fn read<T>(
+    py: Python<'_>,
+    budget: &dyn super::control::Checkpoint,
+    callback_free: bool,
+    invoke: impl FnOnce() -> PyResult<T>,
+) -> PyResult<T> {
+    if callback_free {
+        invoke()
+    } else {
+        super::control::callback(py, Some(budget), invoke)
+    }
+}
+
 /// A retained immutable native base and its paired public buffer slots.
 pub(super) struct Canonical {
     typ: Py<PyType>,
@@ -14,6 +31,13 @@ pub(super) struct Canonical {
 }
 
 impl Canonical {
+    pub(super) fn clone_ref(&self, py: Python<'_>) -> Self {
+        Self {
+            typ: self.typ.clone_ref(py),
+            get: self.get,
+            release: self.release,
+        }
+    }
     pub(super) fn new(typ: Py<PyType>, py: Python<'_>) -> PyResult<Self> {
         // Slot caching is only valid for a native immutable base, never a
         // Python heap type whose public slots can be replaced after preparation.

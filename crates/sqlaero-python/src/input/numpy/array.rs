@@ -8,15 +8,17 @@
 //! Weak references guard normal resize, not arbitrary external NumPy/C writers.
 
 use super::allocation::{Allocation, Export};
-use super::{Kind, half_to_f64};
+use super::{Kind, NumpyArrayApi, half_to_f64};
 use crate::errors;
+use crate::input::attribute::GetSet;
+use crate::input::buffer::Canonical;
 use crate::input::cell::{Schema, Target};
 use crate::input::control::Checkpoint;
 use crate::input::source::{PreparedSource, Shape};
 use crate::input::temporal::{TimeKind, TimeUnit};
 use pyo3::exceptions::{PyBufferError, PyIndexError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyString, PyTuple, PyType};
+use pyo3::types::PyString;
 use sqlaero_transcode::value::ScalarRef;
 
 const RAW_BLOCK_ITEMS: usize = 1024;
@@ -96,6 +98,9 @@ enum ArrayKind {
 pub(crate) struct NumpySource<'py> {
     owner: Bound<'py, PyAny>,
     dtype: Bound<'py, PyAny>,
+    dtype_get: GetSet,
+    array: Canonical,
+    item_get: pyo3::ffi::binaryfunc,
     allocation: Allocation<'py>,
     shape: Shape,
     kind: ArrayKind,
@@ -110,46 +115,67 @@ pub(crate) struct NumpySource<'py> {
 impl<'py> NumpySource<'py> {
     pub(super) fn new(
         value: &Bound<'py, PyAny>,
-        array_type: &Py<PyType>,
-        datetime_data: &Py<PyAny>,
+        api: &NumpyArrayApi,
         budget: &dyn Checkpoint,
     ) -> PyResult<Self> {
         let py = value.py();
-        let allocation = Allocation::new(value, array_type, budget)?;
-        // The view is never published to Python. Subsequent changes to the
-        // original's shape do not change this view's coordinate metadata.
-        let view_method = errors::attribute(value, c"view")?;
-        let view = view_method.call0()?;
-        crate::input::check(py, budget)?;
-        if !view.get_type().is(array_type.bind(py)) {
+        let allocation = Allocation::new(value, api, budget)?;
+        let dtype = api.dtype.get(value)?;
+        if !api.supports_dtype(&dtype) {
             return Err(errors::builtin_message::<PyTypeError>(
                 py,
-                "exact ndarray.view must return an exact ndarray",
+                "NumPy dtype is outside the explicitly supported native source classes",
             ));
         }
-        let dimensions = errors::attribute(&view, c"ndim")?.extract::<usize>()?;
-        if dimensions > 2 {
+        // Only bounded metadata is copied from the canonical public export.
+        // No payload, allocation, Python call or checkpoint occurs in this
+        // attached window. The guard is released before reporting any error.
+        let export = api.array.acquire(value, pyo3::ffi::PyBUF_STRIDES)?;
+        let raw = &export.raw;
+        let dimensions = usize::try_from(raw.ndim).ok();
+        let width = usize::try_from(raw.itemsize).ok();
+        let mut lengths = [1usize; 2];
+        let mut valid = dimensions.is_some_and(|d| d <= 2)
+            && width.is_some()
+            && raw.len >= 0
+            && raw.suboffsets.is_null();
+        if valid && let Some(dimensions) = dimensions {
+            valid = dimensions == 0 || (!raw.shape.is_null() && !raw.strides.is_null());
+            if valid {
+                for (axis, length) in lengths.iter_mut().enumerate().take(dimensions) {
+                    // SAFETY: checked ndim is at most2 and the public shape
+                    // vector has that many entries, retained by this export.
+                    let actual = unsafe { *raw.shape.add(axis) };
+                    if let Ok(actual) = usize::try_from(actual) {
+                        *length = actual;
+                    } else {
+                        valid = false;
+                    }
+                }
+                valid &= lengths[0]
+                    .checked_mul(lengths[1])
+                    .and_then(|n| n.checked_mul(width.unwrap_or(0)))
+                    == Some(raw.len as usize);
+            }
+        }
+        drop(export);
+        crate::input::check(py, budget)?;
+        if !valid {
             return Err(errors::builtin_message::<PyValueError>(
                 py,
-                "NumPy MySQL input supports zero, one or two dimensions",
+                "NumPy storage requires a valid zero, one or two dimensional shape",
             ));
         }
-        let coordinates = errors::attribute(&view, c"shape")?;
-        let coordinates = coordinates.cast::<PyTuple>()?;
-        let shape = if dimensions == 0 {
-            Shape::Scalar
-        } else if dimensions == 1 {
-            Shape::Vector {
-                length: coordinates.get_item(0)?.extract()?,
-            }
-        } else {
-            Shape::Table {
-                rows: coordinates.get_item(0)?.extract()?,
-                columns: coordinates.get_item(1)?.extract()?,
-            }
+        let dimensions = dimensions.unwrap_or(0);
+        let width = width.unwrap_or(0);
+        let shape = match dimensions {
+            0 => Shape::Scalar,
+            1 => Shape::Vector { length: lengths[0] },
+            _ => Shape::Table {
+                rows: lengths[0],
+                columns: lengths[1],
+            },
         };
-        let dtype = errors::attribute(&view, c"dtype")?;
-        let width = errors::attribute(&dtype, c"itemsize")?.extract::<usize>()?;
         let tag = errors::attribute(&dtype, c"kind")?;
         let tag = tag.extract::<&str>()?;
         let kind = match (tag, width) {
@@ -183,18 +209,21 @@ impl<'py> NumpySource<'py> {
         let temporal = match kind {
             ArrayKind::Scalar(Kind::DateTime) => {
                 let (unit, multiplier) =
-                    super::temporal_metadata(&view, datetime_data, Some(budget))?;
+                    super::temporal_dtype_metadata(&dtype, &api.datetime_data, Some(budget))?;
                 Some((unit, multiplier, TimeKind::DateTime))
             }
             ArrayKind::Scalar(Kind::Duration) => {
                 let (unit, multiplier) =
-                    super::temporal_metadata(&view, datetime_data, Some(budget))?;
+                    super::temporal_dtype_metadata(&dtype, &api.datetime_data, Some(budget))?;
                 Some((unit, multiplier, TimeKind::Duration))
             }
             _ => None,
         };
         Ok(Self {
             owner: value.clone(),
+            dtype_get: api.dtype.clone_ref(py),
+            array: api.array.clone_ref(py),
+            item_get: api.item,
             dtype,
             allocation,
             shape,
@@ -239,10 +268,10 @@ impl<'py> NumpySource<'py> {
             if let Some(copied) = copied {
                 bytes[..self.width].copy_from_slice(copied);
             } else {
-                self.copy_source_range(row, column, 0, &mut bytes[..self.width])?;
+                self.copy_source_range(row, column, 0, &mut bytes[..self.width], budget)?;
             }
         } else {
-            self.copy_source_range(row, column, 0, &mut bytes[..self.width])?;
+            self.copy_source_range(row, column, 0, &mut bytes[..self.width], budget)?;
         }
         if self.swap {
             bytes[..self.width].reverse();
@@ -296,7 +325,7 @@ impl<'py> NumpySource<'py> {
     /// The returned guard must be dropped before making any Python call.
     fn native_view(&self) -> PyResult<NativeView<'_, 'py>> {
         let py = self.owner.py();
-        if !errors::attribute(&self.owner, c"dtype")?.is(&self.dtype) {
+        if !self.dtype_get.get(&self.owner)?.is(&self.dtype) {
             return Err(errors::builtin_message::<PyBufferError>(
                 py,
                 "NumPy input dtype changed during escape; keep input storage stable",
@@ -314,7 +343,12 @@ impl<'py> NumpySource<'py> {
             }
         };
         let root = self.allocation.export()?;
-        let source = match Export::acquire(&self.owner, pyo3::ffi::PyBUF_STRIDES) {
+        let current_dtype = self.dtype_get.get(&self.owner)?;
+        if !current_dtype.is(&self.dtype) {
+            drop(root);
+            return Err(super::allocation::bounds_error(py));
+        }
+        let source = match self.array.acquire(&self.owner, pyo3::ffi::PyBUF_STRIDES) {
             Ok(source) => source,
             Err(error) => {
                 drop(root);
@@ -371,6 +405,22 @@ impl<'py> NumpySource<'py> {
         column: usize,
         start: usize,
         destination: &mut [u8],
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        crate::input::buffer::read(
+            self.owner.py(),
+            budget,
+            self.allocation.native_root(),
+            || self.copy_range_window(row, column, start, destination),
+        )
+    }
+
+    fn copy_range_window(
+        &self,
+        row: usize,
+        column: usize,
+        start: usize,
+        destination: &mut [u8],
     ) -> PyResult<()> {
         let py = self.owner.py();
         if start
@@ -420,6 +470,21 @@ impl<'py> NumpySource<'py> {
     /// conversion, encoding or Python hook. A future bad coordinate truncates
     /// the run: its error is reported only if that actual cell is requested.
     fn read_block(
+        &mut self,
+        start: usize,
+        total: usize,
+        columns: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        crate::input::buffer::read(
+            self.owner.py(),
+            budget,
+            self.allocation.native_root(),
+            || self.read_block_window(start, total, columns, budget),
+        )
+    }
+
+    fn read_block_window(
         &mut self,
         start: usize,
         total: usize,
@@ -548,30 +613,70 @@ impl<'py> NumpySource<'py> {
             destination.copy_from_slice(fragment);
             return Ok(());
         }
-        self.copy_source_range(row, column, start, destination)
+        self.copy_source_range(row, column, start, destination, budget)
     }
 
-    fn element(&self, row: usize, column: usize) -> PyResult<Bound<'py, PyAny>> {
+    fn element(
+        &self,
+        row: usize,
+        column: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Bound<'py, PyAny>> {
         let py = self.owner.py();
-        // A real Python getter needs current source validation even when an
-        // earlier S/U snapshot exists. In particular, Unicode's exceptional
-        // scalar fallback must not inherit a cached empty-fragment shortcut.
-        self.copy_source_range(row, column, 0, &mut [])?;
-        match self.shape {
-            Shape::Scalar => self
-                .owner
-                .get_item(crate::output::tuple_from_ready(py, [])?),
-            Shape::Vector { .. } => self.owner.get_item(crate::input::python_index(py, row)?),
+        let key = match self.shape {
+            Shape::Scalar => crate::output::tuple_from_ready(py, [])?.into_any(),
+            Shape::Vector { .. } => crate::input::python_index(py, row)?,
             Shape::Table { .. } => {
                 let row = crate::input::python_index(py, row)?;
                 let column = crate::input::python_index(py, column)?;
-                self.owner
-                    .get_item(crate::output::tuple_from_ready(py, [row, column])?)
+                crate::output::tuple_from_ready(py, [row, column])?.into_any()
             }
-            Shape::Record { .. } => Err(errors::builtin_message::<PyTypeError>(
+            Shape::Record { .. } => {
+                return Err(errors::builtin_message::<PyTypeError>(
+                    py,
+                    "record is not an ndarray",
+                ));
+            }
+        };
+        crate::input::buffer::read(py, budget, self.allocation.native_root(), || {
+            let view = self.native_view()?;
+            if view.offset(row, column).is_none() {
+                drop(view);
+                return Err(super::allocation::bounds_error(py));
+            }
+            // Only the qualified native Object scalar getter uses this path.
+            // It obtains an owning reference without invoking Python. Keep the
+            // proven physical export until that reference has been acquired;
+            // source and root exports then end before any Control callback.
+            let result = self.get_item(&key);
+            drop(view);
+            result
+        })
+    }
+
+    fn unicode_source(
+        &mut self,
+        row: usize,
+        column: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Bound<'py, PyString>> {
+        let py = self.owner.py();
+        let count = self.content_width(row, column, budget)? / 4;
+        crate::input::unicode::from_ucs4(py, count, self.swap, budget, |start, bytes| {
+            self.copy_cell_range(row, column, start * 4, bytes, budget)
+        })
+    }
+
+    fn get_item(&self, key: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
+        // SAFETY: the retained immutable ndarray base owns this public mapping
+        // slot. Original source qualification and full scalar coordinates are
+        // established before this call; it returns an owning reference or its
+        // original Python exception, bypassing a subclass __getitem__.
+        unsafe {
+            Bound::from_owned_ptr_or_err(
                 self.owner.py(),
-                "record is not an ndarray",
-            )),
+                (self.item_get)(self.owner.as_ptr(), key.as_ptr()),
+            )
         }
     }
 
@@ -665,8 +770,8 @@ impl<'py> NumpySource<'py> {
                 let text = scratch.as_ref().map_or("", |scratch| scratch.text.as_str());
                 output.text_utf8(py, text, budget)
             } else {
-                let source = self.element(row, column)?;
-                output.text(source.cast::<PyString>()?, budget)
+                let source = self.unicode_source(row, column, budget)?;
+                output.text(&source, budget)
             };
             if let Some(scratch) = scratch.as_deref_mut() {
                 scratch.text.clear();
@@ -701,8 +806,8 @@ impl<'py> NumpySource<'py> {
                     // NumPy permits UCS4 surrogates. The actual canonical
                     // scalar provides the existing codec's original Python
                     // exception payload only on this exceptional path.
-                    let source = self.element(row, column)?;
-                    return output.text(source.cast::<PyString>()?, budget);
+                    let source = self.unicode_source(row, column, budget)?;
+                    return output.text(&source, budget);
                 };
                 text.push(character);
             }
@@ -828,7 +933,7 @@ impl NumpySource<'_> {
             ArrayKind::Object => {
                 // Retain the public getter's owning reference. Never hold a raw
                 // mutable Object slot across recursive target consumption.
-                let value = self.element(row, column)?;
+                let value = self.element(row, column, budget)?;
                 crate::input::check(py, budget)?;
                 return output.python(&value, None);
             }

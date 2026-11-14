@@ -125,7 +125,7 @@ def test_stable_typed_arrays_have_independent_concurrent_readers() -> None:
         list(pool.map(read, range(4)))
 
 
-@pytest.mark.parametrize("shape", ["many", "single"])
+@pytest.mark.parametrize("shape", ["many", "single", "error_payload"])
 def test_typed_array_long_native_work_preserves_original_signal(shape: str) -> None:
     import os
     import pathlib
@@ -135,7 +135,8 @@ def test_typed_array_long_native_work_preserves_original_signal(shape: str) -> N
 import numpy as np
 from _native_signal import NativeAlarm, native_call_offsets
 from sqlaero import json_dumps
-value = np.arange(1000000, dtype='i8') if shape == 'many' else np.array(['a' * 2000000])
+value = np.arange(1000000, dtype='i8') if shape == 'many' else np.array(['a' * 2000000]) if shape == 'single' else np.array([chr(0xd800) + 'a' * 2000000])
+json_dumps(np.array([1], dtype='i8'))
 original = MemoryError('original growing typed-array work error')
 count = 0
 def serialize():
