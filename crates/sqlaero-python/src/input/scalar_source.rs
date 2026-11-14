@@ -54,17 +54,17 @@ pub(super) fn read<'a, 'py>(
     }
     // Provider temporal storage must win over its datetime/timedelta ancestry:
     // a Timestamp's nanoseconds cannot be silently read as Python microseconds.
-    if let Some(pandas) = types.pandas_types(py)?
-        && let Some(numpy) = types.numpy_types(py)?
-        && let Some(facts) = pandas.read_scalar(value, numpy)?
+    if let Some(pandas) = types.pandas_types(py, budget)?
+        && let Some(numpy) = types.numpy_types(py, budget)?
+        && let Some(facts) = pandas.read_scalar(value, numpy, budget)?
     {
         return Ok(Some(Source::Pandas {
             owner: value,
             facts,
         }));
     }
-    if let Some(numpy) = types.numpy_types(py)?
-        && let Some(facts) = numpy.read(value)?
+    if let Some(numpy) = types.numpy_types(py, budget)?
+        && let Some(facts) = numpy.read(value, budget)?
     {
         return Ok(Some(Source::Numpy(facts)));
     }

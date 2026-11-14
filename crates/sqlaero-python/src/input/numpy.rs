@@ -4,13 +4,13 @@
 //! different ownership and concurrent-mutation requirements and are deliberately
 //! not accepted by the fixed-width reader.
 
+use super::buffer::Canonical;
 use crate::errors;
 use crate::input::control::Checkpoint;
 use pyo3::exceptions::{PyBufferError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyModule, PyString, PyTuple, PyType};
 use std::ffi::CStr;
-use std::mem::MaybeUninit;
 
 use super::temporal::{TimeKind, TimeUnit};
 
@@ -54,8 +54,10 @@ enum Kind {
 
 /// Canonical type and function references owned by one Python module state.
 pub(crate) struct NumpyTypes {
-    numeric: Vec<(Py<PyType>, Kind)>,
+    numeric: Vec<(Canonical, Kind)>,
     datetime_data: Py<PyAny>,
+    datetime_dtype_get: Py<PyAny>,
+    duration_dtype_get: Py<PyAny>,
     array: Py<PyType>,
     record: Py<PyType>,
     void: Py<PyType>,
@@ -86,8 +88,8 @@ impl NumpyArrayApi {
 
 impl NumpyTypes {
     /// Prepare NumPy only on the actual optional-input path.
-    pub(crate) fn new(py: Python<'_>) -> PyResult<Self> {
-        let module = errors::module(py, c"numpy")?;
+    pub(crate) fn new(py: Python<'_>, budget: Option<&dyn Checkpoint>) -> PyResult<Self> {
+        let module = super::control::callback(py, budget, || errors::module(py, c"numpy"))?;
         let definitions: &[(&CStr, Kind)] = &[
             (c"int8", Kind::I8),
             (c"int16", Kind::I16),
@@ -113,9 +115,14 @@ impl NumpyTypes {
             .try_reserve_exact(definitions.len())
             .map_err(|_| errors::memory_error(py))?;
         for &(name, kind) in definitions {
-            numeric.push((exact_type(&module, name)?, kind));
+            numeric.push((
+                Canonical::new(exact_type(&module, name, budget)?, py)?,
+                kind,
+            ));
         }
-        let datetime_data = errors::attribute(module.as_any(), c"datetime_data")?;
+        let datetime_data = super::control::callback(py, budget, || {
+            errors::attribute(module.as_any(), c"datetime_data")
+        })?;
         if !datetime_data.is_callable() {
             return Err(errors::builtin_message::<PyTypeError>(
                 py,
@@ -125,9 +132,11 @@ impl NumpyTypes {
         Ok(Self {
             numeric,
             datetime_data: datetime_data.unbind(),
-            array: exact_type(&module, c"ndarray")?,
-            record: exact_type(&module, c"record")?,
-            void: exact_type(&module, c"void")?,
+            datetime_dtype_get: dtype_get(&module, c"datetime64", budget)?,
+            duration_dtype_get: dtype_get(&module, c"timedelta64", budget)?,
+            array: exact_type(&module, c"ndarray", budget)?,
+            record: exact_type(&module, c"record", budget)?,
+            void: exact_type(&module, c"void", budget)?,
         })
     }
 
@@ -165,51 +174,64 @@ impl NumpyTypes {
     }
 
     /// Read a recognized immutable numeric scalar into a native value.
-    pub(crate) fn read(&self, value: &Bound<'_, PyAny>) -> PyResult<Option<NumpyScalar>> {
+    pub(crate) fn read(
+        &self,
+        value: &Bound<'_, PyAny>,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<Option<NumpyScalar>> {
         let py = value.py();
         let typ = value.get_type();
-        let Some(kind) = self
+        let Some((registered, kind)) = self
             .numeric
             .iter()
-            .find_map(|(registered, kind)| typ.is(registered.bind(py)).then_some(*kind))
+            .find(|(registered, _)| typ.is(registered.typ(py)))
+            .or_else(|| {
+                self.numeric
+                    .iter()
+                    .find(|(registered, _)| super::actual_instance(value, registered.typ(py)))
+            })
         else {
             return Ok(None);
         };
-        let scalar = match kind {
-            Kind::I8 => {
-                NumpyScalar::Signed(i64::from(i8::from_ne_bytes([fixed_bytes(value, 1)?[0]])))
-            }
+        let scalar = match *kind {
+            Kind::I8 => NumpyScalar::Signed(i64::from(i8::from_ne_bytes([fixed_bytes(
+                value, registered, 1,
+            )?[0]]))),
             Kind::I16 => {
-                let b = fixed_bytes(value, 2)?;
+                let b = fixed_bytes(value, registered, 2)?;
                 NumpyScalar::Signed(i64::from(i16::from_ne_bytes([b[0], b[1]])))
             }
             Kind::I32 => {
-                let b = fixed_bytes(value, 4)?;
+                let b = fixed_bytes(value, registered, 4)?;
                 NumpyScalar::Signed(i64::from(i32::from_ne_bytes([b[0], b[1], b[2], b[3]])))
             }
-            Kind::I64 => NumpyScalar::Signed(i64::from_ne_bytes(fixed_bytes(value, 8)?)),
-            Kind::U8 => NumpyScalar::Unsigned(u64::from(fixed_bytes(value, 1)?[0])),
+            Kind::I64 => {
+                NumpyScalar::Signed(i64::from_ne_bytes(fixed_bytes(value, registered, 8)?))
+            }
+            Kind::U8 => NumpyScalar::Unsigned(u64::from(fixed_bytes(value, registered, 1)?[0])),
             Kind::U16 => {
-                let b = fixed_bytes(value, 2)?;
+                let b = fixed_bytes(value, registered, 2)?;
                 NumpyScalar::Unsigned(u64::from(u16::from_ne_bytes([b[0], b[1]])))
             }
             Kind::U32 => {
-                let b = fixed_bytes(value, 4)?;
+                let b = fixed_bytes(value, registered, 4)?;
                 NumpyScalar::Unsigned(u64::from(u32::from_ne_bytes([b[0], b[1], b[2], b[3]])))
             }
-            Kind::U64 => NumpyScalar::Unsigned(u64::from_ne_bytes(fixed_bytes(value, 8)?)),
+            Kind::U64 => {
+                NumpyScalar::Unsigned(u64::from_ne_bytes(fixed_bytes(value, registered, 8)?))
+            }
             Kind::F16 => {
-                let b = fixed_bytes(value, 2)?;
+                let b = fixed_bytes(value, registered, 2)?;
                 NumpyScalar::Float(half_to_f64(u16::from_ne_bytes([b[0], b[1]])))
             }
             Kind::F32 => {
-                let b = fixed_bytes(value, 4)?;
+                let b = fixed_bytes(value, registered, 4)?;
                 NumpyScalar::Float(f64::from(f32::from_ne_bytes([b[0], b[1], b[2], b[3]])))
             }
-            Kind::F64 => NumpyScalar::Float(f64::from_ne_bytes(fixed_bytes(value, 8)?)),
-            Kind::Bool => NumpyScalar::Bool(fixed_bytes(value, 1)?[0] != 0),
+            Kind::F64 => NumpyScalar::Float(f64::from_ne_bytes(fixed_bytes(value, registered, 8)?)),
+            Kind::Bool => NumpyScalar::Bool(fixed_bytes(value, registered, 1)?[0] != 0),
             Kind::DateTime | Kind::Duration => {
-                let ticks = i64::from_ne_bytes(fixed_bytes(value, 8)?);
+                let ticks = i64::from_ne_bytes(fixed_bytes(value, registered, 8)?);
                 let kind = match kind {
                     Kind::DateTime => TimeKind::DateTime,
                     _ => TimeKind::Duration,
@@ -219,7 +241,7 @@ impl NumpyTypes {
                 let (unit, multiplier) = if ticks == i64::MIN {
                     (TimeUnit::Generic, 1)
                 } else {
-                    self.temporal_metadata(value)?
+                    super::control::callback(py, budget, || self.temporal_metadata(value, kind))?
                 };
                 NumpyScalar::Temporal {
                     ticks,
@@ -232,8 +254,18 @@ impl NumpyTypes {
         Ok(Some(scalar))
     }
 
-    fn temporal_metadata(&self, value: &Bound<'_, PyAny>) -> PyResult<(TimeUnit, u64)> {
-        temporal_metadata(value, &self.datetime_data)
+    fn temporal_metadata(
+        &self,
+        value: &Bound<'_, PyAny>,
+        kind: TimeKind,
+    ) -> PyResult<(TimeUnit, u64)> {
+        let get = match kind {
+            TimeKind::DateTime => &self.datetime_dtype_get,
+            TimeKind::Duration => &self.duration_dtype_get,
+        };
+        let args = crate::output::tuple_from_ready(value.py(), [value.clone()])?;
+        let dtype = get.bind(value.py()).call1(args)?;
+        temporal_dtype_metadata(&dtype, &self.datetime_data)
     }
 }
 
@@ -256,9 +288,16 @@ fn temporal_metadata(
     value: &Bound<'_, PyAny>,
     datetime_data: &Py<PyAny>,
 ) -> PyResult<(TimeUnit, u64)> {
-    let py = value.py();
     let dtype = errors::attribute(value, c"dtype")?;
-    let args = crate::output::tuple_from_ready(py, [dtype])?;
+    temporal_dtype_metadata(&dtype, datetime_data)
+}
+
+fn temporal_dtype_metadata(
+    dtype: &Bound<'_, PyAny>,
+    datetime_data: &Py<PyAny>,
+) -> PyResult<(TimeUnit, u64)> {
+    let py = dtype.py();
+    let args = crate::output::tuple_from_ready(py, [dtype.clone()])?;
     let metadata = datetime_data.bind(py).call1(args)?;
     let metadata = metadata.cast::<PyTuple>()?;
     if metadata.len() != 2 {
@@ -298,26 +337,37 @@ fn temporal_metadata(
     Ok((unit, multiplier))
 }
 
-fn exact_type(module: &Bound<'_, PyModule>, name: &CStr) -> PyResult<Py<PyType>> {
-    Ok(errors::attribute(module.as_any(), name)?
-        .cast_into::<PyType>()?
-        .unbind())
+fn dtype_get(
+    module: &Bound<'_, PyModule>,
+    name: &CStr,
+    budget: Option<&dyn Checkpoint>,
+) -> PyResult<Py<PyAny>> {
+    let typ = exact_type(module, name, budget)?;
+    let descriptor = errors::attribute(typ.bind(module.py()).as_any(), c"dtype")?;
+    Ok(errors::attribute(&descriptor, c"__get__")?.unbind())
+}
+
+fn exact_type(
+    module: &Bound<'_, PyModule>,
+    name: &CStr,
+    budget: Option<&dyn Checkpoint>,
+) -> PyResult<Py<PyType>> {
+    Ok(super::control::callback(module.py(), budget, || {
+        errors::attribute(module.as_any(), name)
+    })?
+    .cast_into::<PyType>()?
+    .unbind())
 }
 
 /// Copy at most eight bytes from an immutable canonical scalar export.
-fn fixed_bytes(value: &Bound<'_, PyAny>, width: usize) -> PyResult<[u8; 8]> {
+fn fixed_bytes(
+    value: &Bound<'_, PyAny>,
+    registered: &Canonical,
+    width: usize,
+) -> PyResult<[u8; 8]> {
     let py = value.py();
-    let mut raw = MaybeUninit::<pyo3::ffi::Py_buffer>::uninit();
-    // SAFETY: Python is attached and the owned input remains live. The public
-    // constructor either initializes the stack descriptor or reports PyErr.
-    let result = unsafe {
-        pyo3::ffi::PyObject_GetBuffer(value.as_ptr(), raw.as_mut_ptr(), pyo3::ffi::PyBUF_SIMPLE)
-    };
-    if result < 0 {
-        return Err(PyErr::fetch(py));
-    }
-    // SAFETY: PyObject_GetBuffer succeeded, so every descriptor field is live.
-    let mut raw = unsafe { raw.assume_init() };
+    let export = registered.acquire(value, pyo3::ffi::PyBUF_SIMPLE)?;
+    let raw = &export.raw;
     let valid = raw.len == width as isize && raw.readonly != 0 && !raw.buf.is_null();
     let mut bytes = [0; 8];
     if valid {
@@ -331,7 +381,7 @@ fn fixed_bytes(value: &Bound<'_, PyAny>, width: usize) -> PyResult<[u8; 8]> {
     }
     // SAFETY: release the one successful export exactly once while attached;
     // only copied native bytes survive this potentially callback-capable step.
-    unsafe { pyo3::ffi::PyBuffer_Release(&mut raw) };
+    drop(export);
     if valid {
         Ok(bytes)
     } else {

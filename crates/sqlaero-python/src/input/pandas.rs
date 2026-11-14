@@ -63,26 +63,31 @@ impl PandasTypes {
         &self,
         value: &Bound<'_, PyAny>,
         numpy: &NumpyTypes,
+        budget: Option<&dyn Checkpoint>,
     ) -> PyResult<Option<PandasScalar>> {
         let py = value.py();
         if value.is(self.missing.bind(py)) || value.is(self.nat.bind(py)) {
             return Ok(Some(PandasScalar::Null));
         }
         let (recognized, aware) = if value.get_type().is(self.timestamp.bind(py)) {
-            (true, !errors::attribute(value, c"tzinfo")?.is_none())
+            (
+                true,
+                !super::control::callback(py, budget, || errors::attribute(value, c"tzinfo"))?
+                    .is_none(),
+            )
         } else {
             (value.get_type().is(self.timedelta.bind(py)), false)
         };
         if !recognized {
             return Ok(None);
         }
-        let scalar = errors::attribute(value, c"asm8")?;
+        let scalar = super::control::callback(py, budget, || errors::attribute(value, c"asm8"))?;
         let Some(NumpyScalar::Temporal {
             ticks,
             unit,
             multiplier,
             kind,
-        }) = numpy.read(&scalar)?
+        }) = numpy.read(&scalar, budget)?
         else {
             return Err(errors::builtin_message::<PyTypeError>(
                 py,

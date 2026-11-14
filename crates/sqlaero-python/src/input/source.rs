@@ -29,14 +29,14 @@ pub(crate) fn prepare<'py>(
     {
         return Ok(None);
     }
-    if let Some(numpy) = types.numpy_types(value.py())? {
+    if let Some(numpy) = types.numpy_types(value.py(), Some(budget))? {
         if let Some(source) = numpy.prepare_array(value, budget)? {
             return Ok(Some(super::boxed(value.py(), source)?));
         }
         if let Some(source) = numpy.prepare_record(value, budget)? {
             return Ok(Some(super::boxed(value.py(), source)?));
         }
-        if let Some(pandas) = types.pandas_types(value.py())?
+        if let Some(pandas) = types.pandas_types(value.py(), Some(budget))?
             && let Some(source) = pandas.prepare(value, numpy, budget)?
         {
             return Ok(Some(source));

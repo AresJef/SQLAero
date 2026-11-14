@@ -1,11 +1,11 @@
 //! Resolve and retain the physical buffer owner independently of logical shape.
 
+pub(super) use crate::input::buffer::Export;
 use crate::input::control::Checkpoint;
 use crate::{errors, output};
 use pyo3::exceptions::{PyAttributeError, PyBufferError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::{PyCapsule, PyMemoryView, PyType};
-use std::mem::MaybeUninit;
 
 /// Keep an owning buffer or a native producer's valid contiguous interval,
 /// plus every inspected identity. A strided view's logical nbytes alone never
@@ -191,46 +191,6 @@ fn contiguous_origin(value: &Bound<'_, PyAny>) -> PyResult<usize> {
     let origin = export.raw.buf as usize;
     drop(export);
     Ok(origin)
-}
-
-/// One successful attached export; a checked constructor owns its release.
-pub(super) struct Export<'owner, 'py> {
-    pub(super) raw: pyo3::ffi::Py_buffer,
-    _owner: &'owner Bound<'py, PyAny>,
-}
-
-impl<'owner, 'py> Export<'owner, 'py> {
-    pub(super) fn acquire(owner: &'owner Bound<'py, PyAny>, flags: i32) -> PyResult<Self> {
-        let mut raw = MaybeUninit::<pyo3::ffi::Py_buffer>::uninit();
-        // SAFETY: the live owner is retained throughout this attached export.
-        // A failed public constructor leaves its original Python exception.
-        if unsafe { pyo3::ffi::PyObject_GetBuffer(owner.as_ptr(), raw.as_mut_ptr(), flags) } < 0 {
-            return Err(PyErr::fetch(owner.py()));
-        }
-        // SAFETY: success initialized the complete standard descriptor.
-        let raw = unsafe { raw.assume_init() };
-        Ok(Self { raw, _owner: owner })
-    }
-
-    pub(super) fn contains(&self, pointer: *const u8, length: usize) -> bool {
-        if self.raw.len < 0 || (self.raw.buf.is_null() && self.raw.len != 0) {
-            return false;
-        }
-        let lower = self.raw.buf as usize;
-        let start = pointer as usize;
-        lower
-            .checked_add(self.raw.len as usize)
-            .zip(start.checked_add(length))
-            .is_some_and(|(upper, end)| start >= lower && end <= upper)
-    }
-}
-
-impl Drop for Export<'_, '_> {
-    fn drop(&mut self) {
-        // SAFETY: exactly one successful constructor reaches this destructor.
-        // The retained owner is live and this boundary source stays attached.
-        unsafe { pyo3::ffi::PyBuffer_Release(&mut self.raw) };
-    }
 }
 
 pub(super) fn bounds_error(py: Python<'_>) -> PyErr {

@@ -16,6 +16,7 @@ use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
 
 pub(crate) mod arrow;
+mod buffer;
 pub(crate) mod control;
 mod decimal;
 mod diagnostic;
@@ -356,29 +357,39 @@ impl ScalarTypes {
     /// Discover an already-used optional provider, outside every primitive path.
     /// Full candidates are prepared without a cache lock and losers drop after
     /// OnceLock has returned; Python callbacks never run inside a publish lock.
-    pub(crate) fn numpy_types(&self, py: Python<'_>) -> PyResult<Option<&numpy::NumpyTypes>> {
+    pub(crate) fn numpy_types(
+        &self,
+        py: Python<'_>,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<Option<&numpy::NumpyTypes>> {
         if let Some(types) = self.numpy.get() {
             return Ok(Some(types));
         }
         if !provider_loaded(py, b"numpy")? {
             return Ok(None);
         }
-        let candidate = numpy::NumpyTypes::new(py)?;
+        let candidate = control::callback(py, budget, || numpy::NumpyTypes::new(py, budget))?;
         let _ = self.numpy.set(candidate);
+        checkpoint(py, budget)?;
         Ok(self.numpy.get())
     }
 
     /// Discover Pandas only after the caller imported it, and publish a fully
     /// prepared interpreter-owned cache without holding a lock during Python.
-    pub(crate) fn pandas_types(&self, py: Python<'_>) -> PyResult<Option<&pandas::PandasTypes>> {
+    pub(crate) fn pandas_types(
+        &self,
+        py: Python<'_>,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<Option<&pandas::PandasTypes>> {
         if let Some(types) = self.pandas.get() {
             return Ok(Some(types));
         }
         if !provider_loaded(py, b"pandas")? {
             return Ok(None);
         }
-        let candidate = pandas::PandasTypes::new(py)?;
+        let candidate = control::callback(py, budget, || pandas::PandasTypes::new(py))?;
         let _ = self.pandas.set(candidate);
+        checkpoint(py, budget)?;
         Ok(self.pandas.get())
     }
 
@@ -393,10 +404,13 @@ impl ScalarTypes {
             return Ok(Some(types));
         }
         check(py, budget)?;
-        let Some(candidate) = polars::PolarsTypes::loaded(py)? else {
+        let Some(candidate) =
+            control::callback(py, Some(budget), || polars::PolarsTypes::loaded(py))?
+        else {
             return Ok(None);
         };
         let _ = self.polars.set(candidate);
+        checkpoint(py, Some(budget))?;
         Ok(self.polars.get())
     }
 
