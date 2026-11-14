@@ -366,7 +366,7 @@ def test_numpy_record_public_getter_retains_object_identity_and_cycle_protection
 
 
 @pytest.mark.parametrize("value", [
-    np.zeros((1,), dtype=[("a", "i8")]),
+    np.zeros((1, 1), dtype=[("a", "i8")]),
     np.zeros((1, 1, 1)),
 ])
 def test_numpy_unconfirmed_container_shapes_and_subclasses_remain_excluded(value: object) -> None:

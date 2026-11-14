@@ -5,7 +5,7 @@
 
 use super::control::Checkpoint;
 use super::sink::{self, Destination};
-use super::source::CellWriter;
+use super::source::{CellWriter, PreparedSource};
 use pyo3::prelude::*;
 use pyo3::types::PyString;
 use sqlaero_core::bind::Context;
@@ -19,6 +19,11 @@ pub(crate) enum Schema {
 /// Consume borrowed facts before returning. Python references never leave this
 /// attached boundary, and sources retain no target-formatted answers.
 pub(crate) trait Target {
+    fn source(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()>;
     fn schema(&mut self, py: Python<'_>, schema: Schema) -> PyResult<()>;
     fn checkpoint(&mut self, py: Python<'_>, work: usize) -> PyResult<()>;
     fn scalar(&mut self, py: Python<'_>, value: ScalarRef<'_>) -> PyResult<()>;
@@ -39,6 +44,14 @@ pub(crate) struct Mysql<'a, D: Destination + ?Sized> {
 }
 
 impl<D: Destination + ?Sized> Target for Mysql<'_, D> {
+    fn source(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        self.output
+            .source(source, self.context, budget, self.visitor)
+    }
     fn schema(&mut self, _py: Python<'_>, _schema: Schema) -> PyResult<()> {
         Ok(())
     }

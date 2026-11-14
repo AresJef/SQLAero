@@ -30,10 +30,10 @@ pub(crate) fn prepare<'py>(
         return Ok(None);
     }
     if let Some(numpy) = types.numpy_types(value.py(), Some(budget))? {
-        if let Some(source) = numpy.prepare_array(value, budget)? {
+        if let Some(source) = numpy.prepare_record(value, budget)? {
             return Ok(Some(super::boxed(value.py(), source)?));
         }
-        if let Some(source) = numpy.prepare_record(value, budget)? {
+        if let Some(source) = numpy.prepare_array(value, budget)? {
             return Ok(Some(super::boxed(value.py(), source)?));
         }
         if let Some(pandas) = types.pandas_types(value.py(), Some(budget))?
@@ -63,6 +63,14 @@ pub(crate) enum FragmentRole {
 /// Reuse the production visitor for Python leaves and native nesting facts.
 /// Implementations live at the attached Python boundary, never in the core.
 pub(crate) trait CellWriter {
+    /// Consume an already prepared native projection, without recognizing a
+    /// Python class again or treating its retained owner as a new input cycle.
+    fn source(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        output: &mut Vec<u8>,
+    ) -> PyResult<FragmentRole>;
+
     /// Write a Python leaf or nested value without an intermediate SQL object.
     fn python(
         &mut self,
@@ -112,6 +120,12 @@ pub(crate) trait PreparedSource<'py> {
 
     /// Return the prepared logical shape without per-value Python metadata work.
     fn shape(&self) -> Shape;
+
+    /// Complete actual field name, acquired only by targets that need names.
+    /// Positional targets consume the same values without JSON key work.
+    fn field_name(&self, _column: usize) -> PyResult<Option<Bound<'py, PyAny>>> {
+        Ok(None)
+    }
 
     /// Return one actual axis length without rereading Python metadata.
     /// Higher-rank sources implement this over their prepared native facts.

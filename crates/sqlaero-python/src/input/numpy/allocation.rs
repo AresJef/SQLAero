@@ -18,6 +18,7 @@ pub(super) struct Allocation<'py> {
     origin: usize,
     dtype: Option<(GetSet, Bound<'py, PyAny>)>,
     array: Canonical,
+    record: Canonical,
     native_root: bool,
     zero_only: bool,
     _chain: Vec<Bound<'py, PyAny>>,
@@ -56,6 +57,7 @@ impl<'py> Allocation<'py> {
                     api.array.typ(py).as_ptr().cast(),
                 ) != 0
             };
+            let is_record = crate::input::actual_instance(&current, api.record.typ(py));
             let next = if is_array {
                 guards
                     .try_reserve(1)
@@ -74,6 +76,8 @@ impl<'py> Allocation<'py> {
                 // owner's subclass; no user-overridden base property can
                 // disguise an as_strided/DummyArray chain as owning storage.
                 Some(api.base.get(&current)?)
+            } else if is_record {
+                Some(api.record_base.get(&current)?)
             } else if current.is_exact_instance_of::<PyMemoryView>() {
                 Some(crate::input::control::callback(py, Some(budget), || {
                     errors::attribute(&current, c"obj")
@@ -118,13 +122,16 @@ impl<'py> Allocation<'py> {
                 }
                 let prepared = api.dtype.get(&current)?;
                 dtype = Some((api.dtype.clone_ref(py), prepared));
+            } else if is_record {
+                let prepared = api.record_dtype.get(&current)?;
+                dtype = Some((api.record_dtype.clone_ref(py), prepared));
             }
             break;
         }
         let mut zero_only = false;
         // Only an address survives this scope; its export is already released
         // before root selection can run Python or replace `current`.
-        let origin = match contiguous_origin(&current, &api.array, budget) {
+        let origin = match contiguous_origin(&current, api, budget) {
             Ok(origin) => origin,
             Err(original) if original.is_instance_of::<PyTypeError>(py) => {
                 crate::input::check(py, budget)?;
@@ -142,13 +149,13 @@ impl<'py> Allocation<'py> {
                     crate::input::arrow::allocation_buffer(&current, address, budget)?
                 {
                     current = buffer;
-                    contiguous_origin(&current, &api.array, budget)?
+                    contiguous_origin(&current, api, budget)?
                 } else if empty {
                     // No source byte may be read from this fallback. Future
                     // exports must remain zero length, not merely same origin.
                     current = value.clone();
                     zero_only = true;
-                    contiguous_origin(&current, &api.array, budget)?
+                    contiguous_origin(&current, api, budget)?
                 } else {
                     return Err(original);
                 }
@@ -156,10 +163,12 @@ impl<'py> Allocation<'py> {
             Err(error) => return Err(error),
         };
         let native_root = super::super::actual_instance(&current, api.array.typ(py))
+            || super::super::actual_instance(&current, api.record.typ(py))
             || current.is_exact_instance_of::<PyBytes>()
             || current.is_exact_instance_of::<PyByteArray>();
         Ok(Self {
             array: api.array.clone_ref(py),
+            record: api.record.clone_ref(py),
             native_root,
             root: current,
             origin,
@@ -184,6 +193,9 @@ impl<'py> Allocation<'py> {
         let export = if crate::input::actual_instance(&self.root, self.array.typ(py)) {
             self.array
                 .acquire(&self.root, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
+        } else if crate::input::actual_instance(&self.root, self.record.typ(py)) {
+            self.record
+                .acquire(&self.root, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
         } else {
             Export::acquire(&self.root, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
         };
@@ -197,35 +209,18 @@ impl<'py> Allocation<'py> {
     pub(super) fn native_root(&self) -> bool {
         self.native_root
     }
-
-    /// Records are one contiguous logical value. Check their entire stored
-    /// region before public field access, without reading private field offsets.
-    pub(super) fn validate_record(&self, value: &Bound<'py, PyAny>) -> PyResult<()> {
-        let py = value.py();
-        let root = self.export()?;
-        let source = match Export::acquire(value, pyo3::ffi::PyBUF_SIMPLE) {
-            Ok(source) => source,
-            Err(error) => {
-                drop(root);
-                return Err(error);
-            }
-        };
-        let valid =
-            source.raw.len >= 0 && root.contains(source.raw.buf.cast(), source.raw.len as usize);
-        drop(source);
-        drop(root);
-        if valid { Ok(()) } else { Err(bounds_error(py)) }
-    }
 }
 
 fn contiguous_origin(
     value: &Bound<'_, PyAny>,
-    array: &Canonical,
+    api: &NumpyArrayApi,
     budget: &dyn Checkpoint,
 ) -> PyResult<usize> {
     crate::input::control::callback(value.py(), Some(budget), || {
-        let export = if crate::input::actual_instance(value, array.typ(value.py())) {
-            array.acquire(value, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
+        let export = if crate::input::actual_instance(value, api.array.typ(value.py())) {
+            api.array.acquire(value, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
+        } else if crate::input::actual_instance(value, api.record.typ(value.py())) {
+            api.record.acquire(value, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
         } else {
             Export::acquire(value, pyo3::ffi::PyBUF_ANY_CONTIGUOUS)?
         };

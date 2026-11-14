@@ -466,6 +466,14 @@ impl<'a> LiteralNoneWriter<'a> {
 }
 
 impl CellWriter for LiteralNoneWriter<'_> {
+    fn source(
+        &mut self,
+        source: &mut dyn crate::input::source::PreparedSource<'_>,
+        _output: &mut Vec<u8>,
+    ) -> PyResult<FragmentRole> {
+        Err(placeholder_error(source.owner().py(), self.index))
+    }
+
     fn python(
         &mut self,
         value: &Bound<'_, PyAny>,

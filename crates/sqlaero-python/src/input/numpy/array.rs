@@ -128,6 +128,7 @@ enum ArrayKind {
     Bytes,
     Unicode,
     Object,
+    RecordLayout,
 }
 
 /// Original identity, prepared metadata and necessary normal-resize guards.
@@ -156,6 +157,23 @@ impl<'py> NumpySource<'py> {
         value: &Bound<'py, PyAny>,
         api: &NumpyArrayApi,
         budget: &dyn Checkpoint,
+    ) -> PyResult<Self> {
+        Self::prepare(value, api, budget, false)
+    }
+
+    pub(super) fn record_layout(
+        value: &Bound<'py, PyAny>,
+        api: &NumpyArrayApi,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Self> {
+        Self::prepare(value, api, budget, true)
+    }
+
+    fn prepare(
+        value: &Bound<'py, PyAny>,
+        api: &NumpyArrayApi,
+        budget: &dyn Checkpoint,
+        record: bool,
     ) -> PyResult<Self> {
         let py = value.py();
         let allocation = Allocation::new(value, api, budget)?;
@@ -262,6 +280,7 @@ impl<'py> NumpySource<'py> {
             ("O", width) if width == std::mem::size_of::<*mut pyo3::ffi::PyObject>() => {
                 ArrayKind::Object
             }
+            ("V", _) if record => ArrayKind::RecordLayout,
             _ => {
                 return Err(errors::builtin_message::<PyTypeError>(
                     py,
@@ -289,6 +308,31 @@ impl<'py> NumpySource<'py> {
             raw: None,
             utf8: None,
         })
+    }
+
+    /// Validate only physical source facts. No payload is read, no field is
+    /// boxed, and all public exports end before target or protocol work.
+    pub(super) fn validate_record_cell(
+        &self,
+        row: usize,
+        column: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        crate::input::buffer::read(
+            self.owner.py(),
+            budget,
+            self.allocation.native_root(),
+            || {
+                let view = self.native_view()?;
+                let valid = view.offset(row, column).is_some();
+                drop(view);
+                if valid {
+                    Ok(())
+                } else {
+                    Err(super::allocation::bounds_error(self.owner.py()))
+                }
+            },
+        )
     }
 
     /// Finite unit facts are prepared once, after actual NaT recognition. The
@@ -1058,7 +1102,7 @@ impl<'py> PreparedSource<'py> for NumpySource<'py> {
 impl NumpySource<'_> {
     crate::input::cell::destinations!();
 
-    fn consume_cell_to(
+    pub(super) fn consume_cell_to(
         &mut self,
         row: usize,
         column: usize,
@@ -1069,6 +1113,12 @@ impl NumpySource<'_> {
         output.checkpoint(py, 1)?;
         let kind = match self.kind {
             ArrayKind::Scalar(kind) => kind,
+            ArrayKind::RecordLayout => {
+                return Err(errors::builtin_message::<PyTypeError>(
+                    py,
+                    "record layout facts require the field-aware source consumer",
+                ));
+            }
             ArrayKind::Bytes => return self.write_bytes(row, column, output, budget),
             ArrayKind::Unicode => return self.write_unicode(row, column, output, budget),
             ArrayKind::Object => {

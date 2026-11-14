@@ -27,7 +27,7 @@ mod prepared_native_tests;
 fn tensor_error(py: Python<'_>) -> PyErr {
     errors::builtin_message::<pyo3::exceptions::PyValueError>(
         py,
-        "MySQL parameters support at most two array axes; wrap higher-dimensional values in JSON(...) for one JSON text parameter",
+        "this source's tensor axes are outside the supported MySQL parameter layout; use JSON(...) for one JSON text parameter",
     )
 }
 
@@ -1968,6 +1968,29 @@ impl Visit<'_> {
 }
 
 impl CellWriter for Visit<'_> {
+    fn source(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        output: &mut Vec<u8>,
+    ) -> PyResult<FragmentRole> {
+        let py = source.owner().py();
+        let container = source.shape() != Shape::Scalar;
+        if container {
+            self.enter_native(py)?;
+        }
+        let result = self.native_value(source, output);
+        if container {
+            self.leave_native();
+        }
+        result.map(|()| {
+            if container {
+                FragmentRole::Row
+            } else {
+                FragmentRole::Scalar
+            }
+        })
+    }
+
     fn python_role(
         &mut self,
         value: &Bound<'_, PyAny>,

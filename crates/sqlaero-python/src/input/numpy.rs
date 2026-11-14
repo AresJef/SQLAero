@@ -59,7 +59,6 @@ pub(crate) struct NumpyTypes {
     datetime_dtype_get: Py<PyAny>,
     duration_dtype_get: Py<PyAny>,
     arrays: NumpyArrayApi,
-    record: Py<PyType>,
     void: Py<PyType>,
 }
 
@@ -74,6 +73,11 @@ pub(crate) struct NumpyArrayApi {
     masked: Py<PyType>,
     datetime_data: Py<PyAny>,
     item: pyo3::ffi::binaryfunc,
+    record: Canonical,
+    record_dtype: super::attribute::GetSet,
+    record_base: super::attribute::GetSet,
+    record_array: Py<PyAny>,
+    array_view: Py<PyAny>,
 }
 
 impl NumpyArrayApi {
@@ -89,6 +93,18 @@ impl NumpyArrayApi {
         let dtype = super::attribute::GetSet::new(array.bind(py), c"dtype", budget)?;
         let base = super::attribute::GetSet::new(array.bind(py), c"base", budget)?;
         let flags = super::attribute::GetSet::new(array.bind(py), c"flags", budget)?;
+        let record = exact_type(module, c"void", budget)?;
+        let record_dtype = super::attribute::GetSet::new(record.bind(py), c"dtype", budget)?;
+        let record_base = super::attribute::GetSet::new(record.bind(py), c"base", budget)?;
+        let record_array = super::control::callback(py, budget, || {
+            errors::attribute(record.bind(py).as_any(), c"__array__")
+        })?
+        .unbind();
+        let array_view = super::control::callback(py, budget, || {
+            errors::attribute(array.bind(py).as_any(), c"view")
+        })?
+        .unbind();
+        let record = Canonical::new(record, py)?;
         let ma =
             super::control::callback(py, budget, || errors::attribute(module.as_any(), c"ma"))?;
         let masked =
@@ -135,6 +151,11 @@ impl NumpyArrayApi {
             masked,
             datetime_data: datetime_data.clone().unbind(),
             item,
+            record,
+            record_dtype,
+            record_base,
+            record_array,
+            array_view,
         })
     }
 
@@ -148,6 +169,11 @@ impl NumpyArrayApi {
             masked: self.masked.clone_ref(py),
             datetime_data: self.datetime_data.clone_ref(py),
             item: self.item,
+            record: self.record.clone_ref(py),
+            record_dtype: self.record_dtype.clone_ref(py),
+            record_base: self.record_base.clone_ref(py),
+            record_array: self.record_array.clone_ref(py),
+            array_view: self.array_view.clone_ref(py),
         }
     }
 
@@ -237,7 +263,6 @@ impl NumpyTypes {
             datetime_dtype_get: dtype_get(&module, c"datetime64", budget)?,
             duration_dtype_get: dtype_get(&module, c"timedelta64", budget)?,
             arrays,
-            record: exact_type(&module, c"record", budget)?,
             void: exact_type(&module, c"void", budget)?,
         })
     }
@@ -262,12 +287,13 @@ impl NumpyTypes {
         value: &Bound<'py, PyAny>,
         budget: &dyn Checkpoint,
     ) -> PyResult<Option<RecordSource<'py>>> {
-        let exact_void = value.get_type().is(self.void.bind(value.py()));
-        if !exact_void && !value.get_type().is(self.record.bind(value.py())) {
+        let is_void = super::actual_instance(value, self.void.bind(value.py()));
+        let is_array = super::actual_instance(value, self.arrays.array.typ(value.py()));
+        if !is_void && !is_array {
             return Ok(None);
         }
         super::check(value.py(), budget)?;
-        let source = RecordSource::new(value, &self.arrays, budget, exact_void)?;
+        let source = RecordSource::new(value, &self.arrays, budget, is_void)?;
         super::check(value.py(), budget)?;
         Ok(source)
     }

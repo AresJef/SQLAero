@@ -14,6 +14,13 @@ use sqlaero_core::protocol::framing::WireError;
 /// A destination receives an adapted value immediately. Python-specific text
 /// diagnostics and signal checks remain at this boundary.
 pub(crate) trait Destination {
+    fn source(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        context: &Context,
+        budget: &dyn Checkpoint,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()>;
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError>;
     fn decimal_start(
         &mut self,
@@ -74,6 +81,15 @@ pub(crate) trait Destination {
 }
 
 impl Destination for Vec<u8> {
+    fn source(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        _context: &Context,
+        _budget: &dyn Checkpoint,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        visitor.source(source, self).map(|_| ())
+    }
     #[inline(always)]
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
         TextSink::new(self).write(value, context)
@@ -221,6 +237,18 @@ pub(crate) struct Native<'a>(
 );
 
 impl Destination for Native<'_> {
+    fn source(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        context: &Context,
+        budget: &dyn Checkpoint,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        if source.shape() != super::source::Shape::Scalar {
+            return Err(fragment_error(source.owner().py()));
+        }
+        source.write_parameter_cell(0, 0, self.0, context, budget, visitor)
+    }
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
         self.0.write(value, context)
     }
@@ -489,6 +517,17 @@ impl<'a> RoleSink<'a> {
     }
 }
 impl Destination for RoleSink<'_> {
+    fn source(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        _context: &Context,
+        _budget: &dyn Checkpoint,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        let role = visitor.source(source, self.output)?;
+        self.observe(role);
+        Ok(())
+    }
     fn write(&mut self, value: ValueRef<'_>, context: &Context) -> Result<(), ValueError> {
         self.scalar();
         self.output.write(value, context)
