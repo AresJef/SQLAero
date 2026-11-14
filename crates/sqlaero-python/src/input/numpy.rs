@@ -19,6 +19,8 @@ mod array;
 pub(crate) use array::NumpySource;
 mod record;
 pub(crate) use record::RecordSource;
+mod mask;
+pub(crate) use mask::MaskedSource;
 
 /// A native value obtained without an intermediate Python numeric object.
 pub(crate) enum NumpyScalar {
@@ -78,6 +80,7 @@ pub(crate) struct NumpyArrayApi {
     record_base: super::attribute::GetSet,
     record_array: Py<PyAny>,
     array_view: Py<PyAny>,
+    boolean: Canonical,
 }
 
 impl NumpyArrayApi {
@@ -105,6 +108,13 @@ impl NumpyArrayApi {
         })?
         .unbind();
         let record = Canonical::new(record, py)?;
+        let boolean = numeric
+            .iter()
+            .find(|(_, kind)| matches!(kind, Kind::Bool))
+            .map(|(typ, _)| typ.clone_ref(py))
+            .ok_or_else(|| {
+                errors::builtin_message::<PyTypeError>(py, "NumPy bool base is missing")
+            })?;
         let ma =
             super::control::callback(py, budget, || errors::attribute(module.as_any(), c"ma"))?;
         let masked =
@@ -156,6 +166,7 @@ impl NumpyArrayApi {
             record_base,
             record_array,
             array_view,
+            boolean,
         })
     }
 
@@ -174,6 +185,7 @@ impl NumpyArrayApi {
             record_base: self.record_base.clone_ref(py),
             record_array: self.record_array.clone_ref(py),
             array_view: self.array_view.clone_ref(py),
+            boolean: self.boolean.clone_ref(py),
         }
     }
 
@@ -214,6 +226,20 @@ impl NumpyArrayApi {
 }
 
 impl NumpyTypes {
+    pub(crate) fn prepare_masked<'py>(
+        &self,
+        value: &Bound<'py, PyAny>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<MaskedSource<'py>>> {
+        if !super::actual_instance(value, self.arrays.masked.bind(value.py())) {
+            return Ok(None);
+        }
+        super::control::callback(value.py(), Some(budget), || {
+            MaskedSource::new(value, &self.arrays, budget)
+        })
+        .map(Some)
+    }
+
     /// Prepare NumPy only on the actual optional-input path.
     pub(crate) fn new(py: Python<'_>, budget: Option<&dyn Checkpoint>) -> PyResult<Self> {
         let module = super::control::callback(py, budget, || errors::module(py, c"numpy"))?;

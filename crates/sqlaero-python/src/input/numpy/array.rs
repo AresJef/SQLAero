@@ -337,6 +337,39 @@ impl<'py> NumpySource<'py> {
         )
     }
 
+    /// Masked payload is not read, but its prepared ownership and metadata
+    /// must still be valid before a missing fact can be consumed.
+    pub(super) fn validate_layout(&self, budget: &dyn Checkpoint) -> PyResult<()> {
+        crate::input::buffer::read(
+            self.owner.py(),
+            budget,
+            self.allocation.native_root(),
+            || {
+                drop(self.native_view()?);
+                Ok(())
+            },
+        )
+    }
+
+    pub(super) fn is_boolean(&self) -> bool {
+        matches!(self.kind, ArrayKind::Scalar(Kind::Bool))
+    }
+
+    pub(super) fn bool_cell(
+        &mut self,
+        row: usize,
+        column: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<bool> {
+        if !self.is_boolean() {
+            return Err(errors::builtin_message::<PyTypeError>(
+                self.owner.py(),
+                "NumPy mask requires actual bool storage",
+            ));
+        }
+        Ok(self.cell_bytes(row, column, budget)?[0] != 0)
+    }
+
     /// Finite unit facts are prepared once, after actual NaT recognition. The
     /// protocol cannot conceal a retired operation or a changed source layout.
     fn finite_temporal(&mut self, budget: &dyn Checkpoint) -> PyResult<(TimeUnit, u64, TimeKind)> {
