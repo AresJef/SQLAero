@@ -172,6 +172,56 @@ impl<'py> PreparedSource<'py> for MaskedSource<'py> {
             Data::Record(source) => source.shape(),
         }
     }
+    fn child_shape(&self, index: usize) -> PyResult<Shape> {
+        match &self.data {
+            Data::Value { source, .. } => source.child_shape(index),
+            Data::Record(source) => source.child_shape(index),
+        }
+    }
+    fn python_child(
+        &mut self,
+        index: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        self.state.validate(budget)?;
+        match &mut self.data {
+            Data::Record(source) => source.python_child(index, budget),
+            Data::Value { source, mask }
+                if matches!(source.shape(), Shape::Vector { .. }) && source.is_object() =>
+            {
+                let missing = mask.missing(index, 0, budget)?;
+                self.state.validate(budget)?;
+                if missing {
+                    source.validate_layout(budget)?;
+                    Ok(None)
+                } else {
+                    source.object_child(index, 0, budget)
+                }
+            }
+            _ => Ok(None),
+        }
+    }
+    fn consume_child(
+        &mut self,
+        index: usize,
+        row: usize,
+        column: usize,
+        target: &mut dyn Target,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        self.state.validate(budget)?;
+        match &mut self.data {
+            Data::Record(source) => source.consume_child(index, row, column, target, budget),
+            Data::Value { source, .. } => match source.shape() {
+                Shape::Vector { .. } => self.consume_cell_to(index, 0, target, budget),
+                Shape::Table { .. } => self.consume_cell_to(index, row, target, budget),
+                _ => Err(errors::builtin_message::<PyTypeError>(
+                    self.owner().py(),
+                    "masked source child requires a source axis",
+                )),
+            },
+        }
+    }
     fn axis_length(&self, axis: usize) -> Option<usize> {
         match &self.data {
             Data::Value { source, .. } => source.axis_length(axis),

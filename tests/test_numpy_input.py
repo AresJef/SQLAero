@@ -19,7 +19,7 @@ np = pytest.importorskip("numpy")
 @pytest.mark.parametrize("itemize", [False, True])
 def test_zero_field_record_retains_its_one_logical_row(many: bool, itemize: bool) -> None:
     value = np.zeros(1, dtype=[]).view(np.recarray)[0]
-    sql, expected = ("SELECT 1", b"\x03SELECT 1") if itemize else ("VALUES %s", b"\x03VALUES ()")
+    sql, expected = ("SELECT 1", b"\x03SELECT 1") if many or itemize else ("VALUES %s", b"\x03VALUES ()")
     assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == [expected]
     assert _sqlaero._encode_value(value).to_bytes() == b"()"
 
@@ -264,13 +264,13 @@ def test_numpy_two_dimensional_input_retains_natural_rows(
 
 
 @pytest.mark.parametrize("many", [False, True])
-def test_numpy_object_vector_keeps_each_tuple_as_one_logical_cell(many: bool) -> None:
+def test_numpy_object_vector_selects_one_row_per_tuple_only_with_many(many: bool) -> None:
     value = np.empty(2, dtype=object)
     value[0] = (1, 2)
     value[1] = (3, 4)
     if many:
-        expected = [b"\x03SELECT (1,2)", b"\x03SELECT (3,4)"]
-        sql = "SELECT %s"
+        expected = [b"\x03SELECT 1,2", b"\x03SELECT 3,4"]
+        sql = "SELECT %s,%s"
     else:
         expected = [b"\x03SELECT (1,2),(3,4)"]
         sql = "SELECT %s,%s"
@@ -281,18 +281,22 @@ def test_numpy_object_vector_keeps_each_tuple_as_one_logical_cell(many: bool) ->
 @pytest.mark.parametrize("itemize", [False, True])
 def test_numpy_empty_root_keeps_zero_position_execution_rule(many: bool, itemize: bool) -> None:
     value = np.array([], dtype=np.int64)
-    assert _sqlaero._bind_sql("SELECT 1", value, many=many, itemize=itemize) == [b"\x03SELECT 1"]
+    sql = "SELECT 1" if many or itemize else "VALUES %s"
+    expected = b"\x03SELECT 1" if many or itemize else b"\x03VALUES ()"
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == [expected]
     with pytest.raises(ProgrammingError):
-        _sqlaero._bind_sql("SELECT %s", value, many=many, itemize=itemize)
+        _sqlaero._bind_sql("SELECT %s" if many or itemize else "SELECT 1", value, many=many, itemize=itemize)
 
 
 @pytest.mark.parametrize("many", [False, True])
 @pytest.mark.parametrize("itemize", [False, True])
 def test_numpy_nonempty_zero_column_table_does_not_drop_rows(many: bool, itemize: bool) -> None:
     value = np.empty((3, 0), dtype=np.int64)
-    assert _sqlaero._bind_sql("SELECT 1", value, many=many, itemize=itemize) == [b"\x03SELECT 1"] * 3
+    sql = "SELECT 1" if itemize else "VALUES %s"
+    expected = b"\x03SELECT 1" if itemize else b"\x03VALUES ()"
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == [expected] * 3
     with pytest.raises(ProgrammingError):
-        _sqlaero._bind_sql("SELECT %s", value, many=many, itemize=itemize)
+        _sqlaero._bind_sql("SELECT %s" if itemize else "SELECT 1", value, many=many, itemize=itemize)
 
 
 @pytest.mark.parametrize("dtype", [
@@ -338,9 +342,12 @@ def test_numpy_object_cell_does_not_reopen_excluded_binary_inputs(value: object)
 @pytest.mark.parametrize("itemize", [False, True])
 def test_numpy_record_is_one_schema_ordered_row(many: bool, itemize: bool) -> None:
     record = np.array([(7, "ab")], dtype=[("z", "i8"), ("a", "U2")]).view(np.recarray)[0]
-    sql = "SELECT %s,%s" if itemize else "SELECT %s"
-    expected = b"\x03SELECT 7,'ab'" if itemize else b"\x03SELECT (7,'ab')"
-    assert _sqlaero._bind_sql(sql, record, many=many, itemize=itemize) == [expected]
+    if many:
+        assert _sqlaero._bind_sql("SELECT %s", record, many=True, itemize=itemize) == [b"\x03SELECT 7", b"\x03SELECT 'ab'"]
+    else:
+        sql = "SELECT %s,%s" if itemize else "SELECT %s"
+        expected = b"\x03SELECT 7,'ab'" if itemize else b"\x03SELECT (7,'ab')"
+        assert _sqlaero._bind_sql(sql, record, itemize=itemize) == [expected]
 
 
 def test_numpy_record_nested_field_keeps_one_outer_cell() -> None:

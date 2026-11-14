@@ -507,9 +507,11 @@ def test_pandas_dataframe_mixed_extension_storage_uses_one_row_order() -> None:
 def test_pandas_empty_root_and_zero_column_rows_keep_the_unified_rule(shape: tuple[int, int], many: bool, itemize: bool) -> None:
     value = pd.DataFrame(np.zeros(shape, dtype=np.int64))
     count = max(shape[0], 1)
-    assert _sqlaero._bind_sql("SELECT 1", value, many=many, itemize=itemize) == [b"\x03SELECT 1"] * count
+    fragment = shape[0] > 0 and not itemize
+    sql, expected = ("VALUES %s", b"\x03VALUES ()") if fragment else ("SELECT 1", b"\x03SELECT 1")
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == [expected] * count
     with pytest.raises(ProgrammingError):
-        _sqlaero._bind_sql("SELECT %s", value, many=many, itemize=itemize)
+        _sqlaero._bind_sql("SELECT 1" if fragment else "SELECT %s", value, many=many, itemize=itemize)
 
 
 @pytest.mark.parametrize("length", [0, 1])

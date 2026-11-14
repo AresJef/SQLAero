@@ -637,8 +637,8 @@ impl<'py> Rows<'py> {
                 .as_ref()
                 .is_some_and(|source| match source.shape() {
                     Shape::Table { .. } => true,
-                    Shape::Vector { .. } => self.many,
-                    Shape::Record { .. } | Shape::Scalar | Shape::Tensor { .. } => false,
+                    Shape::Vector { .. } | Shape::Record { .. } => self.many,
+                    Shape::Scalar | Shape::Tensor { .. } => false,
                 })
     }
     pub(crate) fn remaining(&self) -> usize {
@@ -683,8 +683,13 @@ impl<'py> Rows<'py> {
             (None, sequence)
         };
         let (count, empty) = match native.as_ref().map(|v| v.shape()) {
-            Some(Shape::Vector { length }) => (if many { length.max(1) } else { 1 }, length == 0),
-            Some(Shape::Record { .. } | Shape::Scalar) => (1, false),
+            Some(Shape::Vector { length }) => {
+                (if many { length.max(1) } else { 1 }, many && length == 0)
+            }
+            Some(Shape::Record { fields }) => {
+                (if many { fields.max(1) } else { 1 }, many && fields == 0)
+            }
+            Some(Shape::Scalar) => (1, false),
             Some(Shape::Table { rows, .. }) => (rows.max(1), rows == 0),
             Some(Shape::Tensor { .. }) => return Err(tensor_error(root.py())),
             None => (
@@ -724,7 +729,7 @@ impl<'py> Rows<'py> {
         budget: &dyn Checkpoint,
     ) -> PyResult<Row<'r, 'py>> {
         let py = self.root.py();
-        let path = (self.outer.is_some() && !self.empty).then_some(index);
+        let path = (self.public_batch() && !self.empty).then_some(index);
         self.prepare_at(index, types, budget)
             .inspect_err(|error| note_preparation(py, error, path))
     }
@@ -735,26 +740,43 @@ impl<'py> Rows<'py> {
         budget: &dyn Checkpoint,
     ) -> PyResult<Row<'r, 'py>> {
         if let Some(native) = self.native.as_mut() {
-            let shape = native.shape();
-            let native_row = match shape {
-                Shape::Table { .. } => Some(index),
-                Shape::Vector { .. } if self.many && !self.empty => Some(index),
-                _ => None,
-            };
-            let path = if native_row.is_some() {
+            let select = !self.empty
+                && match native.shape() {
+                    Shape::Table { .. } => true,
+                    Shape::Vector { .. } | Shape::Record { .. } => self.many,
+                    Shape::Scalar | Shape::Tensor { .. } => false,
+                };
+            let path = if select {
                 smallvec![index]
             } else {
                 SmallVec::new()
             };
+            if select {
+                let outer = Some(self.root.as_ptr() as usize);
+                return match native.child(index, budget)? {
+                    source::Child::Python(value) => {
+                        Row::from_value(value, outer, path, self.itemize, types, budget)
+                    }
+                    source::Child::Native(source) => Ok(Row {
+                        value: self.root.clone(),
+                        outer,
+                        path,
+                        itemize: self.itemize,
+                        zero_positions: false,
+                        input: RowInput::Native(NativeRow {
+                            source: SourceRef::Selected(source),
+                        }),
+                    }),
+                };
+            }
             return Ok(Row {
                 value: self.root.clone(),
                 outer: None,
                 path,
                 itemize: self.itemize,
-                zero_positions: self.empty || matches!(shape, Shape::Table { columns: 0, .. }),
+                zero_positions: self.empty,
                 input: RowInput::Native(NativeRow {
                     source: SourceRef::Borrowed(native.as_mut()),
-                    row: native_row,
                 }),
             });
         }
@@ -780,7 +802,6 @@ impl<'py> Rows<'py> {
             match mysql_source(&value, types, budget)? {
                 Some(source) => RowInput::Native(NativeRow {
                     source: SourceRef::Owned(source),
-                    row: None,
                 }),
                 None => RowInput::Scalar,
             }
@@ -820,6 +841,7 @@ fn note_preparation(py: Python<'_>, error: &PyErr, index: Option<usize>) {
 enum SourceRef<'r, 'py> {
     Borrowed(&'r mut (dyn PreparedSource<'py> + 'py)),
     Owned(Box<dyn PreparedSource<'py> + 'py>),
+    Selected(source::Selected<'r, 'py>),
 }
 
 /// A single root strategy stays in Rows; a batch child owns its independently
@@ -837,22 +859,23 @@ impl<'py> SequenceRef<'_, 'py> {
     }
 }
 impl<'py> SourceRef<'_, 'py> {
-    fn source(&mut self) -> &mut (dyn PreparedSource<'py> + 'py) {
+    fn source(&mut self) -> &mut (dyn PreparedSource<'py> + '_) {
         match self {
             Self::Borrowed(v) => *v,
             Self::Owned(v) => v.as_mut(),
+            Self::Selected(v) => v,
         }
     }
     fn shape(&self) -> Shape {
         match self {
             Self::Borrowed(v) => v.shape(),
             Self::Owned(v) => v.shape(),
+            Self::Selected(v) => v.shape(),
         }
     }
 }
 struct NativeRow<'r, 'py> {
     source: SourceRef<'r, 'py>,
-    row: Option<usize>,
 }
 
 /// A row has one prepared strategy; ordinary scalars need neither provider.
@@ -870,29 +893,51 @@ pub(crate) struct Row<'r, 'py> {
     itemize: bool,
     zero_positions: bool,
 }
-impl Row<'_, '_> {
+impl<'r, 'py> Row<'r, 'py> {
+    fn from_value(
+        value: Bound<'py, PyAny>,
+        outer: Option<usize>,
+        path: SmallVec<[usize; 4]>,
+        itemize: bool,
+        types: &ScalarTypes,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Self> {
+        let input = if let Some(sequence) = Sequence::from(&value, types, &[], Some(budget))? {
+            RowInput::Sequence(SequenceRef::Owned(sequence))
+        } else if let Some(source) = mysql_source(&value, types, budget)? {
+            RowInput::Native(NativeRow {
+                source: SourceRef::Owned(source),
+            })
+        } else {
+            RowInput::Scalar
+        };
+        Ok(Self {
+            value,
+            input,
+            outer,
+            path,
+            itemize,
+            zero_positions: false,
+        })
+    }
+
     fn public_row(&self) -> bool {
         self.zero_positions
             || (self.itemize
                 && match &self.input {
                     RowInput::Sequence(_) => true,
-                    RowInput::Native(native) => matches!(
-                        (native.source.shape(), native.row),
-                        (Shape::Vector { .. }, None)
-                            | (Shape::Record { .. }, _)
-                            | (Shape::Table { .. }, Some(_))
-                    ),
+                    RowInput::Native(native) => native.source.shape() != Shape::Scalar,
                     RowInput::Scalar => false,
                 })
     }
 
-    fn project<'py>(
+    fn project<'out>(
         self,
-        py: Python<'py>,
+        py: Python<'out>,
         types: &ScalarTypes,
         context: &Context,
         budget: &dyn Checkpoint,
-    ) -> PyResult<Bound<'py, PyAny>> {
+    ) -> PyResult<Bound<'out, PyAny>> {
         let row = self.public_row();
         let mut values = Vec::new();
         let mut encoded = Vec::new();
@@ -941,10 +986,10 @@ impl Row<'_, '_> {
             return 1;
         }
         match &self.input {
-            RowInput::Native(native) => match (native.source.shape(), native.row) {
-                (Shape::Vector { length }, None) => length,
-                (Shape::Record { fields }, _) => fields,
-                (Shape::Table { columns, .. }, Some(_)) => columns,
+            RowInput::Native(native) => match native.source.shape() {
+                Shape::Vector { length } => length,
+                Shape::Record { fields } => fields,
+                Shape::Table { rows, .. } => rows,
                 _ => 1,
             },
             RowInput::Sequence(value) => value.sequence().len(),
@@ -1019,16 +1064,16 @@ impl Row<'_, '_> {
             _ => None,
         };
         if let Some(native) = native.as_ref() {
-            visit.enter_source(
-                py,
-                self.value.as_ptr() as usize,
-                native.source.shape() != Shape::Scalar,
-            )?;
-            if matches!(
-                (native.source.shape(), native.row),
-                (Shape::Table { .. }, Some(_))
-            ) {
-                visit.enter_native(py)?;
+            if matches!(native.source, SourceRef::Selected(_)) {
+                if native.source.shape() != Shape::Scalar {
+                    visit.enter_native(py)?;
+                }
+            } else {
+                visit.enter_source(
+                    py,
+                    self.value.as_ptr() as usize,
+                    native.source.shape() != Shape::Scalar,
+                )?;
             }
         }
         for index in 0..width {
@@ -1037,12 +1082,10 @@ impl Row<'_, '_> {
             let require_none = out(index)?;
             let result = if let Some(native) = native.as_deref_mut() {
                 let shape = native.source.shape();
-                let coordinates = match (self.itemize, shape, native.row) {
-                    (_, Shape::Scalar, _) => Some((0, 0, false)),
-                    (_, Shape::Vector { .. }, Some(row)) => Some((row, 0, false)),
-                    (true, Shape::Vector { .. }, None) => Some((index, 0, true)),
-                    (true, Shape::Record { .. }, _) => Some((0, index, true)),
-                    (true, Shape::Table { .. }, Some(row)) => Some((row, index, true)),
+                let coordinates = match (self.itemize, shape) {
+                    (_, Shape::Scalar) => Some((0, 0, false)),
+                    (true, Shape::Vector { .. }) => Some((index, 0, true)),
+                    (true, Shape::Record { .. }) => Some((0, index, true)),
                     _ => None,
                 };
                 if let Some((row, column, positional)) = coordinates {
@@ -1363,18 +1406,16 @@ impl Row<'_, '_> {
             _ => None,
         };
         if let Some(native) = native.as_ref() {
-            visit.enter_source(
-                py,
-                self.value.as_ptr() as usize,
-                native.source.shape() != Shape::Scalar,
-            )?;
-            if matches!(
-                (native.source.shape(), native.row),
-                (Shape::Table { .. }, Some(_))
-            ) {
-                // A natural table retains its root while one logical row is
-                // bound. Itemizing that row does not remove its depth level.
-                visit.enter_native(py)?;
+            if matches!(native.source, SourceRef::Selected(_)) {
+                if native.source.shape() != Shape::Scalar {
+                    visit.enter_native(py)?;
+                }
+            } else {
+                visit.enter_source(
+                    py,
+                    self.value.as_ptr() as usize,
+                    native.source.shape() != Shape::Scalar,
+                )?;
             }
         }
         let mut role = FragmentRole::Scalar;
@@ -1405,12 +1446,10 @@ impl Row<'_, '_> {
             let result = if out {
                 let mut sink = call::DiscardValue;
                 if let Some(native) = native.as_deref_mut() {
-                    let (source_row, column) = match (native.source.shape(), native.row) {
-                        (Shape::Scalar, _) => (0, 0),
-                        (Shape::Vector { .. }, Some(row)) => (row, 0),
-                        (Shape::Vector { .. }, None) => (index, 0),
-                        (Shape::Record { .. }, _) => (0, index),
-                        (Shape::Table { .. }, Some(row)) => (row, index),
+                    let (source_row, column) = match native.source.shape() {
+                        Shape::Scalar => (0, 0),
+                        Shape::Vector { .. } if self.itemize => (index, 0),
+                        Shape::Record { .. } if self.itemize => (0, index),
                         _ => return Err(crate::input::sink::fragment_error(py)),
                     };
                     visit.push_index(py, index)?;
@@ -1429,56 +1468,34 @@ impl Row<'_, '_> {
                 Ok(FragmentRole::Scalar)
             } else if let Some(native) = native.as_deref_mut() {
                 let shape = native.source.shape();
-                let source_row = native.row;
                 if shape == Shape::Scalar {
                     visit.native_cell::<TRACK_ROLE>(native.source.source(), 0, 0, output)
                 } else if self.itemize {
-                    let coordinates = match (shape, source_row) {
-                        (Shape::Scalar, _) => (0, 0),
-                        (Shape::Vector { .. }, Some(row)) => (row, 0),
-                        (Shape::Vector { .. }, None) => (index, 0),
-                        (Shape::Record { .. }, _) => (0, index),
-                        (Shape::Table { .. }, Some(row)) => (row, index),
-                        (Shape::Table { .. }, None) => (0, 0),
-                        (Shape::Tensor { .. }, _) => return Err(tensor_error(py)),
-                    };
-                    if matches!((shape, source_row), (Shape::Table { .. }, None)) {
-                        visit
-                            .native_value(native.source.source(), output)
-                            .map(|()| FragmentRole::Row)
-                    } else {
-                        let positional =
-                            !matches!((shape, source_row), (Shape::Vector { .. }, Some(_)));
-                        if positional {
-                            visit.push_index(py, index)?;
-                        }
-                        let result = visit.native_cell::<TRACK_ROLE>(
+                    visit.push_index(py, index)?;
+                    let result = match shape {
+                        Shape::Vector { .. } => visit.native_cell::<TRACK_ROLE>(
                             native.source.source(),
-                            coordinates.0,
-                            coordinates.1,
+                            index,
+                            0,
                             output,
-                        );
-                        if result.is_ok() && positional {
-                            visit.pop_index();
-                        }
-                        result
-                    }
-                } else if let Some(row) = source_row {
-                    match shape {
+                        ),
+                        Shape::Record { .. } => visit.native_cell::<TRACK_ROLE>(
+                            native.source.source(),
+                            0,
+                            index,
+                            output,
+                        ),
+                        Shape::Table { .. } => match native.source.source().child(index, budget)? {
+                            source::Child::Native(mut child) => visit.source(&mut child, output),
+                            source::Child::Python(value) => visit.value_role(&value, output, None),
+                        },
                         Shape::Tensor { .. } => Err(tensor_error(py)),
-                        Shape::Vector { .. } => {
-                            visit.native_cell::<TRACK_ROLE>(native.source.source(), row, 0, output)
-                        }
-                        Shape::Table { columns, .. } => visit
-                            .native_row(native.source.source(), row, columns, output)
-                            .map(|()| FragmentRole::Row),
-                        Shape::Scalar => {
-                            visit.native_cell::<TRACK_ROLE>(native.source.source(), 0, 0, output)
-                        }
-                        Shape::Record { .. } => visit
-                            .native_value(native.source.source(), output)
-                            .map(|()| FragmentRole::Row),
+                        Shape::Scalar => unreachable!("scalar handled before itemization"),
+                    };
+                    if result.is_ok() {
+                        visit.pop_index();
                     }
+                    result
                 } else {
                     visit
                         .native_value(native.source.source(), output)

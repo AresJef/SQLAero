@@ -898,9 +898,11 @@ def test_arrow_dictionary_rejects_invalid_actual_key(key: int, prefix: int) -> N
 @pytest.mark.parametrize("itemize", [False, True])
 def test_empty_arrow_root_uses_zero_positions(many: bool, itemize: bool) -> None:
     value = pa.array([], type=pa.int64())
-    assert _sqlaero._bind_sql("SELECT 1", value, many=many, itemize=itemize) == [b"\x03SELECT 1"]
+    fragment = not many and not itemize
+    sql, expected = ("VALUES %s", b"\x03VALUES ()") if fragment else ("SELECT 1", b"\x03SELECT 1")
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == [expected]
     with pytest.raises(_sqlaero.ProgrammingError):
-        _sqlaero._bind_sql("SELECT %s", value, many=many, itemize=itemize)
+        _sqlaero._bind_sql("SELECT 1" if fragment else "SELECT %s", value, many=many, itemize=itemize)
 
 
 def test_arrow_zero_width_table_preserves_its_nonzero_row_count() -> None:
@@ -922,9 +924,11 @@ def test_arrow_empty_and_zero_column_shapes_keep_every_logical_row(kind: str, ma
         batch = pa.RecordBatch.from_struct_array(pa.array([{}, {}, {}], type=pa.struct([])))
         value = batch if kind == "zero-batch" else pa.Table.from_batches([batch])
     count = 3 if kind.startswith("zero-") else 1
-    assert _sqlaero._bind_sql("SELECT 1", value, many=many, itemize=itemize) == [b"\x03SELECT 1"] * count
+    fragment = not itemize and (kind.startswith("zero-") or (kind == "chunked" and not many))
+    sql, expected = ("VALUES %s", b"\x03VALUES ()") if fragment else ("SELECT 1", b"\x03SELECT 1")
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == [expected] * count
     with pytest.raises(_sqlaero.ProgrammingError):
-        _sqlaero._bind_sql("SELECT %s", value, many=many, itemize=itemize)
+        _sqlaero._bind_sql("SELECT 1" if fragment else "SELECT %s", value, many=many, itemize=itemize)
 
 
 @pytest.mark.parametrize(

@@ -153,7 +153,7 @@ def test_native_rows_read_numpy_vectors_tables_records_and_temporal_ticks() -> N
     assert native_rows(np.array([1, 2], dtype="int64"), many=True) == [b"1", b"2"]
     assert native_rows(np.array([[1, 2], [3, 4]], dtype="uint64")) == [b"12", b"34"]
     record = np.array([(1, 2)], dtype=[("a", "i8"), ("b", "i8")]).view(np.recarray)[0]
-    assert native_rows(record, many=True) == [b"12"]
+    assert native_rows(record, many=True) == [b"1", b"2"]
     assert native_rows(np.array([-1, 1], dtype="datetime64[ns]"), many=True) == [
         b"'1969-12-31 23:59:59.999999'", b"'1970-01-01 00:00:00'",
     ]
@@ -164,7 +164,7 @@ def test_native_rows_read_numpy_vectors_tables_records_and_temporal_ticks() -> N
 def test_structured_numpy_void_uses_the_final_record_shape_contract() -> None:
     np: Any = pytest.importorskip("numpy")
     record = np.array([(1, 2)], dtype=[("a", "i8"), ("b", "i8")])[0]
-    assert native_rows(record, many=True) == [b"12"]
+    assert native_rows(record, many=True) == [b"1", b"2"]
 
 
 @pytest.mark.parametrize("many", [False, True])
@@ -176,9 +176,14 @@ def test_structured_numpy_void_keeps_schema_order_and_parent_ownership(many: boo
     record = owner[0]
     del owner
     gc.collect()
-    assert native_rows(record, many=many) == [b"7'ab'"]
-    assert _sqlaero._bind_sql("SELECT %s,%s", record, many=many) == [b"\x03SELECT 7,'ab'"]
-    assert _sqlaero._bind_sql("VALUES %s", record, many=many, itemize=False) == [b"\x03VALUES (7,'ab')"]
+    if many:
+        assert native_rows(record, many=True) == [b"7", b"'ab'"]
+        assert _sqlaero._bind_sql("SELECT %s", record, many=True) == [b"\x03SELECT 7", b"\x03SELECT 'ab'"]
+        assert _sqlaero._bind_sql("VALUES %s", record, many=True, itemize=False) == [b"\x03VALUES 7", b"\x03VALUES 'ab'"]
+    else:
+        assert native_rows(record) == [b"7'ab'"]
+        assert _sqlaero._bind_sql("SELECT %s,%s", record) == [b"\x03SELECT 7,'ab'"]
+        assert _sqlaero._bind_sql("VALUES %s", record, itemize=False) == [b"\x03VALUES (7,'ab')"]
 
 
 @pytest.mark.parametrize("many", [False, True])

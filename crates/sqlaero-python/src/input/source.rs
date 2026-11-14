@@ -63,6 +63,57 @@ pub(crate) enum FragmentRole {
     Row,
 }
 
+/// One actual child, not a normalized Python scalar or an encoded answer.
+/// Native selection borrows the existing prepared owner without allocating a
+/// provider per row. Object storage instead returns its actual owning reference.
+pub(crate) enum Child<'a, 'py> {
+    Python(Bound<'py, PyAny>),
+    Native(Selected<'a, 'py>),
+}
+
+pub(crate) struct Selected<'a, 'py> {
+    parent: &'a mut dyn PreparedSource<'py>,
+    index: usize,
+    shape: Shape,
+}
+
+impl<'py> PreparedSource<'py> for Selected<'_, 'py> {
+    fn owner(&self) -> &Bound<'py, PyAny> {
+        self.parent.owner()
+    }
+    fn shape(&self) -> Shape {
+        self.shape
+    }
+    fn schema(&self, _target: &mut dyn super::cell::Target) -> PyResult<()> {
+        // The retained root already admitted its complete schema.
+        Ok(())
+    }
+    fn consume_cell(
+        &mut self,
+        row: usize,
+        column: usize,
+        target: &mut dyn super::cell::Target,
+        budget: &dyn crate::input::control::Checkpoint,
+    ) -> PyResult<()> {
+        self.consume_cell_to(row, column, target, budget)
+    }
+    crate::input::source::cell_destinations!();
+}
+
+impl Selected<'_, '_> {
+    super::cell::destinations!();
+    fn consume_cell_to(
+        &mut self,
+        row: usize,
+        column: usize,
+        target: &mut dyn super::cell::Target,
+        budget: &dyn crate::input::control::Checkpoint,
+    ) -> PyResult<()> {
+        self.parent
+            .consume_child(self.index, row, column, target, budget)
+    }
+}
+
 /// Reuse the production visitor for Python leaves and native nesting facts.
 /// Implementations live at the attached Python boundary, never in the core.
 pub(crate) trait CellWriter {
@@ -118,11 +169,72 @@ pub(crate) trait CellWriter {
 /// A stream supports forward rows and re-encoding its most recent row only.
 /// No raw view or borrowed slot may survive a callback through `visitor`.
 pub(crate) trait PreparedSource<'py> {
+    /// Reborrow the concrete provider; implemented with the destination methods.
+    fn as_source(&mut self) -> &mut dyn PreparedSource<'py>;
+
     /// Retain the canonical original source for identity and lifetime purposes.
     fn owner(&self) -> &Bound<'py, PyAny>;
 
     /// Return the prepared logical shape without per-value Python metadata work.
     fn shape(&self) -> Shape;
+
+    /// A source owns child facts; the caller owns root/row policy such as many.
+    fn child<'a>(
+        &'a mut self,
+        index: usize,
+        budget: &dyn crate::input::control::Checkpoint,
+    ) -> PyResult<Child<'a, 'py>> {
+        if let Some(value) = self.python_child(index, budget)? {
+            return Ok(Child::Python(value));
+        }
+        let shape = self.child_shape(index)?;
+        Ok(Child::Native(Selected {
+            parent: self.as_source(),
+            index,
+            shape,
+        }))
+    }
+
+    fn python_child(
+        &mut self,
+        _index: usize,
+        _budget: &dyn crate::input::control::Checkpoint,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        Ok(None)
+    }
+
+    fn child_shape(&self, index: usize) -> PyResult<Shape> {
+        match self.shape() {
+            Shape::Vector { length } if index < length => Ok(Shape::Scalar),
+            Shape::Table { rows, columns } if index < rows => Ok(Shape::Vector { length: columns }),
+            _ => Err(crate::errors::builtin_message::<
+                pyo3::exceptions::PyIndexError,
+            >(
+                self.owner().py(),
+                "source child is outside its prepared shape",
+            )),
+        }
+    }
+
+    fn consume_child(
+        &mut self,
+        index: usize,
+        row: usize,
+        _column: usize,
+        target: &mut dyn super::cell::Target,
+        budget: &dyn crate::input::control::Checkpoint,
+    ) -> PyResult<()> {
+        match self.shape() {
+            Shape::Vector { .. } => self.consume_cell(index, 0, target, budget),
+            Shape::Table { .. } => self.consume_cell(index, row, target, budget),
+            _ => Err(crate::errors::builtin_message::<
+                pyo3::exceptions::PyTypeError,
+            >(
+                self.owner().py(),
+                "source child consumption requires explicit field facts",
+            )),
+        }
+    }
 
     /// Complete actual field name, acquired only by targets that need names.
     /// Positional targets consume the same values without JSON key work.
@@ -208,6 +320,9 @@ pub(crate) trait PreparedSource<'py> {
 /// Keep text statically specialized while sharing actual cell acquisition.
 macro_rules! cell_destinations {
     () => {
+        fn as_source(&mut self) -> &mut dyn $crate::input::source::PreparedSource<'py> {
+            self
+        }
         fn write_cell(
             &mut self,
             row: usize,

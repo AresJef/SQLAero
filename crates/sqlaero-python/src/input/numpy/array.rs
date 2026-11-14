@@ -799,6 +799,23 @@ impl<'py> NumpySource<'py> {
         self.copy_source_range(row, column, start, destination, budget)
     }
 
+    pub(super) fn is_object(&self) -> bool {
+        matches!(self.kind, ArrayKind::Object)
+    }
+
+    pub(super) fn object_child(
+        &self,
+        row: usize,
+        column: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if self.is_object() {
+            self.element(row, column, budget).map(Some)
+        } else {
+            Ok(None)
+        }
+    }
+
     fn element(
         &self,
         row: usize,
@@ -1099,6 +1116,18 @@ impl<'py> PreparedSource<'py> for NumpySource<'py> {
 
     fn shape(&self) -> Shape {
         self.shape
+    }
+
+    fn python_child(
+        &mut self,
+        index: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if matches!(self.shape, Shape::Vector { .. }) {
+            self.object_child(index, 0, budget)
+        } else {
+            Ok(None)
+        }
     }
 
     fn axis_length(&self, axis: usize) -> Option<usize> {

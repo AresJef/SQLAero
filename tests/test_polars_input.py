@@ -138,9 +138,11 @@ def test_polars_empty_and_zero_column_shapes_keep_every_logical_row(kind: str, m
         value = pl.DataFrame({"x": [1, 2, 3]}).drop("x")
         assert value.shape == (3, 0)
     count = 3 if kind == "zero-columns" else 1
-    assert _sqlaero._bind_sql("SELECT 1", value, many=many, itemize=itemize) == [b"\x03SELECT 1"] * count
+    fragment = not itemize and (kind == "zero-columns" or (kind == "series" and not many))
+    sql, expected = ("VALUES %s", b"\x03VALUES ()") if fragment else ("SELECT 1", b"\x03SELECT 1")
+    assert _sqlaero._bind_sql(sql, value, many=many, itemize=itemize) == [expected] * count
     with pytest.raises(_sqlaero.ProgrammingError):
-        _sqlaero._bind_sql("SELECT %s", value, many=many, itemize=itemize)
+        _sqlaero._bind_sql("SELECT 1" if fragment else "SELECT %s", value, many=many, itemize=itemize)
 
 
 @pytest.mark.parametrize("dtype", [pl.Categorical, pl.Enum(["a", "b"])])

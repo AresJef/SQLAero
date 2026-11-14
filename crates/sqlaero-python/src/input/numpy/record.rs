@@ -502,6 +502,128 @@ impl<'py> PreparedSource<'py> for RecordSource<'py> {
         }
     }
 
+    fn child_shape(&self, index: usize) -> PyResult<Shape> {
+        match &self.nodes[0] {
+            Node::Record(record) => match record.layout.shape() {
+                Shape::Scalar => {
+                    let node = record.values.get(index).ok_or_else(|| {
+                        errors::builtin_message::<PyIndexError>(
+                            self.owner().py(),
+                            "record child is outside its fields",
+                        )
+                    })?;
+                    self.shape_at(*node, 0)
+                }
+                Shape::Vector { length } if index < length => Ok(Shape::Record {
+                    fields: record.fields.len(),
+                }),
+                _ => Err(errors::builtin_message::<PyIndexError>(
+                    self.owner().py(),
+                    "record child is outside its prepared axes",
+                )),
+            },
+            Node::Value(_) => Err(errors::builtin_message::<PyTypeError>(
+                self.owner().py(),
+                "record source has no record fields",
+            )),
+        }
+    }
+
+    fn python_child(
+        &mut self,
+        index: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        let Node::Record(record) = &self.nodes[0] else {
+            return Ok(None);
+        };
+        if record.layout.shape() != Shape::Scalar {
+            return Ok(None);
+        }
+        let Some(&node) = record.values.get(index) else {
+            return Ok(None);
+        };
+        if self.shape_at(node, 0)? != Shape::Scalar {
+            return Ok(None);
+        }
+        if !matches!(&self.nodes[node], Node::Value(value) if value.data.is_object()) {
+            return Ok(None);
+        }
+        if !record.dtype_get.get(&record.owner)?.is(&record.dtype) {
+            return Err(super::allocation::bounds_error(self.owner().py()));
+        }
+        record.layout.validate_record_cell(0, 0, budget)?;
+        let Node::Value(value) = &mut self.nodes[node] else {
+            return Ok(None);
+        };
+        if let Some(state) = &self.mask_state {
+            state.validate(budget)?;
+        }
+        let missing = value
+            .mask
+            .as_mut()
+            .map(|mask| mask.missing(0, 0, budget))
+            .transpose()?
+            .unwrap_or(false);
+        if let Some(state) = &self.mask_state {
+            state.validate(budget)?;
+        }
+        if missing {
+            value.data.validate_layout(budget)?;
+            Ok(None)
+        } else {
+            value.data.object_child(0, 0, budget)
+        }
+    }
+
+    fn consume_child(
+        &mut self,
+        index: usize,
+        row: usize,
+        column: usize,
+        target: &mut dyn Target,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        match self.shape() {
+            Shape::Vector { .. } => self.consume_field(0, index, column, target, budget),
+            Shape::Record { .. } => {
+                let node = match &self.nodes[0] {
+                    Node::Record(record) => {
+                        if !record.dtype_get.get(&record.owner)?.is(&record.dtype) {
+                            return Err(super::allocation::bounds_error(record.owner.py()));
+                        }
+                        record.layout.validate_record_cell(0, 0, budget)?;
+                        *record.values.get(index).ok_or_else(|| {
+                            errors::builtin_message::<PyIndexError>(
+                                record.owner.py(),
+                                "record child is outside its fields",
+                            )
+                        })?
+                    }
+                    Node::Value(_) => {
+                        return Err(errors::builtin_message::<PyTypeError>(
+                            self.owner().py(),
+                            "record shape requires record metadata",
+                        ));
+                    }
+                };
+                let shape = self.shape_at(node, 0)?;
+                Projection {
+                    source: self,
+                    node,
+                    prefix: 0,
+                    start: 0,
+                    shape,
+                }
+                .consume_cell(row, column, target, budget)
+            }
+            _ => Err(errors::builtin_message::<PyTypeError>(
+                self.owner().py(),
+                "record child requires one source axis or scalar record",
+            )),
+        }
+    }
+
     fn axis_length(&self, axis: usize) -> Option<usize> {
         self.nodes[0].storage().axis_length(axis)
     }

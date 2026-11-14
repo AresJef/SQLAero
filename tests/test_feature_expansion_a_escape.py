@@ -43,12 +43,12 @@ def test_empty_ordinary_root_preserves_synthetic_zero_positions(root: object) ->
 def test_native_empty_and_zero_column_roles_are_not_empty_batches() -> None:
     np: Any = pytest.importorskip("numpy")
     for itemize in (False, True):
-        assert escape(np.empty(0), itemize=itemize) == ()
+        assert escape(np.empty(0), itemize=itemize) == (() if itemize else "()")
         assert escape(np.empty(0), many=True, itemize=itemize) == [()]
         for shape in ((0, 0), (0, 2)):
             assert escape(np.empty(shape), itemize=itemize) == [()]
             assert escape(np.empty(shape), many=True, itemize=itemize) == [()]
-        assert escape(np.empty((2, 0)), itemize=itemize) == [(), ()]
+        assert escape(np.empty((2, 0)), itemize=itemize) == ([(), ()] if itemize else ["()", "()"])
 
 
 def test_natural_table_and_record_projection_uses_shared_shapes() -> None:
