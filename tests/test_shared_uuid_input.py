@@ -4,6 +4,7 @@
 
 
 from uuid import UUID
+import re
 
 import pytest
 
@@ -21,6 +22,13 @@ def test_uuid_canonical_text_for_sql_json_and_keys(value: UUID, text: str) -> No
     assert json_dumps({value: 7}) == b'{"' + text.encode() + b'":7}'
     with pytest.raises(ValueError, match="collid"):
         json_dumps({value: 7, text: 8})
+    assert _sqlaero._escape_projection({value:7})==("7",)
+    assert _sqlaero._escape_projection({value:7,text:8})==("7","8")
+    with pytest.raises(TypeError):json_dumps(value.bytes)
+    binary=_sqlaero._encode_value(value.bytes).to_bytes()
+    match=re.fullmatch(rb"CAST\(X'([0-9a-fA-F]*)' AS BINARY\)",binary)
+    assert match is not None
+    assert bytes.fromhex(match.group(1).decode())==value.bytes
 
 
 def test_true_uuid_subclass_ignores_replaced_int_and_display() -> None:

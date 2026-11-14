@@ -10,6 +10,9 @@ from pathlib import Path
 import subprocess
 import sys
 import textwrap
+from collections.abc import Callable
+from typing import Any, NoReturn, cast
+from types import new_class
 
 import pytest
 
@@ -78,6 +81,8 @@ def test_enum_target_specific_rejection_and_key_rules() -> None:
         json_dumps(Values.NONFINITE, allow_nan=False)
     with pytest.raises(TypeError):
         json_dumps({Values.NUMBER: "ab"})
+    with pytest.raises(TypeError):
+        _sqlaero._encode_value(Values.UNKNOWN)
 
 
 def test_enum_integer_and_text_bases_keep_priority_over_member_metadata() -> None:
@@ -103,6 +108,39 @@ def test_plain_flag_uses_actual_combination_bits_including_zero() -> None:
         TWO = 2
     assert json_dumps([Bits(0), Bits.ONE | Bits.TWO]) == b"[0,3]"
     assert _sqlaero._encode_value(Bits.ONE | Bits.TWO).to_bytes() == b"3"
+    assert _sqlaero._encode_value(Bits(0)).to_bytes() == b"0"
+    with pytest.raises(TypeError):json_dumps({Bits.ONE:7})
+    assert _sqlaero._escape_projection({Bits.ONE:7})==("7",)
+
+
+@pytest.mark.parametrize("family",[Enum,IntEnum,StrEnum,Flag,IntFlag])
+def test_valid_family_derivation_reads_base_value_despite_replacement_display(family: type[Enum]) -> None:
+    factory=cast(Any,family)
+    empty=factory("Empty",{})
+    flags=family in (Flag,IntFlag)
+    members={"ONE":1,"TWO":2} if flags else {"VALUE":"ab" if family is StrEnum else 7}
+    derived=empty("Approved",members)
+    value=derived.ONE|derived.TWO if flags else derived.VALUE
+    def forbidden(*_args: object) -> NoReturn:
+        raise AssertionError("replacement Enum display/conversion must not execute")
+    derived.__str__=forbidden
+    derived.__int__=forbidden
+    derived.value=property(forbidden)
+    sql,document=(b"3",b"3") if flags else (b"'ab'",b'"ab"') if family is StrEnum else (b"7",b"7")
+    assert _sqlaero._encode_value(value).to_bytes()==sql
+    assert json_dumps(value)==document
+    if family is IntFlag:
+        assert _sqlaero._encode_value(derived(0)).to_bytes()==b"0"
+        assert json_dumps(derived(0))==b"0"
+
+
+@pytest.mark.parametrize("family",[Enum,IntEnum,StrEnum,Flag,IntFlag])
+def test_extending_an_existing_member_family_fails_before_product_use(family: type[Enum],record_property: Callable[[str,object],None]) -> None:
+    factory=cast(Any,family)
+    defined=factory("Defined",{"VALUE":"ab" if family is StrEnum else 1})
+    with pytest.raises(TypeError,match="cannot extend"):
+        new_class("Forbidden",(defined,))
+    record_property("verification_boundary","python-class-construction-only")
 
 
 def test_long_transparent_chain_does_not_consume_output_depth_or_native_stack() -> None:

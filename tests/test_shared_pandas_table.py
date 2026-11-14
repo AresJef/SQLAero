@@ -174,3 +174,81 @@ def test_supported_pandas_storage_never_repairs_surrogates_or_admits_unknown_pay
     source=pd.array(["a\ud800"],dtype="string[python]") if kind=="string" else pd.arrays.NumpyExtensionArray(np.array([object()],dtype=object))
     for convert in (_sqlaero._escape_projection,json_dumps):
         with pytest.raises(UnicodeEncodeError if kind=="string" else TypeError):convert(source)
+
+
+@pytest.mark.parametrize("value",[pd.NA,pd.NaT])
+def test_actual_pandas_missing_scalars_stay_missing_in_strict_mode_but_are_not_keys(value: object) -> None:
+    assert json_dumps(value,allow_nan=False)==b"null"
+    assert _sqlaero._escape_projection(value)=="NULL"
+    with pytest.raises(TypeError):json_dumps({value:7})
+    assert _sqlaero._escape_projection({value:7})==("7",)
+
+
+@pytest.mark.parametrize(("value","sql","document"),[
+    (pd.to_timedelta([1,2],unit="s"),("'00:00:01'","'00:00:02'"),b'["PT1S","PT2S"]'),
+    (pd.to_timedelta([900,None],unit="ns"),("'00:00:00'","NULL"),b'["PT0.0000009S",null]'),
+    (pd.to_timedelta([],unit="s"),(),b"[]"),
+])
+def test_timedelta_index_table_values_share_both_target_policies(value: object,sql: object,document: bytes) -> None:
+    assert _sqlaero._escape_projection(value)==sql
+    assert json_dumps(value)==document
+
+
+@pytest.mark.parametrize("kind",["datetime","timedelta","categorical"])
+def test_remaining_actual_index_family_subclasses_preserve_base_values(kind: str) -> None:
+    if kind=="datetime":
+        value=pd.date_range("2026-11-12",periods=2)
+        sql: object=("'2026-11-12 00:00:00'","'2026-11-13 00:00:00'")
+        document=b'["2026-11-12T00:00:00","2026-11-13T00:00:00"]'
+    elif kind=="timedelta":
+        value=pd.to_timedelta([1,2],unit="s")
+        sql=("'00:00:01'","'00:00:02'")
+        document=b'["PT1S","PT2S"]'
+    else:
+        value=pd.CategoricalIndex(["ab","cd","ab"])
+        sql=("'ab'","'cd'","'ab'")
+        document=b'["ab","cd","ab"]'
+    base=cast(type[Any],type(value))
+    child=type("StoredIndex",(base,),{"__slots__":()})
+    value.__class__=child
+    def forbidden(self: object,name: str) -> Any:
+        raise AssertionError("replacement Index attribute must not execute: "+name)
+    child.__getattribute__=forbidden
+    assert _sqlaero._escape_projection(value)==sql
+    assert json_dumps(value)==document
+
+
+def test_each_actual_dst_offset_is_used_without_changing_the_original_epoch() -> None:
+    source=pd.DatetimeIndex(["2026-11-01T05:30:00.123456789Z","2026-11-01T06:30:00.123456789Z"]).tz_convert("America/New_York")
+    assert _sqlaero._escape_projection(source)==("'2026-11-01 05:30:00.123456'","'2026-11-01 06:30:00.123456'")
+    assert json_dumps(source)==b'["2026-11-01T01:30:00.123456789-04:00","2026-11-01T01:30:00.123456789-05:00"]'
+
+
+@pytest.mark.parametrize("key",[("id",),1.5,None])
+def test_dataframe_output_key_admission_never_changes_positional_mysql_values(key: object) -> None:
+    value=pd.DataFrame([[7]],columns=[key])
+    with pytest.raises(TypeError):json_dumps(value)
+    assert _sqlaero._escape_projection(value)==[("7",)]
+
+
+def test_dataframe_index_metadata_and_named_record_values_have_distinct_roles() -> None:
+    from collections import namedtuple
+    record=namedtuple("NamedRecord","id name")  # pyright: ignore[reportUntypedNamedTuple]
+    records=pd.Series([record(7,"ab"),record(8,"cd")],dtype=object)
+    assert json_dumps(records)==b'[{"id":7,"name":"ab"},{"id":8,"name":"cd"}]'
+    assert _sqlaero._escape_projection(records,many=True)==[("7","\'ab\'"),("8","\'cd\'")]
+    frame=pd.DataFrame({"id":[7,8]},index=["same","same"])
+    assert json_dumps(frame)==b'[{"id":7},{"id":8}]'
+    assert _sqlaero._escape_projection(frame)==[("7",),("8",)]
+
+
+@pytest.mark.parametrize("kind",["category","category-index","numpy"])
+def test_actual_unapproved_value_or_schema_is_not_hidden_by_a_pandas_wrapper(kind: str) -> None:
+    if kind=="numpy":
+        value=pd.arrays.NumpyExtensionArray(np.array([],dtype="complex128"))
+        for convert in (_sqlaero._escape_projection,json_dumps):
+            with pytest.raises(TypeError):convert(value)
+    else:
+        value=pd.Categorical([b"ab"]) if kind=="category" else pd.CategoricalIndex([b"ab"])
+        assert _sqlaero._escape_projection(value)==("CAST(X'6162' AS BINARY)",)
+        with pytest.raises(TypeError):json_dumps(value)

@@ -4,9 +4,9 @@
 from types import FrameType
 
 
-import signal
 import pytest
 from sqlaero import _sqlaero
+from _native_signal import NativeAlarm
 
 pa = pytest.importorskip("pyarrow")
 
@@ -38,7 +38,6 @@ def test_error_payload_reconstruction_uses_the_original_operation_deadline() -> 
         _sqlaero._bind_sql("SELECT %s", value, charset="ascii", timeout_ns=5_000_000)
 
 
-@pytest.mark.skipif(not hasattr(signal, "setitimer"), reason="requires the platform's interval timer")
 def test_original_signal_is_preserved_while_reconstructing_the_error_payload() -> None:
     class InterruptedDiagnostic(Exception):
         pass
@@ -47,12 +46,11 @@ def test_original_signal_is_preserved_while_reconstructing_the_error_payload() -
     value = pa.array(["🙂" + "a" * (16 * 1024 * 1024)])
     def interrupt(signum: int, frame: FrameType | None):
         raise original
-    previous = signal.signal(signal.SIGALRM, interrupt)
-    signal.setitimer(signal.ITIMER_REAL, 0.005)
+    alarm = NativeAlarm(interrupt)
     try:
+        alarm.start(0.005)
         with pytest.raises(InterruptedDiagnostic) as caught:
             _sqlaero._bind_sql("SELECT %s", value, charset="ascii")
         assert caught.value is original
     finally:
-        signal.setitimer(signal.ITIMER_REAL, 0)
-        signal.signal(signal.SIGALRM, previous)
+        alarm.close()

@@ -122,6 +122,17 @@ FEATURE_PROVIDER_NA = {
           for source in ('arrow-null', 'arrow-list-containing-null')
           for label in ('84', '97') for prepared in (False, True)
           for kind in ('Cursor', 'DictCursor', 'SSCursor', 'SSDictCursor')),
+        ('tests.test_shared_pandas_category', 'test_arrow_labels_revisit_previous_chunks_without_python_value_conversion'),
+        ('tests.test_shared_pandas_multi', 'test_native_arrow_labels_can_revisit_chunks_in_a_multiindex'),
+        *(('tests.test_shared_pandas_table',
+           f'test_every_approved_array_family_real_subclass_keeps_actual_storage[{kind}]')
+          for kind in ('arrow-string', 'arrow')),
+        *(('tests.test_shared_pandas_table',
+           f'test_every_approved_array_family_distinguishes_empty_from_actual_missing_positions[{missing}-{kind}]')
+          for kind in ('arrow-string', 'arrow') for missing in ('empty', 'all-null')),
+        *(('tests.test_shared_pandas_table',
+           f'test_pandas_arrow_storage_preserves_actual_target_value_and_shape[{kind}]')
+          for kind in ('decimal', 'zero', 'int', 'string-chunks', 'binary', 'struct')),
     }),
     'polars': frozenset({
         ('tests.test_feature_expansion_a', 'test_native_rows_consume_provider_columns_directly[polars]'),
@@ -141,6 +152,23 @@ FEATURE_PROVIDER_NA = {
           for label in ('84', '97') for prepared in (False, True)
           for kind in ('Cursor', 'DictCursor', 'SSCursor', 'SSDictCursor')),
     }),
+}
+
+# Collection has no parametrized node when its actual optional provider is
+# absent. Keep exact module identities; this is not a wildcard test exemption.
+PROVIDER_COLLECTION_NA = {
+    'pyarrow': frozenset({
+        'tests.test_arrow_input',
+        'tests.test_shared_arrow_input',
+        'tests.test_shared_arrow_compound',
+        'tests.test_shared_arrow_names',
+        'tests.test_shared_arrow_native_control',
+        'tests.test_shared_arrow_temporal',
+        'tests.test_shared_pandas_declared_dtype',
+        'tests.test_shared_pandas_compound_rows',
+        'tests.test_shared_provider_diagnostics',
+    }),
+    'polars': frozenset({'tests.test_polars_input', 'tests.test_shared_polars_input'}),
 }
 
 
@@ -487,8 +515,8 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
                         and skipped.get('message') == 'Parallel performance observations require '
                         'POSIX resource snapshots and are measured on macOS')
             module_skip = (identity[0] == '' and skipped.get('message') == 'collection skipped'
-                           and ((identity[1] == 'tests.test_polars_input' and 'polars' in unavailable)
-                                or (identity[1] == 'tests.test_arrow_input' and 'pyarrow' in unavailable)))
+                           and any(provider in unavailable and identity[1] in modules
+                                   for provider, modules in PROVIDER_COLLECTION_NA.items()))
             arrow_case = ('pyarrow' in unavailable
                           and identity[0] in ('tests.test_numpy_input', 'tests.test_pandas_input', 'tests.test_extended_input_mysql')
                           and skipped.get('message', '').startswith("could not import 'pyarrow':"))
@@ -526,7 +554,7 @@ def test_totals(path: Path, target: str | None = None, providers: Path | None = 
                 } and skipped.get('message') == 'CPython does not expose socket.AF_UNIX')))
             feature_provider = any(
                 provider in unavailable and identity in cases
-                and skipped.get('message', '').startswith(f"could not import '{provider}':")
+                and skipped.get('message') == f"could not import '{provider}': No module named '{provider}'"
                 for provider, cases in FEATURE_PROVIDER_NA.items()
             )
             baseline_skips += int(unix_socket or parallel)

@@ -2,6 +2,8 @@
 
 # pyright: reportPrivateUsage=false
 from typing import Any
+from collections.abc import Callable
+from datetime import date
 
 
 from decimal import Decimal
@@ -12,6 +14,62 @@ import pytest
 from sqlaero import _sqlaero, json_dumps
 
 pl = pytest.importorskip("polars")
+
+
+@pytest.mark.parametrize(("source","sql","document"),[
+    (pl.Series("id",[7,8]),("7","8"),b"[7,8]"),
+    (pl.Series("different name",[7,8]),("7","8"),b"[7,8]"),
+    (pl.Series("value",[2.5,None]),("2.5e0","NULL"),b"[2.5,null]"),
+    (pl.Series("value",[date(2026,11,12)],dtype=pl.Date),("'2026-11-12'",),b'["2026-11-12"]'),
+    (pl.Series("value",[29350123456789],dtype=pl.Time),("'08:09:10.123456'",),b'["08:09:10.123456789"]'),
+    (pl.Series("value",[900],dtype=pl.Duration("ns")),("'00:00:00'",),b'["PT0.0000009S"]'),
+    (pl.Series("value",[Decimal("1.20")],dtype=pl.Decimal(10,2)),("1.20",),b'["1.20"]'),
+    (pl.Series("value",[Decimal("0.00")],dtype=pl.Decimal(10,2)),("0.00",),b'["0.00"]'),
+    (pl.Series("value",["ab","cd"],dtype=pl.Categorical),("'ab'","'cd'"),b'["ab","cd"]'),
+    (pl.Series("value",["ab","cd"],dtype=pl.Enum(["ab","cd"])),("'ab'","'cd'"),b'["ab","cd"]'),
+    (pl.Series("value",[[7,8],None],dtype=pl.List(pl.Int64)),("(7,8)","NULL"),b"[[7,8],null]"),
+    (pl.Series("value",[[7,8],None],dtype=pl.Array(pl.Int64,2)),("(7,8)","NULL"),b"[[7,8],null]"),
+    (pl.Series("value",[{"id":7,"name":"ab"}]),("(7,'ab')",),b'[{"id":7,"name":"ab"}]'),
+    (pl.Series("value",[[7,8],{"id":9}],dtype=pl.Object),("(7,8)","(9)"),b'[[7,8],{"id":9}]'),
+    (pl.Series("value",[(7,"ab"),(8,"cd")],dtype=pl.Object),("(7,'ab')","(8,'cd')"),b'[[7,"ab"],[8,"cd"]]'),
+])
+def test_polars_table_literal_pairs_preserve_the_same_target_value(source: object,sql: object,document: bytes) -> None:
+    assert _sqlaero._escape_projection(source)==sql
+    assert json_dumps(source)==document
+
+
+def test_polars_aware_nanoseconds_keep_the_original_epoch_for_mysql() -> None:
+    import calendar
+    seconds=calendar.timegm((2026,11,12,0,9,10))
+    source=pl.Series("value",[seconds*1_000_000_000+123456789],dtype=pl.Datetime("ns","Asia/Shanghai"))
+    assert _sqlaero._escape_projection(source)==("'2026-11-12 00:09:10.123456'",)
+    assert json_dumps(source)==b'["2026-11-12T08:09:10.123456789+08:00"]'
+
+
+@pytest.mark.parametrize("value",[float("nan"),float("inf"),float("-inf")])
+def test_polars_nonfinite_is_not_a_true_null_in_strict_mode(value: float) -> None:
+    source=pl.Series("value",[value,None],dtype=pl.Float64)
+    assert _sqlaero._escape_projection(source)==("NULL","NULL")
+    assert json_dumps(source)==b"[null,null]"
+    with pytest.raises(ValueError,match="nonfinite"):json_dumps(source,allow_nan=False)
+    assert json_dumps(source[1:],allow_nan=False)==b"[null]"
+
+
+def test_polars_table_has_two_dimensional_rows_and_selecting_a_column_returns_values() -> None:
+    source=pl.DataFrame({"id":[7,8],"name":["ab","cd"]})
+    assert _sqlaero._escape_projection(source)==[("7","'ab'"),("8","'cd'")]
+    assert json_dumps(source)==b'[{"id":7,"name":"ab"},{"id":8,"name":"cd"}]'
+    assert _sqlaero._escape_projection(source["id"])==("7","8")
+    assert json_dumps(source["id"])==b"[7,8]"
+    empty=pl.Series([],dtype=pl.Int64)
+    assert _sqlaero._escape_projection(empty)==()
+    assert json_dumps(empty)==b"[]"
+
+
+def test_polars_duplicate_columns_fail_at_source_construction(record_property: Callable[[str,object],None]) -> None:
+    with pytest.raises(pl.exceptions.DuplicateError):
+        pl.DataFrame([pl.Series("id",[7]),pl.Series("id",[8])])
+    record_property("verification_boundary","provider-construction-only")
 
 
 @pytest.mark.parametrize("dtype,values,expected", [

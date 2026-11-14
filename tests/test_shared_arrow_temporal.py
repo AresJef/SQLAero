@@ -113,8 +113,8 @@ def test_native_decimal_scale_is_a_fact_not_sql_or_json_policy(factory: Callable
     assert sql[1] == "NULL"
 
 
-def test_decimal256_exact_66_digit_integer_is_json_text_but_not_mysql_numeric() -> None:
-    value = "1" + "0" * 65
+@pytest.mark.parametrize("value",["1"+"0"*65,"1"*66],ids=["power-of-ten","table-095-05"])
+def test_decimal256_exact_66_digit_integer_is_json_text_but_not_mysql_numeric(value: str) -> None:
     array = pa.array([Decimal(value)], type=pa.decimal256(76, 0))
     assert json_dumps(array) == ('["' + value + '"]').encode()
     with pytest.raises(_sqlaero.DataError, match="65"):

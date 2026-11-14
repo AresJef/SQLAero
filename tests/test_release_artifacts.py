@@ -837,6 +837,82 @@ def test_out_source_cases_can_skip_only_for_the_exact_known_provider_gap(
             release_artifacts.test_totals(report, target, capabilities)
 
 
+@pytest.mark.parametrize(('provider', 'module'), [
+    ('pyarrow', 'tests.test_arrow_input'),
+    ('pyarrow', 'tests.test_shared_arrow_input'),
+    ('pyarrow', 'tests.test_shared_arrow_compound'),
+    ('pyarrow', 'tests.test_shared_arrow_names'),
+    ('pyarrow', 'tests.test_shared_arrow_native_control'),
+    ('pyarrow', 'tests.test_shared_arrow_temporal'),
+    ('pyarrow', 'tests.test_shared_pandas_declared_dtype'),
+    ('pyarrow', 'tests.test_shared_pandas_compound_rows'),
+    ('pyarrow', 'tests.test_shared_provider_diagnostics'),
+    ('polars', 'tests.test_polars_input'),
+    ('polars', 'tests.test_shared_polars_input'),
+])
+@pytest.mark.parametrize('declared', [False, True])
+def test_shared_provider_collection_na_needs_its_actual_platform_and_abi(
+    tmp_path: Path, provider: str, module: str, declared: bool,
+) -> None:
+    target = 'windows-arm64' if provider == 'pyarrow' else 'macos-arm64'
+    gap = ('NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64' if provider == 'pyarrow'
+           else 'NO_FIXED_POLARS_RUNTIME_FREE_THREADED_ABI')
+    report, capabilities = feature_report(tmp_path, target, provider == 'polars',
+        [('', module, 'collection skipped')], {provider: gap} if declared else {})
+    if declared:
+        baseline = len(PARALLEL_NAMES) if target.startswith('windows-') else 1
+        assert release_artifacts.test_totals(report, target, capabilities)['skipped'] == baseline + 1
+    else:
+        with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+            release_artifacts.test_totals(report, target, capabilities)
+
+
+@pytest.mark.parametrize(('module', 'name'), [
+    ('tests.test_shared_pandas_category', 'test_arrow_labels_revisit_previous_chunks_without_python_value_conversion'),
+    ('tests.test_shared_pandas_multi', 'test_native_arrow_labels_can_revisit_chunks_in_a_multiindex'),
+    *(('tests.test_shared_pandas_table',
+       f'test_every_approved_array_family_real_subclass_keeps_actual_storage[{kind}]')
+      for kind in ('arrow-string', 'arrow')),
+    *(('tests.test_shared_pandas_table',
+       f'test_every_approved_array_family_distinguishes_empty_from_actual_missing_positions[{missing}-{kind}]')
+      for kind in ('arrow-string', 'arrow') for missing in ('empty', 'all-null')),
+    *(('tests.test_shared_pandas_table',
+       f'test_pandas_arrow_storage_preserves_actual_target_value_and_shape[{kind}]')
+      for kind in ('decimal', 'zero', 'int', 'string-chunks', 'binary', 'struct')),
+])
+@pytest.mark.parametrize('declared', [False, True])
+def test_shared_arrow_case_na_needs_the_fixed_provider_gap(
+    tmp_path: Path, module: str, name: str, declared: bool,
+) -> None:
+    reason = "could not import 'pyarrow': No module named 'pyarrow'"
+    report, capabilities = feature_report(tmp_path, 'windows-arm64', False,
+        [(module, name, reason)],
+        {'pyarrow': 'NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64'} if declared else {})
+    if declared:
+        assert release_artifacts.test_totals(report, 'windows-arm64', capabilities)['skipped'] == len(PARALLEL_NAMES) + 1
+    else:
+        with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+            release_artifacts.test_totals(report, 'windows-arm64', capabilities)
+
+
+@pytest.mark.parametrize(('module', 'name', 'reason'), [
+    ('', 'tests.test_shared_json_input', 'collection skipped'),
+    ('tests.test_shared_pandas_table',
+     'test_every_approved_array_family_real_subclass_keeps_actual_storage[numpy]',
+     "could not import 'pyarrow': No module named 'pyarrow'"),
+    ('tests.test_shared_pandas_table',
+     'test_every_approved_array_family_real_subclass_keeps_actual_storage[arrow]',
+     "could not import 'pyarrow': Unexpected ABI loading error"),
+])
+def test_shared_provider_na_cannot_hide_unrelated_or_broken_installed_cases(
+    tmp_path: Path, module: str, name: str, reason: str,
+) -> None:
+    report, capabilities = feature_report(tmp_path, 'windows-arm64', False,
+        [(module, name, reason)], {'pyarrow': 'NO_FIXED_PROVIDER_WHEEL_WINDOWS_ARM64'})
+    with pytest.raises(AssertionError, match='Unexpected skipped requirement'):
+        release_artifacts.test_totals(report, 'windows-arm64', capabilities)
+
+
 @pytest.mark.parametrize('defect', ['platform', 'reason', 'node', 'duplicate'])
 def test_nested_arrow_out_skip_rejects_invalid_evidence(tmp_path: Path, defect: str) -> None:
     target = 'windows-x86_64' if defect == 'platform' else 'windows-arm64'

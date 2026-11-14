@@ -171,6 +171,36 @@ def test_wrapper_is_lazy_readonly_and_reads_current_payload_each_time() -> None:
         json_dumps([wrapped])
 
 
+@pytest.mark.parametrize("many",[False,True])
+@pytest.mark.parametrize("itemize",[False,True])
+@pytest.mark.parametrize(("payload","literal"),[(None,"'null'"),([7,8],"'[7,8]'"),(float("nan"),"'null'")])
+def test_json_wrapper_is_one_text_parameter_for_all_root_flags(payload: object,literal: str,many: bool,itemize: bool) -> None:
+    wrapped=JSON(payload)
+    assert _sqlaero._escape_projection(wrapped,many=many,itemize=itemize)==literal
+    with pytest.raises(TypeError):json_dumps(wrapped)
+
+
+def test_strict_wrapper_and_nested_wrapper_fail_only_when_serialized() -> None:
+    strict=JSON(float("nan"),allow_nan=False)
+    assert json_dumps(strict.data)==b"null"
+    with pytest.raises(ValueError):json_dumps(strict.data,allow_nan=strict.allow_nan)
+    with pytest.raises(ValueError):_sqlaero._escape_projection(strict)
+    nested=JSON([JSON(7)])
+    with pytest.raises(TypeError):_sqlaero._escape_projection(nested)
+
+
+def test_json_encoding_and_embedded_temporal_text_do_not_inherit_mysql_value_policy() -> None:
+    wrapped=JSON({"value":"🙂"})
+    assert json_dumps(wrapped.data)=='{"value":"🙂"}'.encode()
+    with pytest.raises(UnicodeEncodeError):
+        _sqlaero._bind_sql("SELECT %s",(wrapped,),charset="latin1")
+    np=pytest.importorskip("numpy")
+    timestamp=JSON(np.datetime64("2026-11-12T08:09:10.123456789","ns"))
+    assert json_dumps(timestamp.data)==b'"2026-11-12T08:09:10.123456789"'
+    requests=_sqlaero._bind_sql("SELECT %s",(timestamp,))
+    assert len(requests)==1 and b"2026-11-12T08:09:10.123456789" in requests[0]
+
+
 def test_actual_subclasses_read_base_values_without_replacement_protocols() -> None:
     class Integer(int):
         def __int__(self) -> int:
