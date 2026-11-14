@@ -1,5 +1,6 @@
 //! Native COM_STMT request encoding and prepare-response validation.
 
+use crate::bind::temporal::MysqlTemporal;
 use crate::bind::temporal::Temporal;
 use crate::bind::value::{ValueError, ValueRef, ValueSink};
 use crate::bind::{Context, scalar, temporal, writer};
@@ -194,6 +195,7 @@ impl Parameters {
     }
 
     fn temporal(&mut self, value: Temporal) -> Result<u8, ValueError> {
+        let value = temporal::mysql_precision(value)?;
         match value {
             Temporal::Date { year, month, day } if normal_date(year, month, day) => {
                 self.append(&[4, year as u8, (year >> 8) as u8, month, day])?;
@@ -226,22 +228,16 @@ impl Parameters {
                 }
                 return Ok(12);
             }
-            Temporal::Clock { second, nanosecond }
-                if second < 86_400
-                    && nanosecond.is_multiple_of(1000)
-                    && nanosecond < 1_000_000_000 =>
-            {
-                self.native_duration(false, u128::from(second), nanosecond / 1000)?;
-                return Ok(11);
-            }
-            Temporal::Duration {
+            Temporal::Clock {
                 negative,
                 second,
                 nanosecond,
-            } if second <= 3_020_399
-                && nanosecond.is_multiple_of(1000)
-                && nanosecond < 1_000_000_000 =>
-            {
+            }
+            | Temporal::Duration {
+                negative,
+                second,
+                nanosecond,
+            } if second <= 3_020_399 && nanosecond < 1_000_000_000 => {
                 self.native_duration(negative, second, nanosecond / 1000)?;
                 return Ok(11);
             }
@@ -354,9 +350,10 @@ impl Parameters {
                 })?
             }
             ValueRef::Time { clock, .. } => self.temporal(Temporal::Clock {
-                second: u32::from(clock.hour) * 3600
-                    + u32::from(clock.minute) * 60
-                    + u32::from(clock.second),
+                negative: false,
+                second: u128::from(clock.hour) * 3600
+                    + u128::from(clock.minute) * 60
+                    + u128::from(clock.second),
                 nanosecond: clock.microsecond * 1000,
             })?,
             ValueRef::Duration(micros) => {
@@ -756,7 +753,7 @@ mod tests {
     }
 
     #[test]
-    fn boundary_temporal_values_stay_exact_character_parameters() {
+    fn temporal_target_truncation_precedes_native_admission_and_wide_fallback() {
         let mut writer = Parameters::new(1, 3, 4096).unwrap();
         writer
             .write(
@@ -789,10 +786,10 @@ mod tests {
             )
             .unwrap();
         let bytes = writer.finish().unwrap();
-        assert_eq!(&bytes[12..18], &[253, 0, 253, 0, 253, 0]);
+        assert_eq!(&bytes[12..18], &[253, 0, 12, 0, 253, 0]);
         assert_eq!(
             &bytes[18..],
-            b"\x0b10000-01-01\x1d1970-01-01 00:00:00.000000001\x132026-13-32 24:60:61"
+            b"\x0b10000-01-01\x07\xb2\x07\x01\x01\x00\x00\x00\x132026-13-32 24:60:61"
         );
     }
 }

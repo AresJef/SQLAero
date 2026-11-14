@@ -2,7 +2,13 @@
 
 use super::Error;
 use sqlaero_transcode::number::{Integer, IntegerBuffer};
-use sqlaero_transcode::temporal::{Clock, Date};
+use sqlaero_transcode::temporal::{Clock, Date, TimeUnit, Value};
+
+pub(super) fn source_error(error: sqlaero_transcode::temporal::Error) -> Error {
+    match error {
+        sqlaero_transcode::temporal::Error::Range(message) => Error::Range(message),
+    }
+}
 
 /// Every admitted fixed-width date, offset and i128 duration fits this stack
 /// owner. It contains only ASCII; a checked view avoids an unsafe UTF-8 cast.
@@ -43,14 +49,18 @@ impl Text {
     }
 
     fn date(&mut self, date: Date) -> Result<(), Error> {
-        if date.year < 0 {
+        self.wide_date(i128::from(date.year), date.month, date.day)
+    }
+
+    fn wide_date(&mut self, year: i128, month: u8, day: u8) -> Result<(), Error> {
+        if year < 0 {
             self.put(b"-")?;
         }
-        self.number(date.year.unsigned_abs(), 4)?;
+        self.number(year.unsigned_abs(), 4)?;
         self.put(b"-")?;
-        self.number(date.month, 2)?;
+        self.number(month, 2)?;
         self.put(b"-")?;
-        self.number(date.day, 2)
+        self.number(day, 2)
     }
 
     fn clock(&mut self, clock: Clock) -> Result<(), Error> {
@@ -114,33 +124,111 @@ impl Text {
     }
 
     pub(super) fn duration(micros: i128) -> Result<Self, Error> {
-        let mut text = Self::new();
-        if micros < 0 {
-            text.put(b"-")?;
-        }
-        text.put(b"P")?;
         let absolute = micros.unsigned_abs();
-        let days = absolute / 86_400_000_000;
-        let seconds = absolute / 1_000_000 % 86_400;
-        let micros = absolute % 1_000_000;
-        if days != 0 || absolute == 0 {
-            text.number(days, 0)?;
-            text.put(b"D")?;
+        Self::native(Value::Duration {
+            negative: micros < 0,
+            second: absolute / 1_000_000,
+            nanosecond: (absolute % 1_000_000) as u32 * 1000,
+        })
+    }
+
+    fn fraction(&mut self, nanosecond: u32, trim: bool) -> Result<(), Error> {
+        if nanosecond >= 1_000_000_000 {
+            return Err(Error::Range("fraction must be smaller than one second"));
         }
-        if seconds != 0 || micros != 0 {
-            text.put(b"T")?;
-            text.number(seconds, 0)?;
-            if micros != 0 {
-                text.put(b".")?;
-                let mut digits = micros;
-                let mut width = 6;
-                while digits.is_multiple_of(10) {
-                    digits /= 10;
-                    width -= 1;
-                }
-                text.number(digits, width)?;
+        if nanosecond == 0 {
+            return Ok(());
+        }
+        let (mut digits, mut width) = if nanosecond.is_multiple_of(1000) {
+            (nanosecond / 1000, 6)
+        } else {
+            (nanosecond, 9)
+        };
+        if trim {
+            while digits.is_multiple_of(10) {
+                digits /= 10;
+                width -= 1;
             }
-            text.put(b"S")?;
+        }
+        self.put(b".")?;
+        self.number(digits, width)
+    }
+
+    fn clock_seconds(
+        &mut self,
+        negative: bool,
+        second: u128,
+        nanosecond: u32,
+    ) -> Result<(), Error> {
+        if negative {
+            self.put(b"-")?;
+        }
+        self.number(second / 3600, 2)?;
+        self.put(b":")?;
+        self.number(second / 60 % 60, 2)?;
+        self.put(b":")?;
+        self.number(second % 60, 2)?;
+        self.fraction(nanosecond, false)
+    }
+
+    pub(super) fn native(value: Value) -> Result<Self, Error> {
+        let mut text = Self::new();
+        match value {
+            Value::Date { year, month, day } => text.wide_date(year, month, day)?,
+            Value::Datetime {
+                year,
+                month,
+                day,
+                second,
+                nanosecond,
+            } => {
+                text.wide_date(year, month, day)?;
+                text.put(b"T")?;
+                text.clock_seconds(false, u128::from(second), nanosecond)?;
+            }
+            Value::Clock {
+                negative,
+                second,
+                nanosecond,
+            } => text.clock_seconds(negative, second, nanosecond)?,
+            Value::Period {
+                negative,
+                count,
+                unit,
+            } => {
+                if negative {
+                    text.put(b"-")?;
+                }
+                text.put(b"P")?;
+                text.number(count, 0)?;
+                text.put(match unit {
+                    TimeUnit::Year => b"Y",
+                    TimeUnit::Month => b"M",
+                    _ => return Err(Error::Range("calendar period unit must be year or month")),
+                })?;
+            }
+            Value::Duration {
+                negative,
+                second,
+                nanosecond,
+            } => {
+                if negative {
+                    text.put(b"-")?;
+                }
+                text.put(b"P")?;
+                let days = second / 86_400;
+                let seconds = second % 86_400;
+                if days != 0 || (second == 0 && nanosecond == 0) {
+                    text.number(days, 0)?;
+                    text.put(b"D")?;
+                }
+                if seconds != 0 || nanosecond != 0 {
+                    text.put(b"T")?;
+                    text.number(seconds, 0)?;
+                    text.fraction(nanosecond, true)?;
+                    text.put(b"S")?;
+                }
+            }
         }
         Ok(text)
     }

@@ -25,6 +25,9 @@ impl Default for Options {
 /// A real JSON target failure, before any output is published.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Recognized native temporal facts exceed the accurate admitted domain.
+    #[error("{0}")]
+    Range(&'static str),
     /// A source family has no permitted JSON mapping.
     #[error("JSON serialization does not support {0}")]
     Unsupported(&'static str),
@@ -410,6 +413,32 @@ impl Consumer for Writer {
                 } => return writer.temporal(temporal::Text::time(clock, offset_micros)?),
                 ScalarRef::Duration(micros) => {
                     return writer.temporal(temporal::Text::duration(micros)?);
+                }
+                ScalarRef::Ticks {
+                    value,
+                    unit,
+                    multiplier,
+                    kind,
+                } => {
+                    let value =
+                        sqlaero_transcode::temporal::decompose(value, unit, multiplier, kind)
+                            .map_err(temporal::source_error)?;
+                    return writer.temporal(temporal::Text::native(value)?);
+                }
+                ScalarRef::ClockTicks {
+                    value,
+                    unit,
+                    multiplier,
+                } => {
+                    let value =
+                        sqlaero_transcode::temporal::decompose_clock(value, unit, multiplier)
+                            .map_err(temporal::source_error)?;
+                    return writer.temporal(temporal::Text::native(value)?);
+                }
+                ScalarRef::DateDays(value) => {
+                    let value = sqlaero_transcode::temporal::decompose_date(value)
+                        .map_err(temporal::source_error)?;
+                    return writer.temporal(temporal::Text::native(value)?);
                 }
                 _ => (),
             }

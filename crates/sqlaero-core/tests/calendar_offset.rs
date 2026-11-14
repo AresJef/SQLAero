@@ -1,6 +1,6 @@
 //! Independent calendar and target-policy boundaries for explicit offsets.
 
-use sqlaero_core::bind::temporal::components_utc;
+use sqlaero_core::bind::temporal::{MysqlTemporal, components_utc};
 use sqlaero_core::bind::{
     Context,
     value::{TextSink, ValueError, ValueRef, ValueSink},

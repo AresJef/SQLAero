@@ -64,62 +64,6 @@ fn range() -> ScalarError {
     ScalarError::Range("temporal ticks or unit multiplier exceed the native exact range")
 }
 
-fn scaled(ticks: i64, multiplier: u64) -> Result<i128, ScalarError> {
-    if multiplier == 0 {
-        return Err(ScalarError::Range(
-            "temporal unit multiplier must be positive",
-        ));
-    }
-    i128::from(ticks)
-        .checked_mul(i128::from(multiplier))
-        .ok_or_else(range)
-}
-
-/// Split an exact fixed-unit value into mathematical floor seconds and fraction.
-fn seconds(value: i128, unit: TimeUnit) -> Result<(i128, u32, usize), ScalarError> {
-    let factor = match unit {
-        TimeUnit::Week => 604_800,
-        TimeUnit::Day => 86_400,
-        TimeUnit::Hour => 3_600,
-        TimeUnit::Minute => 60,
-        TimeUnit::Second => 1,
-        TimeUnit::Millisecond => {
-            return Ok((value.div_euclid(1_000), value.rem_euclid(1_000) as u32, 3));
-        }
-        TimeUnit::Microsecond => {
-            return Ok((
-                value.div_euclid(1_000_000),
-                value.rem_euclid(1_000_000) as u32,
-                6,
-            ));
-        }
-        TimeUnit::Nanosecond => {
-            return Ok((
-                value.div_euclid(1_000_000_000),
-                value.rem_euclid(1_000_000_000) as u32,
-                9,
-            ));
-        }
-        _ => return Err(ScalarError::Range("finite temporal unit is not supported")),
-    };
-    Ok((value.checked_mul(factor).ok_or_else(range)?, 0, 0))
-}
-
-fn civil(days: i128) -> Result<(i128, u8, u8), ScalarError> {
-    // Gregorian eras use Euclidean division, including dates before year zero.
-    let z = days.checked_add(719_468).ok_or_else(range)?;
-    let era = z.div_euclid(146_097);
-    let day = z.rem_euclid(146_097);
-    let year_in_era = (day - day / 1_460 + day / 36_524 - day / 146_096) / 365;
-    let mut year = year_in_era + era * 400;
-    let day_in_year = day - (365 * year_in_era + year_in_era / 4 - year_in_era / 100);
-    let month_from_march = (5 * day_in_year + 2) / 153;
-    let date = day_in_year - (153 * month_from_march + 2) / 5 + 1;
-    let month = month_from_march + if month_from_march < 10 { 3 } else { -9 };
-    year += i128::from(month <= 2);
-    Ok((year, month as u8, date as u8))
-}
-
 fn date(stamp: &mut Stamp, year: i128, month: u8, day: u8) -> Result<(), ScalarError> {
     if year < 0 {
         stamp.append(b"-")?;
@@ -140,228 +84,194 @@ fn clock(stamp: &mut Stamp, second: u128) -> Result<(), ScalarError> {
     stamp.padded((second % 60) as u8, 2)
 }
 
-fn fraction(stamp: &mut Stamp, mut value: u32, mut precision: usize) -> Result<(), ScalarError> {
+fn fraction(stamp: &mut Stamp, value: u32, precision: usize) -> Result<(), ScalarError> {
     if value == 0 {
         return Ok(());
-    }
-    while precision != 0 && value.is_multiple_of(10) {
-        value /= 10;
-        precision -= 1;
     }
     stamp.append(b".")?;
     stamp.padded(value, precision)
 }
 
-/// Exact native temporal components shared by text and prepared writers.
-/// Fractions are always nanoseconds; no source precision is discarded.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Temporal {
-    /// A Gregorian date whose year is not narrowed to the MySQL wire range.
-    Date {
-        /// Signed Gregorian year.
-        year: i128,
-        /// Calendar month.
-        month: u8,
-        /// Day of month.
-        day: u8,
-    },
-    /// An epoch-normalized Gregorian date and clock.
-    Datetime {
-        /// Signed Gregorian year.
-        year: i128,
-        /// Calendar month.
-        month: u8,
-        /// Day of month.
-        day: u8,
-        /// Second within the nonnegative day.
-        second: u32,
-        /// Fractional second, less than one billion.
-        nanosecond: u32,
-    },
-    /// A nonnegative clock within one day.
-    Clock {
-        /// Second within the nonnegative day.
-        second: u32,
-        /// Fractional second, less than one billion.
-        nanosecond: u32,
-    },
-    /// An elapsed duration without a MySQL TIME-range restriction.
-    Duration {
-        /// Original sign, also for negative subsecond durations.
-        negative: bool,
-        /// Absolute whole elapsed seconds.
-        second: u128,
-        /// Absolute fractional second, less than one billion.
-        nanosecond: u32,
-    },
+pub use sqlaero_transcode::temporal::Value as Temporal;
+
+/// The MySQL target's exact rendering operations on neutral temporal facts.
+pub trait MysqlTemporal {
+    /// Write a complete quoted SQL literal after microsecond truncation.
+    /// # Errors
+    /// Returns checked conversion, formatting or capacity failure.
+    fn write_literal(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError>;
+    /// Write a character parameter after the same microsecond policy.
+    /// # Errors
+    /// Returns checked conversion, formatting or capacity failure.
+    fn write_text(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError>;
+}
+impl MysqlTemporal for Temporal {
+    fn write_literal(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError> {
+        stamp(self, true)?.finish(output, limit)
+    }
+    fn write_text(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError> {
+        stamp(self, false)?.finish(output, limit)
+    }
 }
 
-impl Temporal {
-    /// Write one already normalized native value as a SQL literal.
-    /// # Errors
-    /// Returns invalid formatting or the actual destination capacity failure.
-    pub fn write_literal(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError> {
-        self.stamp(true)?.finish(output, limit)
-    }
-
-    fn stamp(self, quoted: bool) -> Result<Stamp, ScalarError> {
-        let mut stamp = Stamp::new();
-        if quoted {
-            stamp.append(b"'")?;
+/// Apply only MySQL's approved microsecond and calendar-average policies.
+/// # Errors
+/// Rejects invalid native fractions and checked calendar-period overflow.
+pub fn mysql_precision(value: Temporal) -> Result<Temporal, ScalarError> {
+    Ok(match value {
+        Temporal::Period {
+            negative,
+            count,
+            unit,
+        } => {
+            let factor = match unit {
+                TimeUnit::Year => 31_556_952,
+                TimeUnit::Month => 2_629_746,
+                _ => return Err(range()),
+            };
+            let second = count
+                .checked_mul(factor)
+                .filter(|value| *value <= i128::MAX as u128)
+                .ok_or_else(range)?;
+            Temporal::Duration {
+                negative: negative && second != 0,
+                second,
+                nanosecond: 0,
+            }
         }
-        match self {
-            Self::Date { year, month, day } => date(&mut stamp, year, month, day)?,
-            Self::Datetime {
+        Temporal::Datetime {
+            year,
+            month,
+            day,
+            second,
+            nanosecond,
+        } => {
+            if nanosecond >= 1_000_000_000 {
+                return Err(range());
+            }
+            Temporal::Datetime {
                 year,
                 month,
                 day,
                 second,
-                nanosecond,
-            } => {
-                date(&mut stamp, year, month, day)?;
-                stamp.append(b" ")?;
-                clock(&mut stamp, u128::from(second))?;
-                fraction(&mut stamp, nanosecond, 9)?;
+                nanosecond: nanosecond / 1000 * 1000,
             }
-            Self::Clock { second, nanosecond } => {
-                clock(&mut stamp, u128::from(second))?;
-                fraction(&mut stamp, nanosecond, 9)?;
+        }
+        Temporal::Clock {
+            negative,
+            second,
+            nanosecond,
+        } => {
+            if nanosecond >= 1_000_000_000 {
+                return Err(range());
             }
-            Self::Duration {
-                negative,
+            let nanosecond = nanosecond / 1000 * 1000;
+            Temporal::Clock {
+                negative: negative && (second != 0 || nanosecond != 0),
                 second,
                 nanosecond,
-            } => {
-                if negative {
-                    stamp.append(b"-")?;
-                }
-                clock(&mut stamp, second)?;
-                fraction(&mut stamp, nanosecond, 9)?;
             }
         }
-        if quoted {
-            stamp.append(b"'")?;
+        Temporal::Duration {
+            negative,
+            second,
+            nanosecond,
+        } => {
+            if nanosecond >= 1_000_000_000 {
+                return Err(range());
+            }
+            let nanosecond = nanosecond / 1000 * 1000;
+            Temporal::Duration {
+                negative: negative && (second != 0 || nanosecond != 0),
+                second,
+                nanosecond,
+            }
         }
-        Ok(stamp)
-    }
-
-    /// Write a character parameter's temporal content, without SQL quotes.
-    ///
-    /// # Errors
-    /// Returns a formatting, allocation or destination-limit failure.
-    pub fn write_text(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError> {
-        self.stamp(false)?.finish(output, limit)
-    }
+        value => value,
+    })
 }
 
-fn nanoseconds(part: u32, precision: usize) -> u32 {
-    match precision {
-        3 => part * 1_000_000,
-        6 => part * 1_000,
-        _ => part,
+fn source_error(error: sqlaero_transcode::temporal::Error) -> ScalarError {
+    match error {
+        sqlaero_transcode::temporal::Error::Range(message) => ScalarError::Range(message),
     }
 }
-
-/// Decompose source ticks once, preserving wide calendar and exact fractions.
-/// Source-specific null sentinels and timezone policy belong to the adapter.
-///
+/// Decompose full source ticks without applying MySQL precision or spelling.
 /// # Errors
-/// Returns unsupported units or checked native arithmetic overflow.
+/// Returns unsupported metadata or checked source arithmetic overflow.
 pub fn decompose(
     ticks: i64,
     unit: TimeUnit,
     multiplier: u64,
     kind: TimeKind,
 ) -> Result<Temporal, ScalarError> {
-    let value = scaled(ticks, multiplier)?;
-    match kind {
-        TimeKind::DateTime => {
-            let (year, month, day, second, part, precision) = match unit {
-                TimeUnit::Year => (
-                    1970i128.checked_add(value).ok_or_else(range)?,
-                    1,
-                    1,
-                    0,
-                    0,
-                    0,
-                ),
-                TimeUnit::Month => {
-                    let month = (1970i128 * 12).checked_add(value).ok_or_else(range)?;
-                    (
-                        month.div_euclid(12),
-                        month.rem_euclid(12) as u8 + 1,
-                        1,
-                        0,
-                        0,
-                        0,
-                    )
-                }
-                _ => {
-                    let (seconds, part, precision) = seconds(value, unit)?;
-                    let (year, month, day) = civil(seconds.div_euclid(86_400))?;
-                    (
-                        year,
-                        month,
-                        day,
-                        seconds.rem_euclid(86_400) as u32,
-                        part,
-                        precision,
-                    )
-                }
-            };
-            Ok(Temporal::Datetime {
-                year,
-                month,
-                day,
-                second,
-                nanosecond: nanoseconds(part, precision),
-            })
-        }
-        TimeKind::Duration => {
-            let negative = value < 0;
-            let absolute = value.checked_abs().ok_or_else(range)?;
-            let (second, part, precision) = match unit {
-                TimeUnit::Year => (absolute.checked_mul(31_556_952).ok_or_else(range)?, 0, 0),
-                TimeUnit::Month => (absolute.checked_mul(2_629_746).ok_or_else(range)?, 0, 0),
-                _ => seconds(absolute, unit)?,
-            };
-            Ok(Temporal::Duration {
-                negative,
-                second: second as u128,
-                nanosecond: nanoseconds(part, precision),
-            })
-        }
-    }
+    sqlaero_transcode::temporal::decompose(ticks, unit, multiplier, kind).map_err(source_error)
 }
-
-/// Decompose a clock source while enforcing its original one-day boundary.
-///
+/// Decompose full signed clock ticks without narrowing their total hours.
 /// # Errors
-/// Returns invalid clock values, unsupported units or checked overflow.
+/// Returns unsupported metadata or checked source arithmetic overflow.
 pub fn decompose_clock(
     ticks: i64,
     unit: TimeUnit,
     multiplier: u64,
 ) -> Result<Temporal, ScalarError> {
-    let (second, part, precision) = seconds(scaled(ticks, multiplier)?, unit)?;
-    if !(0..86_400).contains(&second) {
-        return Err(ScalarError::Range(
-            "clock value must be within one nonnegative day",
-        ));
-    }
-    Ok(Temporal::Clock {
-        second: second as u32,
-        nanosecond: nanoseconds(part, precision),
-    })
+    sqlaero_transcode::temporal::decompose_clock(ticks, unit, multiplier).map_err(source_error)
+}
+/// Decompose full Gregorian epoch days without narrowing the year.
+/// # Errors
+/// Returns checked source arithmetic overflow.
+pub fn decompose_date(days: i64) -> Result<Temporal, ScalarError> {
+    sqlaero_transcode::temporal::decompose_date(days).map_err(source_error)
 }
 
-/// Decompose Unix-epoch days without narrowing the calendar year.
-///
-/// # Errors
-/// Returns checked calendar arithmetic overflow.
-pub fn decompose_date(days: i64) -> Result<Temporal, ScalarError> {
-    let (year, month, day) = civil(i128::from(days))?;
-    Ok(Temporal::Date { year, month, day })
+fn stamp(value: Temporal, quoted: bool) -> Result<Stamp, ScalarError> {
+    let value = mysql_precision(value)?;
+    let mut stamp = Stamp::new();
+    if quoted {
+        stamp.append(b"'")?;
+    }
+    match value {
+        Temporal::Date { year, month, day } => date(&mut stamp, year, month, day)?,
+        Temporal::Datetime {
+            year,
+            month,
+            day,
+            second,
+            nanosecond,
+        } => {
+            date(&mut stamp, year, month, day)?;
+            stamp.append(b" ")?;
+            clock(&mut stamp, u128::from(second))?;
+            fraction(&mut stamp, nanosecond / 1000, 6)?;
+        }
+        Temporal::Clock {
+            negative,
+            second,
+            nanosecond,
+        } => {
+            if negative {
+                stamp.append(b"-")?;
+            }
+            clock(&mut stamp, second)?;
+            fraction(&mut stamp, nanosecond / 1000, 6)?;
+        }
+        Temporal::Period { .. } => return Err(range()),
+        Temporal::Duration {
+            negative,
+            second,
+            nanosecond,
+        } => {
+            if negative {
+                stamp.append(b"-")?;
+            }
+            clock(&mut stamp, second)?;
+            fraction(&mut stamp, nanosecond / 1000, 6)?;
+        }
+    }
+    if quoted {
+        stamp.append(b"'")?;
+    }
+    Ok(stamp)
 }
 
 /// Write exact source ticks as a complete SQL temporal literal.
@@ -376,9 +286,7 @@ pub fn write(
     kind: TimeKind,
     limit: usize,
 ) -> Result<(), ScalarError> {
-    decompose(ticks, unit, multiplier, kind)?
-        .stamp(true)?
-        .finish(output, limit)
+    decompose(ticks, unit, multiplier, kind)?.write_literal(output, limit)
 }
 
 /// Write a clock source as a complete SQL temporal literal.
@@ -392,9 +300,7 @@ pub fn write_clock(
     multiplier: u64,
     limit: usize,
 ) -> Result<(), ScalarError> {
-    decompose_clock(ticks, unit, multiplier)?
-        .stamp(true)?
-        .finish(output, limit)
+    decompose_clock(ticks, unit, multiplier)?.write_literal(output, limit)
 }
 
 /// Write Unix-epoch days as a complete SQL date literal.
@@ -402,7 +308,7 @@ pub fn write_clock(
 /// # Errors
 /// Returns checked calendar overflow or destination failure.
 pub fn write_date(output: &mut Vec<u8>, days: i64, limit: usize) -> Result<(), ScalarError> {
-    decompose_date(days)?.stamp(true)?.finish(output, limit)
+    decompose_date(days)?.write_literal(output, limit)
 }
 
 /// Write six nonnegative integer calendar components without imposing a target
@@ -584,10 +490,11 @@ mod tests {
         );
         let mut output = Vec::new();
         value.write_text(&mut output, 128).unwrap();
-        assert_eq!(output, b"1969-12-31 23:59:59.999999999");
+        assert_eq!(output, b"1969-12-31 23:59:59.999999");
         assert_eq!(
             decompose_clock(123_456_789, TimeUnit::Nanosecond, 1).unwrap(),
             Temporal::Clock {
+                negative: false,
                 second: 0,
                 nanosecond: 123_456_789
             }
@@ -602,10 +509,10 @@ mod tests {
         );
         assert_eq!(
             decompose(-1, TimeUnit::Month, 1, TimeKind::Duration).unwrap(),
-            Temporal::Duration {
+            Temporal::Period {
                 negative: true,
-                second: 2_629_746,
-                nanosecond: 0
+                count: 1,
+                unit: TimeUnit::Month
             }
         );
     }
@@ -643,7 +550,7 @@ mod tests {
                 TimeUnit::Nanosecond,
                 1,
                 TimeKind::DateTime,
-                30
+                26
             )
             .is_err()
         );
@@ -672,14 +579,14 @@ mod tests {
     }
 
     #[test]
-    fn negative_epoch_fraction_uses_floor_calendar_and_keeps_nanoseconds() {
+    fn negative_epoch_fraction_uses_floor_calendar_before_target_truncation() {
         assert_eq!(
             value(-1, TimeUnit::Nanosecond, 1, TimeKind::DateTime),
-            "'1969-12-31 23:59:59.999999999'"
+            "'1969-12-31 23:59:59.999999'"
         );
         assert_eq!(
             value(-1, TimeUnit::Nanosecond, 1, TimeKind::Duration),
-            "'-00:00:00.000000001'"
+            "'00:00:00'"
         );
     }
 
@@ -715,12 +622,12 @@ mod tests {
     fn valid_minimum_ticks_are_not_a_generic_null_sentinel() {
         assert_eq!(
             value(i64::MIN, TimeUnit::Nanosecond, 1, TimeKind::Duration),
-            "'-2562047:47:16.854775808'"
+            "'-2562047:47:16.854775'"
         );
         let mut out = Vec::new();
-        assert!(write_clock(&mut out, -1, TimeUnit::Nanosecond, 1, 100).is_err());
-        assert!(write_clock(&mut out, 86_400, TimeUnit::Second, 1, 100).is_err());
-        assert!(out.is_empty());
+        write_clock(&mut out, -1, TimeUnit::Nanosecond, 1, 100).unwrap();
+        write_clock(&mut out, 86_400, TimeUnit::Second, 1, 100).unwrap();
+        assert_eq!(out, b"'00:00:00''24:00:00'");
     }
 
     #[test]

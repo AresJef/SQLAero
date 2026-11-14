@@ -77,3 +77,231 @@ pub enum TimeKind {
     /// Elapsed duration for fixed units, or a calendar period for year/month.
     Duration,
 }
+
+/// Checked failure while interpreting complete native source facts.
+#[derive(Clone, Copy, Debug, thiserror::Error)]
+pub enum Error {
+    /// Source metadata or arithmetic exceeds the exact admitted native domain.
+    #[error("{0}")]
+    Range(&'static str),
+}
+
+/// Exact logical temporal components, independent of any target format.
+/// Fractions are always nanoseconds; no source precision is discarded.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Value {
+    /// A Gregorian date whose year is not narrowed to the MySQL wire range.
+    Date {
+        /// Signed Gregorian year.
+        year: i128,
+        /// Calendar month.
+        month: u8,
+        /// Day of month.
+        day: u8,
+    },
+    /// An epoch-normalized Gregorian date and clock.
+    Datetime {
+        /// Signed Gregorian year.
+        year: i128,
+        /// Calendar month.
+        month: u8,
+        /// Day of month.
+        day: u8,
+        /// Second within the nonnegative day.
+        second: u32,
+        /// Fractional second, less than one billion.
+        nanosecond: u32,
+    },
+    /// A signed clock with an unrestricted total hour count.
+    Clock {
+        /// Original sign, including a negative subsecond value.
+        negative: bool,
+        /// Absolute whole elapsed seconds.
+        second: u128,
+        /// Fractional second, less than one billion.
+        nanosecond: u32,
+    },
+    /// An elapsed duration without a MySQL TIME-range restriction.
+    Duration {
+        /// Original sign, also for negative subsecond durations.
+        negative: bool,
+        /// Absolute whole elapsed seconds.
+        second: u128,
+        /// Absolute fractional second, less than one billion.
+        nanosecond: u32,
+    },
+    /// A calendar period, kept distinct from a fixed elapsed duration.
+    Period {
+        /// Original sign.
+        negative: bool,
+        /// Absolute number of source calendar periods.
+        count: u128,
+        /// Year or month; other units are not valid period facts.
+        unit: TimeUnit,
+    },
+}
+
+fn range() -> Error {
+    Error::Range("temporal ticks or unit multiplier exceed the native exact range")
+}
+
+fn scaled(ticks: i64, multiplier: u64) -> Result<i128, Error> {
+    if multiplier == 0 {
+        return Err(Error::Range("temporal unit multiplier must be positive"));
+    }
+    i128::from(ticks)
+        .checked_mul(i128::from(multiplier))
+        .ok_or_else(range)
+}
+
+/// Split an exact fixed-unit value into mathematical floor seconds and fraction.
+fn seconds(value: i128, unit: TimeUnit) -> Result<(i128, u32, usize), Error> {
+    let factor = match unit {
+        TimeUnit::Week => 604_800,
+        TimeUnit::Day => 86_400,
+        TimeUnit::Hour => 3_600,
+        TimeUnit::Minute => 60,
+        TimeUnit::Second => 1,
+        TimeUnit::Millisecond => {
+            return Ok((value.div_euclid(1_000), value.rem_euclid(1_000) as u32, 3));
+        }
+        TimeUnit::Microsecond => {
+            return Ok((
+                value.div_euclid(1_000_000),
+                value.rem_euclid(1_000_000) as u32,
+                6,
+            ));
+        }
+        TimeUnit::Nanosecond => {
+            return Ok((
+                value.div_euclid(1_000_000_000),
+                value.rem_euclid(1_000_000_000) as u32,
+                9,
+            ));
+        }
+        _ => return Err(Error::Range("finite temporal unit is not supported")),
+    };
+    Ok((value.checked_mul(factor).ok_or_else(range)?, 0, 0))
+}
+
+fn civil(days: i128) -> Result<(i128, u8, u8), Error> {
+    // Gregorian eras use Euclidean division, including dates before year zero.
+    let z = days.checked_add(719_468).ok_or_else(range)?;
+    let era = z.div_euclid(146_097);
+    let day = z.rem_euclid(146_097);
+    let year_in_era = (day - day / 1_460 + day / 36_524 - day / 146_096) / 365;
+    let mut year = year_in_era + era * 400;
+    let day_in_year = day - (365 * year_in_era + year_in_era / 4 - year_in_era / 100);
+    let month_from_march = (5 * day_in_year + 2) / 153;
+    let date = day_in_year - (153 * month_from_march + 2) / 5 + 1;
+    let month = month_from_march + if month_from_march < 10 { 3 } else { -9 };
+    year += i128::from(month <= 2);
+    Ok((year, month as u8, date as u8))
+}
+
+fn nanoseconds(part: u32, precision: usize) -> u32 {
+    match precision {
+        3 => part * 1_000_000,
+        6 => part * 1_000,
+        _ => part,
+    }
+}
+
+/// Decompose source ticks once, preserving wide calendar and exact fractions.
+/// Source-specific null sentinels and timezone policy belong to the adapter.
+///
+/// # Errors
+/// Returns unsupported units or checked native arithmetic overflow.
+pub fn decompose(
+    ticks: i64,
+    unit: TimeUnit,
+    multiplier: u64,
+    kind: TimeKind,
+) -> Result<Value, Error> {
+    let value = scaled(ticks, multiplier)?;
+    match kind {
+        TimeKind::DateTime => {
+            let (year, month, day, second, part, precision) = match unit {
+                TimeUnit::Year => (
+                    1970i128.checked_add(value).ok_or_else(range)?,
+                    1,
+                    1,
+                    0,
+                    0,
+                    0,
+                ),
+                TimeUnit::Month => {
+                    let month = (1970i128 * 12).checked_add(value).ok_or_else(range)?;
+                    (
+                        month.div_euclid(12),
+                        month.rem_euclid(12) as u8 + 1,
+                        1,
+                        0,
+                        0,
+                        0,
+                    )
+                }
+                _ => {
+                    let (seconds, part, precision) = seconds(value, unit)?;
+                    let (year, month, day) = civil(seconds.div_euclid(86_400))?;
+                    (
+                        year,
+                        month,
+                        day,
+                        seconds.rem_euclid(86_400) as u32,
+                        part,
+                        precision,
+                    )
+                }
+            };
+            Ok(Value::Datetime {
+                year,
+                month,
+                day,
+                second,
+                nanosecond: nanoseconds(part, precision),
+            })
+        }
+        TimeKind::Duration => {
+            let negative = value < 0;
+            let absolute = value.checked_abs().ok_or_else(range)?;
+            if matches!(unit, TimeUnit::Year | TimeUnit::Month) {
+                return Ok(Value::Period {
+                    negative,
+                    count: absolute as u128,
+                    unit,
+                });
+            }
+            let (second, part, precision) = seconds(absolute, unit)?;
+            Ok(Value::Duration {
+                negative,
+                second: second as u128,
+                nanosecond: nanoseconds(part, precision),
+            })
+        }
+    }
+}
+
+/// Decompose a signed clock source without a target-specific day bound.
+///
+/// # Errors
+/// Returns unsupported units or checked exact arithmetic overflow.
+pub fn decompose_clock(ticks: i64, unit: TimeUnit, multiplier: u64) -> Result<Value, Error> {
+    let value = scaled(ticks, multiplier)?;
+    let absolute = value.checked_abs().ok_or_else(range)?;
+    let (second, part, precision) = seconds(absolute, unit)?;
+    Ok(Value::Clock {
+        negative: value < 0,
+        second: second as u128,
+        nanosecond: nanoseconds(part, precision),
+    })
+}
+
+/// Decompose Unix-epoch days without narrowing the calendar year.
+///
+/// # Errors
+/// Returns checked calendar arithmetic overflow.
+pub fn decompose_date(days: i64) -> Result<Value, Error> {
+    let (year, month, day) = civil(i128::from(days))?;
+    Ok(Value::Date { year, month, day })
+}

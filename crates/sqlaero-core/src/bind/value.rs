@@ -6,6 +6,7 @@
 
 use super::Context;
 use super::scalar::{self, ScalarError};
+use super::temporal::MysqlTemporal;
 use super::{temporal, writer};
 use crate::charset::codec::CodecError;
 use crate::protocol::framing::WireError;

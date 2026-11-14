@@ -73,7 +73,7 @@ fn failure(py: Python<'_>, error: Error) -> PyErr {
             py,
             format_args!("JSON serialization does not support {name}"),
         ),
-        Error::NonFinite | Error::Depth => {
+        Error::NonFinite | Error::Depth | Error::Range(_) => {
             errors::builtin_format::<PyValueError>(py, format_args!("{error}"))
         }
         Error::Capacity(_) => errors::memory_error(py),
@@ -178,11 +178,22 @@ impl Serialize<'_> {
                 }
                 Source::Numpy(super::numpy::NumpyScalar::Float(value)) => ScalarRef::Float(value),
                 Source::Numpy(super::numpy::NumpyScalar::Bool(value)) => ScalarRef::Boolean(value),
-                Source::Numpy(super::numpy::NumpyScalar::Temporal { .. }) => {
-                    return Err(errors::builtin_message::<PyTypeError>(
-                        py,
-                        "NumPy JSON temporal migration is not connected yet",
-                    ));
+                Source::Numpy(super::numpy::NumpyScalar::Temporal {
+                    ticks,
+                    unit,
+                    multiplier,
+                    kind,
+                }) => {
+                    if ticks == i64::MIN {
+                        ScalarRef::Null
+                    } else {
+                        ScalarRef::Ticks {
+                            value: ticks,
+                            unit,
+                            multiplier,
+                            kind,
+                        }
+                    }
                 }
                 Source::Decimal(_) => {
                     return Err(errors::builtin_message::<PyTypeError>(
