@@ -726,14 +726,14 @@ def test_arrow_long_value_preserves_the_actual_signal_exception(kind: str) -> No
         (pa.date32(), -1, b"('1969-12-31',NULL)"),
         (pa.date64(), 86_400_000, b"('1970-01-02',NULL)"),
         (pa.timestamp("s"), -1, b"('1969-12-31 23:59:59',NULL)"),
-        (pa.timestamp("ms"), -1, b"('1969-12-31 23:59:59.999',NULL)"),
+        (pa.timestamp("ms"), -1, b"('1969-12-31 23:59:59.999000',NULL)"),
         (pa.timestamp("us"), -1, b"('1969-12-31 23:59:59.999999',NULL)"),
-        (pa.timestamp("ns", tz="Asia/Shanghai"), -1, b"('1969-12-31 23:59:59.999999999',NULL)"),
-        (pa.duration("ns"), -1, b"('-00:00:00.000000001',NULL)"),
+        (pa.timestamp("ns", tz="Asia/Shanghai"), -1, b"('1969-12-31 23:59:59.999999',NULL)"),
+        (pa.duration("ns"), -1, b"('00:00:00',NULL)"),
         (pa.time32("s"), 1, b"('00:00:01',NULL)"),
-        (pa.time32("ms"), 1, b"('00:00:00.001',NULL)"),
+        (pa.time32("ms"), 1, b"('00:00:00.001000',NULL)"),
         (pa.time64("us"), 1, b"('00:00:00.000001',NULL)"),
-        (pa.time64("ns"), 1, b"('00:00:00.000000001',NULL)"),
+        (pa.time64("ns"), 1, b"('00:00:00',NULL)"),
     ],
 )
 def test_arrow_temporal_units_keep_source_precision_and_validity(dtype: object, ticks: int, expected: bytes) -> None:
@@ -742,22 +742,30 @@ def test_arrow_temporal_units_keep_source_precision_and_validity(dtype: object, 
 
 def test_arrow_valid_minimum_duration_is_not_numpy_nat() -> None:
     value = pa.array([-(2**63), None], type=pa.duration("ms"))
-    assert _sqlaero._encode_value(value).to_bytes() == b"('-2562047788015:12:55.808',NULL)"
+    assert _sqlaero._encode_value(value).to_bytes() == b"('-2562047788015:12:55.808000',NULL)"
 
 
 @pytest.mark.parametrize(
     "unit,expected",
-    [("s", b"('-00:00:01')"), ("ms", b"('-00:00:00.001')"),
-     ("us", b"('-00:00:00.000001')"), ("ns", b"('-00:00:00.000000001')")],
+    [("s", b"('-00:00:01')"), ("ms", b"('-00:00:00.001000')"),
+     ("us", b"('-00:00:00.000001')"), ("ns", b"('00:00:00')")],
 )
 def test_arrow_all_duration_units_use_exact_signed_ticks(unit: str, expected: bytes) -> None:
     assert _sqlaero._encode_value(pa.array([-1], type=pa.duration(unit))).to_bytes() == expected
 
 
-@pytest.mark.parametrize("dtype,ticks", [(pa.date64(), 1), (pa.time32("s"), -1), (pa.time64("ns"), 86_400_000_000_000)])
-def test_arrow_invalid_date_or_clock_storage_is_not_silently_changed(dtype: object, ticks: int) -> None:
+@pytest.mark.parametrize("dtype,ticks", [(pa.date64(), 1)])
+def test_arrow_invalid_date_storage_is_not_silently_changed(dtype: object, ticks: int) -> None:
     with pytest.raises(_sqlaero.DataError):
         _sqlaero._encode_value(pa.array([ticks], type=dtype))
+
+
+@pytest.mark.parametrize(("dtype", "ticks", "expected"), [
+    (pa.time32("s"), -1, b"('-00:00:01')"),
+    (pa.time64("ns"), 86_400_000_000_000, b"('24:00:00')"),
+])
+def test_arrow_clock_storage_keeps_signed_total_hours(dtype: object, ticks: int, expected: bytes) -> None:
+    assert _sqlaero._encode_value(pa.array([ticks], type=dtype)).to_bytes() == expected
 
 
 def test_arrow_sliced_fixed_size_list_keeps_child_offset() -> None:

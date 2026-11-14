@@ -1791,6 +1791,18 @@ impl Visit<'_> {
             self.push_index(py, index)?;
         }
         let result = (|| {
+            if crate::input::transparent::contains(
+                py,
+                &self.active,
+                value.as_ptr() as usize,
+                Some(self.budget),
+            )? {
+                return Err(errors::client(
+                    py,
+                    ClientErrorCode::ContainerNesting,
+                    "input contains a true cycle; current request was not sent",
+                ));
+            }
             if let Some(source) = self.types.transparent(value, Some(self.budget))? {
                 let previous = self.enter_transparent(&source)?;
                 let result = self.value_role(source.payload(), output, None);

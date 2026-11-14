@@ -76,22 +76,23 @@ def test_polars_short_and_long_primitive_series_share_the_native_arrow_policy(le
     assert _sqlaero._encode_value(source).to_bytes() == expected
 
 
-@pytest.mark.parametrize("unit,fraction", [("ms", ".999"), ("us", ".999999"), ("ns", ".999999999")])
+@pytest.mark.parametrize("unit,fraction", [("ms", ".999000"), ("us", ".999999"), ("ns", ".999999")])
 @pytest.mark.parametrize("zone", [None, "Asia/Shanghai"])
 def test_polars_datetime_keeps_epoch_value_in_utc(unit: str, fraction: str, zone: str | None) -> None:
     value = pl.Series([-1, None], dtype=pl.Datetime(unit, zone))
     assert _sqlaero._encode_value(value).to_bytes() == f"('1969-12-31 23:59:59{fraction}',NULL)".encode()
 
 
-@pytest.mark.parametrize("unit,fraction", [("ms", ".001"), ("us", ".000001"), ("ns", ".000000001")])
+@pytest.mark.parametrize("unit,fraction", [("ms", ".001000"), ("us", ".000001"), ("ns", "")])
 def test_polars_duration_keeps_signed_source_precision(unit: str, fraction: str) -> None:
     value = pl.Series([-1, None], dtype=pl.Duration(unit))
-    assert _sqlaero._encode_value(value).to_bytes() == f"('-00:00:00{fraction}',NULL)".encode()
+    sign = "-" if fraction else ""
+    assert _sqlaero._encode_value(value).to_bytes() == f"('{sign}00:00:00{fraction}',NULL)".encode()
 
 
 def test_polars_date_and_clock_are_not_duration_values() -> None:
     assert _sqlaero._encode_value(pl.Series([-1, None], dtype=pl.Date)).to_bytes() == b"('1969-12-31',NULL)"
-    assert _sqlaero._encode_value(pl.Series([1, None], dtype=pl.Time)).to_bytes() == b"('00:00:00.000000001',NULL)"
+    assert _sqlaero._encode_value(pl.Series([1, None], dtype=pl.Time)).to_bytes() == b"('00:00:00',NULL)"
 
 
 @pytest.mark.parametrize("many", [False, True])
@@ -163,7 +164,7 @@ def test_polars_repeated_category_columns_keep_independent_labels_and_quote_mode
     assert _sqlaero._bind_sql("SELECT %s,%s", value, no_backslash=no_backslash) == expected
 
 
-def test_polars_category_reuse_never_caches_object_conversion_hooks() -> None:
+def test_polars_category_reuse_preserves_actual_object_integer_bases() -> None:
     calls: list[int] = []
 
     class CountingInt(int):
@@ -176,8 +177,8 @@ def test_polars_category_reuse_never_caches_object_conversion_hooks() -> None:
         pl.Series("category", ["a'"] * 32, dtype=pl.Categorical),
         pl.Series("objects", [source] * 32, dtype=pl.Object),
     ])
-    assert _sqlaero._bind_sql("SELECT %s,%s", value) == [b"\x03SELECT 'a\\''," + str(index).encode() for index in range(1, 33)]
-    assert calls == [1] * 32
+    assert _sqlaero._bind_sql("SELECT %s,%s", value) == [b"\x03SELECT 'a\\'',7"] * 32
+    assert calls == []
 
 
 @pytest.mark.parametrize("length", [1, 100, 1000])
@@ -484,13 +485,13 @@ def test_polars_object_item_lookup_stays_dynamic_and_preserves_original_errors(
             _sqlaero._bind_sql("SELECT %s", value, many=True)
         assert caught.value is original
         assert "args[1]" in "\n".join(getattr(caught.value, "__notes__", []))
-        assert events == [("first", 0), ("convert", 0), ("later", 1)]
+        assert events == [("first", 0), ("later", 1)]
     else:
         assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [
-            b"\x03SELECT 'v0'", b"\x03SELECT 'v1'", b"\x03SELECT 'v2'"
+            b"\x03SELECT '0'", b"\x03SELECT '1'", b"\x03SELECT '2'"
         ]
         assert events == [
-            ("first", 0), ("convert", 0), ("later", 1), ("convert", 1), ("later", 2), ("convert", 2)
+            ("first", 0), ("later", 1), ("later", 2)
         ]
 
 

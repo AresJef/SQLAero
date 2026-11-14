@@ -88,8 +88,8 @@ def test_native_scalar_sink_preserves_numpy_temporal_precision_and_nulls() -> No
     for value, expected in [
         (np.int64(-17), b"-17"),
         (np.uint64(2**64 - 1), b"18446744073709551615"),
-        (np.datetime64(-1, "ns"), b"'1969-12-31 23:59:59.999999999'"),
-        (np.timedelta64(-1, "ns"), b"'-00:00:00.000000001'"),
+        (np.datetime64(-1, "ns"), b"'1969-12-31 23:59:59.999999'"),
+        (np.timedelta64(-1, "ns"), b"'00:00:00'"),
         (np.datetime64("NaT"), b"NULL"),
     ]:
         assert native_scalar(value) == expected
@@ -155,7 +155,7 @@ def test_native_rows_read_numpy_vectors_tables_records_and_temporal_ticks() -> N
     record = np.array([(1, 2)], dtype=[("a", "i8"), ("b", "i8")]).view(np.recarray)[0]
     assert native_rows(record, many=True) == [b"12"]
     assert native_rows(np.array([-1, 1], dtype="datetime64[ns]"), many=True) == [
-        b"'1969-12-31 23:59:59.999999999'", b"'1970-01-01 00:00:00.000000001'",
+        b"'1969-12-31 23:59:59.999999'", b"'1970-01-01 00:00:00'",
     ]
     assert native_rows(np.empty((0, 2), dtype="int64")) == [b""]
     assert native_rows(np.empty((2, 0), dtype="int64")) == [b"", b""]

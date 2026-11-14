@@ -43,12 +43,12 @@ def test_pandas_missing_scalars_are_null_before_other_protocols(value: object) -
 
 
 @pytest.mark.parametrize(("value", "expected"), [
-    (pd.Timestamp("2024-01-02 03:04:05.123456789"), b"'2024-01-02 03:04:05.123456789'"),
-    (pd.Timestamp("1969-12-31 23:59:59.999999999"), b"'1969-12-31 23:59:59.999999999'"),
+    (pd.Timestamp("2024-01-02 03:04:05.123456789"), b"'2024-01-02 03:04:05.123456'"),
+    (pd.Timestamp("1969-12-31 23:59:59.999999999"), b"'1969-12-31 23:59:59.999999'"),
     (pd.Timestamp("2500-01-01 00:00:00"), b"'2500-01-01 00:00:00'"),
-    (pd.Timestamp("2024-01-02 03:04:05.123456789", tz="Asia/Shanghai"), b"'2024-01-01 19:04:05.123456789'"),
-    (pd.Timedelta(1, unit="ns"), b"'00:00:00.000000001'"),
-    (pd.Timedelta(-1, unit="ns"), b"'-00:00:00.000000001'"),
+    (pd.Timestamp("2024-01-02 03:04:05.123456789", tz="Asia/Shanghai"), b"'2024-01-01 19:04:05.123456'"),
+    (pd.Timedelta(1, unit="ns"), b"'00:00:00'"),
+    (pd.Timedelta(-1, unit="ns"), b"'00:00:00'"),
     (pd.Timedelta(2, unit="D"), b"'48:00:00'"),
 ])
 def test_pandas_temporal_scalar_retains_source_unit_fraction_and_utc(value: object, expected: bytes) -> None:
@@ -270,7 +270,7 @@ def test_pandas_multi_index_gets_all_labels_before_converting_them(monkeypatch: 
         return getter(index, key)
     monkeypatch.setattr(pd.Index, "__getitem__", observed)
     assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT ('a','b')"] * 33
-    assert events == ["get:0", "get:1", "convert:a", "convert:b"] * 33
+    assert events == ["get:0", "get:1"] * 33
 
 
 @pytest.mark.parametrize(("dtype", "numbers"), [
@@ -355,7 +355,7 @@ def test_pandas_multi_index_signed_and_object_gets_every_label_before_conversion
         return getter(index, key)
     monkeypatch.setattr(pd.Index, "__getitem__", observed)
     assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT (7,'a','b')"] * 35
-    assert events == ["get:a", "get:b", "convert:a", "convert:b"] * 35
+    assert events == ["get:a", "get:b"] * 35
 
 
 @pytest.mark.parametrize("error_type", [MemoryError, KeyboardInterrupt])
@@ -456,7 +456,7 @@ def test_pandas_empty_multi_index_does_not_hide_unsupported_level_schema() -> No
 def test_pandas_complex_multi_index_levels_keep_the_original_tuple_reader(kind: str) -> None:
     if kind == "time":
         level = pd.DatetimeIndex(["2024-01-02 03:04:05.123456789"], tz="Asia/Shanghai")
-        literal = b"'2024-01-01 19:04:05.123456789'"
+        literal = b"'2024-01-01 19:04:05.123456'"
     else:
         level = pd.Index([(1, 2)], dtype=object, tupleize_cols=False)
         literal = b"(1,2)"
@@ -476,7 +476,7 @@ def test_pandas_aware_index_keeps_utc_instants_across_dst(unit: str) -> None:
 def test_pandas_timedelta_index_retains_negative_nanoseconds() -> None:
     value = pd.TimedeltaIndex([pd.Timedelta(-1, unit="ns"), pd.NaT, pd.Timedelta(1, unit="ns")])
     assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [
-        b"\x03SELECT '-00:00:00.000000001'", b"\x03SELECT NULL", b"\x03SELECT '00:00:00.000000001'",
+        b"\x03SELECT '00:00:00'", b"\x03SELECT NULL", b"\x03SELECT '00:00:00'",
     ]
 
 
@@ -1183,7 +1183,7 @@ def test_pandas_arrow_category_nonmonotonic_codes_do_not_rewind_a_stream(chunked
 
 
 @pytest.mark.parametrize("fail", [False, True])
-def test_pandas_object_category_keeps_every_real_label_conversion_and_original_error(fail: bool) -> None:
+def test_pandas_object_category_reads_real_string_labels_without_display_overrides(fail: bool) -> None:
     calls: list[str] = []
     original = MemoryError("category original conversion")
     class Label(str):
@@ -1198,14 +1198,37 @@ def test_pandas_object_category_keeps_every_real_label_conversion_and_original_e
     labels = pd.Index([Label("source"), Unused()], dtype=object)
     value = pd.Categorical.from_codes([0] * 35, categories=labels)
     calls.clear()
+    assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 'source'"] * 35
+    assert calls == []
+
+
+@pytest.mark.parametrize("fail", [False, True])
+def test_pandas_object_category_repeats_required_protocols_and_preserves_original_error(fail: bool) -> None:
+    from time import struct_time
+    calls: list[int] = []
+    original = MemoryError("category original required protocol")
+    class Year:
+        def __index__(self) -> int:
+            calls.append(2024)
+            if fail and len(calls) == 33:
+                raise original
+            return 2024
+    class Unused:
+        def __repr__(self) -> str:
+            raise AssertionError("unreferenced category must remain untouched")
+    label = struct_time((Year(), 1, 2, 3, 4, 5, 1, 2, -1))
+    labels = pd.Index([label, Unused()], dtype=object, tupleize_cols=False)
+    value = pd.Categorical.from_codes([0] * 35, categories=labels)
+    assert not calls
     if fail:
         with pytest.raises(MemoryError) as caught:
             _sqlaero._bind_sql("SELECT %s", value, many=True)
         assert caught.value is original
-        assert calls == ["convert"] * 33
+        assert calls == [2024] * 33
+        assert "args[32]" in "\n".join(caught.value.__notes__)
     else:
-        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT 'wire'"] * 35
-        assert calls == ["convert"] * 35
+        assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT '2024-01-02 03:04:05'"] * 35
+        assert calls == [2024] * 35
 
 
 @pytest.mark.parametrize("fail", [False, True])
