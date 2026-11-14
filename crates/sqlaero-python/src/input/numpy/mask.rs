@@ -7,7 +7,7 @@ use crate::input::control::Checkpoint;
 use crate::input::source::{PreparedSource, Shape};
 use pyo3::exceptions::{PyBufferError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::PyBool;
+use pyo3::types::{PyBool, PyString};
 use sqlaero_transcode::value::ScalarRef;
 
 pub(crate) enum Reader<'py> {
@@ -22,22 +22,25 @@ pub(crate) enum Reader<'py> {
 pub(crate) struct State<'py> {
     pub(super) owner: Bound<'py, PyAny>,
     pub(super) original: Bound<'py, PyAny>,
-}
-
-fn current<'py>(value: &Bound<'py, PyAny>, budget: &dyn Checkpoint) -> PyResult<Bound<'py, PyAny>> {
-    crate::input::attribute::instance(value, "_mask", budget)
+    key: Bound<'py, PyString>,
 }
 
 impl<'py> State<'py> {
     pub(crate) fn new(value: &Bound<'py, PyAny>, budget: &dyn Checkpoint) -> PyResult<Self> {
+        crate::input::check(value.py(), budget)?;
+        let key = PyString::from_bytes(value.py(), b"_mask")?;
+        let original = crate::input::attribute::instance_key(value, &key, "_mask", budget)?;
         Ok(Self {
             owner: value.clone(),
-            original: current(value, budget)?,
+            original,
+            key,
         })
     }
 
     pub(crate) fn validate(&self, budget: &dyn Checkpoint) -> PyResult<()> {
-        if !current(&self.owner, budget)?.is(&self.original) {
+        if !crate::input::attribute::instance_key(&self.owner, &self.key, "_mask", budget)?
+            .is(&self.original)
+        {
             return Err(errors::builtin_message::<PyBufferError>(
                 self.owner.py(),
                 "MaskedArray mask changed during escape; keep data and mask storage stable",

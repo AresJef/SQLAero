@@ -14,6 +14,26 @@ pub(crate) fn instance<'py>(
     name: &str,
     budget: &dyn Checkpoint,
 ) -> PyResult<Bound<'py, PyAny>> {
+    instance_entry(value, name, name, budget)
+}
+
+/// Reuse an owned canonical key without caching the mutable source dictionary
+/// or its entry. Actual state and all callback checks are read every time.
+pub(crate) fn instance_key<'py>(
+    value: &Bound<'py, PyAny>,
+    key: &Bound<'py, PyString>,
+    label: &str,
+    budget: &dyn Checkpoint,
+) -> PyResult<Bound<'py, PyAny>> {
+    instance_entry(value, key, label, budget)
+}
+
+fn instance_entry<'py, K: IntoPyObject<'py>>(
+    value: &Bound<'py, PyAny>,
+    key: K,
+    label: &str,
+    budget: &dyn Checkpoint,
+) -> PyResult<Bound<'py, PyAny>> {
     let py = value.py();
     control::callback(py, Some(budget), || {
         // SAFETY: the documented API obtains an owning dictionary reference;
@@ -26,10 +46,10 @@ pub(crate) fn instance<'py>(
             )
         }?
         .cast_into::<pyo3::types::PyDict>()?;
-        dictionary.get_item(name)?.ok_or_else(|| {
+        dictionary.get_item(key)?.ok_or_else(|| {
             errors::builtin_format::<PyTypeError>(
                 py,
-                format_args!("supported source has no actual instance storage {name}"),
+                format_args!("supported source has no actual instance storage {label}"),
             )
         })
     })
