@@ -312,8 +312,23 @@ impl ScalarTypes {
         datetime: &Bound<'_, PyDateTime>,
         budget: Option<&dyn Checkpoint>,
     ) -> PyResult<ValueRef<'static>> {
+        let offset_micros = self.read_datetime_offset(datetime, budget)?;
+        Ok(ValueRef::Datetime {
+            date: date(datetime),
+            clock: clock(datetime),
+            offset_micros,
+        })
+    }
+
+    /// Acquire only the required original offset, without narrowing provider
+    /// calendar fields or discarding its higher-resolution UTC epoch ticks.
+    pub(super) fn read_datetime_offset(
+        &self,
+        datetime: &Bound<'_, PyDateTime>,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<Option<i128>> {
         let py = datetime.py();
-        let offset_micros = match datetime.get_tzinfo() {
+        Ok(match datetime.get_tzinfo() {
             None => None,
             Some(zone) if zone.is(self.utc.bind(py)) => Some(0),
             Some(_) => {
@@ -326,11 +341,6 @@ impl ScalarTypes {
                     Some(delta(offset.cast::<PyDelta>()?))
                 }
             }
-        };
-        Ok(ValueRef::Datetime {
-            date: date(datetime),
-            clock: clock(datetime),
-            offset_micros,
         })
     }
 
@@ -436,14 +446,24 @@ impl ScalarTypes {
                 kind,
                 aware,
             } => {
-                if aware && !context.utc_confirmed {
-                    return Err(errors::client(
-                        py,
-                        ClientErrorCode::SessionState,
-                        "timezone-aware Pandas input requires a confirmed UTC session",
-                    ));
-                }
-                temporal_to(output, py, ticks, unit, multiplier, kind, context)
+                let value = if ticks == i64::MIN {
+                    ValueRef::Null
+                } else if aware {
+                    ValueRef::UtcTicks {
+                        value: ticks,
+                        unit,
+                        multiplier,
+                        offset_micros: None,
+                    }
+                } else {
+                    ValueRef::Ticks {
+                        value: ticks,
+                        unit,
+                        multiplier,
+                        kind,
+                    }
+                };
+                emit(output, py, value, context)
             }
         }
     }

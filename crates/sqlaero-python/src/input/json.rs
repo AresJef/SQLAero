@@ -176,14 +176,37 @@ impl Serialize<'_> {
                     let _ = owner;
                     ScalarRef::Null
                 }
-                Source::Pandas { owner, .. } => {
-                    let detail = self.types.diagnostic(owner)?;
-                    return Err(errors::builtin_format::<PyTypeError>(
-                        py,
-                        format_args!(
-                            "Pandas JSON temporal migration is not connected yet: {detail}"
-                        ),
-                    ));
+                Source::Pandas {
+                    owner,
+                    facts:
+                        super::pandas::PandasScalar::Temporal {
+                            ticks,
+                            unit,
+                            multiplier,
+                            kind,
+                            aware,
+                        },
+                } => {
+                    if ticks == i64::MIN {
+                        ScalarRef::Null
+                    } else if aware {
+                        let offset_micros = self
+                            .types
+                            .read_datetime_offset(owner.cast()?, self.budget)?;
+                        ScalarRef::UtcTicks {
+                            value: ticks,
+                            unit,
+                            multiplier,
+                            offset_micros,
+                        }
+                    } else {
+                        ScalarRef::Ticks {
+                            value: ticks,
+                            unit,
+                            multiplier,
+                            kind,
+                        }
+                    }
                 }
                 Source::Numpy(super::numpy::NumpyScalar::Signed(value)) => ScalarRef::Signed(value),
                 Source::Numpy(super::numpy::NumpyScalar::Unsigned(value)) => {

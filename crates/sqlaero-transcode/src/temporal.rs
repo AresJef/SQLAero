@@ -282,6 +282,34 @@ pub fn decompose(
     }
 }
 
+/// Resolve original UTC ticks with an already acquired source offset, keeping
+/// all fractional precision. This performs arithmetic, not timezone lookup.
+///
+/// # Errors
+/// Returns unsupported units or exact native arithmetic overflow.
+pub fn decompose_utc(
+    ticks: i64,
+    unit: TimeUnit,
+    multiplier: u64,
+    offset_micros: i128,
+) -> Result<Value, Error> {
+    let (second, part, precision) = seconds(scaled(ticks, multiplier)?, unit)?;
+    let fraction =
+        i128::from(nanoseconds(part, precision)) + offset_micros.rem_euclid(1_000_000) * 1000;
+    let second = second
+        .checked_add(offset_micros.div_euclid(1_000_000))
+        .and_then(|n| n.checked_add(fraction.div_euclid(1_000_000_000)))
+        .ok_or_else(range)?;
+    let (year, month, day) = civil(second.div_euclid(86_400))?;
+    Ok(Value::Datetime {
+        year,
+        month,
+        day,
+        second: second.rem_euclid(86_400) as u32,
+        nanosecond: fraction.rem_euclid(1_000_000_000) as u32,
+    })
+}
+
 /// Decompose a signed clock source without a target-specific day bound.
 ///
 /// # Errors
@@ -304,4 +332,52 @@ pub fn decompose_clock(ticks: i64, unit: TimeUnit, multiplier: u64) -> Result<Va
 pub fn decompose_date(days: i64) -> Result<Value, Error> {
     let (year, month, day) = civil(i128::from(days))?;
     Ok(Value::Date { year, month, day })
+}
+
+#[cfg(test)]
+mod utc_tests {
+    use super::*;
+
+    #[test]
+    fn offset_keeps_negative_epoch_nanoseconds_and_full_clock_carry() {
+        assert_eq!(
+            decompose_utc(-1, TimeUnit::Nanosecond, 1, 28_800_000_000).unwrap(),
+            Value::Datetime {
+                year: 1970,
+                month: 1,
+                day: 1,
+                second: 28_799,
+                nanosecond: 999_999_999
+            }
+        );
+        assert_eq!(
+            decompose_utc(1, TimeUnit::Nanosecond, 1, -1).unwrap(),
+            Value::Datetime {
+                year: 1969,
+                month: 12,
+                day: 31,
+                second: 86_399,
+                nanosecond: 999_999_001
+            }
+        );
+    }
+
+    #[test]
+    fn zero_offset_matches_original_exact_units_without_narrowing() {
+        for unit in [
+            TimeUnit::Second,
+            TimeUnit::Millisecond,
+            TimeUnit::Microsecond,
+            TimeUnit::Nanosecond,
+        ] {
+            for ticks in [i64::MIN, -1, 0, 1, i64::MAX] {
+                assert_eq!(
+                    decompose_utc(ticks, unit, 1, 0).unwrap(),
+                    decompose(ticks, unit, 1, TimeKind::DateTime).unwrap()
+                );
+            }
+        }
+        assert!(decompose_utc(1, TimeUnit::Month, 1, 0).is_err());
+        assert!(decompose_utc(1, TimeUnit::Second, 0, 0).is_err());
+    }
 }

@@ -21,6 +21,8 @@ mod record;
 pub(crate) use record::RecordSource;
 mod mask;
 pub(crate) use mask::MaskedSource;
+pub(crate) use mask::Reader as MaskReader;
+pub(crate) use mask::State as MaskState;
 
 /// A native value obtained without an intermediate Python numeric object.
 pub(crate) enum NumpyScalar {
@@ -330,10 +332,40 @@ impl NumpyTypes {
         value: &Bound<'_, PyAny>,
         budget: Option<&dyn Checkpoint>,
     ) -> PyResult<Option<NumpyScalar>> {
+        let Some((registered, kind)) = self.recognize(value) else {
+            return Ok(None);
+        };
+        self.read_classified(value, registered, kind, budget)
+            .map(Some)
+    }
+
+    /// Ask for actual integer facts without reading unrelated numeric/temporal
+    /// payloads or executing a protocol that the consuming target cannot use.
+    pub(crate) fn read_integer(&self, value: &Bound<'_, PyAny>) -> PyResult<Option<NumpyScalar>> {
+        let Some((registered, kind)) = self.recognize(value) else {
+            return Ok(None);
+        };
+        if !matches!(
+            kind,
+            Kind::I8
+                | Kind::I16
+                | Kind::I32
+                | Kind::I64
+                | Kind::U8
+                | Kind::U16
+                | Kind::U32
+                | Kind::U64
+        ) {
+            return Ok(None);
+        }
+        self.read_classified(value, registered, kind, None)
+            .map(Some)
+    }
+
+    fn recognize<'a>(&'a self, value: &Bound<'_, PyAny>) -> Option<(&'a Canonical, Kind)> {
         let py = value.py();
         let typ = value.get_type();
-        let Some((registered, kind)) = self
-            .numeric
+        self.numeric
             .iter()
             .find(|(registered, _)| typ.is(registered.typ(py)))
             .or_else(|| {
@@ -341,10 +373,17 @@ impl NumpyTypes {
                     .iter()
                     .find(|(registered, _)| super::actual_instance(value, registered.typ(py)))
             })
-        else {
-            return Ok(None);
-        };
-        let scalar = match *kind {
+            .map(|(registered, kind)| (registered, *kind))
+    }
+
+    fn read_classified(
+        &self,
+        value: &Bound<'_, PyAny>,
+        registered: &Canonical,
+        kind: Kind,
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<NumpyScalar> {
+        let scalar = match kind {
             Kind::I8 => NumpyScalar::Signed(i64::from(i8::from_ne_bytes([fixed_bytes(
                 value, registered, 1,
             )?[0]]))),
@@ -402,7 +441,7 @@ impl NumpyTypes {
                 }
             }
         };
-        Ok(Some(scalar))
+        Ok(scalar)
     }
 
     fn temporal_metadata(

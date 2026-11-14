@@ -18,6 +18,9 @@ struct Cell<'a, 'b, 'c> {
 }
 
 impl Target for Cell<'_, '_, '_> {
+    fn needs_local_offsets(&self) -> bool {
+        true
+    }
     fn source(
         &mut self,
         source: &mut dyn PreparedSource<'_>,
@@ -150,22 +153,31 @@ impl Serialize<'_> {
                     .map_err(|error| failure(py, error))?;
             }
             Shape::Table { rows, columns } => {
+                let keys = if rows != 0 && source.prepare_field_names(budget)? {
+                    Some(self.source_keys(source, columns, path)?)
+                } else {
+                    None
+                };
                 self.writer
                     .array_start()
                     .map_err(|error| failure(py, error))?;
                 for row in 0..rows {
                     input::checkpoint(py, Some(budget))?;
                     let current = path.child(Coordinate::Index(row));
-                    self.writer
-                        .array_start()
-                        .map_err(|error| failure(py, error))?;
-                    for column in 0..columns {
-                        let child = current.child(Coordinate::Index(column));
-                        self.typed_cell(source, row, column, &child, budget)?;
+                    if let Some(keys) = &keys {
+                        self.record_cells(source, row, keys, &current, budget)?;
+                    } else {
+                        self.writer
+                            .array_start()
+                            .map_err(|error| failure(py, error))?;
+                        for column in 0..columns {
+                            let child = current.child(Coordinate::Index(column));
+                            self.typed_cell(source, row, column, &child, budget)?;
+                        }
+                        self.writer
+                            .array_end()
+                            .map_err(|error| failure(py, error))?;
                     }
-                    self.writer
-                        .array_end()
-                        .map_err(|error| failure(py, error))?;
                 }
                 self.writer
                     .array_end()
@@ -189,30 +201,32 @@ impl Serialize<'_> {
         Ok(())
     }
 
-    fn typed_record(
+    fn source_keys(
         &mut self,
         source: &mut dyn PreparedSource<'_>,
         fields: usize,
         path: &Path<'_>,
-        budget: &dyn Checkpoint,
-    ) -> PyResult<()> {
+    ) -> PyResult<Vec<String>> {
         use std::collections::{HashMap, hash_map::RandomState};
         let py = source.owner().py();
         let seed = RandomState::new();
-        let mut names: HashMap<u64, Vec<String>> = HashMap::new();
-        self.writer
-            .object_start()
-            .map_err(|error| failure(py, error))?;
+        let mut positions: HashMap<u64, Vec<usize>> = HashMap::new();
+        let mut names: Vec<String> = Vec::new();
+        names
+            .try_reserve_exact(fields)
+            .map_err(|_| errors::memory_error(py))?;
         for column in 0..fields {
             Cell { state: self, path }.checkpoint(py, 1)?;
             let name = source.field_name(column)?.ok_or_else(|| {
-                errors::builtin_message::<PyValueError>(py, "native record field name is missing")
+                errors::builtin_message::<PyValueError>(py, "native field name is missing")
             })?;
             let key = super::keys::read(&name, self.types, self.budget, &seed)?;
-            names.try_reserve(1).map_err(|_| errors::memory_error(py))?;
-            if let Some(previous) = names.get(&key.hash) {
-                for name in previous {
-                    if super::keys::same(py, name, &key.value, self.budget)? {
+            positions
+                .try_reserve(1)
+                .map_err(|_| errors::memory_error(py))?;
+            if let Some(previous) = positions.get(&key.hash) {
+                for &index in previous {
+                    if super::keys::same(py, &names[index], &key.value, self.budget)? {
                         return Err(errors::builtin_format::<PyValueError>(
                             py,
                             format_args!(
@@ -222,10 +236,45 @@ impl Serialize<'_> {
                     }
                 }
             }
+            let previous = positions.entry(key.hash).or_default();
+            previous
+                .try_reserve(1)
+                .map_err(|_| errors::memory_error(py))?;
+            previous.push(column);
+            names.push(key.value);
+        }
+        Ok(names)
+    }
+
+    fn typed_record(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        fields: usize,
+        path: &Path<'_>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        let names = self.source_keys(source, fields, path)?;
+        self.record_cells(source, 0, &names, path, budget)
+    }
+
+    fn record_cells(
+        &mut self,
+        source: &mut dyn PreparedSource<'_>,
+        row: usize,
+        names: &[String],
+        path: &Path<'_>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        let py = source.owner().py();
+        self.writer
+            .object_start()
+            .map_err(|error| failure(py, error))?;
+        for (column, name) in names.iter().enumerate() {
+            Cell { state: self, path }.checkpoint(py, 1)?;
             self.writer
-                .key_start(key.value.len())
+                .key_start(name.len())
                 .map_err(|error| failure(py, error))?;
-            input::unicode::native_fragments(py, &key.value, self.budget, |_, text| {
+            input::unicode::native_fragments(py, name, self.budget, |_, text| {
                 self.writer
                     .text_fragment(text, &self.options)
                     .map_err(|error| failure(py, error))
@@ -234,15 +283,10 @@ impl Serialize<'_> {
                 .text_end(&self.options)
                 .map_err(|error| failure(py, error))?;
             let child = path.child(Coordinate::Field {
-                name: &key.value,
+                name,
                 ordinal: column,
             });
-            self.typed_cell(source, 0, column, &child, budget)?;
-            let previous = names.entry(key.hash).or_default();
-            previous
-                .try_reserve(1)
-                .map_err(|_| errors::memory_error(py))?;
-            previous.push(key.value);
+            self.typed_cell(source, row, column, &child, budget)?;
         }
         self.writer.object_end().map_err(|error| failure(py, error))
     }

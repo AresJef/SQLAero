@@ -7,6 +7,34 @@ use pyo3::prelude::*;
 use pyo3::types::PyType;
 use std::ffi::CStr;
 
+/// Read one actual Python instance-state entry at the boundary, never through
+/// a source's replacement attribute hooks or a private provider C layout.
+pub(crate) fn instance<'py>(
+    value: &Bound<'py, PyAny>,
+    name: &str,
+    budget: &dyn Checkpoint,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = value.py();
+    control::callback(py, Some(budget), || {
+        // SAFETY: the documented API obtains an owning dictionary reference;
+        // NULL is the required context. A dict lookup may invoke equality, so
+        // the common callback boundary owns lifecycle checks and no raw view.
+        let dictionary = unsafe {
+            Bound::from_owned_ptr_or_err(
+                py,
+                pyo3::ffi::PyObject_GenericGetDict(value.as_ptr(), std::ptr::null_mut()),
+            )
+        }?
+        .cast_into::<pyo3::types::PyDict>()?;
+        dictionary.get_item(name)?.ok_or_else(|| {
+            errors::builtin_format::<PyTypeError>(
+                py,
+                format_args!("supported source has no actual instance storage {name}"),
+            )
+        })
+    })
+}
+
 /// One canonical native get/set descriptor and its qualified receiver base.
 /// A caller holding raw exports must separately establish that its specific
 /// registered getter cannot call Python; descriptor identity alone is not that

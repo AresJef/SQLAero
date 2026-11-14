@@ -3,14 +3,14 @@
 use super::{NumpyArrayApi, NumpySource, RecordSource};
 use crate::errors;
 use crate::input::cell::Target;
-use crate::input::control::{self, Checkpoint};
+use crate::input::control::Checkpoint;
 use crate::input::source::{PreparedSource, Shape};
 use pyo3::exceptions::{PyBufferError, PyTypeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyBool, PyDict};
+use pyo3::types::PyBool;
 use sqlaero_transcode::value::ScalarRef;
 
-pub(super) enum Reader<'py> {
+pub(crate) enum Reader<'py> {
     Scalar(bool),
     Array(Box<NumpySource<'py>>),
 }
@@ -19,44 +19,24 @@ pub(super) enum Reader<'py> {
 /// boundary before reuse; its mutable array storage keeps the shared external
 /// stability/all-writers-synchronize contract.
 #[derive(Clone)]
-pub(super) struct State<'py> {
+pub(crate) struct State<'py> {
     pub(super) owner: Bound<'py, PyAny>,
     pub(super) original: Bound<'py, PyAny>,
 }
 
 fn current<'py>(value: &Bound<'py, PyAny>, budget: &dyn Checkpoint) -> PyResult<Bound<'py, PyAny>> {
-    control::callback(value.py(), Some(budget), || {
-        // SAFETY: value is a retained actual MaskedArray. The documented public
-        // API returns an owned instance dictionary without __getattribute__ or
-        // __dict__ replacements; NULL context is required by its public API.
-        // https://docs.python.org/3.12/c-api/object.html#c.PyObject_GenericGetDict
-        let dictionary = unsafe {
-            Bound::from_owned_ptr_or_err(
-                value.py(),
-                pyo3::ffi::PyObject_GenericGetDict(value.as_ptr(), std::ptr::null_mut()),
-            )
-        }?
-        .cast_into::<PyDict>()?;
-        // A hostile dictionary key can run equality; the common wrapper owns
-        // the pre/post lifecycle checks, with no exported buffer in this scope.
-        dictionary.get_item("_mask")?.ok_or_else(|| {
-            errors::builtin_message::<PyTypeError>(
-                value.py(),
-                "MaskedArray actual instance has no mask storage",
-            )
-        })
-    })
+    crate::input::attribute::instance(value, "_mask", budget)
 }
 
 impl<'py> State<'py> {
-    fn new(value: &Bound<'py, PyAny>, budget: &dyn Checkpoint) -> PyResult<Self> {
+    pub(crate) fn new(value: &Bound<'py, PyAny>, budget: &dyn Checkpoint) -> PyResult<Self> {
         Ok(Self {
             owner: value.clone(),
             original: current(value, budget)?,
         })
     }
 
-    pub(super) fn validate(&self, budget: &dyn Checkpoint) -> PyResult<()> {
+    pub(crate) fn validate(&self, budget: &dyn Checkpoint) -> PyResult<()> {
         if !current(&self.owner, budget)?.is(&self.original) {
             return Err(errors::builtin_message::<PyBufferError>(
                 self.owner.py(),
@@ -64,6 +44,10 @@ impl<'py> State<'py> {
             ));
         }
         Ok(())
+    }
+
+    pub(crate) fn mask(&self) -> &Bound<'py, PyAny> {
+        &self.original
     }
 }
 
@@ -78,7 +62,7 @@ impl<'py> Reader<'py> {
         }
     }
 
-    pub(super) fn new(
+    pub(crate) fn new(
         value: &Bound<'py, PyAny>,
         data: &NumpySource<'py>,
         api: &NumpyArrayApi,
@@ -111,7 +95,7 @@ impl<'py> Reader<'py> {
         Ok(mask)
     }
 
-    pub(super) fn missing(
+    pub(crate) fn missing(
         &mut self,
         row: usize,
         column: usize,

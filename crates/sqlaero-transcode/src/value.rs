@@ -70,6 +70,19 @@ pub enum ScalarRef<'a> {
         /// Calendar datetime or duration source semantics.
         kind: TimeKind,
     },
+    /// Datetime storage is a UTC instant. The source's actual local offset is
+    /// acquired only for targets needing the original local representation;
+    /// None means not requested, rather than a naive datetime or zero offset.
+    UtcTicks {
+        /// Actual source UTC epoch ticks.
+        value: i64,
+        /// Original fixed unit.
+        unit: TimeUnit,
+        /// Original positive multiplier.
+        multiplier: u64,
+        /// Actual local offset, when requested from the source protocol.
+        offset_micros: Option<i128>,
+    },
     /// Original clock storage, without a target's day-range interpretation.
     ClockTicks {
         /// Actual signed source ticks.

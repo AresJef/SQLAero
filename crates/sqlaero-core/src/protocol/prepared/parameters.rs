@@ -391,6 +391,22 @@ impl Parameters {
                 multiplier,
                 kind,
             } => self.temporal(temporal::decompose(value, unit, multiplier, kind)?)?,
+            ValueRef::UtcTicks {
+                value,
+                unit,
+                multiplier,
+                ..
+            } => {
+                if !context.utc_confirmed {
+                    return Err(ValueError::UtcRequired);
+                }
+                self.temporal(temporal::decompose(
+                    value,
+                    unit,
+                    multiplier,
+                    sqlaero_transcode::temporal::TimeKind::DateTime,
+                )?)?
+            }
             ValueRef::ClockTicks {
                 value,
                 unit,

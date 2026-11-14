@@ -132,6 +132,19 @@ impl Text {
         })
     }
 
+    pub(super) fn utc_ticks(
+        ticks: i64,
+        unit: TimeUnit,
+        multiplier: u64,
+        offset: i128,
+    ) -> Result<Self, Error> {
+        let value = sqlaero_transcode::temporal::decompose_utc(ticks, unit, multiplier, offset)
+            .map_err(source_error)?;
+        let mut text = Self::native(value)?;
+        text.offset(Some(offset))?;
+        Ok(text)
+    }
+
     fn fraction(&mut self, nanosecond: u32, trim: bool) -> Result<(), Error> {
         if nanosecond >= 1_000_000_000 {
             return Err(Error::Range("fraction must be smaller than one second"));

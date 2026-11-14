@@ -1,9 +1,12 @@
 //! Public column preparation and row-wise writes, without Python row objects.
 
 use crate::errors;
+use crate::input::attribute::GetSet;
+use crate::input::cell::Target;
+use crate::input::control::{self, Checkpoint};
 use crate::input::sink::{self, Destination};
 use crate::input::source::{CellWriter, PreparedSource, Shape};
-use crate::input::temporal::{self, TimeKind, TimeUnit};
+use crate::input::temporal::TimeUnit;
 use crate::input::{
     arrow,
     numpy::{NumpyArrayApi, NumpySource, NumpyTypes},
@@ -14,7 +17,6 @@ use pyo3::types::{PyDict, PyModule, PyTuple, PyType};
 use smallvec::SmallVec;
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::ValueRef;
-use sqlaero_core::error::ClientErrorCode;
 use std::ffi::CStr;
 use std::fmt::Write;
 
@@ -42,6 +44,19 @@ pub(super) struct SourceTypes {
     string_dtype: Py<PyType>,
     numpy_dtype: Py<PyType>,
     numpy_extension: Py<PyType>,
+    object_new: Py<PyAny>,
+    native_arrays: Vec<NativeArray>,
+    name_api: Py<PyTuple>,
+    offset_api: Py<PyTuple>,
+}
+
+/// Retained, provider-exposed native getters. No Cython structure offsets or
+/// borrowed provider pointers are inspected by this adapter.
+struct NativeArray {
+    typ: Py<PyType>,
+    data: GetSet,
+    dtype: GetSet,
+    family: Family,
 }
 
 impl SourceTypes {
@@ -63,7 +78,7 @@ impl SourceTypes {
         let array_module = errors::attribute(module.as_any(), c"arrays")?;
         let mut arrays = Vec::new();
         arrays
-            .try_reserve_exact(7)
+            .try_reserve_exact(10)
             .map_err(|_| errors::memory_error(py))?;
         arrays.push(super::exact_type(module, c"Categorical")?);
         for name in [
@@ -73,6 +88,9 @@ impl SourceTypes {
             c"StringArray",
             c"ArrowStringArray",
             c"ArrowExtensionArray",
+            c"DatetimeArray",
+            c"TimedeltaArray",
+            c"NumpyExtensionArray",
         ] {
             arrays.push(
                 errors::attribute(&array_module, name)?
@@ -104,6 +122,51 @@ impl SourceTypes {
             dtypes.push((super::exact_type(module, name)?, family));
         }
         let numpy = errors::module(py, c"numpy")?;
+        let object_new = errors::attribute(py.get_type::<PyAny>().as_any(), c"__new__")?;
+        let mut name_api = Vec::new();
+        name_api
+            .try_reserve_exact(7)
+            .map_err(|_| errors::memory_error(py))?;
+        name_api.push(object_new.clone().unbind());
+        name_api.push(super::exact_type(module, c"MultiIndex")?.into_any());
+        for base in native_indices.iter().rev() {
+            name_api.push(base.clone_ref(py).into_any());
+        }
+        let name_api = crate::output::tuple_from_ready_vec(py, name_api)?.unbind();
+        let datetime = errors::module(py, c"datetime")?;
+        let offset_api = crate::output::tuple_from_ready(
+            py,
+            [
+                super::exact_type(module, c"Timestamp")?
+                    .into_bound(py)
+                    .into_any(),
+                errors::attribute(
+                    py.get_type::<pyo3::types::PyDateTime>().as_any(),
+                    c"utcoffset",
+                )?,
+                errors::attribute(datetime.as_any(), c"timezone")?,
+            ],
+        )?
+        .unbind();
+        let mut native_arrays = Vec::new();
+        native_arrays
+            .try_reserve_exact(5)
+            .map_err(|_| errors::memory_error(py))?;
+        for (index, family) in [
+            (0, Family::Categorical),
+            (4, Family::PythonString),
+            (7, Family::Numpy),
+            (8, Family::Numpy),
+            (9, Family::Numpy),
+        ] {
+            let typ = arrays[index].bind(py);
+            native_arrays.push(NativeArray {
+                typ: typ.clone().unbind(),
+                data: GetSet::new(typ, c"_ndarray", None)?,
+                dtype: GetSet::new(typ, c"_dtype", None)?,
+                family,
+            });
+        }
         Ok(Self {
             series: super::exact_type(module, c"Series")?,
             index: super::exact_type(module, c"Index")?,
@@ -118,7 +181,20 @@ impl SourceTypes {
             numpy_extension: errors::attribute(&array_module, c"NumpyExtensionArray")?
                 .cast_into::<PyType>()?
                 .unbind(),
+            object_new: object_new.unbind(),
+            native_arrays,
+            name_api,
+            offset_api,
         })
+    }
+
+    fn receiver<'py>(
+        &self,
+        value: &Bound<'py, PyAny>,
+        base: &Bound<'py, PyType>,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        receiver_view(value, base, self.object_new.bind(value.py()), budget)
     }
 
     pub(super) fn prepare<'py>(
@@ -128,16 +204,57 @@ impl SourceTypes {
         budget: &dyn crate::input::control::Checkpoint,
     ) -> PyResult<Option<Box<dyn PreparedSource<'py> + 'py>>> {
         let py = value.py();
-        let typ = value.get_type();
-        let is_frame = typ.is(self.frame.bind(py));
+        let original = value.clone();
+        let is_frame = inherits(value, self.frame.bind(py));
         let is_series = inherits(value, self.series.bind(py));
         let is_index = inherits(value, self.index.bind(py));
-        let is_array = self.arrays.iter().any(|array| typ.is(array.bind(py)));
+        let is_array = self
+            .arrays
+            .iter()
+            .any(|array| inherits(value, array.bind(py)));
         if !is_frame && !is_series && !is_index && !is_array {
             return Ok(None);
         }
         crate::input::check(py, budget)?;
         let api = numpy.array_api(py);
+        if is_array {
+            let column = self.column(value, &api, budget)?;
+            let length = column.length()?;
+            let mut columns = Vec::new();
+            columns
+                .try_reserve_exact(1)
+                .map_err(|_| errors::memory_error(py))?;
+            columns.push(column);
+            return Ok(Some(crate::input::boxed(
+                py,
+                PandasSource {
+                    owner: original,
+                    receiver: value.clone(),
+                    names: None,
+                    shape: Shape::Vector { length },
+                    columns,
+                    numpy: api,
+                    name_api: None,
+                },
+            )?));
+        }
+        let base = if is_frame {
+            self.frame.bind(py)
+        } else if is_series {
+            self.series.bind(py)
+        } else if inherits(value, self.multi.bind(py)) {
+            self.multi.bind(py)
+        } else {
+            self.native_indices
+                .iter()
+                .rev()
+                .find(|base| inherits(value, base.bind(py)))
+                .ok_or_else(|| invalid(py, "Pandas index has no supported base storage"))?
+                .bind(py)
+        };
+        let receiver = self.receiver(value, base, budget)?;
+        let value = &receiver;
+        let typ = value.get_type();
         let (shape, columns) = if is_frame {
             self.frame(value, &api, budget)?
         } else {
@@ -146,10 +263,6 @@ impl SourceTypes {
             // unsupported declared schema behind an empty object ndarray.
             self.family(&errors::attribute(value, c"dtype")?)?;
             let length = value.len()?;
-            let native_index = self
-                .native_indices
-                .iter()
-                .any(|index| typ.is(index.bind(py)));
             let column = if typ.is(self.range.bind(py)) {
                 let start = errors::attribute(value, c"start")?;
                 let step = errors::attribute(value, c"step")?;
@@ -200,22 +313,6 @@ impl SourceTypes {
                         length,
                     }
                 }
-            } else if is_series && !typ.is(self.series.bind(py)) || is_index && !native_index {
-                // Exactly one observable values access for real subclasses.
-                let values = errors::attribute(value, c"values")?;
-                let accepted = api.accepts(&values)
-                    || self
-                        .arrays
-                        .iter()
-                        .any(|array| values.get_type().is(array.bind(py)))
-                    || native_index;
-                if !accepted {
-                    return Err(invalid(
-                        py,
-                        "Pandas subclass values must return a supported one-dimensional storage array",
-                    ));
-                }
-                self.column(&values, &api, budget)?
             } else if is_series || is_index {
                 let storage = errors::attribute(value, c"array")?;
                 self.column(&storage, &api, budget)?
@@ -239,7 +336,10 @@ impl SourceTypes {
         Ok(Some(crate::input::boxed(
             py,
             PandasSource {
-                owner: value.clone(),
+                owner: original,
+                receiver,
+                names: None,
+                name_api: is_frame.then(|| self.name_api.bind(py).clone()),
                 shape,
                 columns,
                 numpy: api,
@@ -416,6 +516,77 @@ impl SourceTypes {
     ) -> PyResult<Column<'py>> {
         let py = storage.py();
         crate::input::check(py, budget)?;
+        if let Some(native) = self
+            .native_arrays
+            .iter()
+            .find(|native| inherits(storage, native.typ.bind(py)))
+        {
+            let data = native.data.get(storage)?;
+            let dtype = native.dtype.get(storage)?;
+            let source = api
+                .prepare(&data, budget)?
+                .ok_or_else(|| invalid(py, "canonical Pandas native storage must be an ndarray"))?;
+            let length = require_vector(&source)?;
+            return match native.family {
+                Family::Categorical => {
+                    let categories = errors::attribute(&dtype, c"categories")?;
+                    let base = self
+                        .native_indices
+                        .iter()
+                        .rev()
+                        .find(|base| inherits(&categories, base.bind(py)))
+                        .ok_or_else(|| {
+                            invalid(py, "Pandas categorical labels have no supported Index base")
+                        })?;
+                    let categories = self.receiver(&categories, base.bind(py), budget)?;
+                    let labels = categories.len()?;
+                    Ok(Column::Categorical(crate::input::boxed(
+                        py,
+                        Category {
+                            codes: source,
+                            categories,
+                            labels,
+                            length,
+                            prepare_native: None,
+                            native: None,
+                        },
+                    )?))
+                }
+                Family::PythonString => Ok(Column::String {
+                    data: source,
+                    length,
+                }),
+                _ if self.dtypes.iter().any(|(typ, family)| {
+                    matches!(family, Family::AwareTime) && dtype.get_type().is(typ.bind(py))
+                }) =>
+                {
+                    Ok(Column::Time {
+                        ticks: source,
+                        length,
+                        offset: crate::input::boxed(
+                            py,
+                            OffsetSource {
+                                dtype,
+                                api: self.offset_api.bind(py).clone(),
+                                zone: None,
+                                fixed: None,
+                            },
+                        )?,
+                    })
+                }
+                _ => Ok(Column::Numpy(source)),
+            };
+        }
+        let receiver_base = self
+            .arrays
+            .iter()
+            .find(|array| inherits(storage, array.bind(py)));
+        let receiver = if let Some(base) = receiver_base {
+            self.receiver(storage, base.bind(py), budget)?
+        } else {
+            storage.clone()
+        };
+        let storage = &receiver;
         if let Some(array) = api.prepare(storage, budget)? {
             require_vector(&array)?;
             return Ok(Column::Numpy(array));
@@ -432,35 +603,41 @@ impl SourceTypes {
         let family = self.family(&dtype)?;
         match family {
             Family::Numpy => converted_numpy_column(storage, api, budget, length),
-            Family::Nullable | Family::PythonString => {
-                let python_string = matches!(family, Family::PythonString);
-                let numpy_dtype = if python_string {
-                    py.get_type::<PyAny>().into_any()
-                } else {
-                    errors::attribute(&dtype, c"numpy_dtype")?
-                };
+            Family::Nullable => {
+                if !self
+                    .arrays
+                    .iter()
+                    .skip(1)
+                    .take(3)
+                    .any(|base| inherits(storage, base.bind(py)))
+                {
+                    return Err(invalid(
+                        py,
+                        "nullable Pandas storage requires a supported actual base array",
+                    ));
+                }
+                let state = crate::input::numpy::MaskState::new(storage, budget)?;
+                let data = crate::input::attribute::instance(storage, "_data", budget)?;
+                let data = numpy_source(api, &data, budget, length)?;
+                if !api.accepts(state.mask()) {
+                    return Err(invalid(
+                        py,
+                        "Pandas nullable mask requires a matching bool ndarray",
+                    ));
+                }
+                let mask = crate::input::numpy::MaskReader::new(state.mask(), &data, api, budget)?;
+                state.validate(budget)?;
                 Ok(Column::Masked(Masked {
-                    owner: storage.clone(),
+                    data,
+                    mask,
+                    state,
                     length,
-                    dtype: numpy_dtype,
-                    python_string,
-                    standard_array: (if python_string {
-                        self.arrays
-                            .get(4)
-                            .is_some_and(|typ| storage.get_type().is(typ.bind(py)))
-                    } else {
-                        length >= 32
-                            && self
-                                .arrays
-                                .iter()
-                                .skip(1)
-                                .take(3)
-                                .any(|typ| storage.get_type().is(typ.bind(py)))
-                    })
-                    .then(|| storage.get_type()),
-                    current: None,
                 }))
             }
+            Family::PythonString => Err(invalid(
+                py,
+                "Pandas Python strings require qualified native StringArray storage",
+            )),
             Family::Arrow => {
                 let exported = errors::attribute(storage, c"__arrow_array__")?.call0()?;
                 crate::input::check(py, budget)?;
@@ -519,34 +696,19 @@ impl SourceTypes {
                     },
                 )?))
             }
-            Family::AwareTime => {
-                let unit = errors::attribute(&dtype, c"unit")?;
-                let unit = match unit.extract::<&str>()? {
-                    "s" => TimeUnit::Second,
-                    "ms" => TimeUnit::Millisecond,
-                    "us" => TimeUnit::Microsecond,
-                    "ns" => TimeUnit::Nanosecond,
-                    _ => {
-                        return Err(invalid(
-                            py,
-                            "Pandas DatetimeTZDtype unit must be s, ms, us or ns",
-                        ));
-                    }
-                };
-                let ticks = errors::attribute(storage, c"asi8")?;
-                let ticks = numpy_source(api, &ticks, budget, length)?;
-                Ok(Column::Time {
-                    ticks,
-                    unit,
-                    length,
-                })
-            }
+            Family::AwareTime => Err(invalid(
+                py,
+                "aware Pandas storage requires qualified native DatetimeArray data",
+            )),
         }
     }
 }
 
 pub(crate) struct PandasSource<'py> {
     owner: Bound<'py, PyAny>,
+    receiver: Bound<'py, PyAny>,
+    names: Option<Vec<Bound<'py, PyAny>>>,
+    name_api: Option<Bound<'py, PyTuple>>,
     shape: Shape,
     columns: Vec<Column<'py>>,
     numpy: NumpyArrayApi,
@@ -559,6 +721,88 @@ impl<'py> PreparedSource<'py> for PandasSource<'py> {
     fn shape(&self) -> Shape {
         self.shape
     }
+    fn prepare_field_names(&mut self, budget: &dyn Checkpoint) -> PyResult<bool> {
+        let Shape::Table { columns, .. } = self.shape else {
+            return Ok(false);
+        };
+        if self.names.is_some() {
+            return Ok(true);
+        }
+        let py = self.owner.py();
+        let api = self
+            .name_api
+            .as_ref()
+            .ok_or_else(|| invalid(py, "named Pandas table has no prepared Index API"))?;
+        let mut names = Vec::new();
+        names
+            .try_reserve_exact(columns)
+            .map_err(|_| errors::memory_error(py))?;
+        if columns != 0 {
+            let index = control::callback(py, Some(budget), || {
+                errors::attribute(&self.receiver, c"columns")
+            })?;
+            let mut base = None;
+            for value in api.iter().skip(1) {
+                let typ = value.cast_into::<PyType>()?;
+                if inherits(&index, &typ) {
+                    base = Some(typ);
+                    break;
+                }
+            }
+            let base = base.ok_or_else(|| {
+                invalid(py, "Pandas columns require supported actual Index storage")
+            })?;
+            let index = receiver_view(&index, &base, &api.get_item(0)?, budget)?;
+            let length = control::callback(py, Some(budget), || index.len())?;
+            if length != columns {
+                return Err(invalid(
+                    py,
+                    "Pandas column names changed during preparation",
+                ));
+            }
+            for column in 0..columns {
+                names.push(control::callback(py, Some(budget), || {
+                    index.get_item(crate::input::python_index(py, column)?)
+                })?);
+            }
+        }
+        self.names = Some(names);
+        Ok(true)
+    }
+    fn field_name(&self, column: usize) -> PyResult<Option<Bound<'py, PyAny>>> {
+        Ok(self
+            .names
+            .as_ref()
+            .and_then(|names| names.get(column))
+            .cloned())
+    }
+    fn schema(&self, target: &mut dyn Target) -> PyResult<()> {
+        for source in &self.columns {
+            target.checkpoint(self.owner.py(), 1)?;
+            source.schema(target)?;
+        }
+        Ok(())
+    }
+    fn python_child(
+        &mut self,
+        index: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        if matches!(self.shape, Shape::Vector { .. }) {
+            self.columns[0].python_child(index, budget)
+        } else {
+            Ok(None)
+        }
+    }
+    fn consume_cell(
+        &mut self,
+        row: usize,
+        column: usize,
+        target: &mut dyn Target,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        self.consume_cell_to(row, column, target, budget)
+    }
     crate::input::source::cell_destinations!();
 }
 
@@ -566,6 +810,10 @@ enum Column<'py> {
     Numpy(NumpySource<'py>),
     Arrow(arrow::Prepared<'py>),
     Masked(Masked<'py>),
+    String {
+        data: NumpySource<'py>,
+        length: usize,
+    },
     Range {
         owner: Bound<'py, PyAny>,
         length: usize,
@@ -578,8 +826,8 @@ enum Column<'py> {
     Categorical(Box<Category<'py>>),
     Time {
         ticks: NumpySource<'py>,
-        unit: TimeUnit,
         length: usize,
+        offset: Box<OffsetSource<'py>>,
     },
 }
 
@@ -595,6 +843,7 @@ impl Column<'_> {
                 )),
             },
             Self::Masked(source) => Ok(source.length),
+            Self::String { length, .. } => Ok(*length),
             Self::Categorical(source) => Ok(source.length),
             Self::Range { length, .. }
             | Self::Python { length, .. }
@@ -602,59 +851,208 @@ impl Column<'_> {
         }
     }
 
-    fn write(
+    fn schema(&self, target: &mut dyn Target) -> PyResult<()> {
+        match self {
+            Self::Numpy(source) | Self::String { data: source, .. } => source.schema(target),
+            Self::Arrow(source) => source.schema(target),
+            Self::Time { ticks, .. } => ticks.schema(target),
+            _ => Ok(()),
+        }
+    }
+
+    fn consume(
         &mut self,
         row: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
-        budget: &dyn crate::input::control::Checkpoint,
-        visitor: &mut dyn CellWriter,
+        target: &mut dyn Target,
+        budget: &dyn Checkpoint,
         api: &NumpyArrayApi,
     ) -> PyResult<()> {
         match self {
-            Self::Numpy(source) => output.source_cell(source, row, 0, context, budget, visitor),
-            Self::Arrow(source) => output.source_cell(source, row, 0, context, budget, visitor),
-            Self::Masked(source) => source.write(row, output, context, budget, visitor, api),
+            Self::Numpy(source) => source.consume_cell(row, 0, target, budget),
+            Self::Arrow(source) => source.consume_cell(row, 0, target, budget),
+            Self::Masked(source) => source.consume(row, target, budget, api),
+            Self::String { data, .. } => {
+                let py = data.owner().py();
+                let value = data.object_child(row, 0, budget)?.ok_or_else(|| {
+                    invalid(py, "Pandas string storage must expose actual object slots")
+                })?;
+                if value.is_none()
+                    || value
+                        .cast::<pyo3::types::PyFloat>()
+                        .is_ok_and(|number| number.value().is_nan())
+                {
+                    target.scalar(py, ValueRef::Null)
+                } else {
+                    target.python(&value, None)
+                }
+            }
             Self::Range { owner, native, .. } => {
                 if let Some(value) = native
                     .and_then(|(start, step)| (row as i128).checked_mul(step)?.checked_add(start))
                 {
-                    let result = match i64::try_from(value) {
-                        Ok(value) => sink::integer(output, value, context),
-                        Err(_) => sink::integer(output, value, context),
-                    };
-                    return result.map_err(|error| sink::failure(owner.py(), error));
+                    if let Ok(value) = i64::try_from(value) {
+                        return target.scalar(owner.py(), ValueRef::Signed(value));
+                    }
+                    if let Ok(value) = u64::try_from(value) {
+                        return target.scalar(owner.py(), ValueRef::Unsigned(value));
+                    }
                 }
-                let value = owner.get_item(crate::input::python_index(owner.py(), row)?)?;
-                output.python(visitor, &value, None)
+                let value = control::callback(owner.py(), Some(budget), || {
+                    owner.get_item(crate::input::python_index(owner.py(), row)?)
+                })?;
+                target.python(&value, None)
             }
             Self::Python { owner, .. } => {
-                let value = owner.get_item(crate::input::python_index(owner.py(), row)?)?;
-                output.python(visitor, &value, None)
+                let value = control::callback(owner.py(), Some(budget), || {
+                    owner.get_item(crate::input::python_index(owner.py(), row)?)
+                })?;
+                target.python(&value, None)
             }
-            Self::Categorical(source) => source.write(row, output, context, budget, visitor, api),
-            Self::Time { ticks, unit, .. } => {
+            Self::Categorical(source) => source.consume(row, target, budget, api),
+            Self::Time { ticks, offset, .. } => {
                 let py = ticks.owner().py();
-                let value = ticks.signed_at(row, budget)?;
-                if value != i64::MIN && !context.utc_confirmed {
-                    return Err(errors::client(
+                match ticks.temporal_at(row, budget)? {
+                    ValueRef::Null => target.scalar(py, ValueRef::Null),
+                    ValueRef::Ticks {
+                        value,
+                        unit,
+                        multiplier,
+                        kind: crate::input::temporal::TimeKind::DateTime,
+                    } => {
+                        let offset_micros = if target.needs_local_offsets() {
+                            Some(offset.read(value, unit, multiplier, budget)?)
+                        } else {
+                            None
+                        };
+                        target.scalar(
+                            py,
+                            ValueRef::UtcTicks {
+                                value,
+                                unit,
+                                multiplier,
+                                offset_micros,
+                            },
+                        )
+                    }
+                    _ => Err(invalid(
                         py,
-                        ClientErrorCode::SessionState,
-                        "aware Pandas datetime requires a reliably confirmed UTC MySQL session; time_zone is non-UTC or unknown",
-                    ));
+                        "aware Pandas array must retain actual datetime ticks",
+                    )),
                 }
-                temporal::write(
-                    py,
-                    value,
-                    *unit,
-                    1,
-                    TimeKind::DateTime,
-                    output,
-                    context,
-                    Some(budget),
-                )
             }
         }
+    }
+}
+
+impl<'py> Column<'py> {
+    fn python_child(
+        &mut self,
+        row: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<Option<Bound<'py, PyAny>>> {
+        match self {
+            Self::Numpy(source) => source.object_child(row, 0, budget),
+            Self::Python { owner, .. } => control::callback(owner.py(), Some(budget), || {
+                owner.get_item(crate::input::python_index(owner.py(), row)?)
+            })
+            .map(Some),
+            _ => Ok(None),
+        }
+    }
+}
+
+/// Only a local-representation target asks for this source protocol. Exact
+/// immutable datetime.timezone offsets are constant; other zones resolve each
+/// actual instant, including DST. No timezone rules or results cross calls.
+struct OffsetSource<'py> {
+    dtype: Bound<'py, PyAny>,
+    api: Bound<'py, PyTuple>,
+    zone: Option<Bound<'py, PyAny>>,
+    fixed: Option<i128>,
+}
+
+impl OffsetSource<'_> {
+    fn read(
+        &mut self,
+        ticks: i64,
+        unit: TimeUnit,
+        multiplier: u64,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<i128> {
+        if let Some(offset) = self.fixed {
+            return Ok(offset);
+        }
+        let py = self.dtype.py();
+        if self.zone.is_none() {
+            self.zone = Some(control::callback(py, Some(budget), || {
+                errors::attribute(&self.dtype, c"tz")
+            })?);
+        }
+        let zone = self
+            .zone
+            .as_ref()
+            .ok_or_else(|| invalid(py, "aware Pandas source has no timezone owner"))?;
+        let fixed = zone.get_type().is(&self.api.get_item(2)?);
+        let offset = if fixed {
+            control::callback(py, Some(budget), || {
+                zone.call_method1(c"utcoffset", (py.None(),))
+            })?
+        } else {
+            let unit = match unit {
+                TimeUnit::Second => b"s".as_slice(),
+                TimeUnit::Millisecond => b"ms".as_slice(),
+                TimeUnit::Microsecond => b"us".as_slice(),
+                TimeUnit::Nanosecond => b"ns".as_slice(),
+                _ => {
+                    return Err(invalid(
+                        py,
+                        "Pandas timezone resolution requires a supported actual fixed unit",
+                    ));
+                }
+            };
+            let ticks = i128::from(ticks)
+                .checked_mul(i128::from(multiplier))
+                .and_then(|n| i64::try_from(n).ok())
+                .ok_or_else(|| {
+                    invalid(py, "Pandas timezone scalar exceeds its source tick range")
+                })?;
+            // SAFETY: this fallible public constructor returns the exact signed
+            // integer required by the one-value provider timezone protocol.
+            let ticks =
+                unsafe { Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyLong_FromLongLong(ticks)) }?;
+            let keywords = errors::dictionary(py)?;
+            keywords.set_item(
+                pyo3::types::PyString::from_bytes(py, b"unit")?,
+                pyo3::types::PyString::from_bytes(py, unit)?,
+            )?;
+            keywords.set_item(pyo3::types::PyString::from_bytes(py, b"tz")?, zone)?;
+            let factory = self.api.get_item(0)?;
+            let value = control::callback(py, Some(budget), || {
+                factory.call(
+                    crate::output::tuple_from_ready(py, [ticks])?,
+                    Some(&keywords),
+                )
+            })?;
+            let method = self.api.get_item(1)?;
+            control::callback(py, Some(budget), || method.call1((value,)))?
+        };
+        if offset.is_none() {
+            return Err(invalid(
+                py,
+                "aware Pandas source returned no actual UTC offset",
+            ));
+        }
+        let micros = crate::input::delta(offset.cast::<pyo3::types::PyDelta>()?);
+        if micros.unsigned_abs() >= 86_400_000_000 {
+            return Err(invalid(
+                py,
+                "Pandas UTC offset must be strictly within one day",
+            ));
+        }
+        if fixed {
+            self.fixed = Some(micros);
+        }
+        Ok(micros)
     }
 }
 
@@ -670,19 +1068,17 @@ struct Category<'py> {
 }
 
 impl<'py> Category<'py> {
-    fn write(
+    fn consume(
         &mut self,
         row: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
+        target: &mut dyn Target,
         budget: &dyn crate::input::control::Checkpoint,
-        visitor: &mut dyn CellWriter,
         api: &NumpyArrayApi,
     ) -> PyResult<()> {
         let py = self.categories.py();
         let code = self.codes.signed_at(row, budget)?;
         if code == -1 {
-            return sink::emit(output, py, ValueRef::Null, context);
+            return target.scalar(py, ValueRef::Null);
         }
         let code = usize::try_from(code)
             .ok()
@@ -728,18 +1124,17 @@ impl<'py> Category<'py> {
                             let label = self
                                 .categories
                                 .get_item(crate::input::python_index(py, code)?)?;
-                            return output.python(visitor, &label, None);
+                            return target.python(&label, None);
                         }
                         Column::Numpy(numpy_source(api, &converted, budget, self.labels)?)
                     }
-                    Family::PythonString => Column::Masked(Masked {
-                        owner: storage,
-                        length: self.labels,
-                        dtype: py.get_type::<PyAny>().into_any(),
-                        python_string: true,
-                        standard_array: None,
-                        current: None,
-                    }),
+                    Family::PythonString => {
+                        let data = GetSet::new(&typ, c"_ndarray", Some(budget))?.get(&storage)?;
+                        Column::String {
+                            data: numpy_source(api, &data, budget, self.labels)?,
+                            length: self.labels,
+                        }
+                    }
                     Family::Arrow => {
                         let exported = errors::attribute(&storage, c"__arrow_array__")?.call0()?;
                         crate::input::check(py, budget)?;
@@ -764,7 +1159,7 @@ impl<'py> Category<'py> {
                             let label = self
                                 .categories
                                 .get_item(crate::input::python_index(py, code)?)?;
-                            return output.python(visitor, &label, None);
+                            return target.python(&label, None);
                         };
                         Column::Arrow(arrow::prepare_exported(
                             &storage,
@@ -783,12 +1178,12 @@ impl<'py> Category<'py> {
             }
         }
         if let Some(source) = &mut self.native {
-            return source.write(code, output, context, budget, visitor, api);
+            return source.consume(code, target, budget, api);
         }
         let label = self
             .categories
             .get_item(crate::input::python_index(py, code)?)?;
-        output.python(visitor, &label, None)
+        target.python(&label, None)
     }
 }
 
@@ -899,126 +1294,30 @@ impl<'py> PreparedSource<'py> for Multi<'py> {
 }
 
 struct Masked<'py> {
-    owner: Bound<'py, PyAny>,
-    length: usize,
-    dtype: Bound<'py, PyAny>,
-    python_string: bool,
-    standard_array: Option<Bound<'py, PyType>>,
-    current: Option<Block<'py>>,
-}
-struct Block<'py> {
-    start: usize,
-    length: usize,
-    values: BlockValues<'py>,
-}
-enum BlockValues<'py> {
-    Numpy(Box<NumpyBlock<'py>>),
-    Arrow(Box<arrow::Prepared<'py>>),
-}
-struct NumpyBlock<'py> {
     data: NumpySource<'py>,
-    mask: NumpySource<'py>,
+    mask: crate::input::numpy::MaskReader<'py>,
+    state: crate::input::numpy::MaskState<'py>,
+    length: usize,
 }
 
-impl<'py> Masked<'py> {
-    fn write(
+impl Masked<'_> {
+    fn consume(
         &mut self,
         row: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
-        budget: &dyn crate::input::control::Checkpoint,
-        visitor: &mut dyn CellWriter,
-        api: &NumpyArrayApi,
+        target: &mut dyn Target,
+        budget: &dyn Checkpoint,
+        _api: &NumpyArrayApi,
     ) -> PyResult<()> {
-        let py = self.owner.py();
-        if !self
-            .current
-            .as_ref()
-            .is_some_and(|block| row >= block.start && row - block.start < block.length)
-        {
-            crate::input::check(py, budget)?;
-            let start = row / 1024 * 1024;
-            let length = (self.length - start).min(1024);
-            let slice = bounded_slice(py, start, start + length)?;
-            let piece = self.owner.get_item(slice)?;
-            let standard = self
-                .standard_array
-                .as_ref()
-                .is_some_and(|typ| piece.get_type().is(typ));
-            // Exact standard nullable arrays may export this bounded piece.
-            // Do not import an optional provider to discover whether it exists.
-            // The current block owns its export; Context is read only at write.
-            let values = if !self.python_string && standard && loaded_arrow(py)? {
-                let exported = errors::attribute(&piece, c"__arrow_array__")?.call0()?;
-                crate::input::check(py, budget)?;
-                let source =
-                    arrow::prepare_exported(&piece, &exported, Shape::Vector { length }, budget)?;
-                crate::input::check(py, budget)?;
-                BlockValues::Arrow(crate::input::boxed(py, source)?)
-            } else {
-                let mask = errors::attribute(&piece, c"isna")?.call0()?;
-                let mask = numpy_source(api, &mask, budget, length)?;
-                let keywords = errors::dictionary(py)?;
-                keywords.set_item(
-                    pyo3::types::PyString::from_bytes(py, b"dtype")?,
-                    &self.dtype,
-                )?;
-                keywords.set_item(pyo3::types::PyString::from_bytes(py, b"copy")?, false)?;
-                // The authoritative mask already handles missing strings.
-                // Request their existing object storage without normalizing
-                // NULLs again. Exact standard sources stay stable by contract;
-                // real EA subclasses retain their original conversion hooks.
-                if !self.python_string || !standard {
-                    let missing = if self.python_string {
-                        py.None().into_bound(py)
-                    } else {
-                        crate::input::python_index(py, 0)?
-                    };
-                    keywords
-                        .set_item(pyo3::types::PyString::from_bytes(py, b"na_value")?, missing)?;
-                }
-                let data = call_keywords(&piece, c"to_numpy", &keywords)?;
-                let data = numpy_source(api, &data, budget, length)?;
-                crate::input::check(py, budget)?;
-                BlockValues::Numpy(crate::input::boxed(py, NumpyBlock { data, mask })?)
-            };
-            // The small range header stays local; only the chosen payload is
-            // boxed. Each route retains one fallible state allocation.
-            self.current = Some(Block {
-                start,
-                length,
-                values,
-            });
-        }
-        let block = self
-            .current
-            .as_mut()
-            .ok_or_else(|| invalid(py, "Pandas nullable block preparation failed"))?;
-        let local = row - block.start;
-        match &mut block.values {
-            BlockValues::Arrow(source) => {
-                output.source_cell(source.as_mut(), local, 0, context, budget, visitor)
-            }
-            BlockValues::Numpy(source) => {
-                if source.mask.bool_at(local, budget)? {
-                    sink::emit(output, py, ValueRef::Null, context)
-                } else {
-                    output.source_cell(&mut source.data, local, 0, context, budget, visitor)
-                }
-            }
+        self.state.validate(budget)?;
+        let missing = self.mask.missing(row, 0, budget)?;
+        self.state.validate(budget)?;
+        if missing {
+            self.data.validate_layout(budget)?;
+            target.scalar(self.data.owner().py(), ValueRef::Null)
+        } else {
+            self.data.consume_cell(row, 0, target, budget)
         }
     }
-}
-
-/// A real, already loaded optional module, not an installed distribution probe.
-/// Absence and the conventional None import blocker retain the NumPy route.
-/// Recheck on block preparation; a prior absence is not a permanent decision.
-fn loaded_arrow(py: Python<'_>) -> PyResult<bool> {
-    let sys = errors::module(py, c"sys")?;
-    let modules = errors::attribute(sys.as_any(), c"modules")?.cast_into::<PyDict>()?;
-    Ok(modules
-        .get_item(pyo3::types::PyString::from_bytes(py, b"pyarrow")?)?
-        .is_some_and(|module| module.is_instance_of::<PyModule>()))
 }
 
 fn require_vector(source: &NumpySource<'_>) -> PyResult<usize> {
@@ -1105,17 +1404,6 @@ fn full_slice(py: Python<'_>) -> PyResult<Bound<'_, PyAny>> {
         )
     }
 }
-fn bounded_slice(py: Python<'_>, start: usize, end: usize) -> PyResult<Bound<'_, PyAny>> {
-    let start = crate::input::python_index(py, start)?;
-    let end = crate::input::python_index(py, end)?;
-    // SAFETY: both endpoints are owned exact ints before the checked call.
-    unsafe {
-        Bound::from_owned_ptr_or_err(
-            py,
-            pyo3::ffi::PySlice_New(start.as_ptr(), end.as_ptr(), pyo3::ffi::Py_None()),
-        )
-    }
-}
 fn column_error(py: Python<'_>, error: PyErr, column: usize) -> PyErr {
     let mut message = String::new();
     if message.try_reserve(96).is_ok()
@@ -1131,14 +1419,13 @@ fn column_error(py: Python<'_>, error: PyErr, column: usize) -> PyErr {
 }
 
 impl<'py> PandasSource<'py> {
-    fn write_cell_to(
+    crate::input::cell::destinations!();
+    fn consume_cell_to(
         &mut self,
         row: usize,
         column: usize,
-        output: &mut (impl Destination + ?Sized),
-        context: &Context,
+        target: &mut dyn Target,
         budget: &dyn crate::input::control::Checkpoint,
-        visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         let py = self.owner.py();
         let length = match self.shape {
@@ -1163,8 +1450,8 @@ impl<'py> PandasSource<'py> {
                 "Pandas column is outside its prepared shape",
             )
         })?;
-        visitor.checkpoint(py, 1)?;
-        source.write(row, output, context, budget, visitor, &self.numpy)
+        target.checkpoint(py, 1)?;
+        source.consume(row, target, budget, &self.numpy)
     }
 }
 
@@ -1231,4 +1518,47 @@ impl<'py> Multi<'py> {
         visitor.leave_native();
         result
     }
+}
+
+/// A short canonical receiver header shares the actual Python instance state.
+/// Native-backed providers never enter this object.__new__ route.
+fn receiver_view<'py>(
+    value: &Bound<'py, PyAny>,
+    base: &Bound<'py, PyType>,
+    object_new: &Bound<'py, PyAny>,
+    budget: &dyn Checkpoint,
+) -> PyResult<Bound<'py, PyAny>> {
+    if value.get_type().is(base) {
+        return Ok(value.clone());
+    }
+    let py = value.py();
+    control::callback(py, Some(budget), || {
+        // object.__new__ refuses native bases requiring additional C
+        // state. This route is only used for known Python-state Pandas
+        // bases; native-backed arrays use retained public getters below.
+        let view = object_new.call1((base,))?;
+        // SAFETY: documented object dictionary APIs return/retain owning
+        // references and bypass child attribute hooks. The exact base
+        // receiver shares the original state, not a copied value array or
+        // alternative value. No provider-private memory layout is read.
+        let dictionary = unsafe {
+            Bound::from_owned_ptr_or_err(
+                py,
+                pyo3::ffi::PyObject_GenericGetDict(value.as_ptr(), std::ptr::null_mut()),
+            )
+        }?;
+        // SAFETY: view is a fresh exact Python-state base receiver and
+        // dictionary is an owning actual dict from the public getter above.
+        let status = unsafe {
+            pyo3::ffi::PyObject_GenericSetDict(
+                view.as_ptr(),
+                dictionary.as_ptr(),
+                std::ptr::null_mut(),
+            )
+        };
+        if status != 0 {
+            return Err(PyErr::fetch(py));
+        }
+        Ok(view)
+    })
 }

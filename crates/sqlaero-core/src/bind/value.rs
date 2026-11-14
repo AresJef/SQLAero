@@ -102,6 +102,24 @@ impl ValueSink for TextSink<'_> {
                 multiplier,
                 kind,
             } => temporal::write(output, value, unit, multiplier, kind, limit)?,
+            ValueRef::UtcTicks {
+                value,
+                unit,
+                multiplier,
+                ..
+            } => {
+                if !context.utc_confirmed {
+                    return Err(ValueError::UtcRequired);
+                }
+                temporal::write(
+                    output,
+                    value,
+                    unit,
+                    multiplier,
+                    sqlaero_transcode::temporal::TimeKind::DateTime,
+                    limit,
+                )?;
+            }
             ValueRef::ClockTicks {
                 value,
                 unit,

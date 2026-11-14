@@ -1,13 +1,14 @@
 //! Pandas public storage adapters; native values reuse the common SQL writers.
 
 use crate::errors;
+use crate::input::attribute::GetSet;
 use crate::input::control::Checkpoint;
 use crate::input::numpy::{NumpyScalar, NumpyTypes};
 use crate::input::source::PreparedSource;
 use crate::input::temporal::{TimeKind, TimeUnit};
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyModule, PyType};
+use pyo3::types::{PyDateTime, PyModule, PyType, PyTzInfoAccess};
 use std::ffi::CStr;
 
 mod source;
@@ -30,6 +31,8 @@ pub(crate) struct PandasTypes {
     nat: Py<PyAny>,
     timestamp: Py<PyType>,
     timedelta: Py<PyType>,
+    timestamp_storage: GetSet,
+    timedelta_storage: GetSet,
     sources: source::SourceTypes,
 }
 
@@ -37,11 +40,15 @@ impl PandasTypes {
     /// Prepare the already-used provider on its own optional boundary path.
     pub(crate) fn new(py: Python<'_>) -> PyResult<Self> {
         let module = errors::module(py, c"pandas")?;
+        let timestamp = exact_type(&module, c"Timestamp")?;
+        let timedelta = exact_type(&module, c"Timedelta")?;
         Ok(Self {
             missing: errors::attribute(module.as_any(), c"NA")?.unbind(),
             nat: errors::attribute(module.as_any(), c"NaT")?.unbind(),
-            timestamp: exact_type(&module, c"Timestamp")?,
-            timedelta: exact_type(&module, c"Timedelta")?,
+            timestamp_storage: GetSet::new(timestamp.bind(py), c"asm8", None)?,
+            timedelta_storage: GetSet::new(timedelta.bind(py), c"asm8", None)?,
+            timestamp,
+            timedelta,
             sources: source::SourceTypes::new(&module)?,
         })
     }
@@ -69,19 +76,17 @@ impl PandasTypes {
         if value.is(self.missing.bind(py)) || value.is(self.nat.bind(py)) {
             return Ok(Some(PandasScalar::Null));
         }
-        let (recognized, aware) = if value.get_type().is(self.timestamp.bind(py)) {
+        let (storage, aware) = if super::actual_instance(value, self.timestamp.bind(py)) {
             (
-                true,
-                !super::control::callback(py, budget, || errors::attribute(value, c"tzinfo"))?
-                    .is_none(),
+                &self.timestamp_storage,
+                value.cast::<PyDateTime>()?.get_tzinfo().is_some(),
             )
+        } else if super::actual_instance(value, self.timedelta.bind(py)) {
+            (&self.timedelta_storage, false)
         } else {
-            (value.get_type().is(self.timedelta.bind(py)), false)
-        };
-        if !recognized {
             return Ok(None);
-        }
-        let scalar = super::control::callback(py, budget, || errors::attribute(value, c"asm8"))?;
+        };
+        let scalar = super::control::callback(py, budget, || storage.get(value))?;
         let Some(NumpyScalar::Temporal {
             ticks,
             unit,

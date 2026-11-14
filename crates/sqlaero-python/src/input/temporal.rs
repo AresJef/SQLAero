@@ -10,33 +10,6 @@ pub(crate) use temporal::{TimeKind, TimeUnit};
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "fixed source-adapter boundary avoids a per-value owned representation"
-)]
-pub(crate) fn write(
-    py: Python<'_>,
-    ticks: i64,
-    unit: TimeUnit,
-    multiplier: u64,
-    kind: TimeKind,
-    output: &mut (impl Destination + ?Sized),
-    context: &Context,
-    budget: Option<&dyn Checkpoint>,
-) -> PyResult<()> {
-    if ticks == i64::MIN {
-        return emit(output, py, ValueRef::Null, context);
-    }
-    if multiplier == 0 {
-        return Err(crate::errors::builtin_message::<
-            pyo3::exceptions::PyTypeError,
-        >(
-            py, "NumPy datetime unit multiplier must be positive"
-        ));
-    }
-    write_valid(py, ticks, unit, multiplier, kind, output, context, budget)
-}
-
-#[expect(
-    clippy::too_many_arguments,
     reason = "source-specific null handling must not turn valid Arrow minimum ticks into NULL"
 )]
 pub(crate) fn write_valid(

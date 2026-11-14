@@ -101,7 +101,22 @@ pub(super) fn read(
             })?;
         }
         None => {
-            if let Some(value) = types.uuid_value(value, budget)? {
+            let numeric = if let Some(numpy) = types.numpy_types(py, budget)? {
+                numpy.read_integer(value)?
+            } else {
+                None
+            };
+            if let Some(numeric) = numeric {
+                let mut buffer = itoa::Buffer::new();
+                let text = match numeric {
+                    crate::input::numpy::NumpyScalar::Signed(value) => buffer.format(value),
+                    crate::input::numpy::NumpyScalar::Unsigned(value) => buffer.format(value),
+                    _ => return Err(unsupported(py)),
+                };
+                output
+                    .text_fragment(text, &())
+                    .map_err(|error| failure(py, error))?;
+            } else if let Some(value) = types.uuid_value(value, budget)? {
                 output
                     .text_fragment(
                         sqlaero_transcode::identifier::UuidText::new(value).as_str(),

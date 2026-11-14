@@ -453,6 +453,18 @@ impl Consumer for Writer {
                             .map_err(temporal::source_error)?;
                     return writer.temporal(temporal::Text::native(value)?);
                 }
+                ScalarRef::UtcTicks {
+                    value,
+                    unit,
+                    multiplier,
+                    offset_micros,
+                } => {
+                    let offset = offset_micros.ok_or(Error::State(
+                        "aware datetime source did not acquire its requested local offset",
+                    ))?;
+                    return writer
+                        .temporal(temporal::Text::utc_ticks(value, unit, multiplier, offset)?);
+                }
                 ScalarRef::ClockTicks {
                     value,
                     unit,

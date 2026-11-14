@@ -178,6 +178,15 @@ pub(crate) trait PreparedSource<'py> {
     /// Return the prepared logical shape without per-value Python metadata work.
     fn shape(&self) -> Shape;
 
+    /// Acquire complete name facts only when the caller needs them. Anonymous
+    /// matrices return false; a named table can prepare its stable schema once.
+    fn prepare_field_names(
+        &mut self,
+        _budget: &dyn crate::input::control::Checkpoint,
+    ) -> PyResult<bool> {
+        Ok(false)
+    }
+
     /// A source owns child facts; the caller owns root/row policy such as many.
     fn child<'a>(
         &'a mut self,

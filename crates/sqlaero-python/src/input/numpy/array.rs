@@ -339,7 +339,7 @@ impl<'py> NumpySource<'py> {
 
     /// Masked payload is not read, but its prepared ownership and metadata
     /// must still be valid before a missing fact can be consumed.
-    pub(super) fn validate_layout(&self, budget: &dyn Checkpoint) -> PyResult<()> {
+    pub(crate) fn validate_layout(&self, budget: &dyn Checkpoint) -> PyResult<()> {
         crate::input::buffer::read(
             self.owner.py(),
             budget,
@@ -478,17 +478,47 @@ impl<'py> NumpySource<'py> {
         })
     }
 
-    /// A nullable mask must be byte-per-element NumPy bool, never Arrow bits.
-    pub(crate) fn bool_at(&mut self, row: usize, budget: &dyn Checkpoint) -> PyResult<bool> {
-        if !matches!(self.kind, ArrayKind::Scalar(Kind::Bool))
-            || !matches!(self.shape, Shape::Vector { .. })
-        {
+    /// Read exact temporal storage and its qualified metadata. The shared NaT
+    /// check stays before finite-unit acquisition for every consuming provider.
+    pub(crate) fn temporal_at(
+        &mut self,
+        row: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<ScalarRef<'static>> {
+        if !matches!(
+            self.kind,
+            ArrayKind::Scalar(Kind::DateTime | Kind::Duration)
+        ) {
             return Err(errors::builtin_message::<PyTypeError>(
                 self.owner.py(),
-                "NumPy missing-value mask requires a one-dimensional bool array",
+                "Pandas temporal storage requires actual datetime64 or timedelta64 data",
             ));
         }
-        Ok(self.cell_bytes(row, 0, budget)?[0] != 0)
+        let bytes = self.cell_bytes(row, 0, budget)?;
+        self.temporal_fact(i64::from_ne_bytes(bytes), budget)
+    }
+
+    fn temporal_fact(
+        &mut self,
+        value: i64,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<ScalarRef<'static>> {
+        if value == i64::MIN {
+            return Ok(ScalarRef::Null);
+        }
+        let (unit, multiplier, kind) = self.finite_temporal(budget)?;
+        if multiplier == 0 {
+            return Err(errors::builtin_message::<PyTypeError>(
+                self.owner.py(),
+                "NumPy datetime unit multiplier must be positive",
+            ));
+        }
+        Ok(ScalarRef::Ticks {
+            value,
+            unit,
+            multiplier,
+            kind,
+        })
     }
 
     /// Validate the current original owners once for one bounded native read.
@@ -799,11 +829,11 @@ impl<'py> NumpySource<'py> {
         self.copy_source_range(row, column, start, destination, budget)
     }
 
-    pub(super) fn is_object(&self) -> bool {
+    pub(crate) fn is_object(&self) -> bool {
         matches!(self.kind, ArrayKind::Object)
     }
 
-    pub(super) fn object_child(
+    pub(crate) fn object_child(
         &self,
         row: usize,
         column: usize,
@@ -1209,26 +1239,7 @@ impl NumpySource<'_> {
             Kind::F32 => ScalarRef::Float(f64::from(f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
             Kind::F64 => ScalarRef::Float(f64::from_ne_bytes(b)),
             Kind::Bool => ScalarRef::Boolean(b[0] != 0),
-            Kind::DateTime | Kind::Duration => {
-                let value = i64::from_ne_bytes(b);
-                if value == i64::MIN {
-                    ScalarRef::Null
-                } else {
-                    let (unit, multiplier, kind) = self.finite_temporal(budget)?;
-                    if multiplier == 0 {
-                        return Err(errors::builtin_message::<PyTypeError>(
-                            py,
-                            "NumPy datetime unit multiplier must be positive",
-                        ));
-                    }
-                    ScalarRef::Ticks {
-                        value,
-                        unit,
-                        multiplier,
-                        kind,
-                    }
-                }
-            }
+            Kind::DateTime | Kind::Duration => self.temporal_fact(i64::from_ne_bytes(b), budget)?,
         };
         output.scalar(py, value)
     }
