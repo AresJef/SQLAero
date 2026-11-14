@@ -237,6 +237,11 @@ impl Destination for Native<'_> {
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
         if source.shape() != super::source::Shape::Scalar {
+            // Preserve source-boundary checks before the prepared policy
+            // rejects a fragment. In particular, an OUT placeholder cannot
+            // become acceptable merely because a nested value contains NULL.
+            visitor.enter_native(source.owner().py())?;
+            visitor.leave_native();
             return Err(fragment_error(source.owner().py()));
         }
         source.write_parameter_cell(0, 0, self.0, context, budget, visitor)

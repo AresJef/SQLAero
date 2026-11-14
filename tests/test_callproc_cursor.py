@@ -544,10 +544,17 @@ def out_placeholder_arguments(source: str, receipt: int) -> object:
         if source == 'pandas-NaT':
             return (receipt, pd.NaT)
         return pd.DataFrame({'receipt': [receipt], 'out': pd.array([None], dtype='Float64')})
-    if source in ('arrow-null', 'arrow-list-containing-null'):
+    if source in ('arrow-null', 'arrow-list-containing-null',
+                  'arrow-struct-containing-null', 'arrow-dictionary-list'):
         pa = pytest.importorskip('pyarrow')
-        out = (pa.array([None], type=pa.int64()) if source == 'arrow-null'
-               else pa.array([[None]], type=pa.list_(pa.int64())))
+        if source == 'arrow-null':
+            out = pa.array([None], type=pa.int64())
+        elif source == 'arrow-struct-containing-null':
+            out = pa.array([{'value': None}], type=pa.struct([('value', pa.int64())]))
+        else:
+            out = pa.array([[None]], type=pa.list_(pa.int64()))
+            if source == 'arrow-dictionary-list':
+                out = pa.DictionaryArray.from_arrays(pa.array([0], type=pa.int8()), out)
         return pa.table({'receipt': [receipt], 'out': out})
     if source == 'polars-null':
         pl = pytest.importorskip('polars')
@@ -576,7 +583,8 @@ def target_command_counts(connection: Any) -> dict[str, int]:
     'numpy-NaT', 'numpy-timedelta-NaT', 'numpy-object-NaT',
     'numpy-record-NaT', 'numpy-masked-null', 'numpy-masked-hidden-none', 'numpy-masked-record-null',
     'pandas-NA', 'pandas-NaT', 'pandas-nullable',
-    'arrow-null', 'arrow-list-containing-null', 'polars-null',
+    'arrow-null', 'arrow-list-containing-null', 'arrow-struct-containing-null',
+    'arrow-dictionary-list', 'polars-null',
 ])
 def test_out_requires_literal_none_before_target_send(
     routines: Routines, kind: CursorType, prepared: bool, source: str,
