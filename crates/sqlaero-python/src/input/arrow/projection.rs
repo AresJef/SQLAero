@@ -29,7 +29,9 @@ fn resolve<'a>(
         if index >= array.len() {
             return Err(invalid(py, "Arrow child index is outside its array"));
         }
-        if array.is_null(index) || !matches!(array.data_type(), TypeView::Dictionary(_, _)) {
+        // Only this native node contains indirections. Scalar and compound
+        // consumers retain their own NULL handling after the index check.
+        if !matches!(array, ArrayRef::Dictionary(_)) || array.is_null(index) {
             return Ok((array, index));
         }
         // Ordinary scalar work is already charged by the target. Transparent
@@ -40,6 +42,14 @@ fn resolve<'a>(
 }
 
 fn kind<'a>(py: Python<'_>, array: &'a ArrayRef, index: usize) -> PyResult<Kind<'a>> {
+    // Every physical leaf has scalar shape, including NULL. Its consumer
+    // still reads the actual value type and null bit; no schema is bypassed.
+    if matches!(
+        array,
+        ArrayRef::Leaf(_) | ArrayRef::Bytes(_) | ArrayRef::View(_)
+    ) {
+        return Ok(Kind::Scalar);
+    }
     if array.is_null(index) {
         return Ok(Kind::Scalar);
     }
