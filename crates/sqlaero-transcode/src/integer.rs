@@ -132,10 +132,19 @@ impl<'a> DecimalDigits<'a> {
     pub fn new(source: Digits<'a>) -> Result<Self, Error> {
         let mut words = Vec::new();
         words.try_reserve_exact(source.len())?;
+        // Each decimal group holds more than 29 binary bits. Reserve a
+        // checked upper bound once, without scanning the source or growing
+        // this buffer during the bounded division steps. Zero needs one group.
+        let bits = source
+            .len()
+            .checked_mul(usize::from(source.bits))
+            .ok_or(Error::Representation)?;
+        let mut groups = Vec::new();
+        groups.try_reserve_exact(bits.div_ceil(29).max(1))?;
         Ok(Self {
             source,
             words,
-            groups: Vec::new(),
+            groups,
             active: 0,
             cursor: 0,
             carry: 0,
@@ -162,7 +171,6 @@ impl<'a> DecimalDigits<'a> {
                 }
                 Phase::Divide => {
                     if self.cursor == 0 {
-                        self.groups.try_reserve(1)?;
                         self.groups.push(self.carry as u32);
                         self.carry = 0;
                         self.phase = Phase::Trim;
@@ -182,7 +190,6 @@ impl<'a> DecimalDigits<'a> {
                         work -= 1;
                     } else if self.active == 0 {
                         if self.groups.is_empty() {
-                            self.groups.try_reserve(1)?;
                             self.groups.push(0);
                         }
                         self.phase = Phase::Done;
@@ -315,6 +322,46 @@ mod tests {
         assert_eq!(decimal(&big, 15, 2, false, false), "2147549183");
         assert_eq!(decimal(&[0, 0, 0, 0], 30, 4, true, true), "0");
         assert_eq!(decimal(&[], 30, 4, true, true), "0");
+    }
+
+    #[test]
+    fn full_native_digits_match_independent_decimal_values_at_group_boundaries() {
+        use num_bigint::BigUint;
+
+        for (bits, width) in [
+            (1, 1),
+            (7, 1),
+            (8, 1),
+            (15, 2),
+            (16, 2),
+            (29, 4),
+            (30, 4),
+            (31, 4),
+            (32, 4),
+        ] {
+            for count in [0, 1, 8, 29, 30, 31, 100] {
+                let expected = if count == 0 {
+                    "0".to_owned()
+                } else {
+                    ((BigUint::from(1_u8) << (usize::from(bits) * count)) - 1_u8).to_str_radix(10)
+                };
+                let word = (1_u64 << bits) - 1;
+                for little_endian in [false, true] {
+                    let bytes = if little_endian {
+                        word.to_le_bytes()[..usize::from(width)].to_vec()
+                    } else {
+                        word.to_be_bytes()[8 - usize::from(width)..].to_vec()
+                    };
+                    let magnitude = bytes.repeat(count);
+                    for least_first in [false, true] {
+                        assert_eq!(
+                            decimal(&magnitude, bits, width, least_first, little_endian),
+                            expected
+                        );
+                    }
+                }
+            }
+        }
     }
 
     #[test]
