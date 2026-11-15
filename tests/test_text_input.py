@@ -114,6 +114,20 @@ def test_utf8_quoting_keeps_unicode_patterns_and_both_sql_modes() -> None:
     assert _sqlaero._encode_scalar(value, no_backslash=True) == ("'" + value.replace("'", "''") + "'").encode("utf-8")
 
 
+@pytest.mark.parametrize("width", [15, 16, 17, 1023, 1024, 1025])
+@pytest.mark.parametrize("no_backslash", [False, True])
+def test_utf8_marker_boundaries_use_independent_sql_literals(width: int, no_backslash: bool) -> None:
+    escapes = {"\0": "\\0", "\n": "\\n", "\r": "\\r", "\x1a": "\\Z",
+               "\\": "\\\\", "'": "\\'", '"': '\\"'}
+    if no_backslash:
+        escapes = {"'": "''"}
+    left, right = "a" * (width // 2), "z" * (width - width // 2 - 1)
+    for marker in range(256):
+        source = left + chr(marker) + right
+        expected = ("'" + "".join(escapes.get(point, point) for point in source) + "'").encode("utf-8")
+        assert _sqlaero._encode_scalar(source, no_backslash=no_backslash) == expected
+
+
 def test_national_single_byte_symbols_are_quoted_after_encoding() -> None:
     assert _sqlaero._encode_scalar("Ö", charset="swe7") == b"'\\\\'"
     assert _sqlaero._encode_scalar("Ö", charset="swe7", no_backslash=True) == b"'\\'"
