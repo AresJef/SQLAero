@@ -179,8 +179,10 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
         // Nested Python providers get their own scope and restore the parent's
         // metadata afterwards, including on a failed traversal.
         let previous_names = self.native_names.take();
+        let previous_repeat = std::mem::replace(&mut self.repeat_native_names, false);
         let result = self.typed_source(source.as_mut(), path, budget);
         self.native_names = previous_names;
+        self.repeat_native_names = previous_repeat;
         self.active.pop();
         result.map(|()| true)
     }
@@ -195,7 +197,14 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
     ) -> PyResult<()> {
         let py = source.owner().py();
         source.schema(&mut Cell { state: self, path })?;
-        match source.shape() {
+        let shape = source.shape();
+        // A singleton cannot amortize an index. Nested repeated structures
+        // enable reuse from the same neutral facts, without provider checks.
+        self.repeat_native_names |= matches!(
+            shape,
+            Shape::Vector { length: 2.. } | Shape::Table { rows: 2.., .. }
+        );
+        match shape {
             Shape::Scalar => {
                 self.typed_cell(source, 0, 0, path, budget)?;
             }
@@ -318,7 +327,11 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         source.prepare_field_names(budget)?;
-        let identity = source.field_name_identity();
+        let identity = if self.repeat_native_names {
+            source.field_name_identity()
+        } else {
+            None
+        };
         let ready = identity.and_then(|identity| {
             self.native_names
                 .as_mut()?

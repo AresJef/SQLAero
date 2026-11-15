@@ -110,6 +110,7 @@ struct Serialize<'a, D: Destination + ?Sized = Vec<u8>> {
     writer: Output<'a, D>,
     active: Vec<usize>,
     failure_located: bool,
+    repeat_native_names: bool,
     nodes: usize,
     native_names: Option<source::NameCache>,
 }
@@ -511,6 +512,7 @@ fn serialize_into<'a, D: Destination + ?Sized>(
         writer,
         active: Vec::new(),
         failure_located: false,
+        repeat_native_names: false,
         nodes: 0,
         native_names: None,
     };

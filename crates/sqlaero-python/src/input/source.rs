@@ -189,9 +189,9 @@ pub(crate) trait CellWriter {
     fn checkpoint(&mut self, py: Python<'_>, work: usize) -> PyResult<()>;
 }
 
-/// Opaque identity of complete immutable names in one retained source.
-/// Consumers may compare this token only while that prepared source is alive;
-/// the address is never dereferenced or reused across source traversals.
+/// Opaque identity of complete immutable names in one retained root traversal.
+/// Projections borrow that root's schema; consumers discard all tokens before
+/// the root dies. The address is never dereferenced or reused across roots.
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct FieldNameIdentity {
     source: usize,
@@ -230,8 +230,8 @@ pub(crate) trait PreparedSource<'py> {
     }
 
     /// Identify stable, fully prepared name facts, not target-formatted keys.
-    /// The default does not promise reusable names. A consumer must discard
-    /// every token before this prepared source and its native projections die.
+    /// The default does not promise reusable names. Native projections can
+    /// share a root identity, scoped to the owning root provider's traversal.
     fn field_name_identity(&self) -> Option<FieldNameIdentity> {
         None
     }

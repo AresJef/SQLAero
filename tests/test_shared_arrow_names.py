@@ -134,10 +134,11 @@ def test_separate_native_sources_and_calls_never_reuse_another_schema_keys() -> 
     assert json.loads(json_dumps(wrapped.data)) == expected
 
 
-def test_wide_nested_native_schemas_keep_their_own_repeated_keys() -> None:
-    columns = [pa.StructArray.from_arrays([pa.array([i, i + 1])], names=[f"a\0{i}"]) for i in range(70)]
+@pytest.mark.parametrize("rows", [1, 2])
+def test_wide_nested_native_schemas_keep_their_own_repeated_keys(rows: int) -> None:
+    columns = [pa.StructArray.from_arrays([pa.array(list(range(i, i + rows)))], names=[f"a\0{i}"]) for i in range(70)]
     table = pa.Table.from_arrays(columns, names=[f"c{i}" for i in range(70)])
-    expected = [{f"c{i}": {f"a\0{i}": i + row} for i in range(70)} for row in range(2)]
+    expected = [{f"c{i}": {f"a\0{i}": i + row} for i in range(70)} for row in range(rows)]
     assert json.loads(json_dumps(table)) == expected
 
 
