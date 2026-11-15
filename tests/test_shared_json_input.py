@@ -263,6 +263,23 @@ def test_unicode_storage_windows_keep_original_source_positions(prefix: str) -> 
         assert (caught.value.start, caught.value.end) == (len(prefix), len(prefix) + 1)
 
 
+@pytest.mark.parametrize("width", [0, 1, 255, 256, 257, 65535, 65536, 65537])
+def test_bounded_base_text_storage_uses_exact_characters(width: int) -> None:
+    class Text(str):
+        def __str__(self) -> str:
+            raise AssertionError("must read actual base text storage")
+
+    for pattern in ("a'\\\0\n", "\u00c3\u00a9", "\u00c2\u00a3", "é"):
+        source = (pattern * (width // len(pattern) + 1))[:width]
+        expected = json.dumps(source, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        assert json_dumps(source) == expected
+        assert json_dumps(Text(source)) == expected
+        expected_object = json.dumps(
+            {source: [source]}, ensure_ascii=False, separators=(",", ":"),
+        ).encode("utf-8")
+        assert json_dumps({Text(source): [Text(source)]}) == expected_object
+
+
 def test_independent_calls_share_no_writer_or_wrapper_output_state() -> None:
     payload: list[object] = [7, "é中😀" * 1000, [None, True, -0.0]]
     wrapped = JSON(payload)

@@ -128,6 +128,32 @@ def test_utf8_marker_boundaries_use_independent_sql_literals(width: int, no_back
         assert _sqlaero._encode_scalar(source, no_backslash=no_backslash) == expected
 
 
+@pytest.mark.parametrize("width", [0, 1, 255, 256, 257, 65535, 65536, 65537])
+@pytest.mark.parametrize("no_backslash", [False, True])
+@pytest.mark.parametrize("charset", ["utf8mb4", "latin1"])
+def test_bounded_base_text_storage_uses_exact_characters(
+    width: int, no_backslash: bool, charset: str,
+) -> None:
+    class Text(str):
+        def __str__(self) -> str:
+            raise AssertionError("must read actual base text storage")
+
+    escapes = {"\0": "\\0", "\n": "\\n", "\r": "\\r", "\x1a": "\\Z",
+               "\\": "\\\\", "'": "\\'", '"': '\\"'}
+    if no_backslash:
+        escapes = {"'": "''"}
+    # The Latin-1 points C3 A9 also form valid UTF-8 bytes. Interpreting their
+    # base UCS1 storage as UTF-8 would silently change two characters into one.
+    for pattern in ("a'\\\0\n", "\u00c3\u00a9", "\u00c2\u00a3", "é"):
+        source = (pattern * (width // len(pattern) + 1))[:width]
+        literal = "'" + "".join(escapes.get(point, point) for point in source) + "'"
+        expected = literal.encode("utf-8" if charset == "utf8mb4" else "cp1252")
+        for value in (source, Text(source)):
+            assert _sqlaero._encode_scalar(
+                value, charset=charset, no_backslash=no_backslash,
+            ) == expected
+
+
 def test_national_single_byte_symbols_are_quoted_after_encoding() -> None:
     assert _sqlaero._encode_scalar("Ö", charset="swe7") == b"'\\\\'"
     assert _sqlaero._encode_scalar("Ö", charset="swe7", no_backslash=True) == b"'\\'"

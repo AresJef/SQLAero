@@ -7,6 +7,28 @@ use pyo3::types::{PyString, PyStringData, PyStringMethods};
 use sqlaero_transcode::utf8::{self, EncodeError};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
+#[cfg(Py_3_14)]
+unsafe extern "C" {
+    fn sqlaero_unicode_ascii(source: *mut pyo3::ffi::PyObject) -> std::ffi::c_uint;
+}
+
+/// Read the immutable base flag without calling str.isascii or scanning text.
+fn is_ascii(source: &Bound<'_, PyString>) -> bool {
+    // SAFETY: source is a retained real str or subtype and Python is attached.
+    // PyO3 exposes this public macro through 3.13. On newer ABIs the tiny C
+    // shim uses the selected CPython headers; Rust never duplicates bitfields.
+    unsafe {
+        #[cfg(Py_3_14)]
+        {
+            sqlaero_unicode_ascii(source.as_ptr()) != 0
+        }
+        #[cfg(not(Py_3_14))]
+        {
+            pyo3::ffi::PyUnicode_IS_ASCII(source.as_ptr()) != 0
+        }
+    }
+}
+
 /// An owned native metadata snapshot through the same base-string reader as
 /// ordinary values. No subclass conversion or whole long UTF-8 conversion.
 pub(crate) fn snapshot(source: &Bound<'_, PyString>, budget: &dyn Checkpoint) -> PyResult<String> {
@@ -301,6 +323,7 @@ pub(crate) fn write<C: Consumer + ?Sized>(
     // targets are little-endian x86_64/aarch64 and must be covered by CI. No raw
     // view is detached, stored globally or retained by the native consumer.
     let data = unsafe { source.data()? };
+    let ascii = matches!(data, PyStringData::Ucs1(_)) && is_ascii(source);
     // A bounded short conversion may reuse CPython's immutable UTF-8 cache.
     // The caller checks aggregate work at its traversal/root boundary; adding
     // two signal/deadline calls to every tiny leaf would duplicate that work.
@@ -313,6 +336,18 @@ pub(crate) fn write<C: Consumer + ?Sized>(
     };
     if length <= CHARACTERS {
         super::control::bytes(py, budget, length.saturating_mul(4))?;
+        if let PyStringData::Ucs1(bytes) = data
+            && ascii
+        {
+            // SAFETY: CPython's immutable ASCII flag proves every UCS1 byte
+            // is ASCII, hence UTF-8. The original owner and attached lifetime
+            // remain live through immediate native consumption; no callback
+            // or Python replacement conversion is invoked here.
+            let text = unsafe { std::str::from_utf8_unchecked(bytes) };
+            return target
+                .write(ScalarRef::Text(text), context)
+                .map_err(|error| failure(error, 0, text));
+        }
         let text = source.to_str().map_err(|original| {
             if !original.is_instance_of::<pyo3::exceptions::PyUnicodeEncodeError>(py) {
                 return original;
@@ -373,7 +408,7 @@ pub(crate) fn write<C: Consumer + ?Sized>(
         PyStringData::Ucs1(values) => {
             for values in values.chunks(CHARACTERS) {
                 super::checkpoint(py, budget)?;
-                if values.is_ascii() {
+                if ascii || values.is_ascii() {
                     // SAFETY: this bounded immutable source chunk passed
                     // is_ascii; its owned string remains live across the call.
                     let value = unsafe { std::str::from_utf8_unchecked(values) };

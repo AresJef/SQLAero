@@ -16,21 +16,23 @@ fn main() {
     );
     // Native builds use the same interpreter selected by PyO3/maturin. No
     // runtime interpreter discovery, private Rust object layout or global
-    // compiler setting is needed for the narrow integer export shim.
+    // compiler setting is needed for the narrow attached source shims.
     let includes = config
         .run_python_script(
             "import sysconfig\np = sysconfig.get_paths()\nprint(p['include'])\nprint(p['platinclude'])\n",
         )
-        .expect("cannot locate the selected CPython headers for native integer export");
+        .expect("cannot locate the selected CPython headers for native source APIs");
     let mut build = cc::Build::new();
     for include in includes.lines().filter(|line| !line.is_empty()) {
         build.include(include);
     }
     build
         .file("src/input/long_export.c")
+        .file("src/input/unicode_source.c")
         .include("../../third-party/pythoncapi-compat")
         .flag_if_supported("-std=c11")
-        .compile("sqlaero_long_export");
+        .compile("sqlaero_source_api");
     println!("cargo:rerun-if-changed=src/input/long_export.c");
+    println!("cargo:rerun-if-changed=src/input/unicode_source.c");
     println!("cargo:rerun-if-changed=../../third-party/pythoncapi-compat/pythoncapi_compat.h");
 }
