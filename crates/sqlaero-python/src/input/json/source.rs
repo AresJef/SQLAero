@@ -4,7 +4,7 @@ use super::{Serialize, failure};
 use crate::input::cell::{NativeFailure, Schema, Target};
 use crate::input::control::Checkpoint;
 use crate::input::sink::Destination;
-use crate::input::source::{FieldNameIdentity, PreparedSource, Shape};
+use crate::input::source::{PreparedSource, Shape};
 use crate::{errors, input};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -12,42 +12,6 @@ use pyo3::types::PyString;
 use sqlaero_core::json::Error;
 use sqlaero_transcode::diagnostic::{Coordinate, Path};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
-use std::collections::HashMap;
-
-struct Names {
-    values: Vec<String>,
-    allocated: usize,
-}
-
-/// Target-owned metadata only. Limits keep lookup growth and retained names
-/// bounded; a source beyond either limit keeps the ordinary checked path.
-#[derive(Default)]
-pub(super) struct NameCache {
-    entries: HashMap<FieldNameIdentity, Option<Names>>,
-    allocated: usize,
-}
-
-impl NameCache {
-    fn reserve(
-        &mut self,
-        py: Python<'_>,
-        identity: FieldNameIdentity,
-        allocated: usize,
-    ) -> PyResult<bool> {
-        if self.entries.len() >= 64
-            || self.entries.contains_key(&identity)
-            || self.allocated.saturating_add(allocated) > input::WORK_BYTES
-        {
-            return Ok(false);
-        }
-        self.entries
-            .try_reserve(1)
-            .map_err(|_| errors::memory_error(py))?;
-        self.entries.insert(identity, None);
-        self.allocated += allocated;
-        Ok(true)
-    }
-}
 
 struct Cell<'a, 'b, 'c, D: Destination + ?Sized> {
     state: &'a mut Serialize<'b, D>,
@@ -175,14 +139,7 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
             .try_reserve(1)
             .map_err(|_| errors::memory_error(py))?;
         self.active.push(value.as_ptr() as usize);
-        // Native schema addresses identify facts only while this source lives.
-        // Nested Python providers get their own scope and restore the parent's
-        // metadata afterwards, including on a failed traversal.
-        let previous_names = self.native_names.take();
-        let previous_repeat = std::mem::replace(&mut self.repeat_native_names, false);
         let result = self.typed_source(source.as_mut(), path, budget);
-        self.native_names = previous_names;
-        self.repeat_native_names = previous_repeat;
         self.active.pop();
         result.map(|()| true)
     }
@@ -197,14 +154,7 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
     ) -> PyResult<()> {
         let py = source.owner().py();
         source.schema(&mut Cell { state: self, path })?;
-        let shape = source.shape();
-        // A singleton cannot amortize an index. Nested repeated structures
-        // enable reuse from the same neutral facts, without provider checks.
-        self.repeat_native_names |= matches!(
-            shape,
-            Shape::Vector { length: 2.. } | Shape::Table { rows: 2.., .. }
-        );
-        match shape {
+        match source.shape() {
             Shape::Scalar => {
                 self.typed_cell(source, 0, 0, path, budget)?;
             }
@@ -233,7 +183,7 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
                     input::checkpoint(py, Some(budget))?;
                     let current = path.child(Coordinate::Index(row));
                     if let Some(keys) = &keys {
-                        self.record_cells(source, row, &keys.values, &current, budget)?;
+                        self.record_cells(source, row, keys, &current, budget)?;
                     } else {
                         self.writer
                             .array_start()
@@ -274,7 +224,7 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
         source: &mut dyn PreparedSource<'_>,
         fields: usize,
         path: &Path<'_>,
-    ) -> PyResult<Names> {
+    ) -> PyResult<Vec<String>> {
         use std::collections::{HashMap, hash_map::RandomState};
         let py = source.owner().py();
         let seed = RandomState::new();
@@ -283,7 +233,6 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
         names
             .try_reserve_exact(fields)
             .map_err(|_| errors::memory_error(py))?;
-        let mut allocated = names.capacity().saturating_mul(size_of::<String>());
         for column in 0..fields {
             Cell { state: self, path }.checkpoint(py, 1)?;
             let name = source.field_name(column)?.ok_or_else(|| {
@@ -310,13 +259,9 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
                 .try_reserve(1)
                 .map_err(|_| errors::memory_error(py))?;
             previous.push(column);
-            allocated = allocated.saturating_add(key.value.capacity());
             names.push(key.value);
         }
-        Ok(Names {
-            values: names,
-            allocated,
-        })
+        Ok(names)
     }
 
     fn typed_record(
@@ -327,49 +272,8 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         source.prepare_field_names(budget)?;
-        let identity = if self.repeat_native_names {
-            source.field_name_identity()
-        } else {
-            None
-        };
-        let ready = identity.and_then(|identity| {
-            self.native_names
-                .as_mut()?
-                .entries
-                .get_mut(&identity)?
-                .take()
-        });
-        let (names, retain) = if let Some(names) = ready {
-            (names, true)
-        } else {
-            let names = self.source_keys(source, fields, path)?;
-            let retain = if let Some(identity) = identity
-                && names.allocated <= input::WORK_BYTES
-            {
-                // Unnamed/scalar roots carry only an optional pointer, rather
-                // than moving an unused map through the shared hot state.
-                let py = source.owner().py();
-                let cache = match &mut self.native_names {
-                    Some(cache) => cache,
-                    slot => slot.insert(input::boxed(py, NameCache::default())?),
-                };
-                cache.reserve(py, identity, names.allocated)?
-            } else {
-                false
-            };
-            (names, retain)
-        };
-        let result = self.record_cells(source, 0, &names.values, path, budget);
-        if retain
-            && let Some(identity) = identity
-            && let Some(slot) = self
-                .native_names
-                .as_mut()
-                .and_then(|cache| cache.entries.get_mut(&identity))
-        {
-            *slot = Some(names);
-        }
-        result
+        let names = self.source_keys(source, fields, path)?;
+        self.record_cells(source, 0, &names, path, budget)
     }
 
     fn record_cells(
