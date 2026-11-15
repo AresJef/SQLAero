@@ -230,21 +230,13 @@ fn padded<T: itoa::Integer>(
 fn date_body(output: &mut Vec<u8>, value: Date, limit: usize) -> Result<(), WireError> {
     padded(output, value.year, 4, limit)?;
     append(output, b"-", limit)?;
-    pair(output, value.month, limit)?;
+    padded(output, value.month, 2, limit)?;
     append(output, b"-", limit)?;
-    pair(output, value.day, limit)
+    padded(output, value.day, 2, limit)
 }
-fn pair(output: &mut Vec<u8>, value: u8, limit: usize) -> Result<(), WireError> {
-    if let Some(digits) = number::two_digits(value) {
-        append(output, &digits, limit)
-    } else {
-        padded(output, value, 2, limit)
-    }
-}
-
-fn clock_body<H: itoa::Integer>(
+fn clock_body(
     output: &mut Vec<u8>,
-    hours: H,
+    hours: u128,
     minutes: u8,
     seconds: u8,
     micros: u32,
@@ -252,9 +244,9 @@ fn clock_body<H: itoa::Integer>(
 ) -> Result<(), WireError> {
     padded(output, hours, 2, limit)?;
     append(output, b":", limit)?;
-    pair(output, minutes, limit)?;
+    padded(output, minutes, 2, limit)?;
     append(output, b":", limit)?;
-    pair(output, seconds, limit)?;
+    padded(output, seconds, 2, limit)?;
     if micros != 0 {
         append(output, b".", limit)?;
         padded(output, micros, 6, limit)?;
@@ -278,7 +270,7 @@ pub fn date_time(
         append(output, b" ", limit)?;
         clock_body(
             output,
-            clock.hour,
+            u128::from(clock.hour),
             clock.minute,
             clock.second,
             clock.microsecond,

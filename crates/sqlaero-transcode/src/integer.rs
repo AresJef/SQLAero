@@ -132,10 +132,19 @@ impl<'a> DecimalDigits<'a> {
     pub fn new(source: Digits<'a>) -> Result<Self, Error> {
         let mut words = Vec::new();
         words.try_reserve_exact(source.len())?;
+        // Each decimal group holds more than 29 binary bits. Reserve a
+        // checked upper bound once, without scanning the source or growing
+        // this buffer during the bounded division steps. Zero needs one group.
+        let bits = source
+            .len()
+            .checked_mul(usize::from(source.bits))
+            .ok_or(Error::Representation)?;
+        let mut groups = Vec::new();
+        groups.try_reserve_exact(bits.div_ceil(29).max(1))?;
         Ok(Self {
             source,
             words,
-            groups: Vec::new(),
+            groups,
             active: 0,
             cursor: 0,
             carry: 0,
@@ -162,7 +171,6 @@ impl<'a> DecimalDigits<'a> {
                 }
                 Phase::Divide => {
                     if self.cursor == 0 {
-                        self.groups.try_reserve(1)?;
                         self.groups.push(self.carry as u32);
                         self.carry = 0;
                         self.phase = Phase::Trim;
@@ -182,7 +190,6 @@ impl<'a> DecimalDigits<'a> {
                         work -= 1;
                     } else if self.active == 0 {
                         if self.groups.is_empty() {
-                            self.groups.try_reserve(1)?;
                             self.groups.push(0);
                         }
                         self.phase = Phase::Done;
@@ -258,11 +265,17 @@ mod tests {
             DecimalDigits::new(Digits::new(bytes, bits, width, order, endian).unwrap()).unwrap();
         assert!(!value.step(0).unwrap());
         assert!(value.groups().is_none());
+        let capacity = value.groups.capacity();
         let mut calls = 0;
         while !value.step(1).unwrap() {
             calls += 1;
             assert!(calls < 10_000_000);
         }
+        assert_eq!(
+            value.groups.capacity(),
+            capacity,
+            "bounded work must not grow decimal groups"
+        );
         let mut answer = String::new();
         for (index, group) in value.groups().unwrap().iter().rev().enumerate() {
             if index == 0 {
