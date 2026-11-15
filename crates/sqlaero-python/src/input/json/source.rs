@@ -346,9 +346,14 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
             let retain = if let Some(identity) = identity
                 && names.allocated <= input::WORK_BYTES
             {
-                self.native_names
-                    .get_or_insert_with(NameCache::default)
-                    .reserve(source.owner().py(), identity, names.allocated)?
+                // Unnamed/scalar roots carry only an optional pointer, rather
+                // than moving an unused map through the shared hot state.
+                let py = source.owner().py();
+                let cache = match &mut self.native_names {
+                    Some(cache) => cache,
+                    slot => slot.insert(input::boxed(py, NameCache::default())?),
+                };
+                cache.reserve(py, identity, names.allocated)?
             } else {
                 false
             };

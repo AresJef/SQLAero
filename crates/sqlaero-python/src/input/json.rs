@@ -112,7 +112,7 @@ struct Serialize<'a, D: Destination + ?Sized = Vec<u8>> {
     failure_located: bool,
     repeat_native_names: bool,
     nodes: usize,
-    native_names: Option<source::NameCache>,
+    native_names: Option<Box<source::NameCache>>,
 }
 
 impl<D: Destination + ?Sized> Serialize<'_, D> {
