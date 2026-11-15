@@ -2,6 +2,13 @@
 
 use crate::buffer::CapacityError;
 
+/// Detect ASCII control bytes without interpreting the target output syntax.
+/// The caller supplies a bounded block. Non-ASCII UTF-8 bytes are not controls.
+#[inline]
+pub fn contains_ascii_control(source: &[u8]) -> bool {
+    source.iter().copied().min().unwrap_or(u8::MAX) < 0x20
+}
+
 /// A source codepoint or scratch-capacity failure, with native coordinates.
 #[derive(Debug, thiserror::Error)]
 pub enum EncodeError {
@@ -56,4 +63,20 @@ pub fn codepoints<T: Copy + Into<u32>>(
         output.push(value);
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::contains_ascii_control;
+
+    #[test]
+    fn control_scan_preserves_every_byte_and_empty_unicode_boundaries() {
+        assert!(!contains_ascii_control(&[]));
+        assert!(!contains_ascii_control("é中😀".as_bytes()));
+        for byte in 0..=u8::MAX {
+            let mut block = [b'a'; 33];
+            block[16] = byte;
+            assert_eq!(contains_ascii_control(&block), byte < 32);
+        }
+    }
 }

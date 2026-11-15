@@ -291,21 +291,29 @@ impl Writer {
             "\\u0011", "\\u0012", "\\u0013", "\\u0014", "\\u0015", "\\u0016", "\\u0017", "\\u0018",
             "\\u0019", "\\u001a", "\\u001b", "\\u001c", "\\u001d", "\\u001e", "\\u001f",
         ];
-        let mut start = 0;
-        for (index, &byte) in value.as_bytes().iter().enumerate() {
-            let escape = match byte {
-                b'"' => "\\\"",
-                b'\\' => "\\\\",
-                0..=31 => CONTROLS[usize::from(byte)],
-                _ => continue,
-            };
-            // Every split is at an ASCII escape character, hence a valid UTF-8
-            // boundary. Native text ownership stays valid without unsafe casts.
-            self.append(&value[start..index])?;
-            self.append(escape)?;
-            start = index + 1;
+        let bytes = value.as_bytes();
+        if bytes.len() >= 16
+            && memchr::memchr2(b'"', b'\\', bytes).is_none()
+            && !sqlaero_transcode::utf8::contains_ascii_control(bytes)
+        {
+            self.append(value)?;
+        } else {
+            let mut start = 0;
+            for (index, &byte) in bytes.iter().enumerate() {
+                let escape = match byte {
+                    b'"' => "\\\"",
+                    b'\\' => "\\\\",
+                    0..=31 => CONTROLS[usize::from(byte)],
+                    _ => continue,
+                };
+                // Every split is at an ASCII escape character, hence a valid UTF-8
+                // boundary. Native text ownership stays valid without unsafe casts.
+                self.append(&value[start..index])?;
+                self.append(escape)?;
+                start = index + 1;
+            }
+            self.append(&value[start..])?;
         }
-        self.append(&value[start..])?;
         // No callback or borrow of external mutable storage occurs above.
         if let Some(text) = &mut self.text {
             text.remaining = remaining;

@@ -243,6 +243,16 @@ def test_long_unicode_and_controls_do_not_change_data() -> None:
     assert _sqlaero._encode_native_scalar(source) == _sqlaero._encode_scalar(source)
 
 
+@pytest.mark.parametrize("width", [15, 16, 17, 1023, 1024, 1025])
+def test_json_string_marker_boundaries_match_independent_standard_output(width: int) -> None:
+    for point in range(128):
+        left, right = "a" * (width // 2), "z" * (width - width // 2 - 1)
+        for text in (left + chr(point) + right, left + chr(point) + "中😀" + right):
+            for value in (text, {text: [text]}):
+                expected = json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+                assert json_dumps(value) == expected
+
+
 @pytest.mark.parametrize("prefix", ["é" * 65536, "中" * 65535, "😀" * 65537])
 def test_unicode_storage_windows_keep_original_source_positions(prefix: str) -> None:
     source = prefix + "\ud800tail"

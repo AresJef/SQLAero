@@ -147,10 +147,9 @@ impl Codec {
         if bytes.len() >= 16
             && matches!(self.charset.route, CodecRoute::Utf8)
             && if no_backslash {
-                memchr::memchr(b'\'', bytes).is_none()
+                plain::<2>(bytes)
             } else {
-                memchr::memchr3(b'\'', b'"', b'\\', bytes).is_none()
-                    && bytes.iter().copied().min().unwrap_or(u8::MAX) >= 0x20
+                plain::<1>(bytes)
             }
         {
             let length = bytes.len().checked_add(2).ok_or(WireError::Limit {
@@ -418,12 +417,26 @@ fn escape<const MODE: u8>(byte: u8) -> Option<&'static [u8]> {
     }
 }
 
+/// Prove a complete fragment needs no target-specific SQL escaping.
+fn plain<const MODE: u8>(bytes: &[u8]) -> bool {
+    match MODE {
+        0 => true,
+        1 => {
+            memchr::memchr3(b'\'', b'"', b'\\', bytes).is_none()
+                && !sqlaero_transcode::utf8::contains_ascii_control(bytes)
+        }
+        2 => memchr::memchr(b'\'', bytes).is_none(),
+        3 => memchr::memchr(b'`', bytes).is_none(),
+        _ => false,
+    }
+}
+
 fn escaped<const MODE: u8>(
     bytes: &[u8],
     output: &mut Vec<u8>,
     limit: usize,
 ) -> Result<(), WireError> {
-    if MODE == 0 {
+    if MODE == 0 || (bytes.len() >= 16 && plain::<MODE>(bytes)) {
         return append(output, bytes, limit);
     }
     let mut start = 0;
