@@ -1170,8 +1170,6 @@ struct Masked<'py> {
 }
 
 impl Masked<'_> {
-    // Keep nullable-mask handling separate from dispatch for unmasked columns.
-    #[inline(never)]
     fn consume(
         &mut self,
         row: usize,
@@ -1179,7 +1177,9 @@ impl Masked<'_> {
         budget: &dyn Checkpoint,
         _api: &NumpyArrayApi,
     ) -> PyResult<()> {
-        let missing = self.mask.checked_missing(&self.state, row, 0, budget)?;
+        self.state.validate(budget)?;
+        let missing = self.mask.missing(row, 0, budget)?;
+        self.state.validate(budget)?;
         if missing {
             self.data.validate_layout(budget)?;
             target.scalar(self.data.owner().py(), ValueRef::Null)

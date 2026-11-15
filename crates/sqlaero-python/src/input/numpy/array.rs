@@ -391,17 +391,6 @@ impl<'py> NumpySource<'py> {
         Ok(self.cell_bytes(row, column, budget)?[0] != 0)
     }
 
-    /// Read only an already owned mask byte. This path cannot call Python,
-    /// acquire a source export, allocate, or refresh the copied block.
-    pub(super) fn copied_bool_cell(&self, row: usize, column: usize) -> Option<bool> {
-        if !self.is_boolean() {
-            return None;
-        }
-        let (_, index, _) = self.cell_position(row, column)?;
-        let block = self.raw.as_ref()?;
-        Some(*block.bytes.get(index.checked_sub(block.start)?)? != 0)
-    }
-
     /// Finite unit facts are prepared once, after actual NaT recognition. The
     /// protocol cannot conceal a retired operation or a changed source layout.
     fn finite_temporal(&mut self, budget: &dyn Checkpoint) -> PyResult<(TimeUnit, u64, TimeKind)> {
@@ -437,25 +426,6 @@ impl<'py> NumpySource<'py> {
         Ok(facts)
     }
 
-    /// Return the prepared logical size, row-major position, and row width.
-    fn cell_position(&self, row: usize, column: usize) -> Option<(usize, usize, usize)> {
-        let (rows, columns) = match self.shape {
-            Shape::Scalar => (1, 1),
-            Shape::Vector { length } => (length, 1),
-            Shape::Table { rows, columns } => (rows, columns),
-            Shape::Tensor { elements, .. } => (elements, 1),
-            Shape::Record { .. } => (0, 0),
-        };
-        if row >= rows || column >= columns {
-            return None;
-        }
-        Some((
-            rows.checked_mul(columns)?,
-            row.checked_mul(columns)?.checked_add(column)?,
-            columns,
-        ))
-    }
-
     fn cell_bytes(
         &mut self,
         row: usize,
@@ -463,7 +433,18 @@ impl<'py> NumpySource<'py> {
         budget: &dyn Checkpoint,
     ) -> PyResult<[u8; 8]> {
         let mut bytes = [0u8; 8];
-        if let Some((total, index, columns)) = self.cell_position(row, column)
+        let (rows, columns) = match self.shape {
+            Shape::Scalar => (1, 1),
+            Shape::Vector { length } => (length, 1),
+            Shape::Table { rows, columns } => (rows, columns),
+            Shape::Tensor { elements, .. } => (elements, 1),
+            Shape::Record { .. } => (0, 0),
+        };
+        let total = rows.checked_mul(columns);
+        let index = (row < rows && column < columns)
+            .then(|| row.checked_mul(columns)?.checked_add(column))
+            .flatten();
+        if let (Some(total), Some(index)) = (total, index)
             && total >= RAW_BLOCK_MINIMUM
         {
             if !self.raw.as_ref().is_some_and(|block| {
