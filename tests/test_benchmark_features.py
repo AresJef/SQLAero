@@ -485,11 +485,16 @@ def test_json_three_boundaries_share_inputs_and_keep_timed_output_costs(runner: 
             assert all(type(value) is native._EncodedValue and value.to_bytes() == expected for value in outputs)
 
 
-def test_json_catalog_has_distinct_boundaries_and_reuses_provider_input(runner: Any) -> None:
+@pytest.mark.parametrize("provider", ["arrow", "polars"])
+@pytest.mark.parametrize("size", [1, 1000])
+def test_json_catalog_has_distinct_boundaries_and_reuses_provider_input(
+    runner: Any, provider: str, size: int,
+) -> None:
     value = object()
-    records = runner.json_cases([runner.Case("typed/arrow/struct/N1000", value)])
+    suffix = f"{provider}/struct/N{size}"
+    records = runner.json_cases([runner.Case("typed/" + suffix, value)])
     assert len(records) == len({case.id for case in records})
-    selected = [case for case in records if "/provider/arrow/struct/N1000" in case.id]
+    selected = [case for case in records if "/provider/" + suffix == case.id.removeprefix(case.family)]
     assert len(selected) == 3 and all(case.value is value for case in selected)
     assert {case.family for case in selected} == set(runner.JSON_BOUNDARIES)
     assert all(case.family in runner.CPU_FAMILIES for case in records)

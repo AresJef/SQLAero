@@ -277,6 +277,7 @@ def json_cases(existing: list[Case] | None = None) -> list[Case]:
         "pandas/Timestamp-utc/scalar", "pandas/Series-nullable/N1000", "pandas/MultiIndex/N1000",
         "pandas/ArrowExtensionArray/N1000", "pandas/frame-int64/R1000C4",
         "arrow/i64/N1000", "arrow/utf8/N1000", "arrow/list/N1000", "arrow/struct/N1000",
+        "arrow/struct/N1", "polars/struct/N1",
         "arrow/chunked/N1000", "arrow/dictionary/N1000", "arrow/duration-ns/N1000",
         "arrow/frame-int64/R1000C4", "polars/i64/N1000", "polars/utf8/N1000",
         "polars/list/N1000", "polars/struct/N1000", "polars/category/N1000",
