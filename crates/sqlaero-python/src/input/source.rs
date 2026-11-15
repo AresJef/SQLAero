@@ -189,6 +189,24 @@ pub(crate) trait CellWriter {
     fn checkpoint(&mut self, py: Python<'_>, work: usize) -> PyResult<()>;
 }
 
+/// Opaque identity of complete immutable names in one retained source.
+/// Consumers may compare this token only while that prepared source is alive;
+/// the address is never dereferenced or reused across source traversals.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct FieldNameIdentity {
+    source: usize,
+    node: usize,
+}
+
+impl FieldNameIdentity {
+    pub(super) fn new<T>(source: &T, node: usize) -> Self {
+        Self {
+            source: std::ptr::from_ref(source) as usize,
+            node,
+        }
+    }
+}
+
 /// Own preparation and traversal of one provider, not a materialized value tree.
 /// A stream supports forward rows and re-encoding its most recent row only.
 /// No raw view or borrowed slot may survive a callback through `visitor`.
@@ -209,6 +227,13 @@ pub(crate) trait PreparedSource<'py> {
         _budget: &dyn crate::input::control::Checkpoint,
     ) -> PyResult<bool> {
         Ok(false)
+    }
+
+    /// Identify stable, fully prepared name facts, not target-formatted keys.
+    /// The default does not promise reusable names. A consumer must discard
+    /// every token before this prepared source and its native projections die.
+    fn field_name_identity(&self) -> Option<FieldNameIdentity> {
+        None
     }
 
     /// A source owns child facts; the caller owns root/row policy such as many.

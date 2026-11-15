@@ -201,6 +201,19 @@ impl<'py> Source<'py> {
             .and_then(|field| field.name.clone()))
     }
 
+    pub(crate) fn identity(&self, node: usize) -> Option<crate::input::source::FieldNameIdentity> {
+        let Self::Ready(schema) = self else {
+            return None;
+        };
+        schema
+            .nodes
+            .get(node)?
+            .fields
+            .as_ref()?
+            .names_ready
+            .then(|| crate::input::source::FieldNameIdentity::new(schema.as_ref(), node))
+    }
+
     /// Reuse an already acquired canonical column header. It contains source
     /// metadata only, not a row/value conversion or a target-formatted key.
     pub(crate) fn bind_polars_column(

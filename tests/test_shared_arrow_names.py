@@ -4,8 +4,9 @@
 
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 import pytest
-from sqlaero import _sqlaero, json_dumps
+from sqlaero import JSON, _sqlaero, json_dumps
 
 pa = pytest.importorskip("pyarrow")
 
@@ -98,3 +99,70 @@ def test_provider_table_export_can_reject_name_before_driver_adaptation() -> Non
         value.__arrow_c_stream__()
     with pytest.raises(UnicodeDecodeError):
         _sqlaero._escape_projection(value)
+
+
+@pytest.mark.parametrize("kind", ["array", "chunked", "dictionary"])
+def test_repeated_native_records_keep_full_keys_and_values_in_both_json_outputs(kind: str) -> None:
+    inner = pa.StructArray.from_arrays(
+        [pa.array([7, 8, 9]), pa.array(["ab", "cd", "ef"])],
+        names=["a\0x", "a\0y"],
+        mask=pa.array([False, True, False]),
+    )
+    rows: list[object] = [{"a\0x": 7, "a\0y": "ab"}, None, {"a\0x": 9, "a\0y": "ef"}]
+    if kind == "array":
+        value, expected = pa.concat_arrays([inner] * 5), rows * 5
+    elif kind == "chunked":
+        value, expected = pa.chunked_array([inner.slice(0, 0), inner, inner]), rows * 2
+    else:
+        value = pa.DictionaryArray.from_arrays(pa.array([0, None, 2, 0], type=pa.int8()), inner)
+        expected = [rows[0], None, rows[2], rows[0]]
+    document = json.dumps(expected, ensure_ascii=False, separators=(",", ":"))
+    assert json_dumps(value) == document.encode()
+    literal = "'" + document.replace("\\", "\\\\").replace("'", "\\'").replace('"', '\\"') + "'"
+    assert _sqlaero._encode_native_scalar(JSON(value)) == literal.encode()
+
+
+def test_separate_native_sources_and_calls_never_reuse_another_schema_keys() -> None:
+    left = pa.StructArray.from_arrays([pa.array([7, 8])], names=["same\0left"])
+    right = pa.StructArray.from_arrays([pa.array([9, 10])], names=["same\0right"])
+    payload: list[object] = [left, right, left]
+    wrapped = JSON(payload)
+    expected = [[{"same\0left": 7}, {"same\0left": 8}], [{"same\0right": 9}, {"same\0right": 10}], [{"same\0left": 7}, {"same\0left": 8}]]
+    assert json.loads(json_dumps(wrapped.data)) == expected
+    payload[0] = right
+    expected[0] = expected[1]
+    assert json.loads(json_dumps(wrapped.data)) == expected
+
+
+def test_wide_nested_native_schemas_keep_their_own_repeated_keys() -> None:
+    columns = [pa.StructArray.from_arrays([pa.array([i, i + 1])], names=[f"a\0{i}"]) for i in range(70)]
+    table = pa.Table.from_arrays(columns, names=[f"c{i}" for i in range(70)])
+    expected = [{f"c{i}": {f"a\0{i}": i + row} for i in range(70)} for row in range(2)]
+    assert json.loads(json_dumps(table)) == expected
+
+
+def test_repeated_large_native_field_names_remain_complete() -> None:
+    name = "a" * 300_000 + "\0tail"
+    value = pa.StructArray.from_arrays([pa.array([7, 8])], names=[name])
+    assert json.loads(json_dumps(value)) == [{name: 7}, {name: 8}]
+
+
+def test_null_prefix_does_not_hide_duplicate_keys_or_change_error_position() -> None:
+    valid = pa.StructArray.from_arrays([pa.array([7])], names=["valid"])
+    duplicate = pa.StructArray.from_arrays(
+        [pa.array([7, 8]), pa.array([9, 10])], names=["same", "same"], mask=pa.array([True, False])
+    )
+    with pytest.raises(ValueError, match="collid") as caught:
+        json_dumps([valid, duplicate])
+    assert "data[1][1]" in "\n".join(getattr(caught.value, "__notes__", ()))
+
+
+def test_immutable_native_named_sources_are_safe_in_independent_threads() -> None:
+    source = pa.StructArray.from_arrays([pa.array(list(range(100)))], names=["a\0x"])
+    expected = json.dumps([{"a\0x": i} for i in range(100)], separators=(",", ":")).encode()
+
+    def encode(_: int) -> bytes:
+        return json_dumps(source)
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        assert list(pool.map(encode, range(32))) == [expected] * 32

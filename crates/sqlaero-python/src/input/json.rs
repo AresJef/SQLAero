@@ -111,6 +111,7 @@ struct Serialize<'a, D: Destination + ?Sized = Vec<u8>> {
     active: Vec<usize>,
     failure_located: bool,
     nodes: usize,
+    native_names: Option<source::NameCache>,
 }
 
 impl<D: Destination + ?Sized> Serialize<'_, D> {
@@ -511,6 +512,7 @@ fn serialize_into<'a, D: Destination + ?Sized>(
         active: Vec::new(),
         failure_located: false,
         nodes: 0,
+        native_names: None,
     };
     let root = Path::root("data");
     state.value_at(value, &root)?;

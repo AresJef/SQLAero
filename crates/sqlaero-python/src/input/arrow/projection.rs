@@ -233,6 +233,9 @@ impl<'py> PreparedSource<'py> for View<'_, 'py> {
     fn field_name(&self, column: usize) -> PyResult<Option<Bound<'py, PyAny>>> {
         self.read.names.field(self.read.node, column)
     }
+    fn field_name_identity(&self) -> Option<crate::input::source::FieldNameIdentity> {
+        self.read.names.identity(self.read.node)
+    }
     fn consume_cell(
         &mut self,
         row: usize,
