@@ -188,19 +188,13 @@ fn civil(days: i128) -> Result<(i128, u8, u8), Error> {
     // Gregorian eras use Euclidean division, including dates before year zero.
     let z = days.checked_add(719_468).ok_or_else(range)?;
     let era = z.div_euclid(146_097);
-    // The nonnegative remainder is at most 146096. All subsequent within-era
-    // values fit u32; only the final signed era/year arithmetic needs i128.
-    let day = z.rem_euclid(146_097) as u32;
+    let day = z.rem_euclid(146_097);
     let year_in_era = (day - day / 1_460 + day / 36_524 - day / 146_096) / 365;
-    let mut year = i128::from(year_in_era) + era * 400;
+    let mut year = year_in_era + era * 400;
     let day_in_year = day - (365 * year_in_era + year_in_era / 4 - year_in_era / 100);
     let month_from_march = (5 * day_in_year + 2) / 153;
     let date = day_in_year - (153 * month_from_march + 2) / 5 + 1;
-    let month = if month_from_march < 10 {
-        month_from_march + 3
-    } else {
-        month_from_march - 9
-    };
+    let month = month_from_march + if month_from_march < 10 { 3 } else { -9 };
     year += i128::from(month <= 2);
     Ok((year, month as u8, date as u8))
 }
