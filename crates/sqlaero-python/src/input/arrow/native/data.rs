@@ -57,7 +57,6 @@ pub(crate) struct View {
 }
 
 impl ArrayRef {
-    #[inline]
     pub(crate) fn data_type(&self) -> TypeView<'_> {
         match self {
             Self::Leaf(value) => TypeView::Scalar(value.data_type()),
@@ -68,7 +67,6 @@ impl ArrayRef {
             Self::View(value) => TypeView::Scalar(&value.dtype),
         }
     }
-    #[inline]
     pub(crate) fn len(&self) -> usize {
         match self {
             Self::Leaf(value) => value.len(),
@@ -92,7 +90,6 @@ impl ArrayRef {
             Self::View(value) => value.nulls.as_ref(),
         }
     }
-    #[inline]
     pub(crate) fn is_null(&self, index: usize) -> bool {
         if let Self::Leaf(value) = self {
             return value.is_null(index);
@@ -105,7 +102,6 @@ impl ArrayRef {
         }
         self.nulls().map_or(0, NullBuffer::null_count)
     }
-    #[inline]
     pub(crate) fn as_any(&self) -> &dyn Any {
         match self {
             Self::Leaf(value) => value.as_any(),
