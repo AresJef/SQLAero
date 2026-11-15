@@ -1170,6 +1170,8 @@ struct Masked<'py> {
 }
 
 impl Masked<'_> {
+    // Keep nullable-mask handling separate from dispatch for unmasked columns.
+    #[inline(never)]
     fn consume(
         &mut self,
         row: usize,
