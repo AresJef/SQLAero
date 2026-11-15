@@ -177,6 +177,13 @@ def cases(*, typed: bool = True) -> list[Case]:
                 payload = (content * size)[:size]
                 result.append(Case(f"escape/{kind}/{variant}/bytes{size}",
                                    payload))
+    # Source ASCII metadata must not penalize the neighboring one-byte
+    # non-ASCII fallback or the last cached-UTF8 source window.
+    for name, text in (("latin1", "é" * 16), ("latin1-utf8-shaped", "Ã©" * 8)):
+        result.append(Case(f"escape/str/{name}/scalar", text))
+        result.append(Case(f"escape/str/{name}/list/N1000", [text] * 1000))
+    for name, text in (("ascii", "a"), ("latin1", "é")):
+        result.append(Case(f"escape/str/{name}/codepoints65536", text * 65536))
     result.extend([
         Case("escape/empty/list", []), Case("escape/empty/tuple", ()),
         Case("escape/str/no-backslash/scalar", "a'\\\x00", no_backslash=True),
@@ -263,6 +270,8 @@ def json_cases(existing: list[Case] | None = None) -> list[Case]:
         "duration": timedelta(days=-2, microseconds=7),
         "empty-array": [], "empty-object": {},
         "object": {"id": 7, "name": "中文🙂", "nested": [None, True, -0.0]},
+        "text-latin1/codepoints16": "é" * 16,
+        "text-latin1-utf8-shaped/codepoints16": "Ã©" * 8,
     }
     for size in (16, 1024, 262144):
         for name, text in (("ascii", "a"), ("unicode", "中🙂"), ("escaped", '"\\\n\x00')):
