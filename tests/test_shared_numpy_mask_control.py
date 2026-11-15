@@ -13,6 +13,53 @@ from test_public_connection import live, requires_mysql
 np = pytest.importorskip("numpy")
 
 
+@pytest.mark.parametrize("provider", ["numpy", "pandas"])
+@pytest.mark.parametrize("target", ["json", "mysql"])
+@pytest.mark.parametrize("raise_original", [False, True])
+def test_long_mask_dictionary_callback_preserves_source_error(
+    provider: str, target: str, raise_original: bool,
+) -> None:
+    if provider == "numpy":
+        source = np.ma.array(np.arange(1000), mask=np.zeros(1000, dtype=bool))
+    else:
+        pd = pytest.importorskip("pandas")
+        source = pd.array(np.arange(1000), dtype="Int64")
+    namespace = source.__dict__
+    original_mask = namespace.pop("_mask")
+    original_error = MemoryError("original long mask dictionary callback")
+
+    class MaskKey:
+        calls: int = 0
+        fired: bool = False
+
+        def __hash__(self) -> int:
+            return hash("_mask")
+
+        def __eq__(self, other: object) -> bool:
+            if other != "_mask":
+                return False
+            self.calls += 1
+            if self.calls >= 32 and not self.fired:
+                self.fired = True
+                if raise_original:
+                    raise original_error
+                namespace[self] = np.ones(1000, dtype=bool)
+            return True
+
+    key = MaskKey()
+    namespace[key] = original_mask
+    with pytest.raises(MemoryError if raise_original else BufferError) as caught:
+        if target == "json":
+            json_dumps(source)
+        else:
+            _sqlaero._encode_value(source)
+    assert key.fired
+    if raise_original:
+        assert caught.value is original_error
+    else:
+        assert "mask changed" in str(caught.value)
+
+
 @pytest.mark.parametrize("change", ["shape", "dtype", "missing", "object"])
 def test_invalid_actual_mask_storage_is_rejected(change: str) -> None:
     value = np.ma.array([7, 8], mask=[False, True])

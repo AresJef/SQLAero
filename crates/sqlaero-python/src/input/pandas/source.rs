@@ -1177,9 +1177,7 @@ impl Masked<'_> {
         budget: &dyn Checkpoint,
         _api: &NumpyArrayApi,
     ) -> PyResult<()> {
-        self.state.validate(budget)?;
-        let missing = self.mask.missing(row, 0, budget)?;
-        self.state.validate(budget)?;
+        let missing = self.mask.checked_missing(&self.state, row, 0, budget)?;
         if missing {
             self.data.validate_layout(budget)?;
             target.scalar(self.data.owner().py(), ValueRef::Null)

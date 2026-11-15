@@ -109,6 +109,28 @@ impl<'py> Reader<'py> {
             Self::Array(source) => source.bool_cell(row, column, budget),
         }
     }
+
+    /// Recheck source identity before reuse. A copied byte or immutable bool
+    /// cannot run a protocol; a source read keeps its original post-check.
+    pub(crate) fn checked_missing(
+        &mut self,
+        state: &State<'py>,
+        row: usize,
+        column: usize,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<bool> {
+        state.validate(budget)?;
+        let copied = match self {
+            Self::Scalar(value) => Some(*value),
+            Self::Array(source) => source.copied_bool_cell(row, column),
+        };
+        if let Some(value) = copied {
+            return Ok(value);
+        }
+        let value = self.missing(row, column, budget)?;
+        state.validate(budget)?;
+        Ok(value)
+    }
 }
 
 /// Read actual mask first, then acquire payload only at an unmasked position.
@@ -249,12 +271,13 @@ impl MaskedSource<'_> {
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         target.checkpoint(self.owner().py(), 1)?;
-        self.state.validate(budget)?;
         match &mut self.data {
-            Data::Record(source) => source.consume_cell_to(row, column, target, budget),
-            Data::Value { source, mask } => {
-                let missing = mask.missing(row, column, budget)?;
+            Data::Record(source) => {
                 self.state.validate(budget)?;
+                source.consume_cell_to(row, column, target, budget)
+            }
+            Data::Value { source, mask } => {
+                let missing = mask.checked_missing(&self.state, row, column, budget)?;
                 if missing {
                     source.validate_layout(budget)?;
                     target.scalar(self.state.owner.py(), ScalarRef::Null)
