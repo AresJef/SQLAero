@@ -5,6 +5,7 @@
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import pytest
 from sqlaero import JSON, _sqlaero, json_dumps
 
@@ -161,8 +162,10 @@ def test_null_prefix_does_not_hide_duplicate_keys_or_change_error_position() -> 
 def test_immutable_native_named_sources_are_safe_in_independent_threads() -> None:
     source = pa.StructArray.from_arrays([pa.array(list(range(100)))], names=["a\0x"])
     expected = json.dumps([{"a\0x": i} for i in range(100)], separators=(",", ":")).encode()
+    together = Barrier(4)
 
     def encode(_: int) -> bytes:
+        together.wait(timeout=10)
         return json_dumps(source)
 
     with ThreadPoolExecutor(max_workers=4) as pool:
