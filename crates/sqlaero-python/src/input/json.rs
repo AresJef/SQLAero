@@ -22,7 +22,7 @@ use sqlaero_core::json::{Error, Options};
 use sqlaero_transcode::diagnostic::{Coordinate, Path};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
-/// Wrap obj as one lazy JSON text parameter.
+/// Wrap data as one lazy JSON text parameter.
 ///
 /// data and allow_nan are read-only; mutable contents may change between calls.
 /// Every Escape call serializes current contents without caching a document.
@@ -44,10 +44,10 @@ pub(crate) struct Json {
 #[pymethods]
 impl Json {
     #[new]
-    #[pyo3(signature = (obj, *, allow_nan=config::Argument::default()), text_signature = "(obj, *, allow_nan=True)")]
-    fn new(obj: Py<PyAny>, allow_nan: config::Argument<'_>) -> PyResult<Self> {
+    #[pyo3(signature = (data, *, allow_nan=config::Argument::default()), text_signature = "(data, *, allow_nan=True)")]
+    fn new(data: Py<PyAny>, allow_nan: config::Argument<'_>) -> PyResult<Self> {
         Ok(Self {
-            data: Some(obj),
+            data: Some(data),
             allow_nan: option(allow_nan)?,
         })
     }
@@ -580,15 +580,15 @@ pub(crate) fn mysql<D: Destination + ?Sized>(
 /// cooperatively; necessary public source/ownership calls can be atomic.
 /// This does not promise an instant cancellation delay.
 #[pyfunction]
-#[pyo3(pass_module, signature = (obj, *, allow_nan=config::Argument::default()), text_signature = "($module, obj, *, allow_nan=True)")]
+#[pyo3(pass_module, signature = (data, *, allow_nan=config::Argument::default()), text_signature = "($module, data, *, allow_nan=True)")]
 pub(crate) fn json_dumps<'py>(
     module: &Bound<'py, PyModule>,
-    obj: &Bound<'py, PyAny>,
+    data: &Bound<'py, PyAny>,
     allow_nan: config::Argument<'py>,
 ) -> PyResult<Bound<'py, PyBytes>> {
     let py = module.py();
     let owner = module.getattr(c"_scalar_types")?;
     let types = owner.extract::<PyRef<'_, ScalarTypes>>()?;
-    let text = serialize(obj, &types, option(allow_nan)?, None)?;
+    let text = serialize(data, &types, option(allow_nan)?, None)?;
     Ok(crate::output::bytes_bounded(py, text.as_bytes(), None)?.cast_into::<PyBytes>()?)
 }

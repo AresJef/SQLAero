@@ -220,9 +220,9 @@ qualified PyArrow complete NUL-containing field names remain supported.
 
 ### JSON serialization and SQL text parameters
 
-The shared-transcode candidate provides `json_dumps(obj, *, allow_nan=True)`,
+The shared-transcode candidate provides `json_dumps(data, *, allow_nan=True)`,
 returning compact UTF-8 `bytes` independently of a Connection, and lazy
-`JSON(obj, *, allow_nan=True)` for one SQL text parameter. The serializer retains
+`JSON(data, *, allow_nan=True)` for one SQL text parameter. The serializer retains
 JSON target precision; only the subsequent SQL text encoding uses connection
 settings. See the [JSON input guide](docs/shared-transcode-json.md) for value,
 structure, error, ownership and source-call boundaries.

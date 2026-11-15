@@ -7,7 +7,7 @@ from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as
 
 @final
 class JSON:
-    """Wrap obj as one lazy JSON text parameter.
+    """Wrap data as one lazy JSON text parameter.
 
     data and allow_nan are read-only; mutable contents may change between calls.
     Every Escape call serializes current contents, then applies the MySQL
@@ -18,7 +18,7 @@ class JSON:
     False raises ValueError. Real missing values remain null. Nested JSON
     wrappers are rejected. Keep mutable/provider storage stable during a call.
     """
-    def __new__(cls, obj: object, *, allow_nan: bool = True) -> Self: ...
+    def __new__(cls, data: object, *, allow_nan: bool = True) -> Self: ...
     @property
     def data(self) -> object:
         """Original read-only payload reference; underlying contents may change between calls."""
@@ -28,7 +28,7 @@ class JSON:
         """True maps nonfinite numbers to null; False raises ValueError."""
         ...
 
-def json_dumps(obj: object, *, allow_nan: bool = True) -> bytes:
+def json_dumps(data: object, *, allow_nan: bool = True) -> bytes:
     """Return one complete compact UTF-8 JSON document as built-in bytes.
 
     Independent of Connection, SQL mode, SQL timeouts and packet quotas.

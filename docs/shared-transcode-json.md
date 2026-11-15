@@ -6,7 +6,7 @@ status. It is not a claim that a historical published Beta has these additions.
 
 ## Two public exits
 
-`json_dumps(obj, *, allow_nan=True) -> bytes` returns one complete compact UTF-8
+`json_dumps(data, *, allow_nan=True) -> bytes` returns one complete compact UTF-8
 JSON document. It does not use a Connection, a SQL mode, a SQL timeout or a
 MySQL packet quota. Actual memory capacity and cooperative signal checks still
 apply. No partial document is returned on failure.
@@ -24,7 +24,7 @@ data["id"] = 8
 # The next Escape call reads the current object, not a cached JSON document.
 ```
 
-`JSON(obj, *, allow_nan=True)` retains a read-only reference called `data` and
+`JSON(data, *, allow_nan=True)` retains a read-only reference called `data` and
 a read-only `allow_nan` option. It serializes lazily at each Escape call, then
 the MySQL target encodes and quotes the document as **one text value** using
 the actual SQL context. It is neither a raw SQL fragment nor a native MySQL

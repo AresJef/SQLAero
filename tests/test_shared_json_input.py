@@ -13,6 +13,7 @@ import subprocess
 import sys
 import textwrap
 import weakref
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -140,8 +141,40 @@ def test_nonfinite_is_null_or_an_explicit_strict_error(value: float) -> None:
 
 
 def test_both_public_signatures_show_the_real_default() -> None:
-    assert str(inspect.signature(JSON)) == "(obj, *, allow_nan=True)"
-    assert str(inspect.signature(json_dumps)) == "(obj, *, allow_nan=True)"
+    assert str(inspect.signature(JSON)) == "(data, *, allow_nan=True)"
+    assert str(inspect.signature(json_dumps)) == "(data, *, allow_nan=True)"
+
+
+def test_both_public_entries_accept_the_same_data_keyword() -> None:
+    payload: list[object] = [7, None]
+    wrapped = JSON(data=payload, allow_nan=False)
+    assert wrapped.data is payload and wrapped.allow_nan is False
+    assert json_dumps(data=payload, allow_nan=False) == b"[7,null]"
+    assert _sqlaero._encode_native_scalar(wrapped) == b"'[7,null]'"
+    assert JSON(data=None).data is None
+    assert json_dumps(data=None) == b"null"
+    unsupported = object()
+    assert JSON(data=unsupported).data is unsupported
+
+
+@pytest.mark.parametrize("factory", [JSON, json_dumps])
+@pytest.mark.parametrize("shape", ["missing", "extra", "duplicate", "obj", "both_names", "unknown"])
+def test_public_json_data_keyword_keeps_normal_argument_errors(
+    factory: Callable[..., object], shape: str,
+) -> None:
+    with pytest.raises(TypeError):
+        if shape == "missing":
+            factory()
+        elif shape == "extra":
+            factory(7, False)
+        elif shape == "duplicate":
+            factory(7, data=8)
+        elif shape == "obj":
+            factory(obj=7)
+        elif shape == "both_names":
+            factory(data=7, obj=8)
+        else:
+            factory(data=7, unknown=8)
 
 
 @pytest.mark.parametrize("flag", [0, 1, None, "true"])

@@ -22,7 +22,8 @@ assert_type(wrapped, JSON)
 assert_type(wrapped.data, object)
 assert_type(wrapped.allow_nan, bool)
 assert_type(json_dumps({"id": 7}), bytes)
-assert_type(json_dumps(obj=[7], allow_nan=False), bytes)
+assert_type(json_dumps(data=[7], allow_nan=False), bytes)
+assert_type(JSON(data={"id": 7}), JSON)
 
 def use(connection: Connection) -> None:
     value: EscapeInput = JSON({"id": 7})
@@ -49,7 +50,8 @@ wrapped = JSON({})
 JSON()  # error:
 JSON({}, False)  # error:
 JSON({}, allow_nan=1)  # error:
-JSON(data={})  # error:
+JSON(obj={})  # error:
+json_dumps(obj={})  # error:
 wrapped.data = {}  # error:
 wrapped.allow_nan = False  # error:
 json_dumps()  # error:
