@@ -7,14 +7,6 @@ use pyo3::types::{PyString, PyStringData, PyStringMethods};
 use sqlaero_transcode::utf8::{self, EncodeError};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
-/// Read the immutable base flag without calling str.isascii or scanning text.
-#[cfg(not(Py_3_14))]
-fn is_ascii(source: &Bound<'_, PyString>) -> bool {
-    // SAFETY: source is a retained real str or subtype and Python is attached.
-    // This public macro is available in the pinned PyO3 through Python 3.13.
-    unsafe { pyo3::ffi::PyUnicode_IS_ASCII(source.as_ptr()) != 0 }
-}
-
 /// An owned native metadata snapshot through the same base-string reader as
 /// ordinary values. No subclass conversion or whole long UTF-8 conversion.
 pub(crate) fn snapshot(source: &Bound<'_, PyString>, budget: &dyn Checkpoint) -> PyResult<String> {
@@ -291,9 +283,7 @@ pub(crate) fn native_fragments(
     super::checkpoint(py, budget)
 }
 
-/// Acquire only the native facts needed by the actual read.
-/// Short values reuse bounded UTF-8 or the qualified inline ASCII view;
-/// long values and error coordinates additionally need full codepoint data.
+/// Read immutable base storage, reusing bounded cached UTF-8 when suitable.
 /// A target error is translated at the boundary with exact source coordinates.
 pub(crate) fn write<C: Consumer + ?Sized>(
     source: &Bound<'_, PyString>,
@@ -304,46 +294,29 @@ pub(crate) fn write<C: Consumer + ?Sized>(
     mut failure: impl FnMut(C::Error, usize, &str) -> PyErr,
 ) -> PyResult<()> {
     let py = source.py();
-    // SAFETY: the retained real str has an immutable, nonnegative base length.
-    // This public API cannot invoke an overridden __len__ or conversion.
-    let length = unsafe { pyo3::ffi::PyUnicode_GET_LENGTH(source.as_ptr()) } as usize;
-    #[cfg(not(Py_3_14))]
-    let ascii = is_ascii(source);
-    // Newer PyO3 ABIs do not expose the inline ASCII flag. Their qualified
-    // cached-UTF8 path needs neither a new C shim nor full codepoint metadata.
-    #[cfg(Py_3_14)]
-    let ascii = false;
+    // SAFETY: this is an owned true str or subclass; its canonical codepoint
+    // storage is immutable and remains owned for every borrowed slice and
+    // signal checkpoint. Supported CPython >=3.12 needs no legacy readiness
+    // conversion. PyO3 handles each pinned ABI's layout; all eight supported
+    // targets are little-endian x86_64/aarch64 and must be covered by CI. No raw
+    // view is detached, stored globally or retained by the native consumer.
+    let data = unsafe { source.data()? };
     // A bounded short conversion may reuse CPython's immutable UTF-8 cache.
     // The caller checks aggregate work at its traversal/root boundary; adding
     // two signal/deadline calls to every tiny leaf would duplicate that work.
     // Long *first* conversions never pass through to_str before checkpointing.
     const CHARACTERS: usize = super::WORK_BYTES / 4;
+    let length = match data {
+        PyStringData::Ucs1(values) => values.len(),
+        PyStringData::Ucs2(values) => values.len(),
+        PyStringData::Ucs4(values) => values.len(),
+    };
     if length <= CHARACTERS {
         super::control::bytes(py, budget, length.saturating_mul(4))?;
-        if ascii {
-            // SAFETY: this qualified base source remains owned and attached.
-            let data = unsafe { source.data()? };
-            if let PyStringData::Ucs1(bytes) = data {
-                // SAFETY: CPython's immutable ASCII flag proves every UCS1 byte
-                // is ASCII, hence UTF-8. The original owner and attached lifetime
-                // remain live through immediate native consumption; no callback
-                // or Python replacement conversion is invoked here.
-                let text = unsafe { std::str::from_utf8_unchecked(bytes) };
-                return target
-                    .write(ScalarRef::Text(text), context)
-                    .map_err(|error| failure(error, 0, text));
-            }
-        }
         let text = source.to_str().map_err(|original| {
             if !original.is_instance_of::<pyo3::exceptions::PyUnicodeEncodeError>(py) {
                 return original;
             }
-            // SAFETY: the immutable original owner remains live after the
-            // failed conversion. Diagnostic acquisition cannot replace its
-            // original exception if the source API itself fails.
-            let Ok(data) = (unsafe { source.data() }) else {
-                return original;
-            };
             let invalid = match data {
                 PyStringData::Ucs1(_) => None,
                 PyStringData::Ucs2(values) => values
@@ -368,10 +341,6 @@ pub(crate) fn write<C: Consumer + ?Sized>(
             .map_err(|error| failure(error, 0, text));
     }
 
-    // SAFETY: the real immutable source remains owned across all bounded
-    // reads and callbacks. PyO3 handles the selected ABI; no view is detached
-    // or retained by a consumer after the immediate native write.
-    let data = unsafe { source.data()? };
     super::checkpoint(py, budget)?;
     target
         .text_start(None, context)
@@ -404,7 +373,7 @@ pub(crate) fn write<C: Consumer + ?Sized>(
         PyStringData::Ucs1(values) => {
             for values in values.chunks(CHARACTERS) {
                 super::checkpoint(py, budget)?;
-                if ascii || values.is_ascii() {
+                if values.is_ascii() {
                     // SAFETY: this bounded immutable source chunk passed
                     // is_ascii; its owned string remains live across the call.
                     let value = unsafe { std::str::from_utf8_unchecked(values) };
