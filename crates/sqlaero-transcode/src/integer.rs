@@ -265,11 +265,17 @@ mod tests {
             DecimalDigits::new(Digits::new(bytes, bits, width, order, endian).unwrap()).unwrap();
         assert!(!value.step(0).unwrap());
         assert!(value.groups().is_none());
+        let capacity = value.groups.capacity();
         let mut calls = 0;
         while !value.step(1).unwrap() {
             calls += 1;
             assert!(calls < 10_000_000);
         }
+        assert_eq!(
+            value.groups.capacity(),
+            capacity,
+            "bounded work must not grow decimal groups"
+        );
         let mut answer = String::new();
         for (index, group) in value.groups().unwrap().iter().rev().enumerate() {
             if index == 0 {
