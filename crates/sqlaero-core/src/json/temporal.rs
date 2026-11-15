@@ -48,6 +48,14 @@ impl Text {
         self.put(text)
     }
 
+    fn pair(&mut self, value: u8) -> Result<(), Error> {
+        if let Some(digits) = sqlaero_transcode::number::two_digits(value) {
+            self.put(&digits)
+        } else {
+            self.number(value, 2)
+        }
+    }
+
     fn date(&mut self, date: Date) -> Result<(), Error> {
         self.wide_date(i128::from(date.year), date.month, date.day)
     }
@@ -58,17 +66,17 @@ impl Text {
         }
         self.number(year.unsigned_abs(), 4)?;
         self.put(b"-")?;
-        self.number(month, 2)?;
+        self.pair(month)?;
         self.put(b"-")?;
-        self.number(day, 2)
+        self.pair(day)
     }
 
     fn clock(&mut self, clock: Clock) -> Result<(), Error> {
-        self.number(clock.hour, 2)?;
+        self.pair(clock.hour)?;
         self.put(b":")?;
-        self.number(clock.minute, 2)?;
+        self.pair(clock.minute)?;
         self.put(b":")?;
-        self.number(clock.second, 2)?;
+        self.pair(clock.second)?;
         if clock.microsecond != 0 {
             self.put(b".")?;
             self.number(clock.microsecond, 6)?;
@@ -85,14 +93,15 @@ impl Text {
             return Err(Error::State("source UTC offset is outside one day"));
         }
         self.put(if offset < 0 { b"-" } else { b"+" })?;
-        self.number(absolute / 3_600_000_000, 2)?;
+        // The checked offset is strictly below one day; each component fits u8.
+        self.pair((absolute / 3_600_000_000) as u8)?;
         self.put(b":")?;
-        self.number(absolute / 60_000_000 % 60, 2)?;
+        self.pair((absolute / 60_000_000 % 60) as u8)?;
         let seconds = absolute / 1_000_000 % 60;
         let micros = absolute % 1_000_000;
         if seconds != 0 || micros != 0 {
             self.put(b":")?;
-            self.number(seconds, 2)?;
+            self.pair(seconds as u8)?;
             if micros != 0 {
                 self.put(b".")?;
                 self.number(micros, 6)?;
@@ -178,9 +187,10 @@ impl Text {
         }
         self.number(second / 3600, 2)?;
         self.put(b":")?;
-        self.number(second / 60 % 60, 2)?;
+        // Remainders are below sixty even when the total hour count is wide.
+        self.pair((second / 60 % 60) as u8)?;
         self.put(b":")?;
-        self.number(second % 60, 2)?;
+        self.pair((second % 60) as u8)?;
         self.fraction(nanosecond, false)
     }
 
@@ -249,5 +259,33 @@ impl Text {
     pub(super) fn as_str(&self) -> Result<&str, Error> {
         std::str::from_utf8(&self.bytes[..self.length])
             .map_err(|_| Error::State("temporal text was not ASCII"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn temporal_minimum_width_keeps_values_wider_than_two_digits() {
+        for value in [0_u8, 9, 10, 59, 99, 100, 255] {
+            let text = Text::calendar(
+                Date {
+                    year: 2024,
+                    month: 1,
+                    day: 1,
+                },
+                Some(Clock {
+                    hour: value,
+                    minute: value,
+                    second: value,
+                    microsecond: 1,
+                }),
+                None,
+            )
+            .unwrap();
+            let expected = format!("2024-01-01T{value:02}:{value:02}:{value:02}.000001");
+            assert_eq!(text.as_str().unwrap(), expected);
+        }
     }
 }

@@ -5,6 +5,13 @@ pub use itoa::Buffer as IntegerBuffer;
 /// Integer types admitted by the existing native formatter.
 pub use itoa::Integer;
 
+/// Return the exact two-digit ASCII spelling when that width suffices.
+/// Larger values retain their target's existing general-width formatter.
+#[inline]
+pub fn two_digits(value: u8) -> Option<[u8; 2]> {
+    (value < 100).then(|| [b'0' + value / 10, b'0' + value % 10])
+}
+
 /// One stack-owned shortest-roundtrip binary64 formatter.
 pub struct FloatBuffer(zmij::Buffer);
 
@@ -36,6 +43,18 @@ impl FloatBuffer {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_digit_spelling_matches_standard_formatting_for_every_source_byte() {
+        for value in 0_u8..=255 {
+            let expected = format!("{value:02}");
+            if let Some(actual) = two_digits(value) {
+                assert_eq!(actual.as_slice(), expected.as_bytes());
+            } else {
+                assert!(expected.len() > 2);
+            }
+        }
+    }
 
     #[test]
     fn finite_values_roundtrip_original_binary64_bits_including_negative_zero() {

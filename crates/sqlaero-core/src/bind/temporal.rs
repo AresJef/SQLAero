@@ -51,6 +51,14 @@ impl Stamp {
         Ok(())
     }
 
+    fn pair(&mut self, value: u8) -> Result<(), ScalarError> {
+        if let Some(digits) = sqlaero_transcode::number::two_digits(value) {
+            self.append(&digits)
+        } else {
+            self.padded(value, 2)
+        }
+    }
+
     fn finish(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError> {
         writer::append(output, &self.bytes[..self.length], limit).map_err(Into::into)
     }
@@ -70,18 +78,18 @@ fn date(stamp: &mut Stamp, year: i128, month: u8, day: u8) -> Result<(), ScalarE
     }
     stamp.padded(year.unsigned_abs(), 4)?;
     stamp.append(b"-")?;
-    stamp.padded(month, 2)?;
+    stamp.pair(month)?;
     stamp.append(b"-")?;
-    stamp.padded(day, 2)
+    stamp.pair(day)
 }
 
 /// Callers supply a nonnegative, already decomposed second count.
 fn clock(stamp: &mut Stamp, second: u128) -> Result<(), ScalarError> {
     stamp.padded(second / 3_600, 2)?;
     stamp.append(b":")?;
-    stamp.padded((second / 60 % 60) as u8, 2)?;
+    stamp.pair((second / 60 % 60) as u8)?;
     stamp.append(b":")?;
-    stamp.padded((second % 60) as u8, 2)
+    stamp.pair((second % 60) as u8)
 }
 
 fn fraction(stamp: &mut Stamp, value: u32, precision: usize) -> Result<(), ScalarError> {

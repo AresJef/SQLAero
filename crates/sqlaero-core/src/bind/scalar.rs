@@ -230,13 +230,21 @@ fn padded<T: itoa::Integer>(
 fn date_body(output: &mut Vec<u8>, value: Date, limit: usize) -> Result<(), WireError> {
     padded(output, value.year, 4, limit)?;
     append(output, b"-", limit)?;
-    padded(output, value.month, 2, limit)?;
+    pair(output, value.month, limit)?;
     append(output, b"-", limit)?;
-    padded(output, value.day, 2, limit)
+    pair(output, value.day, limit)
 }
-fn clock_body(
+fn pair(output: &mut Vec<u8>, value: u8, limit: usize) -> Result<(), WireError> {
+    if let Some(digits) = number::two_digits(value) {
+        append(output, &digits, limit)
+    } else {
+        padded(output, value, 2, limit)
+    }
+}
+
+fn clock_body<H: itoa::Integer>(
     output: &mut Vec<u8>,
-    hours: u128,
+    hours: H,
     minutes: u8,
     seconds: u8,
     micros: u32,
@@ -244,9 +252,9 @@ fn clock_body(
 ) -> Result<(), WireError> {
     padded(output, hours, 2, limit)?;
     append(output, b":", limit)?;
-    padded(output, minutes, 2, limit)?;
+    pair(output, minutes, limit)?;
     append(output, b":", limit)?;
-    padded(output, seconds, 2, limit)?;
+    pair(output, seconds, limit)?;
     if micros != 0 {
         append(output, b".", limit)?;
         padded(output, micros, 6, limit)?;
@@ -270,7 +278,7 @@ pub fn date_time(
         append(output, b" ", limit)?;
         clock_body(
             output,
-            u128::from(clock.hour),
+            clock.hour,
             clock.minute,
             clock.second,
             clock.microsecond,
@@ -314,6 +322,31 @@ pub fn duration(output: &mut Vec<u8>, micros: i128, limit: usize) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn temporal_minimum_width_keeps_values_wider_than_two_digits() {
+        for value in [0_u8, 9, 10, 59, 99, 100, 255] {
+            let mut output = Vec::new();
+            date_time(
+                &mut output,
+                Date {
+                    year: 2024,
+                    month: 1,
+                    day: 1,
+                },
+                Some(Clock {
+                    hour: value,
+                    minute: value,
+                    second: value,
+                    microsecond: 1,
+                }),
+                128,
+            )
+            .unwrap();
+            let expected = format!("'2024-01-01 {value:02}:{value:02}:{value:02}.000001'");
+            assert_eq!(output, expected.as_bytes());
+        }
+    }
+
     #[test]
     fn decimal_scale_and_necessary_value_precision_are_independent() {
         for (digits, exp, expected) in [
