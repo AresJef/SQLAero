@@ -137,6 +137,8 @@ def test_bounded_base_text_storage_uses_exact_characters(
     class Text(str):
         def __str__(self) -> str:
             raise AssertionError("must read actual base text storage")
+        def __len__(self) -> int:
+            raise AssertionError("must read actual base text length")
 
     escapes = {"\0": "\\0", "\n": "\\n", "\r": "\\r", "\x1a": "\\Z",
                "\\": "\\\\", "'": "\\'", '"': '\\"'}

@@ -268,6 +268,8 @@ def test_bounded_base_text_storage_uses_exact_characters(width: int) -> None:
     class Text(str):
         def __str__(self) -> str:
             raise AssertionError("must read actual base text storage")
+        def __len__(self) -> int:
+            raise AssertionError("must read actual base text length")
 
     for pattern in ("a'\\\0\n", "\u00c3\u00a9", "\u00c2\u00a3", "é"):
         source = (pattern * (width // len(pattern) + 1))[:width]
