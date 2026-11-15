@@ -188,13 +188,19 @@ fn civil(days: i128) -> Result<(i128, u8, u8), Error> {
     // Gregorian eras use Euclidean division, including dates before year zero.
     let z = days.checked_add(719_468).ok_or_else(range)?;
     let era = z.div_euclid(146_097);
-    let day = z.rem_euclid(146_097);
+    // The nonnegative remainder is at most 146096. All subsequent within-era
+    // values fit u32; only the final signed era/year arithmetic needs i128.
+    let day = z.rem_euclid(146_097) as u32;
     let year_in_era = (day - day / 1_460 + day / 36_524 - day / 146_096) / 365;
-    let mut year = year_in_era + era * 400;
+    let mut year = i128::from(year_in_era) + era * 400;
     let day_in_year = day - (365 * year_in_era + year_in_era / 4 - year_in_era / 100);
     let month_from_march = (5 * day_in_year + 2) / 153;
     let date = day_in_year - (153 * month_from_march + 2) / 5 + 1;
-    let month = month_from_march + if month_from_march < 10 { 3 } else { -9 };
+    let month = if month_from_march < 10 {
+        month_from_march + 3
+    } else {
+        month_from_march - 9
+    };
     year += i128::from(month <= 2);
     Ok((year, month as u8, date as u8))
 }
@@ -337,6 +343,44 @@ pub fn decompose_date(days: i64) -> Result<Value, Error> {
 #[cfg(test)]
 mod utc_tests {
     use super::*;
+
+    #[test]
+    fn civil_matches_an_independent_full_gregorian_cycle_and_wide_era_shifts() {
+        let (mut year, mut month, mut day) = (1970_i128, 1_u8, 1_u8);
+        for elapsed in 0_i128..146_097 {
+            assert_eq!(civil(elapsed).unwrap(), (year, month, day));
+            if [0, 31, 58, 59, 60, 365, 789, 11_016, 146_096].contains(&elapsed) {
+                for eras in [-5_i128, -1, 1, 10_000_000_000_000_000_000_000_000_000] {
+                    assert_eq!(
+                        civil(elapsed + eras * 146_097).unwrap(),
+                        (year + eras * 400, month, day)
+                    );
+                }
+            }
+            // Independent day-by-day calendar progression, not an inverse of
+            // the civil decomposition algorithm under test.
+            let days = match month {
+                4 | 6 | 9 | 11 => 30,
+                2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+                2 => 28,
+                _ => 31,
+            };
+            if day < days {
+                day += 1;
+            } else {
+                day = 1;
+                if month == 12 {
+                    month = 1;
+                    year += 1;
+                } else {
+                    month += 1;
+                }
+            }
+        }
+        assert_eq!((year, month, day), (2370, 1, 1));
+        assert_eq!(civil(11_016 - 5 * 146_097).unwrap(), (0, 2, 29));
+        assert!(civil(i128::MAX).is_err());
+    }
 
     #[test]
     fn offset_keeps_negative_epoch_nanoseconds_and_full_clock_carry() {
