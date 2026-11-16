@@ -121,6 +121,7 @@ jobs:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
       SQLAERO_NATIVE_MYSQL: '1'
       SQLAERO_TEST_CALLPROC_PREFIX: 'sqlaero_ci_call'
+      PYTEST_ADDOPTS: ${{ startsWith(matrix.platform.name, 'windows-') && '-vv' || '' }}
       HOMEBREW_NO_AUTO_UPDATE: '1'
       EXPECTED_SDIST_SHA: ${{ needs.source.outputs.sha256 }}
     steps:
