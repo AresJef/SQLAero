@@ -345,40 +345,6 @@ impl Writer {
         })
     }
 
-    // Both measured native artifacts reserve over 4 KiB for every scalar
-    // because of Decimal's bounded scratch. Keep that scratch on this call's
-    // stack without changing Decimal's format, checks or failure boundary.
-    #[inline(never)]
-    fn decimal_scalar(
-        &mut self,
-        negative: bool,
-        digits: &[u8],
-        exponent: i64,
-        options: &Options,
-    ) -> Result<(), Error> {
-        use sqlaero_transcode::decimal::{Digits, Inspect, Render};
-        let mut inspect = Inspect::default();
-        for &digit in digits {
-            inspect.digit(digit).map_err(Error::Range)?;
-        }
-        let header = inspect.finish(negative, exponent).map_err(Error::Range)?;
-        if let Some(layout) = self.decimal_start(header, options)? {
-            let mut render = Render::new(Digits::Values(digits), layout).map_err(Error::Range)?;
-            let mut chunk = [0; 4096];
-            loop {
-                let n = render.read(&mut chunk);
-                if n == 0 {
-                    break;
-                }
-                let text = std::str::from_utf8(&chunk[..n])
-                    .map_err(|_| Error::State("decimal renderer emitted non-ASCII"))?;
-                self.decimal_fragment(text, options)?;
-            }
-            self.decimal_end(options)?;
-        }
-        Ok(())
-    }
-
     fn temporal(&mut self, text: temporal::Text) -> Result<(), Error> {
         let text = text.as_str()?;
         self.string_start(Some(text.len()), false)?;
@@ -468,7 +434,30 @@ impl Consumer for Writer {
                     negative,
                     digits,
                     exponent,
-                } => return writer.decimal_scalar(negative, digits, exponent, options),
+                } => {
+                    use sqlaero_transcode::decimal::{Digits, Inspect, Render};
+                    let mut inspect = Inspect::default();
+                    for &digit in digits {
+                        inspect.digit(digit).map_err(Error::Range)?;
+                    }
+                    let header = inspect.finish(negative, exponent).map_err(Error::Range)?;
+                    if let Some(layout) = writer.decimal_start(header, options)? {
+                        let mut render =
+                            Render::new(Digits::Values(digits), layout).map_err(Error::Range)?;
+                        let mut chunk = [0; 4096];
+                        loop {
+                            let n = render.read(&mut chunk);
+                            if n == 0 {
+                                break;
+                            }
+                            let text = std::str::from_utf8(&chunk[..n])
+                                .map_err(|_| Error::State("decimal renderer emitted non-ASCII"))?;
+                            writer.decimal_fragment(text, options)?;
+                        }
+                        writer.decimal_end(options)?;
+                    }
+                    return Ok(());
+                }
                 ScalarRef::Uuid(value) => {
                     let text = sqlaero_transcode::identifier::UuidText::new(value);
                     writer.string_start(Some(36), false)?;
