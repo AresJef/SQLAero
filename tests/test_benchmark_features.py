@@ -31,9 +31,11 @@ def runner() -> Any:
     return module
 
 
-def test_existing_case_inputs_and_ten_core_functions_are_unchanged(runner: Any) -> None:
+def test_frozen_sampler_and_original_case_inputs_are_preserved(runner: Any) -> None:
     frozen = {
-        "cases": "6a296a8093a8576895fe722cc6ec3b558060da2f822c36539ee7f3b21cd93663",
+        # Six approved adjacent string controls were added during the shared
+        # transcode project. The original 490 inputs remain checked below.
+        "cases": "6d9aea50016597f1bbe9a759eeb2155536aa114c4298e46359ce425f721ddc28",
         "typed_cases": "3d294e7de8028743ad1d0e0f1faead4eef4dad2707732ea6ae4569a6783eeaeb",
         "network_target": "b67d30c957b8dc3bfd6ae3f9235a17cbfa8ddaf605bc0784e5bbb2898afe6198",
         "clock_calibration": "4b5380cf4fe535e03e7df62ce0de893baf8615b7ad5e37265be588e5ce922565",
@@ -46,7 +48,15 @@ def test_existing_case_inputs_and_ten_core_functions_are_unchanged(runner: Any) 
     }
     for name, expected in frozen.items():
         assert hashlib.sha256(inspect.getsource(getattr(runner, name)).encode()).hexdigest() == expected
-    original = [case.identity() for case in runner.cases(typed=False)]
+    adjacent = {
+        "escape/str/latin1/scalar", "escape/str/latin1/list/N1000",
+        "escape/str/latin1-utf8-shaped/scalar", "escape/str/latin1-utf8-shaped/list/N1000",
+        "escape/str/ascii/codepoints65536", "escape/str/latin1/codepoints65536",
+    }
+    current = runner.cases(typed=False)
+    assert len(current) == 496
+    assert {case.id for case in current if case.id in adjacent} == adjacent
+    original = [case.identity() for case in current if case.id not in adjacent]
     assert len(original) == 490
     assert hashlib.sha256(json.dumps(original, sort_keys=True).encode()).hexdigest() == (
         "01bcb23851de5ba7576e079e2df04b486a27ff0f7fe01a514ee0132c169c7ebe")

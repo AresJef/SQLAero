@@ -96,7 +96,9 @@ def test_masked_finite_temporal_payload_needs_no_finite_unit_admission(unit: str
     raw = np.array([1], dtype="i8").view(np.dtype("M8" if unit == "generic" else "M8[" + unit + "]"))
     if structured:
         data = np.empty(1, dtype=[("at", raw.dtype)])
-        data["at"] = raw
+        # Preserve the exact ticks without asking NumPy to convert a finite
+        # temporal value through unsupported generic/zero-multiplier units.
+        data["at"].view("i8")[:] = raw.view("i8")
     else:
         data = raw
     if structured and unit in ("generic", "0ns"):
