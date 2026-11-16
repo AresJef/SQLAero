@@ -87,6 +87,7 @@ impl<'a, D: Destination + ?Sized> Output<'a, D> {
     structural!(array_end);
     structural!(object_start);
     structural!(object_end);
+    structural!(key, value: &str);
     structural!(key_start, length: usize);
     structural!(integer_start, negative: bool);
     structural!(integer_fragment, digits: &[u8]);

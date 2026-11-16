@@ -290,17 +290,25 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
             .map_err(|error| failure(py, error))?;
         for (column, name) in names.iter().enumerate() {
             Cell { state: self, path }.checkpoint(py, 1)?;
-            self.writer
-                .key_start(name.len())
-                .map_err(|error| failure(py, error))?;
-            input::unicode::native_fragments(py, name, self.budget, |_, text| {
+            // Six bytes per input byte is the maximum JSON key expansion.
+            // Keep the complete action within the existing work quantum,
+            // retain its byte charge, and drain a streaming sink only once.
+            if name.len() <= (input::WORK_BYTES - 3) / 6 {
+                input::control::bytes(py, self.budget, name.len())?;
+                self.writer.key(name).map_err(|error| failure(py, error))?;
+            } else {
                 self.writer
-                    .text_fragment(text, &self.options)
-                    .map_err(|error| failure(py, error))
-            })?;
-            self.writer
-                .text_end(&self.options)
-                .map_err(|error| failure(py, error))?;
+                    .key_start(name.len())
+                    .map_err(|error| failure(py, error))?;
+                input::unicode::native_fragments(py, name, self.budget, |_, text| {
+                    self.writer
+                        .text_fragment(text, &self.options)
+                        .map_err(|error| failure(py, error))
+                })?;
+                self.writer
+                    .text_end(&self.options)
+                    .map_err(|error| failure(py, error))?;
+            }
             let child = path.child(Coordinate::Field {
                 name,
                 ordinal: column,

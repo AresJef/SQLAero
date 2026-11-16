@@ -78,6 +78,25 @@ def test_full_unicode_name_is_not_truncated_or_normalized(length: int) -> None:
     assert json.loads(json_dumps(value)) == [{name: 7}]
 
 
+@pytest.mark.parametrize("length", [12, 43689, 43690, 43691, 262145])
+@pytest.mark.parametrize("pattern", ["ascii", "control", "unicode"])
+@pytest.mark.parametrize("no_backslash", [False, True])
+def test_complete_named_keys_keep_bounded_and_streamed_sql_output(
+    length: int, pattern: str, no_backslash: bool,
+) -> None:
+    # Cover both sides of the complete-key limit, worst-case JSON expansion,
+    # full UTF-8/NUL names and a name exceeding the native fragment quantum.
+    name = "k" * length if pattern == "ascii" else "\0" * length
+    if pattern == "unicode":
+        name = "é\U0001f642\0\\\"'" + "k" * length
+    value = pa.table({name: [7, None], "tail": [8, 9]})
+    expected = json.dumps([{name: 7, "tail": 8}, {name: None, "tail": 9}],
+                          ensure_ascii=False, separators=(",", ":"))
+    assert json_dumps(value) == expected.encode("utf-8")
+    encode = _sqlaero._prepare_encoder(no_backslash=no_backslash).encode
+    assert encode(JSON(value)).to_bytes() == encode(expected).to_bytes()
+
+
 def test_sql_positional_read_does_not_enter_python_name_source() -> None:
     # Public provider construction accepts the full bytes; only its name
     # snapshot raises. The C Data prefix is valid, and positional SQL need not
