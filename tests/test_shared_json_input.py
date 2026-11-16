@@ -288,8 +288,11 @@ def test_json_string_marker_boundaries_match_independent_standard_output(width: 
                 assert json_dumps(value) == expected
 
 
-@pytest.mark.parametrize("prefix", ["é" * 65536, "中" * 65535, "😀" * 65537])
+@pytest.mark.parametrize("prefix", ["é" * 65536, "中" * 65535, "😀" * 65537],
+                         ids=["latin1-65536", "ucs2-65535", "ucs4-65537"])
 def test_unicode_storage_windows_keep_original_source_positions(prefix: str) -> None:
+    # Pytest includes the parameter ID in PYTEST_CURRENT_TEST; raw long values
+    # exceed Windows' environment-variable limit before this test can run.
     source = prefix + "\ud800tail"
     for encode in (json_dumps, _sqlaero._encode_native_scalar):
         with pytest.raises(UnicodeEncodeError) as caught:
