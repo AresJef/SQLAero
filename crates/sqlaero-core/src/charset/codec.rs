@@ -426,15 +426,90 @@ fn escaped<const MODE: u8>(
     if MODE == 0 {
         return append(output, bytes, limit);
     }
+    if bytes.len() < 16 {
+        return escaped_scalar::<MODE>(bytes, output, limit);
+    }
+    escaped_fast::<MODE>(bytes, output, limit)
+}
+
+/// Keep the large native search frame out of ordinary small fragments.
+/// Its isolation is deliberate: repeated scalar text uses the original loop.
+#[inline(never)]
+fn escaped_fast<const MODE: u8>(
+    mut bytes: &[u8],
+    output: &mut Vec<u8>,
+    limit: usize,
+) -> Result<(), WireError> {
+    // A JSON document's opening quote is an actual marker, not evidence that
+    // the remaining text is dense. Emit it with the original failure boundary.
+    if let Some(encoded) = escape::<MODE>(bytes[0]) {
+        if output.len() > limit {
+            append(output, b"", limit)?;
+        }
+        append(output, encoded, limit)?;
+        bytes = &bytes[1..];
+    }
+    if bytes.len() < 16
+        || bytes[..16]
+            .iter()
+            .copied()
+            .any(|byte| escape::<MODE>(byte).is_some())
+        || (MODE == 1 && bytes.iter().copied().min().unwrap_or(u8::MAX) < 0x20)
+    {
+        return escaped_scalar::<MODE>(bytes, output, limit);
+    }
+    let needles = match MODE {
+        1 => (b'\'', b'"', b'\\'),
+        2 => (b'\'', b'\'', b'\''),
+        3 => (b'\x60', b'\x60', b'\x60'),
+        _ => return escaped_scalar::<MODE>(bytes, output, limit),
+    };
+    let mut start = 0;
+    for index in memchr::memchr3_iter(needles.0, needles.1, needles.2, bytes) {
+        if let Some(encoded) = escape::<MODE>(bytes[index]) {
+            if start < index || output.len() > limit {
+                append(output, &bytes[start..index], limit)?;
+            }
+            append(output, encoded, limit)?;
+            start = index + 1;
+            let tail = &bytes[start..];
+            if tail.len() < 16
+                || tail[..16]
+                    .iter()
+                    .copied()
+                    .any(|byte| escape::<MODE>(byte).is_some())
+            {
+                return escaped_scalar::<MODE>(tail, output, limit);
+            }
+        }
+    }
+    if start < bytes.len() || output.len() > limit {
+        append(output, &bytes[start..], limit)?;
+    }
+    Ok(())
+}
+
+/// Preserve the original small/control-rich loop rather than probing a native
+/// search again after each closely spaced delimiter.
+fn escaped_scalar<const MODE: u8>(
+    bytes: &[u8],
+    output: &mut Vec<u8>,
+    limit: usize,
+) -> Result<(), WireError> {
     let mut start = 0;
     for (index, byte) in bytes.iter().copied().enumerate() {
         if let Some(encoded) = escape::<MODE>(byte) {
-            append(output, &bytes[start..index], limit)?;
+            if start < index || output.len() > limit {
+                append(output, &bytes[start..index], limit)?;
+            }
             append(output, encoded, limit)?;
             start = index + 1;
         }
     }
-    append(output, &bytes[start..], limit)
+    if start < bytes.len() || output.len() > limit {
+        append(output, &bytes[start..], limit)?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -500,5 +575,156 @@ mod tests {
             codec.encode("\\", &mut Vec::new(), 100),
             Err(CodecError::Encode { .. })
         ));
+    }
+
+    #[test]
+    fn adjacent_sql_metacharacters_keep_exact_bytes_at_the_capacity_limit() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"", b""),
+            (b"plain", b"plain"),
+            (b"''", b"\\'\\'"),
+            (b"a''z", b"a\\'\\'z"),
+            (b"\0\n\r\x1a\\'\"", b"\\0\\n\\r\\Z\\\\\\'\\\""),
+        ];
+        for &(input, expected) in cases {
+            let mut output = b"prefix".to_vec();
+            let limit = output.len() + expected.len();
+            escaped::<1>(input, &mut output, limit).unwrap();
+            assert_eq!(&output[6..], expected);
+        }
+    }
+
+    #[test]
+    fn sql_fragment_markers_keep_exact_bytes_across_ordinary_span_lengths() {
+        let markers: &[(&[u8], &[u8])] = &[
+            (b"\0", b"\\0"),
+            (b"\n", b"\\n"),
+            (b"\r", b"\\r"),
+            (b"\x1a", b"\\Z"),
+            (b"\\", b"\\\\"),
+            (b"'", b"\\'"),
+            (b"\"", b"\\\""),
+            (b"\x60", b"\x60"),
+            (b"\x01", b"\x01"),
+            (b"\t", b"\t"),
+            (b"\x1f", b"\x1f"),
+            (b"\x7f", b"\x7f"),
+            ("中😀".as_bytes(), "中😀".as_bytes()),
+        ];
+        for length in [0, 1, 15, 16, 17, 63, 4095, 4096] {
+            for &(marker, encoded) in markers {
+                let mut input = vec![b'a'; length];
+                input.extend_from_slice(marker);
+                input.extend_from_slice(&[b'z'; 17]);
+                let mut expected = vec![b'a'; length];
+                expected.extend_from_slice(encoded);
+                expected.extend_from_slice(&[b'z'; 17]);
+                let mut actual = Vec::new();
+                escaped::<1>(&input, &mut actual, expected.len()).unwrap();
+                assert_eq!(actual, expected, "length={length}, marker={marker:?}");
+
+                for mode in [2, 3] {
+                    let mut expected = vec![b'a'; length];
+                    if marker == if mode == 2 { b"'" } else { b"\x60" } {
+                        expected.extend_from_slice(marker);
+                    }
+                    expected.extend_from_slice(marker);
+                    expected.extend_from_slice(&[b'z'; 17]);
+                    actual.clear();
+                    if mode == 2 {
+                        escaped::<2>(&input, &mut actual, expected.len()).unwrap();
+                    } else {
+                        escaped::<3>(&input, &mut actual, expected.len()).unwrap();
+                    }
+                    assert_eq!(actual, expected, "mode={mode}, length={length}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn long_sql_spans_preserve_failure_prefix_and_required_size() {
+        let mut input = vec![b'a'; 32];
+        input.push(b'\n');
+        input.extend_from_slice(&[b'b'; 48]);
+        input.push(b'"');
+        let mut complete = b"prefix".to_vec();
+        complete.extend_from_slice(&[b'a'; 32]);
+        complete.extend_from_slice(b"\\n");
+        complete.extend_from_slice(&[b'b'; 48]);
+        complete.extend_from_slice(b"\\\"");
+        for (limit, required, saved) in [(37, 38, 6), (39, 40, 38), (87, 88, 40), (89, 90, 88)] {
+            let mut actual = b"prefix".to_vec();
+            let error = escaped::<1>(&input, &mut actual, limit).unwrap_err();
+            assert!(matches!(error, WireError::Limit { required: n, limit: l }
+                if n == required && l == limit));
+            assert_eq!(actual, complete[..saved]);
+        }
+        let mut actual = b"prefix".to_vec();
+        escaped::<1>(&input, &mut actual, complete.len()).unwrap();
+        assert_eq!(actual, complete);
+
+        let mut input = vec![b'a'; 32];
+        input.extend_from_slice(b"''\\\"");
+        input.extend_from_slice(&[b'z'; 17]);
+        let mut expected = vec![b'a'; 32];
+        expected.extend_from_slice(b"\\'\\'\\\\\\\"");
+        expected.extend_from_slice(&[b'z'; 17]);
+        let mut actual = Vec::new();
+        escaped::<1>(&input, &mut actual, expected.len()).unwrap();
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn adjacent_sql_delimiters_keep_the_selected_quoting_mode() {
+        let mut doubled = Vec::new();
+        escaped::<2>(b"''\\", &mut doubled, 5).unwrap();
+        assert_eq!(doubled, b"''''\\");
+        let mut identifier = Vec::new();
+        escaped::<3>(b"``'", &mut identifier, 5).unwrap();
+        assert_eq!(identifier, b"````'");
+        let mut unquoted = Vec::new();
+        escaped::<0>(b"'\\", &mut unquoted, 2).unwrap();
+        assert_eq!(unquoted, b"'\\");
+    }
+
+    #[test]
+    fn empty_sql_spans_do_not_hide_an_already_exceeded_limit() {
+        for input in [b"".as_slice(), b"''".as_slice()] {
+            let mut output = b"prefix".to_vec();
+            let error = escaped::<1>(input, &mut output, 5).unwrap_err();
+            assert!(matches!(
+                error,
+                WireError::Limit {
+                    required: 6,
+                    limit: 5
+                }
+            ));
+            assert_eq!(output, b"prefix");
+        }
+        let mut output = b"prefix".to_vec();
+        let error = escaped::<1>(b"a'", &mut output, 5).unwrap_err();
+        assert!(matches!(
+            error,
+            WireError::Limit {
+                required: 7,
+                limit: 5
+            }
+        ));
+        assert_eq!(output, b"prefix");
+    }
+
+    #[test]
+    fn adjacent_escape_failure_keeps_the_written_prefix_and_exact_required_size() {
+        let mut output = b"prefix".to_vec();
+        let error = escaped::<1>(b"''", &mut output, 8).unwrap_err();
+        assert!(matches!(
+            error,
+            WireError::Limit {
+                required: 10,
+                limit: 8
+            }
+        ));
+        assert_eq!(output, b"prefix\\'");
     }
 }

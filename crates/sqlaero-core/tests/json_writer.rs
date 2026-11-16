@@ -4,6 +4,78 @@ use sqlaero_core::json::{Error, Options, Writer};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
 #[test]
+fn direct_decimal_scalars_preserve_scale_and_surrounding_values() {
+    let mut writer = Writer::new();
+    let options = Options::default();
+    writer.array_start().unwrap();
+    writer.write(ScalarRef::Signed(7), &options).unwrap();
+    writer
+        .write(
+            ScalarRef::Decimal {
+                negative: false,
+                digits: &[1, 2, 5, 0, 0],
+                exponent: -3,
+            },
+            &options,
+        )
+        .unwrap();
+    writer
+        .write(
+            ScalarRef::Decimal {
+                negative: true,
+                digits: &[0],
+                exponent: -2,
+            },
+            &options,
+        )
+        .unwrap();
+    writer.write(ScalarRef::Unsigned(8), &options).unwrap();
+    writer.array_end().unwrap();
+    assert_eq!(writer.finish().unwrap(), "[7,\"12.500\",\"-0.00\",8]");
+}
+
+#[test]
+fn direct_decimal_crosses_a_fragment_boundary_without_losing_digits() {
+    let mut writer = Writer::new();
+    let digits = vec![1; 4097];
+    writer
+        .write(
+            ScalarRef::Decimal {
+                negative: false,
+                digits: &digits,
+                exponent: 0,
+            },
+            &Options::default(),
+        )
+        .unwrap();
+    assert_eq!(
+        writer.finish().unwrap(),
+        format!("\"{}\"", "1".repeat(4097))
+    );
+}
+
+#[test]
+fn invalid_direct_decimal_keeps_the_whole_writer_failed() {
+    let mut writer = Writer::new();
+    let options = Options::default();
+    writer.array_start().unwrap();
+    writer.write(ScalarRef::Signed(7), &options).unwrap();
+    assert!(matches!(
+        writer.write(
+            ScalarRef::Decimal {
+                negative: false,
+                digits: &[1, 10],
+                exponent: 0,
+            },
+            &options,
+        ),
+        Err(Error::Range(_))
+    ));
+    assert!(writer.pending_output().is_err());
+    assert!(writer.finish().is_err());
+}
+
+#[test]
 fn drained_prefix_keeps_container_and_open_string_state() {
     let mut writer = Writer::new();
     let options = Options::default();
