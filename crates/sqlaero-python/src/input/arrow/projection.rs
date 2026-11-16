@@ -255,16 +255,7 @@ impl<'py> PreparedSource<'py> for View<'_, 'py> {
         target: &mut dyn Target,
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
-        let node = self.read.node;
-        consume_selected_child(
-            self.read.at(node),
-            &self.selected,
-            self.index,
-            row,
-            column,
-            target,
-            budget,
-        )
+        self.consume_cell_to(row, column, target, budget)
     }
     crate::input::source::cell_destinations!();
 }
@@ -275,9 +266,18 @@ impl View<'_, '_> {
         &mut self,
         row: usize,
         column: usize,
-        target: &mut dyn Target,
+        target: &mut (impl Target + ?Sized),
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
-        self.consume_cell(row, column, target, budget)
+        let node = self.read.node;
+        consume_selected_child(
+            self.read.at(node),
+            &self.selected,
+            self.index,
+            row,
+            column,
+            target,
+            budget,
+        )
     }
 }
