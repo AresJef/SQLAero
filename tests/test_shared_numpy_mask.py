@@ -4,6 +4,7 @@
 
 
 from datetime import datetime, tzinfo
+import json
 import math
 from typing import NoReturn
 
@@ -12,6 +13,74 @@ import pytest
 from sqlaero import _sqlaero, json_dumps
 
 np = pytest.importorskip("numpy")
+
+
+@pytest.mark.parametrize("provider", ["numpy", "pandas-array", "pandas-series"])
+@pytest.mark.parametrize("length", [31, 32, 33, 1023, 1024, 1025])
+@pytest.mark.parametrize("layout", ["contiguous", "reversed", "stepped"])
+def test_noncanonical_bool_masks_keep_actual_truth_across_owned_reads(
+    provider: str, length: int, layout: str,
+) -> None:
+    # NumPy bool storage can contain any nonzero byte. Use a read-only root
+    # and retain those actual bytes instead of normalizing through Python bool.
+    pattern = (0, 2, 0, 255, 0, 128, 1)
+    raw_mask = bytes(pattern[index % len(pattern)] for index in range(length))
+    missing = np.frombuffer(raw_mask, dtype=bool)
+    values = np.arange(length, dtype="i8")
+    if provider == "numpy":
+        source = np.ma.array(values, mask=False)
+    else:
+        pd = pytest.importorskip("pandas")
+        source = pd.arrays.IntegerArray(values, np.zeros(length, dtype=bool))
+    source.__dict__["_mask"] = missing
+    if provider == "pandas-series":
+        source = pd.Series(source)
+    selection = slice(None, None, -1 if layout == "reversed" else 2 if layout == "stepped" else 1)
+    source = source[selection]
+    expected = [None if raw_mask[index] else index for index in range(length)[selection]]
+    sql = b"(" + b",".join(b"NULL" if value is None else str(value).encode("ascii") for value in expected) + b")"
+    assert _sqlaero._encode_value(source).to_bytes() == sql
+    assert json_dumps(source) == json.dumps(expected, separators=(",", ":")).encode("ascii")
+
+
+@pytest.mark.parametrize("provider", ["numpy", "pandas-array", "pandas-series"])
+@pytest.mark.parametrize("length", [0, 1, 31, 32, 127, 128, 129, 255, 256, 257, 1023, 1024, 1025, 2051])
+@pytest.mark.parametrize("layout", ["contiguous", "reversed", "stepped"])
+def test_mask_values_across_owned_block_boundaries(provider: str, length: int, layout: str) -> None:
+    values = np.arange(length, dtype="i8")
+    missing = np.array([index % 3 == 1 for index in range(length)], dtype=bool)
+    if provider == "numpy":
+        source = np.ma.array(values, mask=missing)
+    else:
+        pd = pytest.importorskip("pandas")
+        source = pd.arrays.IntegerArray(values, missing)
+        if provider == "pandas-series":
+            source = pd.Series(source)
+    selection = slice(None, None, -1 if layout == "reversed" else 2 if layout == "stepped" else 1)
+    source = source[selection]
+    expected = [None if index % 3 == 1 else index for index in range(length)[selection]]
+    sql = b"(" + b",".join(b"NULL" if value is None else str(value).encode("ascii") for value in expected) + b")"
+    assert _sqlaero._encode_value(source).to_bytes() == sql
+    assert json_dumps(source) == json.dumps(expected, separators=(",", ":")).encode("ascii")
+
+
+@pytest.mark.parametrize("rows", [16, 32, 513, 1025])
+@pytest.mark.parametrize("transpose", [False, True])
+@pytest.mark.parametrize("reverse", [False, True])
+def test_mask_table_coordinates_across_owned_block_boundaries(rows: int, transpose: bool, reverse: bool) -> None:
+    data = np.arange(rows * 2, dtype="i8").reshape(rows, 2)
+    missing = np.array([[(row + column) % 3 == 0 for column in range(2)] for row in range(rows)])
+    source = np.ma.array(data, mask=missing)
+    expected = [[None if (row + column) % 3 == 0 else row * 2 + column for column in range(2)] for row in range(rows)]
+    if reverse:
+        source = source[::-1]
+        expected = expected[::-1]
+    if transpose:
+        source = source.T
+        expected = [list(column) for column in zip(*expected)]
+    sql_rows = [b"(" + b",".join(b"NULL" if value is None else str(value).encode("ascii") for value in row) + b")" for row in expected]
+    assert _sqlaero._encode_value(source).to_bytes() == b"(" + b",".join(sql_rows) + b")"
+    assert json_dumps(source) == json.dumps(expected, separators=(",", ":")).encode("ascii")
 
 
 @pytest.mark.parametrize(("value", "sql", "document"), [
@@ -117,3 +186,34 @@ def test_masked_higher_axes_are_json_only() -> None:
     assert json_dumps(value) == b"[[[0,1],[2,3]],[[4,null],[6,7]]]"
     with pytest.raises(ValueError, match="axes"):
         _sqlaero._encode_value(value)
+
+
+@pytest.mark.parametrize("length", [128, 129, 1024, 1025])
+@pytest.mark.parametrize("pattern", ["none", "all", "alternating"])
+@pytest.mark.parametrize("dtype", ["<i8", ">i8"])
+def test_native_cached_run_preserves_masks_and_byte_order(length: int, pattern: str, dtype: str) -> None:
+    values = np.arange(length, dtype=dtype)
+    missing = np.array([pattern == "all" or pattern == "alternating" and index % 2 == 0 for index in range(length)])
+    value = np.ma.array(values, mask=missing)
+    expected = [None if flag else index for index, flag in enumerate(missing)]
+    sql = b"(" + b",".join(b"NULL" if item is None else str(item).encode("ascii") for item in expected) + b")"
+    assert _sqlaero._encode_value(value).to_bytes() == sql
+    assert json_dumps(value) == json.dumps(expected, separators=(",", ":")).encode("ascii")
+
+
+@pytest.mark.parametrize("provider", ["numpy", "pandas-array", "pandas-series"])
+@pytest.mark.parametrize("position", [128, 129, 257, 1025])
+def test_cached_numeric_failure_keeps_the_actual_json_index(provider: str, position: int) -> None:
+    values = np.arange(1200, dtype="f8")
+    values[position] = np.nan
+    missing = np.array([index % 3 == 1 for index in range(1200)])
+    if provider == "numpy":
+        source = np.ma.array(values, mask=missing)
+    else:
+        pd = pytest.importorskip("pandas")
+        source = pd.arrays.FloatingArray(values, missing)
+        if provider == "pandas-series":
+            source = pd.Series(source)
+    with pytest.raises(ValueError, match="nonfinite") as caught:
+        json_dumps(source, allow_nan=False)
+    assert any(f"data[{position}]" in note for note in getattr(caught.value, "__notes__", []))

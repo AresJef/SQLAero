@@ -109,6 +109,15 @@ impl<'py> Reader<'py> {
             Self::Array(source) => source.bool_cell(row, column, budget),
         }
     }
+
+    /// These facts are Rust values already copied by the guarded reader.
+    /// No Python call, allocation, release or checkpoint occurs on this path.
+    pub(crate) fn copied_missing(&self, row: usize, column: usize) -> Option<bool> {
+        match self {
+            Self::Scalar(value) => Some(*value),
+            Self::Array(source) => source.copied_bool(row, column),
+        }
+    }
 }
 
 /// Read actual mask first, then acquire payload only at an unmasked position.
@@ -249,12 +258,23 @@ impl MaskedSource<'_> {
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         target.checkpoint(self.owner().py(), 1)?;
+        // Acquire the owned fact before the final validation: that validation
+        // can itself dispatch a signal handler after its dictionary lookup.
+        let copied = match &self.data {
+            Data::Value { mask, .. } => mask.copied_missing(row, column),
+            Data::Record(_) => None,
+        };
         self.state.validate(budget)?;
         match &mut self.data {
             Data::Record(source) => source.consume_cell_to(row, column, target, budget),
             Data::Value { source, mask } => {
-                let missing = mask.missing(row, column, budget)?;
-                self.state.validate(budget)?;
+                let missing = if let Some(missing) = copied {
+                    missing
+                } else {
+                    let missing = mask.missing(row, column, budget)?;
+                    self.state.validate(budget)?;
+                    missing
+                };
                 if missing {
                     source.validate_layout(budget)?;
                     target.scalar(self.state.owner.py(), ScalarRef::Null)

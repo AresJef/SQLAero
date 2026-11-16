@@ -172,3 +172,103 @@ def test_long_key_work_returns_to_signal_checks_without_publishing_a_prefix() ->
     env["PYTHONPATH"] = str(Path(__file__).parent) + os.pathsep + env.get("PYTHONPATH", "")
     result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, (result.stdout, result.stderr)
+
+
+@pytest.mark.parametrize("target", ["sql", "json", "bind"])
+@pytest.mark.parametrize("action", ["replace", "shrink", "append", "raise"])
+def test_list_acquisition_preserves_callback_mutation_and_original_failure(target: str, action: str) -> None:
+    from datetime import datetime, timedelta, tzinfo
+
+    source: list[object] = []
+    original = MemoryError("original list acquisition callback failure")
+
+    class Zone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta:
+            if action == "replace":
+                source[1] = 8
+            elif action == "shrink":
+                del source[1:]
+            elif action == "append":
+                source.append(9)
+            else:
+                source.clear()
+                raise original
+            return timedelta(0)
+
+    source.extend([datetime(2026, 1, 2, tzinfo=Zone()), 7])
+
+    def convert() -> bytes | list[bytes]:
+        if target == "sql":
+            return _sqlaero._encode_value(source).to_bytes()
+        if target == "json":
+            return json_dumps(source)
+        return _sqlaero._bind_sql("SELECT %s,%s", source)
+
+    if action == "raise":
+        with pytest.raises(MemoryError) as caught:
+            convert()
+        assert caught.value is original
+    elif action == "shrink":
+        with pytest.raises(IndexError):
+            convert()
+    else:
+        number = b"8" if action == "replace" else b"7"
+        if target == "json":
+            expected: bytes | list[bytes] = b'["2026-01-02T00:00:00+00:00",' + number + b"]"
+        elif target == "sql":
+            expected = b"('2026-01-02 00:00:00'," + number + b")"
+        else:
+            expected = [b"\x03SELECT '2026-01-02 00:00:00'," + number]
+        assert convert() == expected
+
+
+@pytest.mark.parametrize("target", ["sql", "json"])
+def test_list_item_ownership_survives_concurrent_replacement_and_shrink(target: str) -> None:
+    script = textwrap.dedent(r"""
+        import json
+        import re
+        import sys
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Event
+        from sqlaero import _sqlaero, json_dumps
+
+        target = sys.argv[1]
+        allowed = {f"v{index:03d}" for index in range(64)}
+        source = sorted(allowed)
+        stop = Event()
+        started = Event()
+
+        def mutate() -> None:
+            started.set()
+            while not stop.is_set():
+                source[:] = [f"v{index:03d}" for index in range(64)]
+                source[:] = [f"v{index:03d}" for index in range(31, -1, -1)]
+                source.clear()
+
+        def read() -> None:
+            for _ in range(64):
+                try:
+                    result = (json_dumps(source) if target == "json"
+                              else _sqlaero._encode_value(source).to_bytes())
+                except IndexError:
+                    continue
+                if target == "json":
+                    values = json.loads(result)
+                    assert isinstance(values, list)
+                    assert all(value in allowed for value in values)
+                else:
+                    assert re.fullmatch(rb"\((?:'v[0-9]{3}'(?:,'v[0-9]{3}')*)?\)", result), result
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            writer = pool.submit(mutate)
+            assert started.wait(5)
+            try:
+                readers = [pool.submit(read) for _ in range(4)]
+                for reader in readers:
+                    reader.result(timeout=15)
+            finally:
+                stop.set()
+            writer.result(timeout=5)
+    """)
+    completed = subprocess.run([sys.executable, "-c", script, target], capture_output=True, text=True, timeout=25)
+    assert completed.returncode == 0, completed.stdout + completed.stderr

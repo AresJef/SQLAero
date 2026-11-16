@@ -1177,9 +1177,17 @@ impl Masked<'_> {
         budget: &dyn Checkpoint,
         _api: &NumpyArrayApi,
     ) -> PyResult<()> {
+        // Validation may dispatch a signal handler. Keep this already owned
+        // fact on its input side, as with the ordinary guarded mask read.
+        let copied = self.mask.copied_missing(row, 0);
         self.state.validate(budget)?;
-        let missing = self.mask.missing(row, 0, budget)?;
-        self.state.validate(budget)?;
+        let missing = if let Some(missing) = copied {
+            missing
+        } else {
+            let missing = self.mask.missing(row, 0, budget)?;
+            self.state.validate(budget)?;
+            missing
+        };
         if missing {
             self.data.validate_layout(budget)?;
             target.scalar(self.data.owner().py(), ValueRef::Null)

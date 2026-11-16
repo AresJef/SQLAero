@@ -376,6 +376,28 @@ impl<'py> NumpySource<'py> {
         matches!(self.kind, ArrayKind::Scalar(Kind::Bool))
     }
 
+    /// Read only an already owned bool byte, without entering a source or
+    /// control boundary. A miss keeps the normal guarded reader unchanged.
+    pub(super) fn copied_bool(&self, row: usize, column: usize) -> Option<bool> {
+        if !self.is_boolean() || self.width != 1 {
+            return None;
+        }
+        let (rows, columns) = match self.shape {
+            Shape::Scalar => (1, 1),
+            Shape::Vector { length } => (length, 1),
+            Shape::Table { rows, columns } => (rows, columns),
+            Shape::Tensor { elements, .. } => (elements, 1),
+            Shape::Record { .. } => return None,
+        };
+        if row >= rows || column >= columns {
+            return None;
+        }
+        let index = row.checked_mul(columns)?.checked_add(column)?;
+        let block = self.raw.as_ref()?;
+        let offset = index.checked_sub(block.start)?;
+        block.bytes.get(offset).map(|&byte| byte != 0)
+    }
+
     pub(super) fn bool_cell(
         &mut self,
         row: usize,

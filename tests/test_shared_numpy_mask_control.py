@@ -16,14 +16,19 @@ np = pytest.importorskip("numpy")
 @pytest.mark.parametrize("provider", ["numpy", "pandas"])
 @pytest.mark.parametrize("target", ["json", "mysql"])
 @pytest.mark.parametrize("raise_original", [False, True])
+@pytest.mark.parametrize("trigger", [8, 16, 32])
 def test_long_mask_dictionary_callback_preserves_source_error(
-    provider: str, target: str, raise_original: bool,
+    provider: str, target: str, raise_original: bool, trigger: int,
 ) -> None:
+    # A long source crosses several bounded native work units. The failure
+    # must survive whenever its actual callback runs; per-cell lookup counts
+    # are not part of the public contract.
+    length = 4096
     if provider == "numpy":
-        source = np.ma.array(np.arange(1000), mask=np.zeros(1000, dtype=bool))
+        source = np.ma.array(np.arange(length), mask=np.zeros(length, dtype=bool))
     else:
         pd = pytest.importorskip("pandas")
-        source = pd.array(np.arange(1000), dtype="Int64")
+        source = pd.array(np.arange(length), dtype="Int64")
     namespace = source.__dict__
     original_mask = namespace.pop("_mask")
     original_error = MemoryError("original long mask dictionary callback")
@@ -39,11 +44,11 @@ def test_long_mask_dictionary_callback_preserves_source_error(
             if other != "_mask":
                 return False
             self.calls += 1
-            if self.calls >= 32 and not self.fired:
+            if self.calls >= trigger and not self.fired:
                 self.fired = True
                 if raise_original:
                     raise original_error
-                namespace[self] = np.ones(1000, dtype=bool)
+                namespace[self] = np.ones(length, dtype=bool)
             return True
 
     key = MaskKey()
