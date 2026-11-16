@@ -112,7 +112,7 @@ pub(super) fn consume<'py>(
     mut read: Read<'_, 'py>,
     array: &ArrayRef,
     index: usize,
-    target: &mut dyn Target,
+    target: &mut (impl Target + ?Sized),
     budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     let (resolved, index) = resolve(read.owner.py(), array, index, budget)?;
@@ -127,11 +127,12 @@ pub(super) fn consume<'py>(
             read.offsets,
         );
     }
-    read.dictionary(array.data_type(), target.needs_field_names(), budget)?;
+    if target.needs_field_names() {
+        read.dictionary(array.data_type(), true, budget)?;
+    }
     target.source(
         &mut View {
             read,
-            array: resolved,
             index,
             selected,
         },
@@ -145,7 +146,7 @@ pub(super) fn consume_child<'py>(
     index: usize,
     row: usize,
     column: usize,
-    target: &mut dyn Target,
+    target: &mut (impl Target + ?Sized),
     budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     let (resolved, index) = resolve(read.owner.py(), array, index, budget)?;
@@ -166,30 +167,45 @@ pub(super) fn consume_child<'py>(
             read.offsets,
         );
     }
-    read.dictionary(array.data_type(), target.needs_field_names(), budget)?;
+    if target.needs_field_names() {
+        read.dictionary(array.data_type(), true, budget)?;
+    }
+    consume_selected_child(read, &selected, index, row, column, target, budget)
+}
+
+/// Consume a child using the current owner's already validated parent shape.
+/// Child indices, validity, schema positions and values are still checked at
+/// their original boundaries; no formatted answers or foreign owners are cached.
+fn consume_selected_child<'py>(
+    mut read: Read<'_, 'py>,
+    selected: &Kind<'_>,
+    index: usize,
+    row: usize,
+    column: usize,
+    target: &mut (impl Target + ?Sized),
+    budget: &dyn Checkpoint,
+) -> PyResult<()> {
     match selected {
         Kind::Record(record) if row == 0 && column < record.num_columns() => {
             let value = record.column(column);
-            let node = read.child(
-                names::Edge::Field(column),
-                value.data_type(),
-                target.needs_field_names(),
-                budget,
-            )?;
+            let node = if target.needs_field_names() {
+                read.child(names::Edge::Field(column), value.data_type(), true, budget)?
+            } else {
+                0
+            };
             consume(read.at(node), value, index, target, budget)
         }
         Kind::Slice {
             values,
             start,
             length,
-        } if row < length && column == 0 => {
-            let node = read.child(
-                names::Edge::Value,
-                values.data_type(),
-                target.needs_field_names(),
-                budget,
-            )?;
-            consume(read.at(node), values, start + row, target, budget)
+        } if row < *length && column == 0 => {
+            let node = if target.needs_field_names() {
+                read.child(names::Edge::Value, values.data_type(), true, budget)?
+            } else {
+                0
+            };
+            consume(read.at(node), values, *start + row, target, budget)
         }
         _ => Err(invalid(
             read.owner.py(),
@@ -200,7 +216,6 @@ pub(super) fn consume_child<'py>(
 
 struct View<'a, 'py> {
     read: Read<'a, 'py>,
-    array: &'a ArrayRef,
     index: usize,
     selected: Kind<'a>,
 }
@@ -241,9 +256,9 @@ impl<'py> PreparedSource<'py> for View<'_, 'py> {
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
         let node = self.read.node;
-        consume_child(
+        consume_selected_child(
             self.read.at(node),
-            self.array,
+            &self.selected,
             self.index,
             row,
             column,

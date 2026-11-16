@@ -971,62 +971,7 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         target: &mut dyn Target,
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
-        let py = self.owner.py();
-        target.checkpoint(py, 1)?;
-        let (array, index) = self.current_array(row, budget)?;
-        let table = match self.shape {
-            Shape::Table { columns, .. } if column < columns => true,
-            Shape::Vector { .. } if column == 0 => false,
-            _ => return Err(invalid(py, "Arrow cell is outside its prepared shape")),
-        };
-        if let Some(reader) = self.fast_path.as_deref_mut() {
-            let value = match reader {
-                FastPath::Dictionary(reader) if reader.has_column(column) => {
-                    let value = cell_array(py, &array, table, column)?;
-                    let Some(reference) = reader.reference(py, value, index, column)? else {
-                        return target.scalar(py, ValueRef::Null);
-                    };
-                    if target.referenced_text(py, reference, budget)? {
-                        return Ok(());
-                    }
-                    return consume_scalar(
-                        py,
-                        reference.values,
-                        reference.index,
-                        target,
-                        budget,
-                        &mut self.offsets,
-                    );
-                }
-                FastPath::Dictionary(_) => None,
-                FastPath::Int64(reader) => Some(reader.read(py, index, column)?),
-                FastPath::Float32(reader) => Some(reader.read(py, index)?),
-                FastPath::Float64(reader) => Some(reader.read(py, index)?),
-                FastPath::Boolean(reader) => Some(reader.read(py, index)?),
-            };
-            if let Some(value) = value {
-                // Native buffer borrows end before target error/control work.
-                return target.scalar(py, value);
-            }
-        }
-        let value = cell_array(py, &array, table, column)?;
-        let node = if table && target.needs_field_names() && names::needed(value.data_type()) {
-            self.names.child(0, names::Edge::Field(column), budget)?
-        } else {
-            0
-        };
-        consume_value(
-            Read {
-                owner: &self.owner,
-                offsets: &mut self.offsets,
-                names: &mut self.names,
-                node,
-            },
-            value,
-            index,
-            target,
-            budget,
-        )
+        self.consume_cell_to(row, column, target, budget)
     }
 
     crate::input::source::cell_destinations!();
@@ -1122,7 +1067,7 @@ fn consume_scalar<'py>(
     py: Python<'py>,
     array: &ArrayRef,
     index: usize,
-    target: &mut dyn Target,
+    target: &mut (impl Target + ?Sized),
     budget: &dyn Checkpoint,
     offsets: &mut Option<Box<offset::Offsets<'py>>>,
 ) -> PyResult<()> {
@@ -1286,7 +1231,7 @@ fn consume_decimal(
     py: Python<'_>,
     bytes: &[u8],
     scale: i8,
-    target: &mut dyn Target,
+    target: &mut (impl Target + ?Sized),
 ) -> PyResult<()> {
     let value = sqlaero_transcode::decimal::Coefficient::from_signed_le(bytes)
         .map_err(|message| errors::client(py, ClientErrorCode::NumericRange, message))?;
@@ -1383,7 +1328,7 @@ fn consume_bytes(
     py: Python<'_>,
     array: &ArrayRef,
     index: usize,
-    target: &mut dyn Target,
+    target: &mut (impl Target + ?Sized),
     budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     let text = matches!(
@@ -1621,6 +1566,71 @@ fn time_unit(unit: &ArrowTimeUnit) -> TimeUnit {
 }
 
 impl<'py> Prepared<'py> {
+    fn consume_cell_to(
+        &mut self,
+        row: usize,
+        column: usize,
+        target: &mut (impl Target + ?Sized),
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        let py = self.owner.py();
+        target.checkpoint(py, 1)?;
+        let (array, index) = self.current_array(row, budget)?;
+        let table = match self.shape {
+            Shape::Table { columns, .. } if column < columns => true,
+            Shape::Vector { .. } if column == 0 => false,
+            _ => return Err(invalid(py, "Arrow cell is outside its prepared shape")),
+        };
+        if let Some(reader) = self.fast_path.as_deref_mut() {
+            let value = match reader {
+                FastPath::Dictionary(reader) if reader.has_column(column) => {
+                    let value = cell_array(py, &array, table, column)?;
+                    let Some(reference) = reader.reference(py, value, index, column)? else {
+                        return target.scalar(py, ValueRef::Null);
+                    };
+                    if target.referenced_text(py, reference, budget)? {
+                        return Ok(());
+                    }
+                    return consume_scalar(
+                        py,
+                        reference.values,
+                        reference.index,
+                        target,
+                        budget,
+                        &mut self.offsets,
+                    );
+                }
+                FastPath::Dictionary(_) => None,
+                FastPath::Int64(reader) => Some(reader.read(py, index, column)?),
+                FastPath::Float32(reader) => Some(reader.read(py, index)?),
+                FastPath::Float64(reader) => Some(reader.read(py, index)?),
+                FastPath::Boolean(reader) => Some(reader.read(py, index)?),
+            };
+            if let Some(value) = value {
+                // Native buffer borrows end before target error/control work.
+                return target.scalar(py, value);
+            }
+        }
+        let value = cell_array(py, &array, table, column)?;
+        let node = if table && target.needs_field_names() && names::needed(value.data_type()) {
+            self.names.child(0, names::Edge::Field(column), budget)?
+        } else {
+            0
+        };
+        consume_value(
+            Read {
+                owner: &self.owner,
+                offsets: &mut self.offsets,
+                names: &mut self.names,
+                node,
+            },
+            value,
+            index,
+            target,
+            budget,
+        )
+    }
+
     fn write_cell_to(
         &mut self,
         row: usize,
@@ -1630,7 +1640,7 @@ impl<'py> Prepared<'py> {
         budget: &dyn Checkpoint,
         visitor: &mut dyn CellWriter,
     ) -> PyResult<()> {
-        self.consume_cell(
+        self.consume_cell_to(
             row,
             column,
             &mut super::cell::Mysql {
