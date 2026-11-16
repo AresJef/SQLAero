@@ -7,12 +7,13 @@ import sys
 
 import pytest
 
+from _native_signal import private_console_options
+
 
 @pytest.mark.parametrize(("depth", "empty"), [(64, False), (65, False), (256, True), (4096, True)])
 def test_source_schema_depth_is_distinct_from_actual_output_depth(depth: int, empty: bool) -> None:
     script = f"depth={depth!r}\nempty={empty!r}\n" + """
 import numpy as np
-from _native_signal import private_console_options
 
 from sqlaero import json_dumps
 dtype=np.dtype('i8')
