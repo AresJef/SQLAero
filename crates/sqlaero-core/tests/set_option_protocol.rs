@@ -25,6 +25,8 @@ fn peer(request: Vec<u8>, response: Option<Vec<u8>>, close: bool) -> (Channel, J
     let address = listener.local_addr().unwrap();
     let server = std::thread::spawn(move || {
         let (mut socket, _) = listener.accept().unwrap();
+        // Do not delay the fixture's separately written short packet body.
+        socket.set_nodelay(true).unwrap();
         socket
             .set_read_timeout(Some(Duration::from_secs(2)))
             .unwrap();
@@ -52,15 +54,24 @@ fn peer(request: Vec<u8>, response: Option<Vec<u8>>, close: bool) -> (Channel, J
 fn advance(query: &mut Query, channel: &mut Channel) -> Result<Response, QueryError> {
     let mut budget = IoBudget::new(
         TimeoutKind::Operation,
-        Some(Duration::from_millis(100)),
-        Some(Duration::from_millis(40)),
+        Some(Duration::from_secs(2)),
+        Some(Duration::from_secs(1)),
         None,
     );
+    // Protocol assertions do not impose a sub-second host-scheduling target.
+    // The deliberate no-response test supplies its original short budget.
+    advance_with_budget(query, channel, &mut budget)
+}
+fn advance_with_budget(
+    query: &mut Query,
+    channel: &mut Channel,
+    budget: &mut IoBudget,
+) -> Result<Response, QueryError> {
     while !channel.connected()? {
-        channel.wait(Direction::Write, &mut budget)?;
+        channel.wait(Direction::Write, budget)?;
     }
     loop {
-        match query.advance(channel, &mut budget)? {
+        match query.advance(channel, budget)? {
             Step::Ready(response) => return Ok(response),
             Step::Control => (),
             Step::Wait(_) => panic!("Query drives concrete readiness"),
@@ -163,8 +174,14 @@ fn after_send_eof_or_timeout_preserves_unknown_control_outcome_without_replay() 
         let request = vec![0x1b, 0, 0];
         let (mut channel, server) = peer(request.clone(), None, close);
         let mut query = job(request).unwrap();
+        let mut budget = IoBudget::new(
+            TimeoutKind::Operation,
+            Some(Duration::from_millis(100)),
+            Some(Duration::from_millis(40)),
+            None,
+        );
         assert!(matches!(
-            advance(&mut query, &mut channel),
+            advance_with_budget(&mut query, &mut channel, &mut budget),
             Err(QueryError::Channel(_))
         ));
         assert!(query.is_finished());
