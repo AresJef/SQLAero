@@ -16,6 +16,8 @@ from types import new_class
 
 import pytest
 
+from _native_signal import private_console_options
+
 from sqlaero import JSON, Cursor, DictCursor, SSCursor, SSDictCursor, _sqlaero, json_dumps
 from test_public_connection import live, requires_mysql
 
@@ -215,7 +217,7 @@ def test_long_enum_chain_checks_signals_inside_the_native_call(target: str) -> N
     """)
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(Path(__file__).parent) + os.pathsep + environment.get("PYTHONPATH", "")
-    result = subprocess.run([sys.executable, "-c", script], env=environment,
+    result = subprocess.run([sys.executable, "-c", script], **private_console_options(environment),
                             capture_output=True, text=True, timeout=20)
     assert result.returncode == 0, (result.stdout, result.stderr)
 

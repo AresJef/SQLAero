@@ -8,7 +8,7 @@ its handlers. No event can reach the Actions runner or a user's console.
 This is a test fixture only; production signal handling remains in CPython.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 import ctypes
 import dis
 import os
@@ -20,9 +20,36 @@ import sys
 from threading import Thread
 import time
 from types import CodeType, FrameType
-from typing import Any
+from typing import Any, TypedDict
 
 _win: Any = ctypes  # Windows-only ctypes exports are absent from non-Windows stubs.
+
+
+class PrivateConsoleOptions(TypedDict, total=False):
+    """Public subprocess options for one owned signal target."""
+
+    creationflags: int
+    env: dict[str, str]
+
+
+def private_console_options(environment: Mapping[str, str] | None = None) -> PrivateConsoleOptions:
+    """Isolate child signals before CPython installs its console handlers.
+
+    The inherited marker alone does not allocate a console: without the
+    creation flag a child alarm would also signal its waiting pytest parent.
+    POSIX keeps its existing environment and process-directed signal behavior.
+    """
+    options: PrivateConsoleOptions = {}
+    if environment is not None:
+        options['env'] = dict(environment)
+    if os.name == 'nt':
+        selected = options.get('env')
+        if selected is None:
+            selected = dict(os.environ)
+        selected['SQLAERO_TEST_PRIVATE_CONSOLE'] = '1'
+        options['env'] = selected
+        options['creationflags'] = subprocess.CREATE_NEW_CONSOLE
+    return options
 
 
 def native_call_offsets(code: CodeType) -> frozenset[int]:
@@ -241,17 +268,15 @@ if __name__ == '__main__':
     elif sys.argv[1:2] == ['--pytest']:
         command = [sys.executable, '-m', 'pytest', *sys.argv[2:]]
         if os.name == 'nt':
-            environment = {**os.environ, 'SQLAERO_TEST_PRIVATE_CONSOLE': '1'}
-            completed = subprocess.run(command, env=environment, stdin=subprocess.DEVNULL,
+            completed = subprocess.run(command, **private_console_options(), stdin=subprocess.DEVNULL,
                                        stdout=sys.stdout, stderr=sys.stderr,
-                                       creationflags=subprocess.CREATE_NEW_CONSOLE, check=False)
+                                       check=False)
             raise SystemExit(completed.returncode)
         os.execv(sys.executable, command)
     elif os.name == 'nt' and os.environ.get('SQLAERO_TEST_PRIVATE_CONSOLE') != '1':
-        environment = {**os.environ, 'SQLAERO_TEST_PRIVATE_CONSOLE': '1'}
-        completed = subprocess.run([sys.executable, str(Path(__file__).resolve())], env=environment,
+        completed = subprocess.run([sys.executable, str(Path(__file__).resolve())], **private_console_options(),
                                    stdin=subprocess.DEVNULL, stdout=sys.stdout, stderr=sys.stderr,
-                                   creationflags=subprocess.CREATE_NEW_CONSOLE, timeout=10, check=False)
+                                   timeout=30, check=False)
         raise SystemExit(completed.returncode)
     else:
         if os.name != 'nt':
@@ -328,3 +353,32 @@ print('pending owned alarm discarded; original handler restored')
             # A Python dispatch already queued during close must stay retired.
             installed(alarm.number, None)
             assert hits == [alarm.number, alarm.number], hits
+        if os.name == 'nt':
+            # With the parent's default dispositions restored, a child alarm
+            # must not broadcast into this console and terminate the parent.
+            nested_probe = '''
+import signal
+import sys
+import time
+sys.path.insert(0, sys.argv[1])
+from _native_signal import NativeAlarm
+for sigint in (False, True):
+    hits = []
+    alarm = NativeAlarm(lambda number, frame: hits.append(number), sigint=sigint)
+    try:
+        alarm.start(0.02)
+        end = time.monotonic() + 3
+        while not hits and time.monotonic() < end:
+            time.sleep(0.01)
+        assert hits == [alarm.number], hits
+    finally:
+        alarm.close()
+print('nested child signals remained in the owned console')
+'''
+            child = subprocess.run(
+                [sys.executable, '-c', nested_probe, str(Path(__file__).resolve().parent)],
+                **private_console_options(), capture_output=True, text=True, timeout=15, check=False,
+            )
+            assert child.returncode == 0, (child.returncode, child.stdout, child.stderr)
+            assert 'nested child signals remained' in child.stdout
+            print(child.stdout.strip())

@@ -19,6 +19,8 @@ from typing import Any
 
 import pytest
 
+from _native_signal import private_console_options
+
 from sqlaero import JSON, Cursor, DictCursor, SSCursor, SSDictCursor, json_dumps
 from sqlaero import _sqlaero
 from test_public_connection import live, requires_mysql
@@ -128,7 +130,7 @@ def test_large_integer_returns_to_signal_control_during_native_work() -> None:
     script = "sysconfig_free = " + repr(free) + "\n" + script
     env = dict(os.environ)
     env["PYTHONPATH"] = str(Path(__file__).parent) + os.pathsep + env.get("PYTHONPATH", "")
-    result = subprocess.run([sys.executable, "-c", script], env=env,
+    result = subprocess.run([sys.executable, "-c", script], **private_console_options(env),
                             capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, (result.stdout, result.stderr)
 

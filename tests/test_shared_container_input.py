@@ -14,6 +14,8 @@ import sys
 import textwrap
 from concurrent.futures import ThreadPoolExecutor
 
+from _native_signal import private_console_options
+
 from sqlaero import _sqlaero, json_dumps
 
 
@@ -170,7 +172,7 @@ def test_long_key_work_returns_to_signal_checks_without_publishing_a_prefix() ->
     """)
     env = dict(os.environ)
     env["PYTHONPATH"] = str(Path(__file__).parent) + os.pathsep + env.get("PYTHONPATH", "")
-    result = subprocess.run([sys.executable, "-c", script], env=env, capture_output=True, text=True, timeout=15)
+    result = subprocess.run([sys.executable, "-c", script], **private_console_options(env), capture_output=True, text=True, timeout=15)
     assert result.returncode == 0, (result.stdout, result.stderr)
 
 

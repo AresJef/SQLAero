@@ -13,6 +13,8 @@ import subprocess
 import sys
 
 import pytest
+from _native_signal import private_console_options
+
 from sqlaero import JSON, Cursor, DictCursor, SSCursor, SSDictCursor, _sqlaero, json_dumps
 from sqlaero.errors import DataError
 from test_public_connection import live, requires_mysql
@@ -139,7 +141,7 @@ assert json_dumps(Decimal('1.20')) == b'"1.20"'
 """
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(pathlib.Path(__file__).parent) + os.pathsep + environment.get("PYTHONPATH", "")
-    result = subprocess.run([sys.executable, "-c", script], env=environment,
+    result = subprocess.run([sys.executable, "-c", script], **private_console_options(environment),
                             capture_output=True, text=True, timeout=20, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
 

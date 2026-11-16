@@ -6,6 +6,8 @@
 import json
 
 import pytest
+from _native_signal import private_console_options
+
 from sqlaero import JSON, _sqlaero, json_dumps
 
 np = pytest.importorskip("numpy")
@@ -214,6 +216,6 @@ finally:
 """
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(pathlib.Path(__file__).parent) + os.pathsep + environment.get("PYTHONPATH", "")
-    result = subprocess.run([sys.executable, "-c", script], env=environment,
+    result = subprocess.run([sys.executable, "-c", script], **private_console_options(environment),
                             capture_output=True, text=True, timeout=20, check=False)
     assert result.returncode == 0, result.stdout + result.stderr

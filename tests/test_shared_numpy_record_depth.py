@@ -12,6 +12,8 @@ import pytest
 def test_source_schema_depth_is_distinct_from_actual_output_depth(depth: int, empty: bool) -> None:
     script = f"depth={depth!r}\nempty={empty!r}\n" + """
 import numpy as np
+from _native_signal import private_console_options
+
 from sqlaero import json_dumps
 dtype=np.dtype('i8')
 for _ in range(depth): dtype=np.dtype([('x',dtype)])
@@ -74,6 +76,6 @@ finally:
 """
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(pathlib.Path(__file__).parent) + os.pathsep + environment.get("PYTHONPATH", "")
-    result = subprocess.run([sys.executable, "-c", script], env=environment,
+    result = subprocess.run([sys.executable, "-c", script], **private_console_options(environment),
                             capture_output=True, text=True, timeout=30, check=False)
     assert result.returncode == 0, result.stdout + result.stderr
