@@ -103,12 +103,10 @@ def test_masked_finite_temporal_payload_needs_no_finite_unit_admission(unit: str
         data = raw
     if structured and unit in ("generic", "0ns"):
         # NumPy2.5.4's default structured fill construction rejects these
-        # units before SQLAero runs. The public same-width dtype assignment
-        # produces the actual supported storage; its source deprecation is
-        # preserved as a warning, not mistaken for a product conversion error.
-        value = np.ma.array(np.zeros(1, dtype=[("at", "M8[ns]")]), mask=True)
-        value.dtype = data.dtype
-        value.data["at"].view("i8")[:] = 1
+        # units before SQLAero runs. NumPy2.5.5 on Windows also divides by
+        # zero while checking a ns-to-0ns view. Reinterpret an integer-backed
+        # masked record instead: same ticks/schema/mask, no temporal cast.
+        value = np.ma.array(np.ones(1, dtype=[("at", "i8")]), mask=True).view(data.dtype)
     else:
         value = np.ma.array(data, mask=True)
     assert json_dumps(value, allow_nan=False) == (b'[{"at":null}]' if structured else b"[null]")

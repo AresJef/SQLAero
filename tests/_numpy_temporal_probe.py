@@ -32,11 +32,17 @@ if structured:
 else:
     data = raw
 if structured and unit in ('generic', '0ns'):
-    value = np.ma.array(np.zeros(1, dtype=[('at', 'M8[ns]')]), mask=True)
-    print('mask_base_ready', flush=True)
-    value.dtype = data.dtype
-    print('mask_dtype_ready', flush=True)
-    value.data['at'].view('i8')[:] = 1
+    if mode == 'int-view':
+        value = np.ma.array(np.ones(1, dtype=[('at', 'i8')]), mask=True)
+        print('integer_mask_base_ready', flush=True)
+        value = value.view(data.dtype)
+        print('integer_mask_view_ready', flush=True)
+    else:
+        value = np.ma.array(np.zeros(1, dtype=[('at', 'M8[ns]')]), mask=True)
+        print('mask_base_ready', flush=True)
+        value.dtype = data.dtype
+        print('mask_dtype_ready', flush=True)
+        value.data['at'].view('i8')[:] = 1
 else:
     value = np.ma.array(data, mask=True)
 print('mask_ready', flush=True)
@@ -50,7 +56,7 @@ print('source_verified_without_sqlaero', flush=True)
 
 def main() -> None:
     records: list[dict[str, object]] = []
-    for mode in ("old", "bits"):
+    for mode in ("old", "bits", "int-view"):
         for structured in (False, True):
             for unit in ("ps", "generic", "0ns"):
                 result = subprocess.run(
@@ -66,7 +72,7 @@ def main() -> None:
     output.parent.mkdir(exist_ok=True)
     output.write_text(json.dumps({"at": datetime.now(timezone.utc).isoformat(),
                                   "python": sys.version, "records": records}, indent=2) + "\n")
-    assert all(row["returncode"] == 0 for row in records if row["mode"] == "bits"), records
+    assert all(row["returncode"] == 0 for row in records if row["mode"] == "int-view"), records
 
 
 if __name__ == "__main__":
