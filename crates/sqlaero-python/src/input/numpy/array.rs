@@ -33,6 +33,24 @@ struct RawBlock {
     bytes: Vec<u8>,
 }
 
+impl RawBlock {
+    /// Resolve an owned item with one checked byte-range contract. This avoids
+    /// dividing the run length by a dynamic width merely to repeat the lookup.
+    fn item(&self, index: usize, width: usize) -> Option<&[u8]> {
+        let offset = index.checked_sub(self.start)?.checked_mul(width)?;
+        self.bytes.get(offset..offset.checked_add(width)?)
+    }
+
+    fn copy_item(&self, index: usize, output: &mut [u8]) -> bool {
+        if let Some(item) = self.item(index, output.len()) {
+            output.copy_from_slice(item);
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// Keep reusable Unicode capacity behind a small, lazily allocated handle.
 struct UnicodeScratch {
     text: String,
@@ -393,9 +411,11 @@ impl<'py> NumpySource<'py> {
             return None;
         }
         let index = row.checked_mul(columns)?.checked_add(column)?;
-        let block = self.raw.as_ref()?;
-        let offset = index.checked_sub(block.start)?;
-        block.bytes.get(offset).map(|&byte| byte != 0)
+        self.raw
+            .as_ref()?
+            .item(index, 1)?
+            .first()
+            .map(|&byte| byte != 0)
     }
 
     pub(super) fn bool_cell(
@@ -469,19 +489,19 @@ impl<'py> NumpySource<'py> {
         if let (Some(total), Some(index)) = (total, index)
             && total >= RAW_BLOCK_MINIMUM
         {
-            if !self.raw.as_ref().is_some_and(|block| {
-                index >= block.start && index - block.start < block.bytes.len() / self.width
-            }) {
+            if !self
+                .raw
+                .as_ref()
+                .is_some_and(|block| block.copy_item(index, &mut bytes[..self.width]))
+            {
                 self.read_block(index, total, columns, budget)?;
-            }
-            let copied = self.raw.as_ref().and_then(|block| {
-                let start = index.checked_sub(block.start)?.checked_mul(self.width)?;
-                block.bytes.get(start..start.checked_add(self.width)?)
-            });
-            if let Some(copied) = copied {
-                bytes[..self.width].copy_from_slice(copied);
-            } else {
-                self.copy_source_range(row, column, 0, &mut bytes[..self.width], budget)?;
+                if !self
+                    .raw
+                    .as_ref()
+                    .is_some_and(|block| block.copy_item(index, &mut bytes[..self.width]))
+                {
+                    self.copy_source_range(row, column, 0, &mut bytes[..self.width], budget)?;
+                }
             }
         } else {
             self.copy_source_range(row, column, 0, &mut bytes[..self.width], budget)?;
@@ -877,15 +897,17 @@ impl<'py> NumpySource<'py> {
             if let (Some(total), Some(index)) = (total, index)
                 && total >= RAW_BLOCK_MINIMUM
             {
-                if !self.raw.as_ref().is_some_and(|block| {
-                    index >= block.start && index - block.start < block.bytes.len() / self.width
-                }) {
+                if !self
+                    .raw
+                    .as_ref()
+                    .is_some_and(|block| block.item(index, self.width).is_some())
+                {
                     self.read_block(index, total, columns, budget)?;
                 }
-                return Ok(self.raw.as_ref().and_then(|block| {
-                    let offset = index.checked_sub(block.start)?.checked_mul(self.width)?;
-                    block.bytes.get(offset..offset.checked_add(self.width)?)
-                }));
+                return Ok(self
+                    .raw
+                    .as_ref()
+                    .and_then(|block| block.item(index, self.width)));
             }
         }
         Ok(None)

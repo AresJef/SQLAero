@@ -11,6 +11,43 @@ from sqlaero import JSON, _sqlaero, json_dumps
 np = pytest.importorskip("numpy")
 
 
+@pytest.mark.parametrize("dtype", ["i1", ">i2", "i4", ">i8", "u8", "f2", ">f4", "f8", "U2", "S3"])
+@pytest.mark.parametrize("rows", [10, 33])
+@pytest.mark.parametrize("layout", ["contiguous", "reversed", "transposed"])
+def test_owned_array_runs_preserve_every_cell_across_rows_and_strides(
+    dtype: str, rows: int, layout: str,
+) -> None:
+    count = rows * 32
+    if dtype == "U2":
+        values = np.array((["a", "中", "🙂", ""] * ((count + 3) // 4))[:count], dtype=dtype)
+    elif dtype == "S3":
+        values = np.array(([b"a", b"ab", b"abc", b""] * ((count + 3) // 4))[:count], dtype=dtype)
+    else:
+        values = (np.arange(count) % 17).astype(dtype)
+    values = values.reshape(rows, 32)
+    if layout == "reversed":
+        values = values[::-1, ::-1]
+    elif layout == "transposed":
+        values = values.T
+    actual = values.tolist()
+
+    def literal(value: object) -> str:
+        if isinstance(value, bytes):
+            return "CAST(X'" + value.hex() + "' AS BINARY)"
+        if isinstance(value, str):
+            return "'" + value + "'"
+        if isinstance(value, float):
+            return f"{value:.1f}e0"
+        return str(value)
+
+    assert _sqlaero._escape_projection(values) == [tuple(literal(value) for value in row) for row in actual]
+    if dtype == "S3":
+        with pytest.raises(TypeError):
+            json_dumps(values)
+    else:
+        assert json_dumps(values) == json.dumps(actual, ensure_ascii=False, separators=(",", ":")).encode()
+
+
 @pytest.mark.parametrize("dtype", ["i1", "i2", "i4", "i8", "u1", "u2", "u4", "u8", "f2", "f4", "f8", "?", "U8", "O"])
 @pytest.mark.parametrize("layout", ["vector", "reverse", "matrix", "transpose", "empty", "zero_columns"])
 def test_standard_array_values_and_axes_are_shared(dtype: str, layout: str) -> None:
