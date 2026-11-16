@@ -255,7 +255,7 @@ impl<'py> PreparedSource<'py> for View<'_, 'py> {
         target: &mut dyn Target,
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
-        self.consume_cell_to(row, column, target, budget)
+        self.consume_selected_to(row, column, target, budget)
     }
     crate::input::source::cell_destinations!();
 }
@@ -263,6 +263,23 @@ impl<'py> PreparedSource<'py> for View<'_, 'py> {
 impl View<'_, '_> {
     crate::input::cell::destinations!();
     fn consume_cell_to(
+        &mut self,
+        row: usize,
+        column: usize,
+        target: &mut impl Target,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        // A list has one element schema. Keep its destination concrete, while
+        // heterogeneous records retain the shared dynamic consumer to bound
+        // the generated scalar paths for every record field and destination.
+        if matches!(self.selected, Kind::Slice { .. }) {
+            self.consume_selected_to(row, column, target, budget)
+        } else {
+            self.consume_cell(row, column, target, budget)
+        }
+    }
+
+    fn consume_selected_to(
         &mut self,
         row: usize,
         column: usize,
