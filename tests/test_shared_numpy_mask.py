@@ -29,12 +29,13 @@ def test_noncanonical_bool_masks_keep_actual_truth_across_owned_reads(
     values = np.arange(length, dtype="i8")
     if provider == "numpy":
         source = np.ma.array(values, mask=False)
+        source.__dict__["_mask"] = missing
     else:
         pd = pytest.importorskip("pandas")
         source = pd.arrays.IntegerArray(values, np.zeros(length, dtype=bool))
-    source.__dict__["_mask"] = missing
-    if provider == "pandas-series":
-        source = pd.Series(source)
+        source.__dict__["_mask"] = missing
+        if provider == "pandas-series":
+            source = pd.Series(source)
     selection = slice(None, None, -1 if layout == "reversed" else 2 if layout == "stepped" else 1)
     source = source[selection]
     expected = [None if raw_mask[index] else index for index in range(length)[selection]]
