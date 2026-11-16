@@ -14,6 +14,14 @@ fn main() {
         !config.is_free_threaded() || version.minor >= 14,
         "SQLAero free-threaded builds require CPython 3.14t or 3.15t; 3.13t is not supported"
     );
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        // Python's Windows headers request the interpreter's import library.
+        // Reuse PyO3's selected interpreter directory for the C shim as well.
+        let directory = config
+            .lib_dir()
+            .expect("the selected CPython import-library directory is required on Windows");
+        println!("cargo:rustc-link-search=native={directory}");
+    }
     // Native builds use the same interpreter selected by PyO3/maturin. No
     // runtime interpreter discovery, private Rust object layout or global
     // compiler setting is needed for the narrow integer export shim.

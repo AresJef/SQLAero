@@ -803,8 +803,9 @@ fn native_numeric_literals_keep_mysql_approximate_and_exact_categories() {
         );
         assert_eq!(
             rows.row(0).unwrap()[0].get(&rows.bytes).unwrap(),
-            Some(b"1234.56".as_slice())
+            Some(b"1234.5600".as_slice())
         );
+        assert_eq!(rows.columns[0].decimals, 4);
     }
 }
 
