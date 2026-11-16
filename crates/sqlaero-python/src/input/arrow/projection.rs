@@ -41,13 +41,17 @@ fn resolve<'a>(
     }
 }
 
+fn scalar_storage(array: &ArrayRef) -> bool {
+    matches!(
+        array,
+        ArrayRef::Leaf(_) | ArrayRef::Bytes(_) | ArrayRef::View(_)
+    )
+}
+
 fn kind<'a>(py: Python<'_>, array: &'a ArrayRef, index: usize) -> PyResult<Kind<'a>> {
     // Every physical leaf has scalar shape, including NULL. Its consumer
     // still reads the actual value type and null bit; no schema is bypassed.
-    if matches!(
-        array,
-        ArrayRef::Leaf(_) | ArrayRef::Bytes(_) | ArrayRef::View(_)
-    ) {
+    if scalar_storage(array) {
         return Ok(Kind::Scalar);
     }
     if array.is_null(index) {
@@ -200,6 +204,19 @@ fn consume_selected_child<'py>(
             start,
             length,
         } if row < *length && column == 0 => {
+            // The retained physical leaf already has scalar shape. Its normal
+            // consumer still checks the checkpoint, index, NULL and value type;
+            // dictionaries and compounds keep the recursive resolution below.
+            if scalar_storage(values) {
+                return consume_scalar(
+                    read.owner.py(),
+                    values,
+                    *start + row,
+                    target,
+                    budget,
+                    read.offsets,
+                );
+            }
             let node = if target.needs_field_names() {
                 read.child(names::Edge::Value, values.data_type(), true, budget)?
             } else {

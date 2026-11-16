@@ -94,3 +94,45 @@ def test_zero_field_records_are_objects_not_nulls() -> None:
     value = pa.array([{}, None, {}], type=pa.struct([]))
     assert json_dumps(value) == b"[{},null,{}]"
     assert _sqlaero._escape_projection(value, many=True) == [(), "NULL", ()]
+
+
+@pytest.mark.parametrize("container", ["list", "large", "fixed"])
+@pytest.mark.parametrize("element", ["integer", "text", "view"])
+@pytest.mark.parametrize("chunked", [False, True])
+def test_prepared_list_scalar_children_keep_slices_nulls_and_target_output(
+    container: str, element: str, chunked: bool,
+) -> None:
+    if element == "integer":
+        dtype = pa.int64()
+        rows = [[7, None], None, [-8, 9]]
+        expected_json = b"[[7,null],null,[-8,9]]"
+        fragments = ("(7,NULL)", "NULL", "(-8,9)")
+        batch = [("7", "NULL"), "NULL", ("-8", "9")]
+    else:
+        dtype = pa.string_view() if element == "view" else pa.string()
+        rows = [["ab", None], None, ["c'd", "\u4e2d"]]
+        expected_json = "[[\"ab\",null],null,[\"c'd\",\"\u4e2d\"]]".encode("utf-8")
+        fragments = ("('ab',NULL)", "NULL", "('c\\'d','\u4e2d')")
+        batch = [("'ab'", "NULL"), "NULL", ("'c\\'d'", "'\u4e2d'")]
+    list_type = pa.large_list(dtype) if container == "large" else pa.list_(dtype, 2) if container == "fixed" else pa.list_(dtype)
+    source = pa.array([rows[0], *rows], type=list_type).slice(1)
+    if chunked:
+        source = pa.chunked_array([source.slice(0, 1), source.slice(1, 0), source.slice(1)])
+    assert json_dumps(source) == expected_json
+    assert _sqlaero._escape_projection(source) == fragments
+    assert _sqlaero._escape_projection(source, many=True) == batch
+
+
+@pytest.mark.parametrize("compound", [False, True])
+def test_prepared_list_dictionary_children_keep_resolution_and_field_names(compound: bool) -> None:
+    labels = pa.array([{"x": 7}, {"x": 8}]) if compound else pa.array([7, 8], type=pa.int64())
+    children = pa.DictionaryArray.from_arrays(pa.array([0, None, 1, 0], type=pa.int8()), labels)
+    source = pa.ListArray.from_arrays(pa.array([0, 2, 4], type=pa.int32()), children)
+    if compound:
+        assert json_dumps(source) == b'[[{"x":7},null],[{"x":8},{"x":7}]]'
+        assert _sqlaero._escape_projection(source) == ("((7),NULL)", "((8),(7))")
+        assert _sqlaero._escape_projection(source, many=True) == [("(7)", "NULL"), ("(8)", "(7)")]
+    else:
+        assert json_dumps(source) == b"[[7,null],[8,7]]"
+        assert _sqlaero._escape_projection(source) == ("(7,NULL)", "(8,7)")
+        assert _sqlaero._escape_projection(source, many=True) == [("7", "NULL"), ("8", "7")]
