@@ -427,7 +427,7 @@ fn escaped<const MODE: u8>(
         return append(output, bytes, limit);
     }
     if bytes.len() < 16 {
-        return escaped_scalar::<MODE>(bytes, output, limit);
+        return escaped_scalar::<MODE, true>(bytes, output, limit);
     }
     escaped_fast::<MODE>(bytes, output, limit)
 }
@@ -442,27 +442,34 @@ fn escaped_fast<const MODE: u8>(
 ) -> Result<(), WireError> {
     // A JSON document's opening quote is an actual marker, not evidence that
     // the remaining text is dense. Emit it with the original failure boundary.
+    let mut previous_marker = false;
     if let Some(encoded) = escape::<MODE>(bytes[0]) {
         if output.len() > limit {
             append(output, b"", limit)?;
         }
         append(output, encoded, limit)?;
         bytes = &bytes[1..];
+        previous_marker = true;
     }
-    if bytes.len() < 16
-        || bytes[..16]
-            .iter()
-            .copied()
-            .any(|byte| escape::<MODE>(byte).is_some())
-        || (MODE == 1 && bytes.iter().copied().min().unwrap_or(u8::MAX) < 0x20)
-    {
-        return escaped_scalar::<MODE>(bytes, output, limit);
+    if bytes.len() < 16 {
+        return escaped_scalar::<MODE, true>(bytes, output, limit);
+    }
+    let (has_marker, has_adjacent) = escaped_prefix::<MODE>(bytes, previous_marker);
+    if has_marker {
+        return if has_adjacent {
+            escaped_scalar::<MODE, true>(bytes, output, limit)
+        } else {
+            escaped_scalar::<MODE, false>(bytes, output, limit)
+        };
+    }
+    if MODE == 1 && bytes.iter().copied().min().unwrap_or(u8::MAX) < 0x20 {
+        return escaped_scalar::<MODE, true>(bytes, output, limit);
     }
     let needles = match MODE {
         1 => (b'\'', b'"', b'\\'),
         2 => (b'\'', b'\'', b'\''),
         3 => (b'\x60', b'\x60', b'\x60'),
-        _ => return escaped_scalar::<MODE>(bytes, output, limit),
+        _ => return escaped_scalar::<MODE, true>(bytes, output, limit),
     };
     let mut start = 0;
     for index in memchr::memchr3_iter(needles.0, needles.1, needles.2, bytes) {
@@ -473,13 +480,16 @@ fn escaped_fast<const MODE: u8>(
             append(output, encoded, limit)?;
             start = index + 1;
             let tail = &bytes[start..];
-            if tail.len() < 16
-                || tail[..16]
-                    .iter()
-                    .copied()
-                    .any(|byte| escape::<MODE>(byte).is_some())
-            {
-                return escaped_scalar::<MODE>(tail, output, limit);
+            if tail.len() < 16 {
+                return escaped_scalar::<MODE, true>(tail, output, limit);
+            }
+            let (has_marker, has_adjacent) = escaped_prefix::<MODE>(tail, true);
+            if has_marker {
+                return if has_adjacent {
+                    escaped_scalar::<MODE, true>(tail, output, limit)
+                } else {
+                    escaped_scalar::<MODE, false>(tail, output, limit)
+                };
             }
         }
     }
@@ -489,9 +499,24 @@ fn escaped_fast<const MODE: u8>(
     Ok(())
 }
 
+/// Classify the already bounded eligibility window, including a marker just
+/// consumed by the caller. Ordinary spans avoid a per-marker empty-span branch;
+/// adjacent markers retain the existing empty-copy optimization.
+fn escaped_prefix<const MODE: u8>(bytes: &[u8], mut previous: bool) -> (bool, bool) {
+    let mut any = false;
+    let mut adjacent = false;
+    for byte in bytes.iter().copied().take(16) {
+        let marker = escape::<MODE>(byte).is_some();
+        any |= marker;
+        adjacent |= previous && marker;
+        previous = marker;
+    }
+    (any, adjacent)
+}
+
 /// Preserve the original small/control-rich loop rather than probing a native
 /// search again after each closely spaced delimiter.
-fn escaped_scalar<const MODE: u8>(
+fn escaped_scalar<const MODE: u8, const SKIP_EMPTY: bool>(
     bytes: &[u8],
     output: &mut Vec<u8>,
     limit: usize,
@@ -499,14 +524,14 @@ fn escaped_scalar<const MODE: u8>(
     let mut start = 0;
     for (index, byte) in bytes.iter().copied().enumerate() {
         if let Some(encoded) = escape::<MODE>(byte) {
-            if start < index || output.len() > limit {
+            if !SKIP_EMPTY || start < index || output.len() > limit {
                 append(output, &bytes[start..index], limit)?;
             }
             append(output, encoded, limit)?;
             start = index + 1;
         }
     }
-    if start < bytes.len() || output.len() > limit {
+    if !SKIP_EMPTY || start < bytes.len() || output.len() > limit {
         append(output, &bytes[start..], limit)?;
     }
     Ok(())
@@ -516,6 +541,28 @@ fn escaped_scalar<const MODE: u8>(
 mod tests {
     use super::*;
     use crate::charset::resolve;
+
+    #[test]
+    fn ordinary_and_adjacent_marker_windows_keep_literal_sql_bytes() {
+        let cases: &[(&[u8], &[u8])] = &[
+            (b"{\"id\":7,\"next\":8}", b"{\\\"id\\\":7,\\\"next\\\":8}"),
+            (
+                b"{\"id\":\"\",\"next\":8}",
+                b"{\\\"id\\\":\\\"\\\",\\\"next\\\":8}",
+            ),
+            (b"''aaaaaaaaaaaaaaaaaa", b"\\'\\'aaaaaaaaaaaaaaaaaa"),
+            (
+                b"abcdefghijklmnop'x'ordinary trailing words",
+                b"abcdefghijklmnop\\'x\\'ordinary trailing words",
+            ),
+        ];
+        for &(input, expected) in cases {
+            let mut output = Vec::new();
+            escaped::<1>(input, &mut output, expected.len()).unwrap();
+            assert_eq!(output, expected);
+        }
+    }
+
     #[test]
     fn complete_utf8_literal_matches_verified_fragment_for_every_byte_character() {
         let codec = Codec::new(resolve(None, None).unwrap().charset);
