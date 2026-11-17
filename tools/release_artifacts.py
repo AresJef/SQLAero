@@ -119,7 +119,8 @@ FEATURE_PROVIDER_NA = {
           for prepared in (False, True) for label in ('84', '97')),
         *(('tests.test_callproc_cursor',
            f'test_out_requires_literal_none_before_target_send[{label}-{source}-{prepared}-{kind}]')
-          for source in ('arrow-null', 'arrow-list-containing-null')
+          for source in ('arrow-null', 'arrow-list-containing-null',
+                         'arrow-struct-containing-null', 'arrow-dictionary-list')
           for label in ('84', '97') for prepared in (False, True)
           for kind in ('Cursor', 'DictCursor', 'SSCursor', 'SSDictCursor')),
         ('tests.test_shared_pandas_category', 'test_arrow_labels_revisit_previous_chunks_without_python_value_conversion'),

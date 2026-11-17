@@ -812,6 +812,8 @@ def test_current_production_graph_catches_old_as_well_as_new_notice_omissions(
 @pytest.mark.parametrize(('provider', 'function', 'source'), [
     ('pyarrow', 'test_out_requires_literal_none_before_target_send', 'arrow-null'),
     ('pyarrow', 'test_out_requires_literal_none_before_target_send', 'arrow-list-containing-null'),
+    ('pyarrow', 'test_out_requires_literal_none_before_target_send', 'arrow-struct-containing-null'),
+    ('pyarrow', 'test_out_requires_literal_none_before_target_send', 'arrow-dictionary-list'),
     ('polars', 'test_out_requires_literal_none_before_target_send', 'polars-null'),
     ('polars', 'test_literal_none_out_survives_shared_source_preparation', 'polars-object'),
 ])
@@ -921,10 +923,15 @@ def test_shared_provider_na_cannot_hide_unrelated_or_broken_installed_cases(
 
 
 @pytest.mark.parametrize('defect', ['platform', 'reason', 'node', 'duplicate'])
-def test_nested_arrow_out_skip_rejects_invalid_evidence(tmp_path: Path, defect: str) -> None:
+@pytest.mark.parametrize('source', [
+    'arrow-list-containing-null', 'arrow-struct-containing-null', 'arrow-dictionary-list',
+])
+def test_nested_arrow_out_skip_rejects_invalid_evidence(
+    tmp_path: Path, defect: str, source: str,
+) -> None:
     target = 'windows-x86_64' if defect == 'platform' else 'windows-arm64'
     kind = 'UnknownCursor' if defect == 'node' else 'Cursor'
-    name = f'test_out_requires_literal_none_before_target_send[84-arrow-list-containing-null-False-{kind}]'
+    name = f'test_out_requires_literal_none_before_target_send[84-{source}-False-{kind}]'
     reason = ("could not import 'pyarrow': No module named 'pyarrow'"
               if defect != 'reason' else 'A different skip reason')
     cases = [('tests.test_callproc_cursor', name, reason)]
