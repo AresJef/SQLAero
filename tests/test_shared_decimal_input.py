@@ -106,20 +106,26 @@ def test_deterministic_finite_sweep_matches_independent_standard_decimal_formatt
         assert json.loads(json_dumps(value)) == Decimal.__str__(value).upper()
 
 
+@pytest.mark.parametrize("digits", [2000000, 32000000])
 @pytest.mark.parametrize("target", ["json", "mysql"])
-def test_long_coefficient_parse_and_output_preserve_repeated_native_signal_error(target: str) -> None:
-    script = "target = " + repr(target) + "\n" + """
+def test_long_coefficient_parse_and_output_preserve_repeated_native_signal_error(target: str, digits: int, request: pytest.FixtureRequest) -> None:
+    script = "target = " + repr(target) + "\ndigits = " + repr(digits) + "\n" + """
 from decimal import Decimal
+import json
+import time
 from _native_signal import NativeAlarm, native_call_offsets
 from sqlaero import json_dumps, _sqlaero
-value = Decimal('1.' + '0' * 2000000)
+value = Decimal('1.' + '0' * digits)
 original = MemoryError('original bounded Decimal work failure')
 count = 0
+deliveries = 0
+started = None
 def convert():
     return json_dumps(value) if target == 'json' else _sqlaero._encode_value(value)
 offsets = native_call_offsets(convert.__code__)
 def interrupt(number, frame):
-    global count
+    global count, deliveries
+    deliveries += 1
     if frame is None or frame.f_code is not convert.__code__ or frame.f_lasti not in offsets:
         return
     count += 1
@@ -129,6 +135,7 @@ def interrupt(number, frame):
 alarm = NativeAlarm(interrupt)
 try:
     alarm.start(0.0001, 0.0001, wait_ready=True)
+    started = time.perf_counter()
     try:
         convert()
     except MemoryError as caught:
@@ -136,13 +143,17 @@ try:
     else:
         raise AssertionError('long Decimal work did not return repeated control')
 finally:
+    elapsed = None if started is None else time.perf_counter() - started
     alarm.close()
+    print(json.dumps({'target': target, 'digits': digits, 'native_callbacks': count,
+                      'all_deliveries': deliveries, 'elapsed_seconds': elapsed}), flush=True)
 assert json_dumps(Decimal('1.20')) == b'"1.20"'
 """
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(pathlib.Path(__file__).parent) + os.pathsep + environment.get("PYTHONPATH", "")
     result = subprocess.run([sys.executable, "-c", script], **private_console_options(environment),
                             capture_output=True, text=True, timeout=20, check=False)
+    request.node.user_properties.append(('decimal_signal_diagnostic', result.stdout))
     assert result.returncode == 0, result.stdout + result.stderr
 
 
