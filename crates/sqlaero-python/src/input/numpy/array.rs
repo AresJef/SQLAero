@@ -42,6 +42,18 @@ impl RawBlock {
     }
 
     fn copy_item(&self, index: usize, output: &mut [u8]) -> bool {
+        // Four-byte machine words share this checked copy in both writers.
+        // Other widths keep the general path and its original bounds checks.
+        if output.len() == 4 {
+            let Some(item) = self.item(index, 4).and_then(|item| item.first_chunk::<4>()) else {
+                return false;
+            };
+            let Some(destination) = output.first_chunk_mut::<4>() else {
+                return false;
+            };
+            *destination = *item;
+            return true;
+        }
         if let Some(item) = self.item(index, output.len()) {
             output.copy_from_slice(item);
             true
