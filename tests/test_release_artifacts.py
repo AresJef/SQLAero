@@ -869,6 +869,7 @@ def test_shared_provider_collection_na_needs_its_actual_platform_and_abi(
 
 @pytest.mark.parametrize(('module', 'name'), [
     ('tests.test_shared_pandas_category', 'test_arrow_labels_revisit_previous_chunks_without_python_value_conversion'),
+    ('tests.test_shared_pandas_category', 'test_native_labels_keep_random_codes_missing_and_actual_values[string[pyarrow]]'),
     ('tests.test_shared_pandas_multi', 'test_native_arrow_labels_can_revisit_chunks_in_a_multiindex'),
     *(('tests.test_shared_pandas_table',
        f'test_every_approved_array_family_real_subclass_keeps_actual_storage[{kind}]')
@@ -896,6 +897,12 @@ def test_shared_arrow_case_na_needs_the_fixed_provider_gap(
 
 
 @pytest.mark.parametrize(('module', 'name', 'reason'), [
+    ('tests.test_shared_pandas_category',
+     'test_native_labels_keep_random_codes_missing_and_actual_values[int64]',
+     "could not import 'pyarrow': No module named 'pyarrow'"),
+    ('tests.test_shared_pandas_category',
+     'test_native_labels_keep_random_codes_missing_and_actual_values[string[pyarrow]]',
+     "could not import 'pyarrow': Unexpected ABI loading error"),
     ('', 'tests.test_shared_json_input', 'collection skipped'),
     ('tests.test_shared_pandas_table',
      'test_every_approved_array_family_real_subclass_keeps_actual_storage[numpy]',

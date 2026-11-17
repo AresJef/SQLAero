@@ -123,6 +123,7 @@ FEATURE_PROVIDER_NA = {
           for label in ('84', '97') for prepared in (False, True)
           for kind in ('Cursor', 'DictCursor', 'SSCursor', 'SSDictCursor')),
         ('tests.test_shared_pandas_category', 'test_arrow_labels_revisit_previous_chunks_without_python_value_conversion'),
+        ('tests.test_shared_pandas_category', 'test_native_labels_keep_random_codes_missing_and_actual_values[string[pyarrow]]'),
         ('tests.test_shared_pandas_multi', 'test_native_arrow_labels_can_revisit_chunks_in_a_multiindex'),
         *(('tests.test_shared_pandas_table',
            f'test_every_approved_array_family_real_subclass_keeps_actual_storage[{kind}]')
