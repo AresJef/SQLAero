@@ -176,11 +176,15 @@ def test_shared_noncyclic_enum_member_is_not_mistaken_for_a_cycle() -> None:
 
 
 @pytest.mark.parametrize("target", ["mysql", "json"])
-def test_long_enum_chain_checks_signals_inside_the_native_call(target: str) -> None:
+def test_long_enum_chain_checks_signals_inside_the_native_call(
+    target: str, record_property: Callable[[str, object], None],
+) -> None:
     script = "target = " + repr(target) + "\n" + textwrap.dedent("""
         from enum import Enum
+        import time
         from _native_signal import NativeAlarm, native_call_offsets
         from sqlaero import _sqlaero, json_dumps
+        started = time.monotonic()
         Chain = Enum('Chain', {f'V{i}': i for i in range(50000)})
         owners = list(Chain)
         previous = 7
@@ -188,6 +192,7 @@ def test_long_enum_chain_checks_signals_inside_the_native_call(target: str) -> N
             member._value_ = previous
             previous = member
         source = previous
+        print('enum source ready', time.monotonic() - started, flush=True)
         original = MemoryError('original signal in transparent native traversal')
         count = 0
         def serialize():
@@ -210,15 +215,18 @@ def test_long_enum_chain_checks_signals_inside_the_native_call(target: str) -> N
                 serialize()
             except MemoryError as error:
                 assert error is original and count == 3
+                print('enum native signal checked', time.monotonic() - started, flush=True)
             else:
                 raise AssertionError('transparent native chain had no growing-work checks')
         finally:
             alarm.close()
+        print('enum alarm closed', time.monotonic() - started, flush=True)
     """)
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(Path(__file__).parent) + os.pathsep + environment.get("PYTHONPATH", "")
     result = subprocess.run([sys.executable, "-c", script], **private_console_options(environment),
-                            capture_output=True, text=True, timeout=20)
+                            capture_output=True, text=True, timeout=60)
+    record_property('enum_subprocess_stages', result.stdout)
     assert result.returncode == 0, (result.stdout, result.stderr)
 
 

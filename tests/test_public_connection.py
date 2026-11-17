@@ -1561,11 +1561,16 @@ def test_large_json_signal_preserves_real_fetch_state(
     else:
         original = ValueError('original JSON handler failure')
     observed: list[int] = []
+    deliveries = 0
 
     def handler(_signum: int, _frame: FrameType | None) -> None:
-        alarm.start(0)
+        nonlocal deliveries
+        deliveries += 1
         if observed:
             return
+        # NativeAlarm already coalesces nested handler delivery. Keep its
+        # periodic source armed during GC inspection instead of adding an
+        # asynchronous stop/restart gap at every unsuccessful observation.
         for value in gc.get_objects():
             if type(value) is not list:
                 continue
@@ -1579,7 +1584,6 @@ def test_large_json_signal_preserves_real_fetch_state(
                 if handler_mode in ('raise', 'custom', 'keyboard', 'memory'):
                     raise original
                 return
-        alarm.start(0.0001, 0.0001)
 
     alarm = NativeAlarm(handler)
     result: object = None
@@ -1598,6 +1602,8 @@ def test_large_json_signal_preserves_real_fetch_state(
     finally:
         alarm.close()
         record_property('json_signal_fetch_seconds', clock_time.monotonic() - fetch_started)
+        record_property('json_signal_deliveries', deliveries)
+        record_property('json_signal_observations', observed)
     assert observed == [1]
     assert cursor.rowcount == 2 and saved.names == ('payload',)
     if handler_mode in ('raise', 'custom', 'keyboard', 'memory'):
