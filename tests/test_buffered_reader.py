@@ -7,7 +7,7 @@ from types import FrameType
 from datetime import time
 from typing import Any, cast
 import pytest
-from _native_signal import NativeAlarm
+from _native_signal import NativeAlarm, native_call_offsets
 from sqlaero._sqlaero import _Rows, _rows_from_packets, DataError, InterfaceBusyError, InterfaceError
 
 # Hosted macOS may deliver a real timer after its requested 1 ms. Keep both
@@ -285,17 +285,30 @@ def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable(
     value = reader([(b"1",)] * _SIGNAL_FETCH_ROWS)
     observed: list[str] = []
 
+    def fetch() -> tuple[tuple[object, ...], ...]:
+        return value.fetchall()
+
+    offsets = native_call_offsets(fetch.__code__)
+
     def overlap(signum: int, frame: FrameType | None) -> None:
+        # A queued pre-entry or post-return delivery cannot prove reentrancy.
+        if frame is None or frame.f_code is not fetch.__code__ or frame.f_lasti not in offsets:
+            return
+        alarm.cancel()
         assert value.names == ("x",)
         try:
             value.close()
         except InterfaceBusyError:
             observed.append("busy")
+        else:
+            raise AssertionError("close succeeded inside the active native fetch")
 
     alarm = NativeAlarm(overlap)
     try:
-        alarm.start(0.001)
-        assert len(value.fetchall()) == _SIGNAL_FETCH_ROWS
+        # Confirm timer arming and retain later deliveries if the first event
+        # precedes native work; only a delivery in the CALL window is accepted.
+        alarm.start(0.001, 0.001, wait_ready=True)
+        assert len(fetch()) == _SIGNAL_FETCH_ROWS
     finally:
         alarm.close()
     assert observed == ["busy"]
