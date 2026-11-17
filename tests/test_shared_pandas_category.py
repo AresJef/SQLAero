@@ -15,6 +15,8 @@ np = pytest.importorskip("numpy")
 
 @pytest.mark.parametrize("dtype", ["int64", "uint64", "float64", "string[python]", "string[pyarrow]"])
 def test_native_labels_keep_random_codes_missing_and_actual_values(dtype: str) -> None:
+    if dtype == "string[pyarrow]":
+        pytest.importorskip("pyarrow", exc_type=ModuleNotFoundError)
     labels = [7, 8, 9] if "64" in dtype else ["ab", "cd", "ef"]
     index = pd.Index(labels, dtype=dtype)
     codes = [2, 0, -1, 1, 2, 0] * 8
