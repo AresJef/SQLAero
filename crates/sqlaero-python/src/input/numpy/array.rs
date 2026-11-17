@@ -42,8 +42,33 @@ impl RawBlock {
     }
 
     fn copy_item(&self, index: usize, output: &mut [u8]) -> bool {
-        if let Some(item) = self.item(index, output.len()) {
-            output.copy_from_slice(item);
+        match output.len() {
+            1 => self.copy_fixed_item::<1>(index, output),
+            2 => self.copy_fixed_item::<2>(index, output),
+            4 => self.copy_fixed_item::<4>(index, output),
+            8 => self.copy_fixed_item::<8>(index, output),
+            _ => {
+                if let Some(item) = self.item(index, output.len()) {
+                    output.copy_from_slice(item);
+                    true
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
+    /// Preserve the checked owned range while exposing short primitive copies
+    /// to the compiler. Other lengths retain the common slice-copy path.
+    fn copy_fixed_item<const WIDTH: usize>(&self, index: usize, output: &mut [u8]) -> bool {
+        let Some(item) = self
+            .item(index, WIDTH)
+            .and_then(|item| item.first_chunk::<WIDTH>())
+        else {
+            return false;
+        };
+        if let Some(destination) = output.first_chunk_mut::<WIDTH>() {
+            *destination = *item;
             true
         } else {
             false
