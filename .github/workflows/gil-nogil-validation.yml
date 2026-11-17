@@ -249,12 +249,14 @@ jobs:
       - name: Collect redacted native server diagnostics
         if: always()
         run: python tools/mysql_fixture.py diagnostics --output validation-evidence
-      - name: Preserve a failed original wheel only for diagnosis
+      - name: Preserve failed original and rebuilt wheels only for diagnosis
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: diagnostic-wheel-${{ matrix.platform.name }}-cp${{ matrix.python.runtime }}
-          path: dist/*.whl
+          path: |
+            dist/*.whl
+            sdist-wheels/*.whl
           if-no-files-found: warn
           retention-days: 7
       - name: Save the exact validated original wheel

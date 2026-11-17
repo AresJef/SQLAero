@@ -4,6 +4,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from collections.abc import Callable
 
 import pytest
 
@@ -37,14 +38,20 @@ print('DELIVERED',flush=True)
 
 
 @pytest.mark.parametrize("kind", ["schema", "records", "single_field"])
-def test_record_schema_and_payload_work_preserve_original_repeated_signal(kind: str) -> None:
+def test_record_schema_and_payload_work_preserve_original_repeated_signal(
+    kind: str, record_property: Callable[[str, object], None],
+) -> None:
     script = f"kind={kind!r}\n" + """
 import numpy as np
+import time
 from _native_signal import NativeAlarm, native_call_offsets
 from sqlaero import json_dumps
 if kind=='schema':
     dtype=np.dtype('i8')
     for _ in range(4096): dtype=np.dtype([('x',dtype)])
+    # Keep the original deep schema and add width so periodic deliveries do
+    # not depend on three sender wakeups fitting inside a few milliseconds.
+    dtype=np.dtype([('deep',dtype)]+[(f'p{i}','i8') for i in range(32768)])
     value=np.empty(0,dtype=dtype)
 elif kind=='records':
     value=np.zeros(1000000,dtype=[('id','i8'),('name','U1')])
@@ -53,11 +60,14 @@ else:
 json_dumps(np.zeros(1,dtype=[('id','i8')]))
 original=MemoryError('original growing record work error')
 count=0
+deliveries=0
+elapsed=None
 def serialize():
     return json_dumps(value)
 offsets=native_call_offsets(serialize.__code__)
 def interrupt(number,frame):
-    global count
+    global count,deliveries
+    deliveries+=1
     if frame is None or frame.f_code is not serialize.__code__ or frame.f_lasti not in offsets:
         return
     count+=1
@@ -67,16 +77,22 @@ def interrupt(number,frame):
 alarm=NativeAlarm(interrupt)
 try:
     alarm.start(0.0001,0.0001,wait_ready=True)
+    started=time.perf_counter()
     try: serialize()
     except MemoryError as error:
+        elapsed=time.perf_counter()-started
         assert error is original and count==3
         assert 'while serializing JSON at data' in '\\n'.join(error.__notes__)
-    else: raise AssertionError('record work did not observe repeated signals')
+    else:
+        elapsed=time.perf_counter()-started
+        raise AssertionError('record work did not observe repeated signals')
 finally:
     alarm.close()
+    print('record native signal',kind,count,deliveries,elapsed,flush=True)
 """
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(pathlib.Path(__file__).parent) + os.pathsep + environment.get("PYTHONPATH", "")
     result = subprocess.run([sys.executable, "-c", script], **private_console_options(environment),
                             capture_output=True, text=True, timeout=30, check=False)
+    record_property('record_subprocess_signal', result.stdout)
     assert result.returncode == 0, result.stdout + result.stderr
