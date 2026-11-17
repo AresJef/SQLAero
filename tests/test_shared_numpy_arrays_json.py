@@ -4,6 +4,7 @@
 
 
 import json
+from collections.abc import Callable
 
 import pytest
 from _native_signal import private_console_options
@@ -168,13 +169,16 @@ def test_stable_typed_arrays_have_independent_concurrent_readers() -> None:
 
 
 @pytest.mark.parametrize("shape", ["many", "single", "error_payload", "tensor", "empty_tensor", "masked", "masked_record"])
-def test_typed_array_long_native_work_preserves_original_signal(shape: str) -> None:
+def test_typed_array_long_native_work_preserves_original_signal(
+    shape: str, record_property: Callable[[str, object], None],
+) -> None:
     import os
     import pathlib
     import subprocess
     import sys
     script = "shape = " + repr(shape) + "\n" + """
 import numpy as np
+import time
 from _native_signal import NativeAlarm, native_call_offsets
 from sqlaero import json_dumps
 if shape == 'masked':
@@ -183,18 +187,23 @@ elif shape == 'masked_record':
     value = np.ma.array(np.zeros(1000000, dtype=[('id','i8'),('other','i8')]), mask=False)
     value.mask['other'] = True
 else:
-    value = (np.arange(1000000, dtype='i8') if shape == 'many' else np.array(['a' * 2000000]) if shape == 'single'
+    # Keep a single Unicode value and leave scheduling margin for the CI
+    # sender; the three native-frame deliveries remain mandatory.
+    value = (np.arange(1000000, dtype='i8') if shape == 'many' else np.array(['a' * 16000000]) if shape == 'single'
          else np.array([chr(0xd800) + 'a' * 2000000]) if shape == 'error_payload'
          else np.arange(1000000, dtype='i8').reshape(100, 100, 100) if shape == 'tensor'
          else np.empty((1000000, 0, 2), dtype='i8'))
 json_dumps(np.array([1], dtype='i8'))
 original = MemoryError('original growing typed-array work error')
 count = 0
+deliveries = 0
+started = None
 def serialize():
     return json_dumps(value)
 offsets = native_call_offsets(serialize.__code__)
 def interrupt(number, frame):
-    global count
+    global count, deliveries
+    deliveries += 1
     if frame is None or frame.f_code is not serialize.__code__ or frame.f_lasti not in offsets:
         return
     count += 1
@@ -204,6 +213,7 @@ def interrupt(number, frame):
 alarm = NativeAlarm(interrupt)
 try:
     alarm.start(0.0001, 0.0001, wait_ready=True)
+    started = time.perf_counter()
     try:
         serialize()
     except MemoryError as error:
@@ -212,10 +222,13 @@ try:
     else:
         raise AssertionError('typed native work did not observe repeated signals')
 finally:
+    elapsed = None if started is None else time.perf_counter() - started
     alarm.close()
+    print('typed native signal', shape, count, deliveries, elapsed, flush=True)
 """
     environment = dict(os.environ)
     environment["PYTHONPATH"] = str(pathlib.Path(__file__).parent) + os.pathsep + environment.get("PYTHONPATH", "")
     result = subprocess.run([sys.executable, "-c", script], **private_console_options(environment),
                             capture_output=True, text=True, timeout=20, check=False)
+    record_property('typed_array_subprocess_signal', result.stdout)
     assert result.returncode == 0, result.stdout + result.stderr
