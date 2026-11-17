@@ -2,7 +2,9 @@
 
 # pyright: reportPrivateUsage=false
 
+import gc
 import sys
+import time as clock
 from types import FrameType
 from datetime import time
 from typing import Any, cast
@@ -284,6 +286,9 @@ def test_interrupted_output_releases_temporaries_and_does_not_commit(width: int)
 def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable() -> None:
     value = reader([(b"1",)] * _SIGNAL_FETCH_ROWS)
     observed: list[str] = []
+    progress: list[int] = []
+    deliveries = 0
+    baseline = 0
 
     def fetch() -> tuple[tuple[object, ...], ...]:
         return value.fetchall()
@@ -291,8 +296,15 @@ def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable(
     offsets = native_call_offsets(fetch.__code__)
 
     def overlap(signum: int, frame: FrameType | None) -> None:
+        nonlocal deliveries
+        deliveries += 1
         # A queued pre-entry or post-return delivery cannot prove reentrancy.
         if frame is None or frame.f_code is not fetch.__code__ or frame.f_lasti not in offsets:
+            return
+        allocated = sys.getallocatedblocks() - baseline
+        # Both pre-entry and complete-output deliveries can still identify
+        # the CALL opcode. Require independent partial-output evidence too.
+        if not 1024 <= allocated < _SIGNAL_FETCH_ROWS // 2:
             return
         alarm.cancel()
         assert value.names == ("x",)
@@ -300,6 +312,7 @@ def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable(
             value.close()
         except InterfaceBusyError:
             observed.append("busy")
+            progress.append(allocated)
         else:
             raise AssertionError("close succeeded inside the active native fetch")
 
@@ -307,11 +320,18 @@ def test_reentrant_mutation_is_immediately_busy_while_metadata_remains_readable(
     try:
         # Confirm timer arming and retain later deliveries if the first event
         # precedes native work; only a delivery in the CALL window is accepted.
-        alarm.start(0.001, 0.001, wait_ready=True)
+        gc.collect()
+        alarm.start(0.0001, 0.0001, wait_ready=True)
+        deadline = clock.monotonic() + 5
+        while deliveries == 0 and clock.monotonic() < deadline:
+            clock.sleep(0.001)
+        assert deliveries > 0, "no real OS signal reached the prepared handler"
+        baseline = sys.getallocatedblocks()
         assert len(fetch()) == _SIGNAL_FETCH_ROWS
     finally:
         alarm.close()
-    assert observed == ["busy"]
+    assert observed == ["busy"], {"deliveries": deliveries, "closed": value.closed}
+    assert len(progress) == 1 and 1024 <= progress[0] < _SIGNAL_FETCH_ROWS // 2
     assert not value.closed
 
 

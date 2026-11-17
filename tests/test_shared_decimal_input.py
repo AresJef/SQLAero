@@ -120,6 +120,7 @@ value = Decimal('1.' + '0' * digits)
 original = MemoryError('original bounded Decimal work failure')
 count = 0
 deliveries = 0
+preflight_deliveries = 0
 started = None
 def convert():
     return json_dumps(value) if target == 'json' else _sqlaero._encode_value(value)
@@ -136,6 +137,13 @@ def interrupt(number, frame):
 alarm = NativeAlarm(interrupt)
 try:
     alarm.start(0.0001, 0.0001, wait_ready=True)
+    # Timer-command acknowledgement does not prove a real OS event reached
+    # this interpreter. Exclude that startup interval from native progress.
+    deadline = time.monotonic() + 5
+    while deliveries == 0 and time.monotonic() < deadline:
+        time.sleep(0.001)
+    preflight_deliveries = deliveries
+    assert preflight_deliveries > 0, 'no real OS signal reached the prepared handler'
     started = time.perf_counter()
     try:
         convert()
@@ -147,7 +155,8 @@ finally:
     elapsed = None if started is None else time.perf_counter() - started
     alarm.close()
     print(json.dumps({'target': target, 'digits': digits, 'native_callbacks': count,
-                      'all_deliveries': deliveries, 'elapsed_seconds': elapsed}), flush=True)
+                      'all_deliveries': deliveries, 'preflight_deliveries': preflight_deliveries,
+                      'elapsed_seconds': elapsed}), flush=True)
 assert json_dumps(Decimal('1.20')) == b'"1.20"'
 """
     environment = dict(os.environ)
