@@ -3,6 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 
+from collections.abc import Callable
 from decimal import Decimal, DecimalTuple, localcontext
 from concurrent.futures import ThreadPoolExecutor
 import json
@@ -108,7 +109,7 @@ def test_deterministic_finite_sweep_matches_independent_standard_decimal_formatt
 
 @pytest.mark.parametrize("digits", [2000000, 32000000])
 @pytest.mark.parametrize("target", ["json", "mysql"])
-def test_long_coefficient_parse_and_output_preserve_repeated_native_signal_error(target: str, digits: int, request: pytest.FixtureRequest) -> None:
+def test_long_coefficient_parse_and_output_preserve_repeated_native_signal_error(target: str, digits: int, record_property: Callable[[str, object], None]) -> None:
     script = "target = " + repr(target) + "\ndigits = " + repr(digits) + "\n" + """
 from decimal import Decimal
 import json
@@ -153,7 +154,7 @@ assert json_dumps(Decimal('1.20')) == b'"1.20"'
     environment["PYTHONPATH"] = str(pathlib.Path(__file__).parent) + os.pathsep + environment.get("PYTHONPATH", "")
     result = subprocess.run([sys.executable, "-c", script], **private_console_options(environment),
                             capture_output=True, text=True, timeout=20, check=False)
-    request.node.user_properties.append(('decimal_signal_diagnostic', result.stdout))
+    record_property('decimal_signal_diagnostic', result.stdout)
     assert result.returncode == 0, result.stdout + result.stderr
 
 
