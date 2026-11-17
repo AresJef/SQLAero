@@ -344,6 +344,8 @@ fn format(
     budget: &dyn Checkpoint,
 ) -> PyResult<SmallVec<[u8; 64]>> {
     const CHUNK: usize = 1024;
+    // C char signedness varies by target; UTF-8 is always read as raw octets.
+    let source = source.cast::<u8>();
     let mut bytes = [0u8; CHUNK + 3];
     let mut pending = 0;
     let mut output = SmallVec::new();
@@ -356,7 +358,7 @@ fn format(
         while length < CHUNK {
             // SAFETY: a conforming owned C Schema format is NUL terminated
             // and remains live under its moved export throughout this call.
-            let value = unsafe { source.add(position).read() } as u8;
+            let value = unsafe { source.add(position).read() };
             position = position
                 .checked_add(1)
                 .ok_or_else(|| super::invalid(py, "Arrow schema format length overflows usize"))?;
