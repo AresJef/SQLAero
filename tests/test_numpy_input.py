@@ -753,7 +753,11 @@ def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(
     encoder = _sqlaero._prepare_encoder()
     observations_ns: list[int] = []
     observations_cpu_ns: list[int] = []
-    for index in range(3):
+    valid_cpu_ns: list[int] = []
+    # A coarse thread clock can report no tick during a real native call.
+    # Keep those observations, but require three measured CPU intervals before
+    # deriving a positive deadline; preparation has a fixed twelve-call bound.
+    for index in range(12):
         started_cpu = thread_time_ns()
         started = perf_counter_ns()
         owner = encoder.encode(args)
@@ -767,12 +771,21 @@ def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(
         # Length checks and owner destruction stay outside the observation.
         assert len(owner) >= 2 * logical_length
         del owner
+        assert cpu_ns >= 0, observations_cpu_ns
+        if cpu_ns > 0:
+            valid_cpu_ns.append(cpu_ns)
+        if len(valid_cpu_ns) == 3:
+            break
+    record_property("valid_cpu_observations", len(valid_cpu_ns))
+    record_property("zero_cpu_observations", observations_cpu_ns.count(0))
+    record_property("deadline_calibration_attempts", len(observations_cpu_ns))
+    assert len(valid_cpu_ns) == 3, (observations_ns, observations_cpu_ns)
     # Calibrate preparation from actual thread work with a fixed small number
     # of observations. Cold work and descheduling can inflate a previous wall
     # sample without making the next conversion take that long. The tested
     # operation itself still receives one unchanged wall-clock deadline.
-    timeout_ns = min(budget_cap_ns, min(observations_cpu_ns) // 4)
-    record_property("timeout_budget_basis", "minimum of three native-owner thread CPU observations / 4; operation uses wall time")
+    timeout_ns = min(budget_cap_ns, min(valid_cpu_ns) // 4)
+    record_property("timeout_budget_basis", "minimum of first three positive native-owner CPU observations / 4; zero ticks retained; at most twelve calls; operation uses wall time")
     record_property("timeout_budget_ns", timeout_ns)
     assert timeout_ns > 0, observations_ns
     actual_elapsed_ns = 0
@@ -812,6 +825,40 @@ def test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline(
     diagnostics = (observations_ns, observations_cpu_ns, timeout_ns, actual_elapsed_ns, notes)
     assert "args[1]" in notes, diagnostics
     assert "args[1][0]" in notes, diagnostics
+
+
+def test_numpy_deadline_calibration_keeps_real_timeout_checks_after_zero_cpu_delta(
+    monkeypatch: pytest.MonkeyPatch, record_property: Callable[[str, object], None],
+) -> None:
+    import time
+    original_clock = time.thread_time_ns
+    clock_calls = 0
+    first_cpu = 0
+
+    def coarse_clock() -> int:
+        nonlocal clock_calls, first_cpu
+        value = original_clock()
+        clock_calls += 1
+        if clock_calls == 1:
+            first_cpu = value
+        if clock_calls == 2:
+            return first_cpu
+        return value
+
+    observations: dict[str, object] = {}
+
+    def record(name: str, value: object) -> None:
+        observations[name] = value
+        record_property(name, value)
+
+    monkeypatch.setattr(time, "thread_time_ns", coarse_clock)
+    test_numpy_long_fixed_width_value_keeps_the_original_operation_deadline("S", record)
+    zeros = observations["zero_cpu_observations"]
+    assert isinstance(zeros, int) and zeros >= 1
+    assert observations["valid_cpu_observations"] == 3
+    assert observations["bind_error_code"] == 65544
+    location = observations["bind_location"]
+    assert isinstance(location, str) and "args[1][0]" in location
 
 
 @pytest.mark.parametrize("kind", ["S", "U"])
