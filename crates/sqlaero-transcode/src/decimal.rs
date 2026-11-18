@@ -248,10 +248,14 @@ enum Segment {
     Exponent,
 }
 
+// The longest layout is a sign, leading digit, point, remaining digits and
+// exponent. Plain notation needs fewer segments, regardless of value length.
+const MAX_SEGMENTS: usize = 5;
+
 /// Bounded ASCII renderer over borrowed original coefficient storage.
 pub struct Render<'a> {
     digits: Digits<'a>,
-    segments: [Segment; 8],
+    segments: [Segment; MAX_SEGMENTS],
     segment: usize,
     offset: usize,
     suffix: [u8; 42],
@@ -267,7 +271,7 @@ impl<'a> Render<'a> {
         if h.leading.checked_add(h.digits) != Some(digits.len()) {
             return Err("Decimal coefficient no longer matches its source header");
         }
-        let mut segments = [Segment::Empty; 8];
+        let mut segments = [Segment::Empty; MAX_SEGMENTS];
         let mut at = 0;
         if h.negative {
             segments[at] = Segment::Text(b"-");

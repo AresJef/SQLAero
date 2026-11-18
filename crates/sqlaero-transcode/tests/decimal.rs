@@ -60,6 +60,16 @@ fn bounded_layout_preserves_actual_scale_sign_and_both_notations() {
 }
 
 #[test]
+fn negative_scientific_keeps_every_part_across_tiny_windows() {
+    for width in [1, 2, 128] {
+        assert_eq!(
+            rendered(&[1, 2, 5, 0, 0], -3, true, Notation::Scientific, width),
+            "-1.2500E+1"
+        );
+    }
+}
+
+#[test]
 fn original_ascii_split_is_borrowed_without_an_owned_digit_vector() {
     let mut inspected = Inspect::default();
     for digit in [0, 0, 1, 2, 5, 0, 0] {
