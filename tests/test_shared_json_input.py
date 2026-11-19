@@ -278,7 +278,7 @@ def test_long_unicode_and_controls_do_not_change_data() -> None:
     assert _sqlaero._encode_native_scalar(source) == _sqlaero._encode_scalar(source)
 
 
-@pytest.mark.parametrize("width", [15, 16, 17, 1023, 1024, 1025])
+@pytest.mark.parametrize("width", [15, 16, 17, 1023, 1024, 1025, 4095, 4096, 4097])
 def test_json_string_marker_boundaries_match_independent_standard_output(width: int) -> None:
     for point in range(128):
         left, right = "a" * (width // 2), "z" * (width - width // 2 - 1)
@@ -309,7 +309,7 @@ def test_bounded_base_text_storage_uses_exact_characters(width: int) -> None:
         def __len__(self) -> int:
             raise AssertionError("must read actual base text length")
 
-    for pattern in ("a'\\\0\n", "\u00c3\u00a9", "\u00c2\u00a3", "é"):
+    for pattern in ("a", "a'\\\0\n", "\u00c3\u00a9", "\u00c2\u00a3", "é", "中😀"):
         source = (pattern * (width // len(pattern) + 1))[:width]
         expected = json.dumps(source, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
         assert json_dumps(source) == expected
