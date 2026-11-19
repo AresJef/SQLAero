@@ -29,8 +29,9 @@ pub(super) fn read<'a, 'py>(
     budget: Option<&dyn super::control::Checkpoint>,
 ) -> PyResult<Option<Source<'a, 'py>>> {
     let py = value.py();
-    if let Ok(wrapper) = value.cast::<super::json::Json>() {
-        return Ok(Some(Source::Json(wrapper)));
+    // JSON is final. Probe its exact type without creating errors for other scalars.
+    if value.is_exact_instance_of::<super::json::Json>() {
+        return Ok(Some(Source::Json(value.cast_exact()?)));
     }
     // Standard exact types do not pay optional-provider discovery costs.
     if value.is_exact_instance_of::<PyDateTime>() {
