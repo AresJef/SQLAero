@@ -177,23 +177,40 @@ impl Writer {
         Ok(())
     }
 
-    fn value(&mut self) -> Result<(), Error> {
+    fn value_delimiter(&mut self) -> Result<bool, Error> {
         if self.fragment_open() {
             return Err(Error::State("a scalar fragment is still open"));
         }
         match self.frames.last_mut() {
             Some(Frame::Array { populated }) => {
-                let comma = *populated;
-                *populated = true;
-                if comma {
-                    self.append(",")?;
-                }
+                return Ok(std::mem::replace(populated, true));
             }
             Some(Frame::Object { waiting, .. }) if *waiting => *waiting = false,
             Some(Frame::Object { .. }) => return Err(Error::State("object value has no key")),
             None if self.root => return Err(Error::State("document already has a root")),
             None => self.root = true,
         }
+        Ok(false)
+    }
+
+    fn value(&mut self) -> Result<(), Error> {
+        if self.value_delimiter()? {
+            self.append(",")?;
+        }
+        Ok(())
+    }
+
+    fn integer_value(&mut self, text: &str) -> Result<(), Error> {
+        if !self.value_delimiter()? {
+            return self.append(text);
+        }
+        // The native formatter supplies at most twenty ASCII bytes. Reserve
+        // the comma and the complete number together for populated arrays.
+        self.output
+            .try_reserve(text.len() + 1)
+            .map_err(CapacityError::Allocation)?;
+        self.output.push(',');
+        self.output.push_str(text);
         Ok(())
     }
 
@@ -491,6 +508,12 @@ impl Consumer for Writer {
     fn write(&mut self, value: ScalarRef<'_>, options: &Options) -> Result<(), Error> {
         self.perform(|writer| {
             match value {
+                ScalarRef::Signed(value) => {
+                    return writer.integer_value(number::IntegerBuffer::new().format(value));
+                }
+                ScalarRef::Unsigned(value) => {
+                    return writer.integer_value(number::IntegerBuffer::new().format(value));
+                }
                 ScalarRef::Text(value) => {
                     writer.string_start(Some(value.len()), false)?;
                     writer.string_fragment(value)?;
@@ -596,12 +619,6 @@ impl Consumer for Writer {
             match value {
                 ScalarRef::Null => writer.append("null"),
                 ScalarRef::Boolean(value) => writer.append(if value { "true" } else { "false" }),
-                ScalarRef::Signed(value) => {
-                    writer.append(number::IntegerBuffer::new().format(value))
-                }
-                ScalarRef::Unsigned(value) => {
-                    writer.append(number::IntegerBuffer::new().format(value))
-                }
                 ScalarRef::Float(value) => {
                     let mut buffer = number::FloatBuffer::new();
                     match buffer.format(value) {
