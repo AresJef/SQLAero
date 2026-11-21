@@ -787,15 +787,23 @@ impl Prepared<'_> {
         }
         Ok(())
     }
+}
 
+impl Storage {
+    /// Borrow the root already owned by the single array, current stream
+    /// chunk or retained label history. Its owner stays alive through this
+    /// projection; individual provider byte borrows keep their own checks.
     fn current_array(
         &mut self,
+        py: Python<'_>,
         row: usize,
+        field: &Field,
+        shape: Shape,
+        fast_path: &mut Option<Box<FastPath>>,
         budget: &dyn Checkpoint,
-    ) -> PyResult<(ArrayRef, usize)> {
-        let py = self.owner.py();
-        match &mut self.storage {
-            Storage::Single(array) => Ok((array.clone(), row)),
+    ) -> PyResult<(&ArrayRef, usize)> {
+        match self {
+            Storage::Single(array) => Ok((array, row)),
             Storage::Stream {
                 stream,
                 current,
@@ -813,8 +821,8 @@ impl Prepared<'_> {
                             .and_then(|index| retained.chunks.get(index))
                             && row - *begin < array.len()
                         {
-                            self.fast_path = None;
-                            return Ok((array.clone(), row - *begin));
+                            *fast_path = None;
+                            return Ok((array, row - *begin));
                         }
                     }
                     return Err(invalid(py, "Arrow stream cannot replay an earlier chunk"));
@@ -842,15 +850,15 @@ impl Prepared<'_> {
                             "Arrow stream ended before its declared row count",
                         ));
                     }
-                    let array = native::import(py, raw, &self.field, budget)?;
+                    let array = native::import(py, raw, field, budget)?;
                     let next_end = end
                         .checked_add(array.len())
                         .ok_or_else(|| invalid(py, "Arrow stream length overflows usize"))?;
                     let next_fast_path =
-                        if matches!(self.fast_path.as_deref(), Some(FastPath::Dictionary(_))) {
+                        if matches!(fast_path.as_deref(), Some(FastPath::Dictionary(_))) {
                             None
                         } else {
-                            native_fast_path(py, &array, self.shape, budget)?
+                            native_fast_path(py, &array, shape, budget)?
                                 .map(|views| super::boxed(py, views))
                                 .transpose()?
                         };
@@ -867,16 +875,16 @@ impl Prepared<'_> {
                     *start = *end;
                     *end = next_end;
                     *current = Some(array);
-                    if let Some(FastPath::Dictionary(reader)) = self.fast_path.as_deref_mut() {
+                    if let Some(FastPath::Dictionary(reader)) = fast_path.as_deref_mut() {
                         reader.clear_chunk();
                     } else {
-                        self.fast_path = next_fast_path;
+                        *fast_path = next_fast_path;
                     }
                 }
                 let array = current
                     .as_ref()
                     .ok_or_else(|| invalid(py, "Arrow stream has no current chunk"))?;
-                Ok((array.clone(), row - *start))
+                Ok((array, row - *start))
             }
         }
     }
@@ -912,8 +920,15 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         let shape = match self.shape {
             Shape::Table { rows, columns } if index < rows => Shape::Vector { length: columns },
             Shape::Vector { length } if index < length => {
-                let (array, local) = self.current_array(index, budget)?;
-                projection::shape(&self.owner, &array, local, budget)?
+                let (array, local) = self.storage.current_array(
+                    self.owner.py(),
+                    index,
+                    &self.field,
+                    self.shape,
+                    &mut self.fast_path,
+                    budget,
+                )?;
+                projection::shape(&self.owner, array, local, budget)?
             }
             _ => {
                 return Err(invalid(
@@ -944,11 +959,18 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
             }
             return self.consume_cell(index, row, target, budget);
         }
-        let (array, local) = self.current_array(index, budget)?;
+        let (array, local) = self.storage.current_array(
+            self.owner.py(),
+            index,
+            &self.field,
+            self.shape,
+            &mut self.fast_path,
+            budget,
+        )?;
         if row == 0
             && column == 0
             && (self.fast_path.is_some()
-                || projection::shape(&self.owner, &array, local, budget)? == Shape::Scalar)
+                || projection::shape(&self.owner, array, local, budget)? == Shape::Scalar)
         {
             return self.consume_cell(index, 0, target, budget);
         }
@@ -959,7 +981,7 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
                 names: &mut self.names,
                 node: 0,
             },
-            &array,
+            array,
             local,
             row,
             column,
@@ -1579,7 +1601,14 @@ impl<'py> Prepared<'py> {
     ) -> PyResult<()> {
         let py = self.owner.py();
         target.checkpoint(py, 1)?;
-        let (array, index) = self.current_array(row, budget)?;
+        let (array, index) = self.storage.current_array(
+            py,
+            row,
+            &self.field,
+            self.shape,
+            &mut self.fast_path,
+            budget,
+        )?;
         let table = match self.shape {
             Shape::Table { columns, .. } if column < columns => true,
             Shape::Vector { .. } if column == 0 => false,
@@ -1588,7 +1617,7 @@ impl<'py> Prepared<'py> {
         if let Some(reader) = self.fast_path.as_deref_mut() {
             let value = match reader {
                 FastPath::Dictionary(reader) if reader.has_column(column) => {
-                    let value = cell_array(py, &array, table, column)?;
+                    let value = cell_array(py, array, table, column)?;
                     let Some(reference) = reader.reference(py, value, index, column)? else {
                         return target.scalar(py, ValueRef::Null);
                     };
@@ -1615,7 +1644,7 @@ impl<'py> Prepared<'py> {
                 return target.scalar(py, value);
             }
         }
-        let value = cell_array(py, &array, table, column)?;
+        let value = cell_array(py, array, table, column)?;
         let node = if table && target.needs_field_names() && names::needed(value.data_type()) {
             self.names.child(0, names::Edge::Field(column), budget)?
         } else {
