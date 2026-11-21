@@ -1,6 +1,9 @@
 //! Exact temporal tick decomposition without Python objects or floating point.
 
-use super::{scalar::ScalarError, writer};
+use super::{
+    scalar::{ScalarError, fixed_calendar, fixed_clock},
+    writer,
+};
 pub use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
 
 /// A bounded stack formatter; all supported i128 dates fit well below 128 bytes.
@@ -65,6 +68,9 @@ fn range() -> ScalarError {
 }
 
 fn date(stamp: &mut Stamp, year: i128, month: u8, day: u8) -> Result<(), ScalarError> {
+    if let Some(text) = fixed_calendar(year, month, day) {
+        return stamp.append(&text);
+    }
     if year < 0 {
         stamp.append(b"-")?;
     }
@@ -76,20 +82,23 @@ fn date(stamp: &mut Stamp, year: i128, month: u8, day: u8) -> Result<(), ScalarE
 }
 
 /// Callers supply a nonnegative, already decomposed second count.
-fn clock(stamp: &mut Stamp, second: u128) -> Result<(), ScalarError> {
-    stamp.padded(second / 3_600, 2)?;
-    stamp.append(b":")?;
-    stamp.padded((second / 60 % 60) as u8, 2)?;
-    stamp.append(b":")?;
-    stamp.padded((second % 60) as u8, 2)
-}
-
-fn fraction(stamp: &mut Stamp, value: u32, precision: usize) -> Result<(), ScalarError> {
-    if value == 0 {
-        return Ok(());
+fn clock(stamp: &mut Stamp, second: u128, micros: u32) -> Result<(), ScalarError> {
+    let hours = second / 3_600;
+    let minutes = (second / 60 % 60) as u8;
+    let seconds = (second % 60) as u8;
+    if let Some((text, width)) = fixed_clock(hours, minutes, seconds, micros) {
+        return stamp.append(&text[..width]);
     }
-    stamp.append(b".")?;
-    stamp.padded(value, precision)
+    stamp.padded(hours, 2)?;
+    stamp.append(b":")?;
+    stamp.padded(minutes, 2)?;
+    stamp.append(b":")?;
+    stamp.padded(seconds, 2)?;
+    if micros != 0 {
+        stamp.append(b".")?;
+        stamp.padded(micros, 6)?;
+    }
+    Ok(())
 }
 
 pub use sqlaero_transcode::temporal::Value as Temporal;
@@ -241,8 +250,7 @@ fn stamp(value: Temporal, quoted: bool) -> Result<Stamp, ScalarError> {
         } => {
             date(&mut stamp, year, month, day)?;
             stamp.append(b" ")?;
-            clock(&mut stamp, u128::from(second))?;
-            fraction(&mut stamp, nanosecond / 1000, 6)?;
+            clock(&mut stamp, u128::from(second), nanosecond / 1000)?;
         }
         Temporal::Clock {
             negative,
@@ -252,8 +260,7 @@ fn stamp(value: Temporal, quoted: bool) -> Result<Stamp, ScalarError> {
             if negative {
                 stamp.append(b"-")?;
             }
-            clock(&mut stamp, second)?;
-            fraction(&mut stamp, nanosecond / 1000, 6)?;
+            clock(&mut stamp, second, nanosecond / 1000)?;
         }
         Temporal::Period { .. } => return Err(range()),
         Temporal::Duration {
@@ -264,8 +271,7 @@ fn stamp(value: Temporal, quoted: bool) -> Result<Stamp, ScalarError> {
             if negative {
                 stamp.append(b"-")?;
             }
-            clock(&mut stamp, second)?;
-            fraction(&mut stamp, nanosecond / 1000, 6)?;
+            clock(&mut stamp, second, nanosecond / 1000)?;
         }
     }
     if quoted {

@@ -240,6 +240,55 @@ fn digit_pair(value: u8) -> [u8; 2] {
     [b'0' + value / 10, b'0' + value % 10]
 }
 
+/// Format the common four-digit nonnegative date without target delimiters.
+pub(super) fn fixed_calendar(year: i128, month: u8, day: u8) -> Option<[u8; 10]> {
+    let year = u16::try_from(year).ok()?;
+    if year >= 10_000 || month >= 100 || day >= 100 {
+        return None;
+    }
+    let [year_thousands, year_hundreds] = digit_pair((year / 100) as u8);
+    let [year_tens, year_ones] = digit_pair((year % 100) as u8);
+    let [month_tens, month_ones] = digit_pair(month);
+    let [day_tens, day_ones] = digit_pair(day);
+    Some([
+        year_thousands,
+        year_hundreds,
+        year_tens,
+        year_ones,
+        b'-',
+        month_tens,
+        month_ones,
+        b'-',
+        day_tens,
+        day_ones,
+    ])
+}
+
+/// Format a two-digit clock with its optional six-digit microsecond field.
+pub(super) fn fixed_clock(
+    hours: u128,
+    minutes: u8,
+    seconds: u8,
+    micros: u32,
+) -> Option<([u8; 15], usize)> {
+    if hours >= 100 || minutes >= 100 || seconds >= 100 || micros >= 1_000_000 {
+        return None;
+    }
+    let mut text = *b"00:00:00.000000";
+    text[..2].copy_from_slice(&digit_pair(hours as u8));
+    text[3..5].copy_from_slice(&digit_pair(minutes));
+    text[6..8].copy_from_slice(&digit_pair(seconds));
+    let width = if micros == 0 {
+        8
+    } else {
+        text[9..11].copy_from_slice(&digit_pair((micros / 10_000) as u8));
+        text[11..13].copy_from_slice(&digit_pair((micros / 100 % 100) as u8));
+        text[13..15].copy_from_slice(&digit_pair((micros % 100) as u8));
+        15
+    };
+    Some((text, width))
+}
+
 fn clock_body(
     output: &mut Vec<u8>,
     hours: u128,
@@ -248,22 +297,9 @@ fn clock_body(
     micros: u32,
     limit: usize,
 ) -> Result<(), WireError> {
-    let width = if micros == 0 { 8 } else { 15 };
-    if hours < 100
-        && minutes < 100
-        && seconds < 100
-        && micros < 1_000_000
+    if let Some((text, width)) = fixed_clock(hours, minutes, seconds, micros)
         && limit.saturating_sub(output.len()) >= width
     {
-        let mut text = *b"00:00:00.000000";
-        text[..2].copy_from_slice(&digit_pair(hours as u8));
-        text[3..5].copy_from_slice(&digit_pair(minutes));
-        text[6..8].copy_from_slice(&digit_pair(seconds));
-        if micros != 0 {
-            text[9..11].copy_from_slice(&digit_pair((micros / 10_000) as u8));
-            text[11..13].copy_from_slice(&digit_pair((micros / 100 % 100) as u8));
-            text[13..15].copy_from_slice(&digit_pair((micros % 100) as u8));
-        }
         return append(output, &text[..width], limit);
     }
     // Wide durations and close request limits still use the general writer.
@@ -290,31 +326,12 @@ pub fn date_time(
     limit: usize,
 ) -> Result<(), WireError> {
     let delimiter = if clock.is_some() { b' ' } else { b'\'' };
-    const PREFIX_LEN: usize = 12;
-    if let Ok(year) = u16::try_from(date.year)
-        && year < 10_000
-        && date.month < 100
-        && date.day < 100
-        && limit.saturating_sub(output.len()) >= PREFIX_LEN
+    let mut prefix = *b"'0000-00-00'";
+    if limit.saturating_sub(output.len()) >= prefix.len()
+        && let Some(calendar) = fixed_calendar(i128::from(date.year), date.month, date.day)
     {
-        let [year_thousands, year_hundreds] = digit_pair((year / 100) as u8);
-        let [year_tens, year_ones] = digit_pair((year % 100) as u8);
-        let [month_tens, month_ones] = digit_pair(date.month);
-        let [day_tens, day_ones] = digit_pair(date.day);
-        let prefix: [u8; PREFIX_LEN] = [
-            b'\'',
-            year_thousands,
-            year_hundreds,
-            year_tens,
-            year_ones,
-            b'-',
-            month_tens,
-            month_ones,
-            b'-',
-            day_tens,
-            day_ones,
-            delimiter,
-        ];
+        prefix[1..11].copy_from_slice(&calendar);
+        prefix[11] = delimiter;
         append(output, &prefix, limit)?;
     } else {
         // Keep exact wide components and the original failing boundary when
