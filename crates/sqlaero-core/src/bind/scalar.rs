@@ -248,6 +248,25 @@ fn clock_body(
     micros: u32,
     limit: usize,
 ) -> Result<(), WireError> {
+    let width = if micros == 0 { 8 } else { 15 };
+    if hours < 100
+        && minutes < 100
+        && seconds < 100
+        && micros < 1_000_000
+        && limit.saturating_sub(output.len()) >= width
+    {
+        let mut text = *b"00:00:00.000000";
+        text[..2].copy_from_slice(&digit_pair(hours as u8));
+        text[3..5].copy_from_slice(&digit_pair(minutes));
+        text[6..8].copy_from_slice(&digit_pair(seconds));
+        if micros != 0 {
+            text[9..11].copy_from_slice(&digit_pair((micros / 10_000) as u8));
+            text[11..13].copy_from_slice(&digit_pair((micros / 100 % 100) as u8));
+            text[13..15].copy_from_slice(&digit_pair((micros % 100) as u8));
+        }
+        return append(output, &text[..width], limit);
+    }
+    // Wide durations and close request limits still use the general writer.
     padded(output, hours, 2, limit)?;
     append(output, b":", limit)?;
     padded(output, minutes, 2, limit)?;
@@ -352,6 +371,28 @@ pub fn duration(output: &mut Vec<u8>, micros: i128, limit: usize) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clock_block_preserves_fraction_wide_hours_and_request_limit_diagnostics() {
+        for (micros, expected) in [
+            (-99 * 3_600_000_000 - 1, "'-99:00:00.000001'"),
+            (100 * 3_600_000_000, "'100:00:00'"),
+            (1_234_567, "'00:00:01.234567'"),
+        ] {
+            let mut output = Vec::new();
+            duration(&mut output, micros, expected.len()).unwrap();
+            assert_eq!(output, expected.as_bytes());
+        }
+        let mut limited = Vec::new();
+        assert!(matches!(
+            duration(&mut limited, 1_234_567, 13),
+            Err(WireError::Limit {
+                required: 16,
+                limit: 13
+            })
+        ));
+        assert_eq!(limited, b"'00:00:01.");
+    }
 
     #[test]
     fn calendar_prefix_preserves_wide_years_and_request_limit_diagnostics() {
