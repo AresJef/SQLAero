@@ -266,11 +266,12 @@ pub(super) fn fixed_clock(
     minutes: u8,
     seconds: u8,
     micros: u32,
-) -> Option<([u8; 15], usize)> {
+    text: &mut [u8; 15],
+) -> Option<usize> {
     if hours >= 100 || minutes >= 100 || seconds >= 100 || micros >= 1_000_000 {
         return None;
     }
-    let mut text = *b"00:00:00.000000";
+    *text = *b"00:00:00.000000";
     text[..2].copy_from_slice(&digit_pair(hours as u8));
     text[3..5].copy_from_slice(&digit_pair(minutes));
     text[6..8].copy_from_slice(&digit_pair(seconds));
@@ -282,7 +283,7 @@ pub(super) fn fixed_clock(
         text[13..15].copy_from_slice(&digit_pair((micros % 100) as u8));
         15
     };
-    Some((text, width))
+    Some(width)
 }
 
 fn clock_body(
@@ -293,7 +294,8 @@ fn clock_body(
     micros: u32,
     limit: usize,
 ) -> Result<(), WireError> {
-    if let Some((text, width)) = fixed_clock(hours, minutes, seconds, micros)
+    let mut text = [0; 15];
+    if let Some(width) = fixed_clock(hours, minutes, seconds, micros, &mut text)
         && limit.saturating_sub(output.len()) >= width
     {
         return append(output, &text[..width], limit);
@@ -401,6 +403,23 @@ fn clock_literal(
     micros: u32,
     limit: usize,
 ) -> Result<(), WireError> {
+    let mut literal = [b'\''; 18];
+    let [_, _, text @ .., _] = &mut literal;
+    if let Some(width) = fixed_clock(hours, minutes, seconds, micros, text) {
+        let start = if negative {
+            literal[1] = b'-';
+            0
+        } else {
+            1
+        };
+        literal[2 + width] = b'\'';
+        let literal = &literal[start..=2 + width];
+        if limit.saturating_sub(output.len()) >= literal.len() {
+            return append(output, literal, limit);
+        }
+    }
+    // Preserve the original component error when available request space is
+    // shorter than the complete literal, or the wide clock is general.
     append(output, b"'", limit)?;
     if negative {
         append(output, b"-", limit)?;

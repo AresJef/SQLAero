@@ -86,7 +86,8 @@ fn clock(stamp: &mut Stamp, second: u128, micros: u32) -> Result<(), ScalarError
     let hours = second / 3_600;
     let minutes = (second / 60 % 60) as u8;
     let seconds = (second % 60) as u8;
-    if let Some((text, width)) = fixed_clock(hours, minutes, seconds, micros) {
+    let mut text = [0; 15];
+    if let Some(width) = fixed_clock(hours, minutes, seconds, micros, &mut text) {
         return stamp.append(&text[..width]);
     }
     stamp.padded(hours, 2)?;
