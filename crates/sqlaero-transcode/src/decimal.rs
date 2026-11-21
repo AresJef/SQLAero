@@ -264,6 +264,11 @@ impl Layout {
     pub fn is_empty(self) -> bool {
         self.length == 0
     }
+
+    /// Selected target notation, independent of the source representation.
+    pub fn notation(self) -> Notation {
+        self.notation
+    }
 }
 
 #[derive(Clone, Copy)]

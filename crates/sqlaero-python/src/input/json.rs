@@ -249,20 +249,16 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
                     }
                 }
                 Source::Decimal(value) => {
-                    return self
-                        .types
-                        .decimal
-                        .read(value, self.budget, |header, digits| {
-                            super::decimal::consume(
-                                py,
-                                header,
-                                digits,
-                                &mut self.writer,
-                                &self.options,
-                                self.budget,
-                                |error| failure(py, error),
-                            )
-                        });
+                    return self.types.decimal.read(value, self.budget, |source| {
+                        super::decimal::consume(
+                            py,
+                            source,
+                            &mut self.writer,
+                            &self.options,
+                            self.budget,
+                            |error| failure(py, error),
+                        )
+                    });
                 }
                 Source::StructTime(value) => return self.struct_time(value, path),
                 Source::Json(_) => {

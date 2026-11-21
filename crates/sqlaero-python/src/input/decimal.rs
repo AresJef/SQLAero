@@ -10,7 +10,7 @@ use crate::input::control::Checkpoint;
 use pyo3::exceptions::{PyAttributeError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyInt, PyString, PyStringData, PyTuple, PyType};
-use sqlaero_transcode::decimal::{Digits, Header, Inspect, Render, Special};
+use sqlaero_transcode::decimal::{Digits, Header, Inspect, Notation, Render, Special};
 use sqlaero_transcode::value::Consumer;
 use std::ffi::CStr;
 
@@ -62,6 +62,13 @@ pub(super) struct Api {
     string: Option<pyo3::ffi::reprfunc>,
 }
 
+/// Original decimal facts and an optional unchanged short plain spelling.
+pub(super) struct Snapshot<'a> {
+    pub(super) header: Header,
+    pub(super) digits: Digits<'a>,
+    plain: Option<&'a str>,
+}
+
 impl Api {
     pub(super) fn new(typ: &Bound<'_, PyType>) -> PyResult<Self> {
         let string = if native_type(typ)? {
@@ -97,7 +104,7 @@ impl Api {
         &self,
         value: &Bound<'_, PyAny>,
         budget: Option<&dyn Checkpoint>,
-        consume: impl FnOnce(Header, Digits<'_>) -> PyResult<()>,
+        consume: impl FnOnce(Snapshot<'_>) -> PyResult<()>,
     ) -> PyResult<()> {
         let py = value.py();
         if let Some(string) = self.string {
@@ -116,8 +123,16 @@ impl Api {
                     "canonical Decimal snapshot must be ASCII",
                 ));
             };
-            let (header, digits) = parse(py, bytes, budget)?;
-            consume(header, digits)
+            let (header, digits, unchanged_plain) = parse(py, bytes, budget)?;
+            consume(Snapshot {
+                header,
+                digits,
+                plain: if unchanged_plain {
+                    Some(source.to_str()?)
+                } else {
+                    None
+                },
+            })
         } else {
             let parts = super::control::callback(py, budget, || {
                 let method = errors::attribute(self.typ(py).as_any(), c"as_tuple")?;
@@ -184,7 +199,11 @@ impl Api {
                     .finish(sign, exponent)
                     .map_err(|error| malformed(py, error))?
             };
-            consume(header, Digits::Values(&digits))
+            consume(Snapshot {
+                header,
+                digits: Digits::Values(&digits),
+                plain: None,
+            })
         }
     }
 }
@@ -201,7 +220,7 @@ fn parse<'a>(
     py: Python<'_>,
     text: &'a [u8],
     budget: Option<&dyn Checkpoint>,
-) -> PyResult<(Header, Digits<'a>)> {
+) -> PyResult<(Header, Digits<'a>, bool)> {
     let negative = text.first() == Some(&b'-');
     let start = usize::from(negative || text.first() == Some(&b'+'));
     let unsigned = &text[start..];
@@ -227,6 +246,7 @@ fn parse<'a>(
         return Ok((
             Header::special(negative, category),
             Digits::Ascii(payload, &[]),
+            false,
         ));
     }
     let mut at = start;
@@ -291,24 +311,42 @@ fn parse<'a>(
         Some(point) => Digits::Ascii(&text[start..point], &text[point + 1..end]),
     };
     super::control::bytes(py, budget, text.len().min(4096))?;
-    Ok((header, digits))
+    let whole_end = point.unwrap_or(end);
+    // This validated spelling has the same sign, scale and digits as a plain
+    // layout. Extra leading zeros or an incomplete point stay on the renderer.
+    let unchanged_plain = text.len() <= 128
+        && end == text.len()
+        && start == usize::from(negative)
+        && whole_end > start
+        && (whole_end == start + 1 || text[start] != b'0')
+        && point.is_none_or(|point| point + 1 < end);
+    Ok((header, digits, unchanged_plain))
 }
 
 /// Consume the same coefficient with a target-selected layout and native sink.
 /// Python control remains here, never inside a pure native target.
 pub(super) fn consume<C: Consumer + ?Sized>(
     py: Python<'_>,
-    header: Header,
-    digits: Digits<'_>,
+    source: Snapshot<'_>,
     target: &mut C,
     context: &C::Context,
     budget: Option<&dyn Checkpoint>,
     failure: impl Fn(C::Error) -> PyErr,
 ) -> PyResult<()> {
-    let Some(layout) = target.decimal_start(header, context).map_err(&failure)? else {
+    let Some(layout) = target
+        .decimal_start(source.header, context)
+        .map_err(&failure)?
+    else {
         return Ok(());
     };
-    let render = Render::new(digits, layout).map_err(|error| malformed(py, error))?;
+    if let Some(plain) = source.plain
+        && layout.notation() == Notation::Plain
+        && layout.len() == plain.len()
+    {
+        target.decimal_fragment(plain, context).map_err(&failure)?;
+        return target.decimal_end(context).map_err(failure);
+    }
+    let render = Render::new(source.digits, layout).map_err(|error| malformed(py, error))?;
     if layout.len() <= 128 {
         fragments::<C, 128>(py, render, target, context, budget, &failure)?;
     } else {

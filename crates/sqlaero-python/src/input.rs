@@ -281,11 +281,11 @@ impl ScalarTypes {
                 emit(output, py, scalar_source::clock_fact(value), context)?
             }
             scalar_source::Source::Decimal(value) => {
-                self.decimal.read(value, budget, |header, digits| {
+                self.decimal.read(value, budget, |source| {
+                    let (header, digits) = (source.header, source.digits);
                     decimal::consume(
                         py,
-                        header,
-                        digits,
+                        source,
                         &mut sink::Adapter(output),
                         context,
                         budget,

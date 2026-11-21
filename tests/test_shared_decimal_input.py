@@ -52,6 +52,15 @@ def test_exact_representation_is_independent_of_context(text: str, sql: bytes, d
         assert not any(context.flags.values())
 
 
+@pytest.mark.parametrize("length", [127, 128, 129])
+def test_plain_decimal_preserves_scale_across_direct_write_boundary(length: int) -> None:
+    text = "-1." + "0" * (length - 3)
+    value = Decimal(text)
+    assert _sqlaero._encode_value(value).to_bytes() == text.encode("ascii")
+    assert json_dumps(value) == ('"' + text + '"').encode("ascii")
+    assert json.loads(json_dumps(value)) == text
+
+
 @pytest.mark.parametrize("text", ["NaN", "NaN123", "-sNaN42", "Infinity", "-Infinity"])
 def test_nonfinite_categories_share_policy_without_float_conversion(text: str) -> None:
     value = Decimal(text)
