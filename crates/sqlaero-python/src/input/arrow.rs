@@ -280,6 +280,10 @@ impl Int64Views {
                 .get(column)
                 .ok_or_else(|| invalid(py, "Arrow source column is outside its prepared schema"))?,
         };
+        Self::read_value(py, values, row)
+    }
+
+    fn read_value(py: Python<'_>, values: &Int64Array, row: usize) -> PyResult<ValueRef<'static>> {
         if row >= values.len() {
             return Err(invalid(py, "Arrow child index is outside its array"));
         }

@@ -3,7 +3,10 @@
 
 use super::native::Sequence;
 use super::schema::View as TypeView;
-use super::{ArrayRef, Read, StructArray, consume_scalar, dictionary_label, invalid, names};
+use super::{
+    ArrayRef, DataType, Int64Array, Int64Views, Read, StructArray, consume_scalar,
+    dictionary_label, invalid, names,
+};
 use crate::input::cell::Target;
 use crate::input::control::Checkpoint;
 use crate::input::source::{PreparedSource, Shape};
@@ -17,6 +20,55 @@ enum Kind<'a> {
         start: usize,
         length: usize,
     },
+    Int64Slice {
+        values: &'a Int64Array,
+        start: usize,
+        length: usize,
+    },
+}
+
+impl<'a> Kind<'a> {
+    fn shape(&self) -> Shape {
+        match self {
+            Self::Scalar => Shape::Scalar,
+            Self::Record(record) => Shape::Record {
+                fields: record.num_columns(),
+            },
+            Self::Slice { length, .. } | Self::Int64Slice { length, .. } => {
+                Shape::Vector { length: *length }
+            }
+        }
+    }
+
+    fn prepare_leaf(self) -> Self {
+        match self {
+            Self::Slice {
+                values,
+                start,
+                length,
+            } => {
+                // The parent already validated its range. Borrow one typed
+                // child from the same owned array for the complete list.
+                if length > 1
+                    && values.data_type().is_scalar(&DataType::Int64)
+                    && let Some(values) = values.as_any().downcast_ref::<Int64Array>()
+                {
+                    Self::Int64Slice {
+                        values,
+                        start,
+                        length,
+                    }
+                } else {
+                    Self::Slice {
+                        values,
+                        start,
+                        length,
+                    }
+                }
+            }
+            other => other,
+        }
+    }
 }
 
 fn resolve<'a>(
@@ -103,13 +155,7 @@ pub(super) fn shape(
     budget: &dyn Checkpoint,
 ) -> PyResult<Shape> {
     let (array, index) = resolve(owner.py(), array, index, budget)?;
-    Ok(match kind(owner.py(), array, index)? {
-        Kind::Scalar => Shape::Scalar,
-        Kind::Record(record) => Shape::Record {
-            fields: record.num_columns(),
-        },
-        Kind::Slice { length, .. } => Shape::Vector { length },
-    })
+    Ok(kind(owner.py(), array, index)?.shape())
 }
 
 pub(super) fn consume<'py>(
@@ -138,7 +184,7 @@ pub(super) fn consume<'py>(
         &mut View {
             read,
             index,
-            selected,
+            selected: selected.prepare_leaf(),
         },
         budget,
     )
@@ -190,6 +236,15 @@ fn consume_selected_child<'py>(
     budget: &dyn Checkpoint,
 ) -> PyResult<()> {
     match selected {
+        Kind::Int64Slice {
+            values,
+            start,
+            length,
+        } if row < *length && column == 0 => {
+            let py = read.owner.py();
+            target.checkpoint(py, 1)?;
+            target.scalar(py, Int64Views::read_value(py, values, *start + row)?)
+        }
         Kind::Record(record) if row == 0 && column < record.num_columns() => {
             let value = record.column(column);
             let node = if target.needs_field_names() {
@@ -242,13 +297,7 @@ impl<'py> PreparedSource<'py> for View<'_, 'py> {
         self.read.owner
     }
     fn shape(&self) -> Shape {
-        match self.selected {
-            Kind::Scalar => Shape::Scalar,
-            Kind::Record(record) => Shape::Record {
-                fields: record.num_columns(),
-            },
-            Kind::Slice { length, .. } => Shape::Vector { length },
-        }
+        self.selected.shape()
     }
     fn schema(&self, _target: &mut dyn Target) -> PyResult<()> {
         Ok(())
@@ -289,7 +338,7 @@ impl View<'_, '_> {
         // A list has one element schema. Keep its destination concrete, while
         // heterogeneous records retain the shared dynamic consumer to bound
         // the generated scalar paths for every record field and destination.
-        if matches!(self.selected, Kind::Slice { .. }) {
+        if matches!(self.selected, Kind::Slice { .. } | Kind::Int64Slice { .. }) {
             self.consume_selected_to(row, column, target, budget)
         } else {
             self.consume_cell(row, column, target, budget)
