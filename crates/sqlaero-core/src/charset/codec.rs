@@ -163,6 +163,16 @@ impl Codec {
             output.push(b'\'');
             return Ok(());
         }
+        if bytes.len() <= 16 && matches!(self.charset.route, CodecRoute::Utf8) {
+            let written = if no_backslash {
+                short_utf8_literal::<2>(bytes, output, limit)?
+            } else {
+                short_utf8_literal::<1>(bytes, output, limit)?
+            };
+            if written {
+                return Ok(());
+            }
+        }
         append(output, b"'", limit)?;
         self.literal_fragment(text, output, no_backslash, limit)?;
         append(output, b"'", limit)?;
@@ -418,6 +428,40 @@ fn escape<const MODE: u8>(byte: u8) -> Option<&'static [u8]> {
     }
 }
 
+/// Assemble one bounded, complete UTF-8 literal with the common escape map.
+/// A width rejection leaves the original incremental diagnostic path in use.
+fn short_utf8_literal<const MODE: u8>(
+    bytes: &[u8],
+    output: &mut Vec<u8>,
+    limit: usize,
+) -> Result<bool, WireError> {
+    // At most sixteen UTF-8 bytes, two output bytes per input byte plus
+    // two quotes. Delimiters and escapes are ASCII, never UTF-8 trail bytes.
+    let mut literal = [0; 34];
+    literal[0] = b'\'';
+    let mut end = 1;
+    for &byte in bytes {
+        if let Some(encoded) = escape::<MODE>(byte) {
+            let next = end + encoded.len();
+            literal[end..next].copy_from_slice(encoded);
+            end = next;
+        } else {
+            literal[end] = byte;
+            end += 1;
+        }
+    }
+    literal[end] = b'\'';
+    end += 1;
+    match reserve(output, end, limit) {
+        Ok(()) => {
+            output.extend_from_slice(&literal[..end]);
+            Ok(true)
+        }
+        Err(WireError::Limit { .. }) => Ok(false),
+        Err(error) => Err(error),
+    }
+}
+
 fn escaped<const MODE: u8>(
     bytes: &[u8],
     output: &mut Vec<u8>,
@@ -549,6 +593,23 @@ mod tests {
         assert_eq!(actual, b"prefix");
         codec.literal(value, &mut actual, false, limit).unwrap();
         assert_eq!(actual, b"prefix'abcdefghijklmnop'");
+    }
+
+    #[test]
+    fn short_utf8_literal_preserves_the_limit_of_its_last_quote() {
+        let codec = Codec::new(resolve(None, None).unwrap().charset);
+        let source = "\0".repeat(16);
+        let expected = format!("prefix'{}'", "\\0".repeat(16));
+        let limit = expected.len();
+        let mut actual = b"prefix".to_vec();
+        assert!(matches!(
+            codec.literal(&source, &mut actual, false, limit - 1),
+            Err(CodecError::Wire(WireError::Limit { required, .. })) if required == limit
+        ));
+        assert_eq!(actual, expected.as_bytes()[..limit - 1]);
+        let mut actual = b"prefix".to_vec();
+        codec.literal(&source, &mut actual, false, limit).unwrap();
+        assert_eq!(actual, expected.as_bytes());
     }
     #[test]
     fn native_utf8_quotes_actual_sql_metacharacters_without_touching_patterns() {
