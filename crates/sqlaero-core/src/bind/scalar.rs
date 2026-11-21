@@ -234,6 +234,12 @@ fn date_body(output: &mut Vec<u8>, value: Date, limit: usize) -> Result<(), Wire
     append(output, b"-", limit)?;
     padded(output, value.day, 2, limit)
 }
+
+/// The caller has established that the value fits in two decimal digits.
+fn digit_pair(value: u8) -> [u8; 2] {
+    [b'0' + value / 10, b'0' + value % 10]
+}
+
 fn clock_body(
     output: &mut Vec<u8>,
     hours: u128,
@@ -264,10 +270,41 @@ pub fn date_time(
     clock: Option<Clock>,
     limit: usize,
 ) -> Result<(), WireError> {
-    append(output, b"'", limit)?;
-    date_body(output, date, limit)?;
+    let delimiter = if clock.is_some() { b' ' } else { b'\'' };
+    const PREFIX_LEN: usize = 12;
+    if let Ok(year) = u16::try_from(date.year)
+        && year < 10_000
+        && date.month < 100
+        && date.day < 100
+        && limit.saturating_sub(output.len()) >= PREFIX_LEN
+    {
+        let [year_thousands, year_hundreds] = digit_pair((year / 100) as u8);
+        let [year_tens, year_ones] = digit_pair((year % 100) as u8);
+        let [month_tens, month_ones] = digit_pair(date.month);
+        let [day_tens, day_ones] = digit_pair(date.day);
+        let prefix: [u8; PREFIX_LEN] = [
+            b'\'',
+            year_thousands,
+            year_hundreds,
+            year_tens,
+            year_ones,
+            b'-',
+            month_tens,
+            month_ones,
+            b'-',
+            day_tens,
+            day_ones,
+            delimiter,
+        ];
+        append(output, &prefix, limit)?;
+    } else {
+        // Keep exact wide components and the original failing boundary when
+        // the request has fewer bytes available than the fixed prefix.
+        append(output, b"'", limit)?;
+        date_body(output, date, limit)?;
+        append(output, &[delimiter], limit)?;
+    }
     if let Some(clock) = clock {
-        append(output, b" ", limit)?;
         clock_body(
             output,
             u128::from(clock.hour),
@@ -276,8 +313,9 @@ pub fn date_time(
             clock.microsecond,
             limit,
         )?;
+        append(output, b"'", limit)?;
     }
-    append(output, b"'", limit)
+    Ok(())
 }
 
 /// Write a native clock without consulting or applying any time-zone metadata.
@@ -314,6 +352,42 @@ pub fn duration(output: &mut Vec<u8>, micros: i128, limit: usize) -> Result<(), 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calendar_prefix_preserves_wide_years_and_request_limit_diagnostics() {
+        let date = Date {
+            year: 0,
+            month: 1,
+            day: 9,
+        };
+        let mut exact = b"x".to_vec();
+        date_time(&mut exact, date, None, 13).unwrap();
+        assert_eq!(exact, b"x'0000-01-09'");
+
+        let mut limited = b"x".to_vec();
+        assert!(matches!(
+            date_time(&mut limited, date, None, 12),
+            Err(WireError::Limit {
+                required: 13,
+                limit: 12
+            })
+        ));
+        assert_eq!(limited, b"x'0000-01-09");
+
+        let mut wide = Vec::new();
+        date_time(
+            &mut wide,
+            Date {
+                year: 10_000,
+                ..date
+            },
+            None,
+            13,
+        )
+        .unwrap();
+        assert_eq!(wide, b"'10000-01-09'");
+    }
+
     #[test]
     fn temporal_minimum_width_keeps_values_wider_than_two_digits() {
         for value in [0_u8, 9, 10, 59, 99, 100, 255] {
