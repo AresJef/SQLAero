@@ -357,9 +357,16 @@ impl Writer {
 
     fn temporal(&mut self, text: temporal::Text) -> Result<(), Error> {
         let text = text.as_str()?;
-        self.string_start(Some(text.len()), false)?;
-        self.string_fragment(text)?;
-        self.string_end()
+        self.value()?;
+        // The temporal formatter supplies only digits and fixed JSON-safe
+        // punctuation or unit letters. Its bounded output needs no quoting scan.
+        self.output
+            .try_reserve(text.len() + 2)
+            .map_err(CapacityError::Allocation)?;
+        self.output.push('"');
+        self.output.push_str(text);
+        self.output.push('"');
+        Ok(())
     }
 
     /// Start one exact integer; callers may return control between digit blocks.
