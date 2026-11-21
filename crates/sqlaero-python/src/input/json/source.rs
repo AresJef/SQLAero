@@ -65,6 +65,12 @@ impl<D: Destination + ?Sized> Target for Cell<'_, '_, '_, D> {
     fn native_scalar(&mut self, value: ScalarRef<'_>) -> Result<(), NativeFailure> {
         self.state.writer.write(value, &self.state.options)
     }
+    fn signed(&mut self, py: Python<'_>, value: i64) -> PyResult<()> {
+        self.state
+            .writer
+            .signed(value)
+            .map_err(|error| failure(py, error))
+    }
     fn native_text_start(&mut self, length: usize) -> Result<(), NativeFailure> {
         self.state
             .writer

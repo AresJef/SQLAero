@@ -200,6 +200,18 @@ impl Writer {
         Ok(())
     }
 
+    /// Write one already qualified signed value with the usual JSON state and
+    /// integer formatting contract.
+    /// # Errors
+    /// Propagates the original writer state or reservation error.
+    pub fn signed(&mut self, value: i64) -> Result<(), Error> {
+        self.perform(|writer| writer.signed_value(value))
+    }
+
+    fn signed_value(&mut self, value: i64) -> Result<(), Error> {
+        self.integer_value(number::IntegerBuffer::new().format(value))
+    }
+
     fn integer_value(&mut self, text: &str) -> Result<(), Error> {
         if !self.value_delimiter()? {
             return self.append(text);
@@ -508,9 +520,7 @@ impl Consumer for Writer {
     fn write(&mut self, value: ScalarRef<'_>, options: &Options) -> Result<(), Error> {
         self.perform(|writer| {
             match value {
-                ScalarRef::Signed(value) => {
-                    return writer.integer_value(number::IntegerBuffer::new().format(value));
-                }
+                ScalarRef::Signed(value) => return writer.signed_value(value),
                 ScalarRef::Unsigned(value) => {
                     return writer.integer_value(number::IntegerBuffer::new().format(value));
                 }

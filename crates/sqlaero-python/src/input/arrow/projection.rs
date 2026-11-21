@@ -243,7 +243,7 @@ fn consume_selected_child<'py>(
         } if row < *length && column == 0 => {
             let py = read.owner.py();
             target.checkpoint(py, 1)?;
-            target.scalar(py, Int64Views::read_value(py, values, *start + row)?)
+            Int64Views::write_value(py, values, *start + row, target)
         }
         Kind::Record(record) if row == 0 && column < record.num_columns() => {
             let value = record.column(column);

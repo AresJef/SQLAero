@@ -274,25 +274,37 @@ impl Int64Views {
         Ok(Some(views))
     }
 
-    fn read(&self, py: Python<'_>, row: usize, column: usize) -> PyResult<ValueRef<'static>> {
+    fn write(
+        &self,
+        py: Python<'_>,
+        row: usize,
+        column: usize,
+        target: &mut (impl Target + ?Sized),
+    ) -> PyResult<()> {
         let values = match self {
             Self::Vector(values) => values,
             Self::Table(columns) => columns
                 .get(column)
                 .ok_or_else(|| invalid(py, "Arrow source column is outside its prepared schema"))?,
         };
-        Self::read_value(py, values, row)
+        Self::write_value(py, values, row, target)
     }
 
-    fn read_value(py: Python<'_>, values: &Int64Array, row: usize) -> PyResult<ValueRef<'static>> {
+    fn write_value(
+        py: Python<'_>,
+        values: &Int64Array,
+        row: usize,
+        target: &mut (impl Target + ?Sized),
+    ) -> PyResult<()> {
         if row >= values.len() {
             return Err(invalid(py, "Arrow child index is outside its array"));
         }
-        Ok(if values.is_null(row) {
-            ValueRef::Null
+        if values.is_null(row) {
+            target.scalar(py, ValueRef::Null)
         } else {
-            ValueRef::Signed(values.value(row))
-        })
+            let value = values.value(row);
+            target.signed(py, value)
+        }
     }
 }
 
@@ -1632,7 +1644,7 @@ impl<'py> Prepared<'py> {
                     );
                 }
                 FastPath::Dictionary(_) => None,
-                FastPath::Int64(reader) => Some(reader.read(py, index, column)?),
+                FastPath::Int64(reader) => return reader.write(py, index, column, target),
                 FastPath::Float32(reader) => return reader.write(py, index, target),
                 FastPath::Float64(reader) => return reader.write(py, index, target),
                 FastPath::Boolean(reader) => Some(reader.read(py, index)?),
