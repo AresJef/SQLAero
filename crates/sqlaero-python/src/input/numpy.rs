@@ -386,7 +386,7 @@ impl NumpyTypes {
             .or_else(|| {
                 self.numeric
                     .iter()
-                    .find(|(registered, _)| super::actual_instance(value, registered.typ(py)))
+                    .find(|(registered, _)| super::actual_type_is_subtype(&typ, registered.typ(py)))
             })
             .map(|(registered, kind)| (registered, *kind))
     }

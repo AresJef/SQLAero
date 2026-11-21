@@ -72,11 +72,17 @@ pub(crate) fn python_index<'py>(py: Python<'py>, index: usize) -> PyResult<Bound
 
 /// Test the actual type hierarchy without invoking an object's __class__ hook.
 pub(crate) fn actual_instance(value: &Bound<'_, PyAny>, base: &Bound<'_, PyType>) -> bool {
+    actual_type_is_subtype(&value.get_type(), base)
+}
+
+/// Compare an already retained actual type against a canonical base.
+pub(crate) fn actual_type_is_subtype(
+    candidate: &Bound<'_, PyType>,
+    base: &Bound<'_, PyType>,
+) -> bool {
     // SAFETY: both references denote live actual type objects. The public
     // subtype predicate consults their MRO and does not call Python code.
-    unsafe {
-        pyo3::ffi::PyType_IsSubtype(value.get_type().as_ptr().cast(), base.as_ptr().cast()) != 0
-    }
+    unsafe { pyo3::ffi::PyType_IsSubtype(candidate.as_ptr().cast(), base.as_ptr().cast()) != 0 }
 }
 
 /// Module-owned immutable type references; there is no process-global Python
