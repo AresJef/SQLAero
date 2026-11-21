@@ -37,6 +37,8 @@ def test_struct_time_json_preserves_all_eleven_original_fields(offset: object) -
     ((10000, 1, 1, 0, 0, 0, 0, 0, 0), 1, b"'9999-12-31 23:59:59'"),
     ((0, 1, 1, 0, 0, 0, 0, 0, 0), 1, b"'-0001-12-31 23:59:59'"),
     ((2024, 13, 31, 25, 59, 61, 999, 999, 999), None, b"'2024-13-31 25:59:61'"),
+    ((2**63, 1, 2, 3, 4, 5, 0, 0, 0), None, b"'9223372036854775808-01-02 03:04:05'"),
+    ((10**20, 1, 2, 3, 4, 5, 0, 0, 0), None, b"'100000000000000000000-01-02 03:04:05'"),
 ])
 def test_struct_time_mysql_uses_the_offset_only_when_present(parts: tuple[int, ...], offset: object, expected: bytes) -> None:
     value = struct_time(parts, {"tm_zone": object(), "tm_gmtoff": offset})

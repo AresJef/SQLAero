@@ -1,6 +1,6 @@
 //! Approved standard scalar subclasses and the canonical struct_time boundary.
 
-use super::integer_to;
+use super::integer_wide;
 use super::sink::{Destination, emit};
 use crate::errors;
 use crate::input::control::Checkpoint;
@@ -9,6 +9,9 @@ use pyo3::prelude::*;
 use pyo3::types::{PyInt, PyTuple};
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::ValueRef;
+use sqlaero_core::protocol::framing::WireError;
+use sqlaero_transcode::number::IntegerBuffer;
+use std::borrow::Cow;
 
 pub(super) const STRUCT_FIELDS: [&str; 11] = [
     "tm_year",
@@ -42,13 +45,13 @@ pub(super) fn struct_field<'py>(
     }
 }
 
-fn integer<'py>(
-    value: &Bound<'py, PyAny>,
+fn integer<'a, 'py>(
+    value: &'a Bound<'py, PyAny>,
     index: usize,
     budget: Option<&dyn Checkpoint>,
-) -> PyResult<Bound<'py, PyAny>> {
+) -> PyResult<Cow<'a, Bound<'py, PyAny>>> {
     if value.is_instance_of::<PyInt>() {
-        return Ok(value.clone());
+        return Ok(Cow::Borrowed(value));
     }
     let py = value.py();
     super::control::callback(py, budget, || {
@@ -61,6 +64,20 @@ fn integer<'py>(
             STRUCT_FIELDS[index],
         ));
     })
+    .map(Cow::Owned)
+}
+
+fn compact_integer(value: &Bound<'_, PyAny>) -> PyResult<(i64, i32)> {
+    let mut overflow = 0;
+    // SAFETY: integer() obtained a real int from the immutable tuple slot or
+    // an owned __index__ result. The base-storage API does not call overrides.
+    let number = unsafe { pyo3::ffi::PyLong_AsLongLongAndOverflow(value.as_ptr(), &mut overflow) };
+    if number == -1
+        && let Some(error) = PyErr::take(value.py())
+    {
+        return Err(error);
+    }
+    Ok((number, overflow))
 }
 
 pub(super) fn struct_time<D: Destination + ?Sized>(
@@ -75,16 +92,7 @@ pub(super) fn struct_time<D: Destination + ?Sized>(
         None
     } else {
         let offset = integer(&offset, 10, budget)?;
-        let mut overflow = 0;
-        // SAFETY: integer() acquired actual int storage; overflow is separate
-        // from an exception and does not invoke an int subclass replacement.
-        let seconds =
-            unsafe { pyo3::ffi::PyLong_AsLongLongAndOverflow(offset.as_ptr(), &mut overflow) };
-        if seconds == -1
-            && let Some(error) = PyErr::take(py)
-        {
-            return Err(error);
-        }
+        let (seconds, overflow) = compact_integer(&offset)?;
         if overflow != 0 || !(-86_399..=86_399).contains(&seconds) {
             return Err(errors::builtin_message::<PyValueError>(
                 py,
@@ -93,21 +101,21 @@ pub(super) fn struct_time<D: Destination + ?Sized>(
         }
         Some(seconds as i32)
     };
-    let mut parts: [Vec<u8>; 6] = std::array::from_fn(|_| Vec::new());
-    for (index, part) in parts.iter_mut().enumerate() {
-        let value = value.get_item(index)?;
-        let converted = integer(&value, index, budget)?;
-        let mut overflow = 0;
-        // SAFETY: `converted` is an owned exact int; range overflow is reported
-        // separately, so large positive components retain the integer policy.
-        let sign =
-            unsafe { pyo3::ffi::PyLong_AsLongLongAndOverflow(converted.as_ptr(), &mut overflow) };
-        // SAFETY: attachment is held and the immediately preceding checked C
-        // conversion is the only operation that may have set this error.
-        if sign == -1 && unsafe { !pyo3::ffi::PyErr_Occurred().is_null() } {
-            return Err(PyErr::fetch(py));
-        }
-        if overflow < 0 || (overflow == 0 && sign < 0) {
+    // Only a component outside the compact int range needs heap storage.
+    // Keep its checked formatting and numeric-range policy on the wide path.
+    let mut compact = std::array::from_fn::<_, 6, _>(|_| IntegerBuffer::new());
+    let mut wide: [Vec<u8>; 6] = std::array::from_fn(|_| Vec::new());
+    let mut parts = [&[][..]; 6];
+    for (index, ((part, compact), wide)) in parts
+        .iter_mut()
+        .zip(&mut compact)
+        .zip(&mut wide)
+        .enumerate()
+    {
+        let source = value.get_borrowed_item(index)?;
+        let converted = integer(&source, index, budget)?;
+        let (number, overflow) = compact_integer(&converted)?;
+        if overflow < 0 || (overflow == 0 && number < 0) {
             return Err(errors::builtin_format::<PyValueError>(
                 py,
                 format_args!(
@@ -115,13 +123,30 @@ pub(super) fn struct_time<D: Destination + ?Sized>(
                 ),
             ));
         }
-        integer_to(&converted, part, context)?;
+        *part = if overflow > 0 {
+            integer_wide(&converted, wide, context, overflow)?;
+            wide.as_slice()
+        } else {
+            let digits = compact.format(number).as_bytes();
+            // Preserve the original per-component failure before reading the
+            // next slot, whose integer protocol may call back into Python.
+            if digits.len() > context.limit {
+                return Err(errors::wire(
+                    py,
+                    WireError::Limit {
+                        required: digits.len(),
+                        limit: context.limit,
+                    },
+                ));
+            }
+            digits
+        };
     }
     emit(
         result,
         py,
         ValueRef::CalendarComponents {
-            parts: &std::array::from_fn(|index| parts[index].as_slice()),
+            parts: &parts,
             offset_seconds,
         },
         context,

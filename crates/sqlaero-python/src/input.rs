@@ -550,31 +550,6 @@ pub(crate) fn unsupported(value: &Bound<'_, PyAny>) -> PyErr {
     }
 }
 
-// The sampled primitive hot path should not pay an extra reader call.
-// Wide allocation/conversion remains in the separate non-inlined helper.
-#[inline(always)]
-fn integer_to(
-    value: &Bound<'_, PyAny>,
-    output: &mut (impl Destination + ?Sized),
-    context: &Context,
-) -> PyResult<()> {
-    let py = value.py();
-    let mut overflow = 0;
-    // SAFETY: exact-int dispatch precedes this call; value remains owned and
-    // Python stays attached. The public C API reports overflow without a
-    // lossy conversion or a Python string. No private integer layout is read.
-    let compact = unsafe { pyo3::ffi::PyLong_AsLongLongAndOverflow(value.as_ptr(), &mut overflow) };
-    if overflow == 0 {
-        if compact == -1
-            && let Some(error) = PyErr::take(py)
-        {
-            return Err(error);
-        }
-        return emit(output, py, ValueRef::Signed(compact), context);
-    }
-    integer_wide(value, output, context, overflow)
-}
-
 /// Keep owned big-integer storage and error construction off the compact
 /// integer writer's frame. The public conversion and range policy are shared.
 #[inline(never)]
