@@ -359,7 +359,18 @@ pub fn date_time(
 /// # Errors
 /// Returns a request-buffer error.
 pub fn time(output: &mut Vec<u8>, clock: Clock, limit: usize) -> Result<(), WireError> {
-    duration(output, clock.micros(), limit)
+    if clock.minute >= 60 || clock.second >= 60 || clock.microsecond >= 1_000_000 {
+        return duration(output, clock.micros(), limit);
+    }
+    clock_literal(
+        output,
+        false,
+        u128::from(clock.hour),
+        clock.minute,
+        clock.second,
+        clock.microsecond,
+        limit,
+    )
 }
 
 /// Write signed duration microseconds, including the full Python timedelta
@@ -368,20 +379,37 @@ pub fn time(output: &mut Vec<u8>, clock: Clock, limit: usize) -> Result<(), Wire
 /// # Errors
 /// Returns a request-buffer error.
 pub fn duration(output: &mut Vec<u8>, micros: i128, limit: usize) -> Result<(), WireError> {
+    const HOUR_MICROS: u128 = 3_600_000_000;
+    const SECOND_MICROS: u32 = 1_000_000;
+    let magnitude = micros.unsigned_abs();
+    // One wide quotient and remainder. The remaining hour fits in u32.
+    let within_hour = (magnitude % HOUR_MICROS) as u32;
+    let whole_seconds = within_hour / SECOND_MICROS;
+    clock_literal(
+        output,
+        micros < 0,
+        magnitude / HOUR_MICROS,
+        (whole_seconds / 60) as u8,
+        (whole_seconds % 60) as u8,
+        within_hour % SECOND_MICROS,
+        limit,
+    )
+}
+
+fn clock_literal(
+    output: &mut Vec<u8>,
+    negative: bool,
+    hours: u128,
+    minutes: u8,
+    seconds: u8,
+    micros: u32,
+    limit: usize,
+) -> Result<(), WireError> {
     append(output, b"'", limit)?;
-    if micros < 0 {
+    if negative {
         append(output, b"-", limit)?;
     }
-    let magnitude = micros.unsigned_abs();
-    clock_body(
-        output,
-        magnitude / 3_600_000_000,
-        // Remainders prove these component widths, even for i128::MIN.
-        (magnitude / 60_000_000 % 60) as u8,
-        (magnitude / 1_000_000 % 60) as u8,
-        (magnitude % 1_000_000) as u32,
-        limit,
-    )?;
+    clock_body(output, hours, minutes, seconds, micros, limit)?;
     append(output, b"'", limit)
 }
 

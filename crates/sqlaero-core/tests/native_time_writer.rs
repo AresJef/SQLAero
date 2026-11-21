@@ -177,6 +177,26 @@ fn cases() -> Vec<Case> {
             components: &[1, 2, 1, 2, 1, 2, 1, 6, 1],
         },
         Case {
+            value: Value::Time(Clock {
+                hour: 95,
+                minute: 125,
+                second: 90,
+                microsecond: 5_000_001,
+            }),
+            expected: b"'97:06:35.000001'",
+            components: &[1, 2, 1, 2, 1, 2, 1, 6, 1],
+        },
+        Case {
+            value: Value::Duration(3_599_999_999),
+            expected: b"'00:59:59.999999'",
+            components: &[1, 2, 1, 2, 1, 2, 1, 6, 1],
+        },
+        Case {
+            value: Value::Duration(-3_600_000_000),
+            expected: b"'-01:00:00'",
+            components: &[1, 1, 2, 1, 2, 1, 2, 1],
+        },
+        Case {
             value: Value::Duration(i128::MIN),
             expected: b"'-47261439850130342147690917698:51:24.105728'",
             components: &[1, 1, 29, 1, 2, 1, 2, 1, 6, 1],
