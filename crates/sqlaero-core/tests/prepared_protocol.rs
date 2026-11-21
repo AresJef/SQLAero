@@ -238,7 +238,7 @@ fn real_prepared_parameters_preserve_native_values_long_chunks_and_reusable_hand
                 ValueRef::Unsigned(0),
                 ValueRef::Decimal {
                     negative: false,
-                    digits: &[1, 2, 3, 4, 5],
+                    digits: sqlaero_transcode::decimal::Digits::Values(&[1, 2, 3, 4, 5]),
                     exponent: -3,
                 },
                 ValueRef::Date(Date {
@@ -334,7 +334,7 @@ fn real_binary_select_uses_native_fields_and_server_current_metadata() {
                 ValueRef::Unsigned(u64::MAX),
                 ValueRef::Decimal {
                     negative: false,
-                    digits: &[1, 2, 3, 4, 5],
+                    digits: sqlaero_transcode::decimal::Digits::Ascii(b"12", b"345"),
                     exponent: -3,
                 },
                 ValueRef::Datetime {

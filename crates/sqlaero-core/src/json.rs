@@ -525,15 +525,10 @@ impl Consumer for Writer {
                     digits,
                     exponent,
                 } => {
-                    use sqlaero_transcode::decimal::{Digits, Inspect, Render};
-                    let mut inspect = Inspect::default();
-                    for &digit in digits {
-                        inspect.digit(digit).map_err(Error::Range)?;
-                    }
-                    let header = inspect.finish(negative, exponent).map_err(Error::Range)?;
+                    use sqlaero_transcode::decimal::Render;
+                    let header = digits.inspect(negative, exponent).map_err(Error::Range)?;
                     if let Some(layout) = writer.decimal_start(header, options)? {
-                        let mut render =
-                            Render::new(Digits::Values(digits), layout).map_err(Error::Range)?;
+                        let mut render = Render::new(digits, layout).map_err(Error::Range)?;
                         let mut chunk = [0; 4096];
                         loop {
                             let n = render.read(&mut chunk);

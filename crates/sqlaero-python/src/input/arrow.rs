@@ -28,6 +28,7 @@ use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::{ValueError, ValueRef};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
+use sqlaero_transcode::decimal::Coefficient;
 
 use super::source::{CellWriter, PreparedSource, Shape};
 use crate::errors;
@@ -1237,34 +1238,28 @@ fn consume_scalar<'py>(
                 },
             )
         }
-        DataType::Decimal32(_, scale) => {
-            consume_decimal(py, &native!(Decimal32Array).to_le_bytes(), *scale, target)
-        }
-        DataType::Decimal64(_, scale) => {
-            consume_decimal(py, &native!(Decimal64Array).to_le_bytes(), *scale, target)
-        }
-        DataType::Decimal128(_, scale) => {
-            consume_decimal(py, &native!(Decimal128Array).to_le_bytes(), *scale, target)
-        }
+        DataType::Decimal32(_, scale) => target.scalar(
+            py,
+            Coefficient::from_i128(i128::from(native!(Decimal32Array))).scalar(*scale),
+        ),
+        DataType::Decimal64(_, scale) => target.scalar(
+            py,
+            Coefficient::from_i128(i128::from(native!(Decimal64Array))).scalar(*scale),
+        ),
+        DataType::Decimal128(_, scale) => target.scalar(
+            py,
+            Coefficient::from_i128(native!(Decimal128Array)).scalar(*scale),
+        ),
         DataType::Decimal256(_, scale) => {
-            consume_decimal(py, &native!(Decimal256Array).to_le_bytes(), *scale, target)
+            let value = Coefficient::from_signed_le(&native!(Decimal256Array).to_le_bytes())
+                .map_err(|message| errors::client(py, ClientErrorCode::NumericRange, message))?;
+            target.scalar(py, value.scalar(*scale))
         }
         _ => Err(invalid(
             py,
             "unsupported Arrow scalar at the shared input boundary",
         )),
     }
-}
-
-fn consume_decimal(
-    py: Python<'_>,
-    bytes: &[u8],
-    scale: i8,
-    target: &mut (impl Target + ?Sized),
-) -> PyResult<()> {
-    let value = sqlaero_transcode::decimal::Coefficient::from_signed_le(bytes)
-        .map_err(|message| errors::client(py, ClientErrorCode::NumericRange, message))?;
-    target.scalar(py, value.scalar(scale))
 }
 
 fn cell_array<'a>(

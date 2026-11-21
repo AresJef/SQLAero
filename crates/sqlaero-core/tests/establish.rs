@@ -791,7 +791,14 @@ fn native_numeric_literals_keep_mysql_approximate_and_exact_categories() {
             );
         }
         let mut sql = b"SELECT ".to_vec();
-        scalar::decimal(&mut sql, false, &[1, 2, 3, 4, 5, 6, 0, 0], -4, 1024).unwrap();
+        scalar::decimal(
+            &mut sql,
+            false,
+            sqlaero_transcode::decimal::Digits::Values(&[1, 2, 3, 4, 5, 6, 0, 0]),
+            -4,
+            1024,
+        )
+        .unwrap();
         let Response::Rows(rows) =
             query(&mut connection, std::str::from_utf8(&sql).unwrap()).unwrap()
         else {

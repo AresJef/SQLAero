@@ -258,7 +258,7 @@ mod tests {
             (
                 ValueRef::Decimal {
                     negative: false,
-                    digits: &[1, 2, 3, 4, 5],
+                    digits: sqlaero_transcode::decimal::Digits::Ascii(b"12345", b""),
                     exponent: -3,
                 },
                 b"12.345",

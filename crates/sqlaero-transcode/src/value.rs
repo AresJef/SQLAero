@@ -29,8 +29,8 @@ pub enum ScalarRef<'a> {
     Decimal {
         /// Original sign.
         negative: bool,
-        /// Most-significant-first coefficient digits, each in 0..=9.
-        digits: &'a [u8],
+        /// Original coefficient digits in the source's native digit storage.
+        digits: crate::decimal::Digits<'a>,
         /// Original base-ten exponent.
         exponent: i64,
     },

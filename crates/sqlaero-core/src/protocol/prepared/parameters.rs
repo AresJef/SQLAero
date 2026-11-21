@@ -306,17 +306,12 @@ impl Parameters {
                 digits,
                 exponent,
             } => {
-                use sqlaero_transcode::decimal::{Digits, Inspect, Render};
-                let mut inspect = Inspect::default();
-                for &digit in digits {
-                    inspect.digit(digit).map_err(scalar::ScalarError::Range)?;
-                }
-                let header = inspect
-                    .finish(negative, exponent)
+                use sqlaero_transcode::decimal::Render;
+                let header = digits
+                    .inspect(negative, exponent)
                     .map_err(scalar::ScalarError::Range)?;
                 let layout = scalar::decimal_layout(header)?;
-                let mut render = Render::new(Digits::Values(digits), layout)
-                    .map_err(scalar::ScalarError::Range)?;
+                let mut render = Render::new(digits, layout).map_err(scalar::ScalarError::Range)?;
                 self.begin_bytes(layout.len())?;
                 let mut chunk = [0; 128];
                 loop {
@@ -711,7 +706,7 @@ mod tests {
             .write(
                 ValueRef::Decimal {
                     negative: true,
-                    digits: &[1, 2, 3, 4, 5, 0, 0],
+                    digits: sqlaero_transcode::decimal::Digits::Values(&[1, 2, 3, 4, 5, 0, 0]),
                     exponent: -5,
                 },
                 &context(),

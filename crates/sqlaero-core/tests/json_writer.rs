@@ -1,6 +1,7 @@
 //! Independent native expectations for the JSON target's minimal output chain.
 
 use sqlaero_core::json::{DirectKey, Error, Options, Writer};
+use sqlaero_transcode::decimal::Digits;
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
 #[test]
@@ -45,7 +46,7 @@ fn direct_decimal_scalars_preserve_scale_and_surrounding_values() {
         .write(
             ScalarRef::Decimal {
                 negative: false,
-                digits: &[1, 2, 5, 0, 0],
+                digits: Digits::Ascii(b"12500", b""),
                 exponent: -3,
             },
             &options,
@@ -55,7 +56,7 @@ fn direct_decimal_scalars_preserve_scale_and_surrounding_values() {
         .write(
             ScalarRef::Decimal {
                 negative: true,
-                digits: &[0],
+                digits: Digits::Values(&[0]),
                 exponent: -2,
             },
             &options,
@@ -74,7 +75,7 @@ fn direct_decimal_crosses_a_fragment_boundary_without_losing_digits() {
         .write(
             ScalarRef::Decimal {
                 negative: false,
-                digits: &digits,
+                digits: Digits::Values(&digits),
                 exponent: 0,
             },
             &Options::default(),
@@ -88,23 +89,25 @@ fn direct_decimal_crosses_a_fragment_boundary_without_losing_digits() {
 
 #[test]
 fn invalid_direct_decimal_keeps_the_whole_writer_failed() {
-    let mut writer = Writer::new();
     let options = Options::default();
-    writer.array_start().unwrap();
-    writer.write(ScalarRef::Signed(7), &options).unwrap();
-    assert!(matches!(
-        writer.write(
-            ScalarRef::Decimal {
-                negative: false,
-                digits: &[1, 10],
-                exponent: 0,
-            },
-            &options,
-        ),
-        Err(Error::Range(_))
-    ));
-    assert!(writer.pending_output().is_err());
-    assert!(writer.finish().is_err());
+    for digits in [Digits::Values(&[1, 10]), Digits::Ascii(b"1", b"a")] {
+        let mut writer = Writer::new();
+        writer.array_start().unwrap();
+        writer.write(ScalarRef::Signed(7), &options).unwrap();
+        assert!(matches!(
+            writer.write(
+                ScalarRef::Decimal {
+                    negative: false,
+                    digits,
+                    exponent: 0,
+                },
+                &options,
+            ),
+            Err(Error::Range(_))
+        ));
+        assert!(writer.pending_output().is_err());
+        assert!(writer.finish().is_err());
+    }
 }
 
 #[test]

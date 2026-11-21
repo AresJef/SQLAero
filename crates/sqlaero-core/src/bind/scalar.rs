@@ -3,6 +3,7 @@
 use super::writer::{append, reserve};
 use crate::protocol::framing::WireError;
 use num_bigint::BigInt;
+use sqlaero_transcode::decimal::{Digits, Render};
 use sqlaero_transcode::number;
 
 /// Necessary bit bound before formatting a signed value with at most 65 digits.
@@ -93,20 +94,15 @@ pub fn float(output: &mut Vec<u8>, value: f64, limit: usize) -> Result<(), WireE
 pub fn decimal(
     output: &mut Vec<u8>,
     negative: bool,
-    digits: &[u8],
+    digits: Digits<'_>,
     exponent: i64,
     limit: usize,
 ) -> Result<(), ScalarError> {
-    use sqlaero_transcode::decimal::{Digits, Inspect, Render};
-    let mut inspect = Inspect::default();
-    for &digit in digits {
-        inspect.digit(digit).map_err(ScalarError::Range)?;
-    }
-    let header = inspect
-        .finish(negative, exponent)
+    let header = digits
+        .inspect(negative, exponent)
         .map_err(ScalarError::Range)?;
     let layout = decimal_layout(header)?;
-    let mut render = Render::new(Digits::Values(digits), layout).map_err(ScalarError::Range)?;
+    let mut render = Render::new(digits, layout).map_err(ScalarError::Range)?;
     // Native provider coefficients are bounded; long Python coefficients use
     // this same plan through the fragmented Consumer contract at the boundary.
     let mut chunk = [0; 128];
@@ -508,15 +504,15 @@ mod tests {
             (&[0][..], i64::MAX, "0"),
         ] {
             let mut out = Vec::new();
-            decimal(&mut out, false, digits, exp, 1024).unwrap();
+            decimal(&mut out, false, Digits::Values(digits), exp, 1024).unwrap();
             assert_eq!(out, expected.as_bytes());
         }
         let mut high_scale = Vec::new();
-        decimal(&mut high_scale, false, &[1], -65, 1024).unwrap();
+        decimal(&mut high_scale, false, Digits::Values(&[1]), -65, 1024).unwrap();
         assert_eq!(high_scale, format!("0.{}1", "0".repeat(64)).as_bytes());
-        assert!(decimal(&mut Vec::new(), false, &[1], -66, 1024).is_err());
-        assert!(decimal(&mut Vec::new(), false, &[1], 65, 1024).is_err());
-        assert!(decimal(&mut Vec::new(), false, &[1], i64::MIN, 1024).is_err());
+        assert!(decimal(&mut Vec::new(), false, Digits::Values(&[1]), -66, 1024).is_err());
+        assert!(decimal(&mut Vec::new(), false, Digits::Values(&[1]), 65, 1024).is_err());
+        assert!(decimal(&mut Vec::new(), false, Digits::Values(&[1]), i64::MIN, 1024).is_err());
     }
 
     #[test]

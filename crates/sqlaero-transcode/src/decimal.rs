@@ -24,9 +24,32 @@ pub enum Digits<'a> {
     Values(&'a [u8]),
     /// Canonical ASCII digits on either side of an optional source point.
     Ascii(&'a [u8], &'a [u8]),
+    /// Canonical digits produced by the bounded native coefficient reader.
+    Native(&'a Coefficient),
 }
 
 impl Digits<'_> {
+    /// Inspect either digit storage without materializing a second format.
+    /// # Errors
+    /// Rejects an invalid digit, an empty coefficient, or a length overflow.
+    pub fn inspect(self, negative: bool, exponent: i64) -> Result<Header, &'static str> {
+        let mut inspect = Inspect::default();
+        match self {
+            Self::Values(digits) => {
+                for &digit in digits {
+                    inspect.digit(digit)?;
+                }
+            }
+            Self::Ascii(whole, fraction) => {
+                for &digit in whole.iter().chain(fraction) {
+                    inspect.digit(digit.wrapping_sub(b'0'))?;
+                }
+            }
+            Self::Native(coefficient) => return Ok(coefficient.header(negative, exponent)),
+        }
+        inspect.finish(negative, exponent)
+    }
+
     /// Copy a bounded numeric preview from the inspected original coefficient.
     /// # Errors
     /// Rejects storage whose length differs from its already inspected header.
@@ -48,6 +71,7 @@ impl Digits<'_> {
         match self {
             Self::Values(value) => value.len(),
             Self::Ascii(first, second) => first.len().saturating_add(second.len()),
+            Self::Native(coefficient) => coefficient.ascii().len(),
         }
     }
     fn copy(&self, start: usize, output: &mut [u8]) {
@@ -67,6 +91,9 @@ impl Digits<'_> {
                     let length = output.len() - prefix;
                     output[prefix..].copy_from_slice(&second[offset..offset + length]);
                 }
+            }
+            Self::Native(coefficient) => {
+                output.copy_from_slice(&coefficient.ascii()[start..start + output.len()]);
             }
         }
     }

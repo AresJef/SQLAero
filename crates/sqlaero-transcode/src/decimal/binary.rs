@@ -1,9 +1,11 @@
 //! Fixed-width signed source coefficients, independent of target formatting.
 
+use super::{Digits, Header};
 use crate::value::ScalarRef;
 
 /// An exact two's-complement coefficient up to 256 bits, with bounded stack
 /// ownership. No Python scalar or intermediate decimal string is constructed.
+#[derive(Debug)]
 pub struct Coefficient {
     negative: bool,
     digits: [u8; 78],
@@ -29,41 +31,73 @@ impl Coefficient {
             source
         };
         let negative = source[source.len() - 1] & 0x80 != 0;
-        let mut value = Self {
-            negative,
-            digits: [0; 78],
-            start: 78,
-        };
         if source.len() <= 16 {
             let mut bytes = [if negative { 0xff } else { 0 }; 16];
             bytes[..source.len()].copy_from_slice(source);
-            let coefficient = i128::from_le_bytes(bytes);
-            let mut buffer = itoa::Buffer::new();
-            let text = match i64::try_from(coefficient) {
-                Ok(n) => buffer.format(n),
-                Err(_) => buffer.format(coefficient),
-            };
-            let ascii = if negative {
-                &text.as_bytes()[1..]
-            } else {
-                text.as_bytes()
-            };
-            value.start -= ascii.len();
-            for (digit, ascii) in value.digits[value.start..].iter_mut().zip(ascii) {
-                *digit = *ascii - b'0';
-            }
-        } else {
-            value.wide(source);
+            return Ok(Self::from_i128(i128::from_le_bytes(bytes)));
         }
+        let mut value = Self {
+            negative,
+            digits: [b'0'; 78],
+            start: 78,
+        };
+        value.wide(source);
         Ok(value)
+    }
+
+    /// Read an already decoded signed coefficient without a byte round trip.
+    pub fn from_i128(coefficient: i128) -> Self {
+        let mut buffer = itoa::Buffer::new();
+        let magnitude = coefficient.unsigned_abs();
+        let ascii = match u64::try_from(magnitude) {
+            Ok(number) => buffer.format(number),
+            Err(_) => buffer.format(magnitude),
+        };
+        let mut digits = [b'0'; 78];
+        let start = digits.len() - ascii.len();
+        digits[start..].copy_from_slice(ascii.as_bytes());
+        Self {
+            negative: coefficient < 0,
+            digits,
+            start,
+        }
     }
 
     /// Borrow the complete coefficient with the source scale still intact.
     pub fn scalar(&self, scale: i8) -> ScalarRef<'_> {
         ScalarRef::Decimal {
             negative: self.negative,
-            digits: &self.digits[self.start..],
+            digits: Digits::Native(self),
             exponent: -i64::from(scale),
+        }
+    }
+
+    pub(super) fn ascii(&self) -> &[u8] {
+        &self.digits[self.start..]
+    }
+
+    pub(super) fn header(&self, negative: bool, exponent: i64) -> Header {
+        let ascii = self.ascii();
+        let zero = ascii == b"0";
+        // Native formatting already produced valid digits without a leading
+        // zero. Only the consecutive trailing zeros affect target layout.
+        let trailing = if zero {
+            0
+        } else {
+            ascii
+                .iter()
+                .rev()
+                .take_while(|&&digit| digit == b'0')
+                .count()
+        };
+        Header {
+            negative,
+            exponent,
+            digits: ascii.len(),
+            leading: 0,
+            trailing,
+            zero,
+            special: None,
         }
     }
 
@@ -107,12 +141,7 @@ impl Coefficient {
             let width = if active == 0 { chunk.len() } else { 19 };
             self.start -= width;
             let tail = self.start + width - chunk.len();
-            for (digit, ascii) in self.digits[tail..self.start + width]
-                .iter_mut()
-                .zip(chunk.bytes())
-            {
-                *digit = ascii - b'0';
-            }
+            self.digits[tail..self.start + width].copy_from_slice(chunk.as_bytes());
         }
     }
 }
@@ -147,7 +176,7 @@ mod tests {
                 let actual = Coefficient::from_signed_le(part).unwrap();
                 let ScalarRef::Decimal {
                     negative,
-                    digits,
+                    digits: Digits::Native(digits),
                     exponent,
                 } = actual.scalar(-7)
                 else {
@@ -157,11 +186,16 @@ mod tests {
                 if negative {
                     text.push('-');
                 }
-                for n in digits {
-                    text.push(char::from(b'0' + *n));
-                }
+                text.push_str(std::str::from_utf8(digits.ascii()).unwrap());
                 assert_eq!(text, expected, "width={width}, choice={choice}");
                 assert_eq!(exponent, 7);
+                let original = Digits::Ascii(expected.trim_start_matches('-').as_bytes(), b"")
+                    .inspect(negative, exponent)
+                    .unwrap();
+                let native = Digits::Native(digits).inspect(negative, exponent).unwrap();
+                assert_eq!(native.digits, original.digits);
+                assert_eq!(native.trailing, original.trailing);
+                assert_eq!(native.zero, original.zero);
             }
         }
     }
