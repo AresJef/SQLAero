@@ -1,7 +1,39 @@
 //! Independent native expectations for the JSON target's minimal output chain.
 
-use sqlaero_core::json::{Error, Options, Writer};
+use sqlaero_core::json::{DirectKey, Error, Options, Writer};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
+
+#[test]
+fn direct_keys_keep_the_same_object_state_across_fragment_draining() {
+    let mut writer = Writer::new();
+    let key = DirectKey::from_name("é😀".to_owned()).unwrap();
+    writer.object_start().unwrap();
+    writer.direct_key(&key).unwrap();
+    writer
+        .write(ScalarRef::Signed(7), &Options::default())
+        .unwrap();
+    let mut output = writer.pending_output().unwrap().to_owned();
+    writer.consume_output().unwrap();
+    writer.key("a\0x").unwrap();
+    writer
+        .write(ScalarRef::Signed(8), &Options::default())
+        .unwrap();
+    writer.object_end().unwrap();
+    output.push_str(&writer.finish_tail().unwrap());
+    assert_eq!(output, "{\"é😀\":7,\"a\\u0000x\":8}");
+
+    let mut invalid = Writer::new();
+    invalid.object_start().unwrap();
+    invalid.direct_key(&key).unwrap();
+    assert!(matches!(invalid.direct_key(&key), Err(Error::State(_))));
+    assert!(invalid.finish().is_err());
+
+    assert!(DirectKey::from_name("k".repeat(255)).is_ok());
+    assert!(DirectKey::from_name("k".repeat(256)).is_err());
+    for special in ["a\0z", "a\n", "a\\", "a\""] {
+        assert!(matches!(DirectKey::from_name(special.to_owned()), Err(name) if name == special));
+    }
+}
 
 #[test]
 fn direct_decimal_scalars_preserve_scale_and_surrounding_values() {

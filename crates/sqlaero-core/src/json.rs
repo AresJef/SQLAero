@@ -22,6 +22,31 @@ impl Default for Options {
     }
 }
 
+/// A complete normalized field name which fits in one unescaped write.
+pub struct DirectKey(String);
+
+impl DirectKey {
+    /// Qualify the already owned name once. Longer or escaped keys retain
+    /// their original storage for the caller's normal fragment path.
+    /// # Errors
+    /// Returns the original name if it needs escaping or bounded fragments.
+    pub fn from_name(name: String) -> Result<Self, String> {
+        if name.len() >= 256
+            || name
+                .bytes()
+                .any(|byte| byte < b' ' || matches!(byte, b'"' | b'\\'))
+        {
+            return Err(name);
+        }
+        Ok(Self(name))
+    }
+
+    /// Use the same complete name for diagnostics and duplicate detection.
+    pub fn name(&self) -> &str {
+        &self.0
+    }
+}
+
 /// A real JSON target failure, before any output is published.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
@@ -243,21 +268,25 @@ impl Writer {
         })
     }
 
+    fn begin_key(&mut self) -> Result<bool, Error> {
+        if self.fragment_open() {
+            return Err(Error::State("a scalar fragment is still open"));
+        }
+        let Some(Frame::Object { populated, waiting }) = self.frames.last_mut() else {
+            return Err(Error::State("a key requires an object"));
+        };
+        if *waiting {
+            return Err(Error::State("the preceding key has no value"));
+        }
+        let comma = *populated;
+        *populated = true;
+        *waiting = true;
+        Ok(comma)
+    }
+
     fn string_start(&mut self, length: Option<usize>, key: bool) -> Result<(), Error> {
         if key {
-            if self.fragment_open() {
-                return Err(Error::State("a scalar fragment is still open"));
-            }
-            let Some(Frame::Object { populated, waiting }) = self.frames.last_mut() else {
-                return Err(Error::State("a key requires an object"));
-            };
-            if *waiting {
-                return Err(Error::State("the preceding key has no value"));
-            }
-            let comma = *populated;
-            *populated = true;
-            *waiting = true;
-            if comma {
+            if self.begin_key()? {
                 self.append(",")?;
             }
         } else {
@@ -352,6 +381,27 @@ impl Writer {
             writer.string_start(Some(value.len()), true)?;
             writer.string_fragment(value)?;
             writer.string_end()
+        })
+    }
+
+    /// Write a prequalified name, reusing the same object state as other keys.
+    /// # Errors
+    /// Returns a structural or allocation failure.
+    pub fn direct_key(&mut self, key: &DirectKey) -> Result<(), Error> {
+        self.perform(|writer| {
+            let comma = writer.begin_key()?;
+            let name = key.name();
+            writer
+                .output
+                .try_reserve(name.len() + 3 + usize::from(comma))
+                .map_err(CapacityError::Allocation)?;
+            if comma {
+                writer.output.push(',');
+            }
+            writer.output.push('"');
+            writer.output.push_str(name);
+            writer.output.push_str("\":");
+            Ok(())
         })
     }
 

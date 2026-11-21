@@ -9,13 +9,27 @@ use crate::{errors, input};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyString;
-use sqlaero_core::json::Error;
+use sqlaero_core::json::{DirectKey, Error};
 use sqlaero_transcode::diagnostic::{Coordinate, Path};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
 struct Cell<'a, 'b, 'c, D: Destination + ?Sized> {
     state: &'a mut Serialize<'b, D>,
     path: &'a Path<'c>,
+}
+
+enum SourceKey {
+    Direct(DirectKey),
+    Fragmented(String),
+}
+
+impl SourceKey {
+    fn name(&self) -> &str {
+        match self {
+            Self::Direct(key) => key.name(),
+            Self::Fragmented(name) => name,
+        }
+    }
 }
 
 impl<D: Destination + ?Sized> Target for Cell<'_, '_, '_, D> {
@@ -224,12 +238,12 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
         source: &mut dyn PreparedSource<'_>,
         fields: usize,
         path: &Path<'_>,
-    ) -> PyResult<Vec<String>> {
+    ) -> PyResult<Vec<SourceKey>> {
         use std::collections::{HashMap, hash_map::RandomState};
         let py = source.owner().py();
         let seed = RandomState::new();
         let mut positions: HashMap<u64, Vec<usize>> = HashMap::new();
-        let mut names: Vec<String> = Vec::new();
+        let mut names: Vec<SourceKey> = Vec::new();
         names
             .try_reserve_exact(fields)
             .map_err(|_| errors::memory_error(py))?;
@@ -244,7 +258,7 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
                 .map_err(|_| errors::memory_error(py))?;
             if let Some(previous) = positions.get(&key.hash) {
                 for &index in previous {
-                    if super::keys::same(py, &names[index], &key.value, self.budget)? {
+                    if super::keys::same(py, names[index].name(), &key.value, self.budget)? {
                         return Err(errors::builtin_format::<PyValueError>(
                             py,
                             format_args!(
@@ -259,7 +273,11 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
                 .try_reserve(1)
                 .map_err(|_| errors::memory_error(py))?;
             previous.push(column);
-            names.push(key.value);
+            let name = match DirectKey::from_name(key.value) {
+                Ok(key) => SourceKey::Direct(key),
+                Err(name) => SourceKey::Fragmented(name),
+            };
+            names.push(name);
         }
         Ok(names)
     }
@@ -280,7 +298,7 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
         &mut self,
         source: &mut dyn PreparedSource<'_>,
         row: usize,
-        names: &[String],
+        names: &[SourceKey],
         path: &Path<'_>,
         budget: &dyn Checkpoint,
     ) -> PyResult<()> {
@@ -288,19 +306,32 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
         self.writer
             .object_start()
             .map_err(|error| failure(py, error))?;
-        for (column, name) in names.iter().enumerate() {
+        for (column, key) in names.iter().enumerate() {
             Cell { state: self, path }.checkpoint(py, 1)?;
-            self.writer
-                .key_start(name.len())
-                .map_err(|error| failure(py, error))?;
-            input::unicode::native_fragments(py, name, self.budget, |_, text| {
-                self.writer
-                    .text_fragment(text, &self.options)
-                    .map_err(|error| failure(py, error))
-            })?;
-            self.writer
-                .text_end(&self.options)
-                .map_err(|error| failure(py, error))?;
+            let name = key.name();
+            match key {
+                SourceKey::Direct(key) => {
+                    // Keep the existing short-name work accounting. Longer
+                    // names continue to yield control between fragments.
+                    input::control::bytes(py, self.budget, name.len())?;
+                    self.writer
+                        .direct_key(key)
+                        .map_err(|error| failure(py, error))?;
+                }
+                SourceKey::Fragmented(_) => {
+                    self.writer
+                        .key_start(name.len())
+                        .map_err(|error| failure(py, error))?;
+                    input::unicode::native_fragments(py, name, self.budget, |_, text| {
+                        self.writer
+                            .text_fragment(text, &self.options)
+                            .map_err(|error| failure(py, error))
+                    })?;
+                    self.writer
+                        .text_end(&self.options)
+                        .map_err(|error| failure(py, error))?;
+                }
+            }
             let child = path.child(Coordinate::Field {
                 name,
                 ordinal: column,

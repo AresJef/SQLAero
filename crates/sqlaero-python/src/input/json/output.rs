@@ -6,7 +6,7 @@
 use crate::input::cell::NativeFailure;
 use crate::input::sink::Destination;
 use sqlaero_core::bind::Context;
-use sqlaero_core::json::{Error, Options, Writer};
+use sqlaero_core::json::{DirectKey, Error, Options, Writer};
 use sqlaero_transcode::decimal::{Header, Layout};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
@@ -88,6 +88,7 @@ impl<'a, D: Destination + ?Sized> Output<'a, D> {
     structural!(object_start);
     structural!(object_end);
     structural!(key_start, length: usize);
+    structural!(direct_key, key: &DirectKey);
     structural!(integer_start, negative: bool);
     structural!(integer_fragment, digits: &[u8]);
     structural!(integer_end);
