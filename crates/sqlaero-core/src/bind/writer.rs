@@ -2,6 +2,17 @@
 
 use crate::protocol::framing::WireError;
 
+const HEX: &[u8; 16] = b"0123456789ABCDEF";
+const HEX_PAIRS: [[u8; 2]; 256] = {
+    let mut pairs = [[0; 2]; 256];
+    let mut byte = 0;
+    while byte < pairs.len() {
+        pairs[byte] = [HEX[byte >> 4], HEX[byte & 15]];
+        byte += 1;
+    }
+    pairs
+};
+
 /// Append already encoded SQL bytes under the logical request limit.
 ///
 /// # Errors
@@ -83,15 +94,13 @@ fn append_hex(output: &mut Vec<u8>, value: &[u8]) {
         append_hex_bulk(output, value);
         return;
     }
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
     for byte in value {
-        output.extend_from_slice(&[HEX[usize::from(byte >> 4)], HEX[usize::from(byte & 15)]]);
+        output.extend_from_slice(&HEX_PAIRS[usize::from(*byte)]);
     }
 }
 
 #[inline(never)]
 fn append_hex_bulk(output: &mut Vec<u8>, value: &[u8]) {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
     let start = output.len();
     // The caller checked and reserved the full width before this private call.
     let end = start + value.len() * 2;
@@ -123,6 +132,17 @@ pub(crate) fn reserve(output: &mut Vec<u8>, length: usize, limit: usize) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_binary_pairs_cover_every_source_byte() {
+        for value in u8::MIN..=u8::MAX {
+            let mut output = Vec::new();
+            binary(&mut output, &[value], 21).unwrap();
+            let expected = format!("CAST(X'{value:02X}' AS BINARY)");
+            assert_eq!(output, expected.as_bytes());
+        }
+    }
+
     #[test]
     fn binary_cast_has_exact_width_and_checks_before_any_partial_write() {
         let mut output = vec![3];

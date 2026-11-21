@@ -330,9 +330,7 @@ impl Parameters {
                 246
             }
             ValueRef::Bytes(value) => {
-                self.begin_bytes(value.len())?;
-                self.append_bytes(value)?;
-                self.finish_bytes()?;
+                self.bytes(value)?;
                 252
             }
             ValueRef::Text(value) => {
