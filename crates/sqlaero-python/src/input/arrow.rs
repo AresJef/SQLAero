@@ -304,17 +304,20 @@ struct FloatReader<T: ArrowNativeType + Into<f64>> {
 }
 
 impl<T: ArrowNativeType + Into<f64>> FloatReader<T> {
-    fn read(&self, py: Python<'_>, row: usize) -> PyResult<ValueRef<'static>> {
+    fn write(
+        &self,
+        py: Python<'_>,
+        row: usize,
+        target: &mut (impl Target + ?Sized),
+    ) -> PyResult<()> {
         if row >= self.values.len() {
             return Err(invalid(py, "Arrow child index is outside its array"));
         }
-        Ok(
-            if self.nulls.as_ref().is_some_and(|nulls| nulls.is_null(row)) {
-                ValueRef::Null
-            } else {
-                ValueRef::Float(self.values[row].into())
-            },
-        )
+        if self.nulls.as_ref().is_some_and(|nulls| nulls.is_null(row)) {
+            return target.scalar(py, ValueRef::Null);
+        }
+        let value = self.values[row].into();
+        target.float(py, value)
     }
 }
 
@@ -1635,8 +1638,8 @@ impl<'py> Prepared<'py> {
                 }
                 FastPath::Dictionary(_) => None,
                 FastPath::Int64(reader) => Some(reader.read(py, index, column)?),
-                FastPath::Float32(reader) => Some(reader.read(py, index)?),
-                FastPath::Float64(reader) => Some(reader.read(py, index)?),
+                FastPath::Float32(reader) => return reader.write(py, index, target),
+                FastPath::Float64(reader) => return reader.write(py, index, target),
                 FastPath::Boolean(reader) => Some(reader.read(py, index)?),
             };
             if let Some(value) = value {

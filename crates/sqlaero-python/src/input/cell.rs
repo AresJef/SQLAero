@@ -95,6 +95,9 @@ pub(crate) trait Target {
     fn scalar(&mut self, py: Python<'_>, value: ScalarRef<'_>) -> PyResult<()> {
         self.native_scalar(value).map_err(|error| error.python(py))
     }
+    fn float(&mut self, py: Python<'_>, value: f64) -> PyResult<()> {
+        self.scalar(py, ScalarRef::Float(value))
+    }
     fn native_text_start(&mut self, length: usize) -> Result<(), NativeFailure>;
     fn native_text_fragment(&mut self, value: &str) -> Result<(), NativeFailure>;
     fn native_text_end(&mut self) -> Result<(), NativeFailure>;
@@ -147,6 +150,16 @@ impl<D: Destination + ?Sized> Target for Mysql<'_, D> {
         self.output
             .write(value, self.context)
             .map_err(NativeFailure::Mysql)
+    }
+    fn float(&mut self, py: Python<'_>, value: f64) -> PyResult<()> {
+        if let Some(output) = self.output.text_buffer() {
+            // A plain text destination is already selected. Keep the same
+            // formatter, exact capacity limit and original error conversion.
+            sqlaero_core::bind::scalar::float(output, value, self.context.limit)
+                .map_err(|error| crate::errors::wire(py, error))
+        } else {
+            self.scalar(py, ScalarRef::Float(value))
+        }
     }
     fn native_text_start(&mut self, length: usize) -> Result<(), NativeFailure> {
         self.output
