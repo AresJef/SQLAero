@@ -61,6 +61,17 @@ impl RawBlock {
             false
         }
     }
+
+    /// A checked, already owned native-endian floating-point word.
+    fn float(&self, index: usize, kind: Kind) -> Option<f64> {
+        match kind {
+            Kind::F32 => Some(f64::from(f32::from_ne_bytes(
+                self.item(index, 4)?.try_into().ok()?,
+            ))),
+            Kind::F64 => Some(f64::from_ne_bytes(self.item(index, 8)?.try_into().ok()?)),
+            _ => None,
+        }
+    }
 }
 
 /// Keep reusable Unicode capacity behind a small, lazily allocated handle.
@@ -1340,6 +1351,17 @@ impl NumpySource<'_> {
                 return output.python(&value, None);
             }
         };
+        // The copied block already proved these native vector positions.
+        // Keep short values, block misses, other layouts and byte orders on
+        // the existing checked read and preserve every target checkpoint.
+        if matches!(kind, Kind::F32 | Kind::F64)
+            && !self.swap
+            && column == 0
+            && matches!(self.shape, Shape::Vector { length } if row < length)
+            && let Some(value) = self.raw.as_ref().and_then(|block| block.float(row, kind))
+        {
+            return output.float(py, value);
+        }
         let b = self.cell_bytes(row, column, budget)?;
         let value = self.scalar_fact(kind, b, budget)?;
         output.scalar(py, value)
