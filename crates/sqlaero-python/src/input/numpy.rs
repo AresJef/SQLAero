@@ -4,7 +4,7 @@
 //! different ownership and concurrent-mutation requirements and are deliberately
 //! not accepted by the fixed-width reader.
 
-use super::buffer::Canonical;
+use super::buffer::{Canonical, Export};
 use crate::errors;
 use crate::input::control::Checkpoint;
 use pyo3::exceptions::{PyBufferError, PyTypeError};
@@ -56,9 +56,16 @@ enum Kind {
     Duration,
 }
 
+#[derive(Clone, Copy)]
+enum ScalarExport<'a> {
+    Exact,
+    Qualified(&'a Canonical),
+}
+
 /// Canonical type and function references owned by one Python module state.
 pub(crate) struct NumpyTypes {
     numeric: Vec<(Canonical, Kind)>,
+    exact_export: bool,
     numeric_base: Option<Py<PyType>>,
     datetime_data: Py<PyAny>,
     datetime_dtype_get: Py<PyAny>,
@@ -291,6 +298,12 @@ impl NumpyTypes {
                 kind,
             ));
         }
+        let module_type = py.get_type::<PyModule>();
+        let exact_export = numeric.iter().all(|(registered, _)| {
+            // Canonical::new established immutable types. CPython allows
+            // class reassignment between module subtypes despite that flag.
+            !super::actual_type_is_subtype(registered.typ(py), &module_type)
+        });
         let numeric_base = super::control::callback(py, budget, || {
             module
                 .dict()
@@ -322,6 +335,7 @@ impl NumpyTypes {
         let arrays = NumpyArrayApi::new(&module, &numeric, &datetime_data, budget)?;
         Ok(Self {
             numeric,
+            exact_export,
             numeric_base,
             datetime_data: datetime_data.unbind(),
             datetime_dtype_get: dtype_get(&module, c"datetime64", budget)?,
@@ -368,17 +382,16 @@ impl NumpyTypes {
         value: &Bound<'_, PyAny>,
         budget: Option<&dyn Checkpoint>,
     ) -> PyResult<Option<NumpyScalar>> {
-        let Some((registered, kind)) = self.recognize(value) else {
+        let Some((export, kind)) = self.recognize(value) else {
             return Ok(None);
         };
-        self.read_classified(value, registered, kind, budget)
-            .map(Some)
+        self.read_classified(value, export, kind, budget).map(Some)
     }
 
     /// Ask for actual integer facts without reading unrelated numeric/temporal
     /// payloads or executing a protocol that the consuming target cannot use.
     pub(crate) fn read_integer(&self, value: &Bound<'_, PyAny>) -> PyResult<Option<NumpyScalar>> {
-        let Some((registered, kind)) = self.recognize(value) else {
+        let Some((export, kind)) = self.recognize(value) else {
             return Ok(None);
         };
         if !matches!(
@@ -394,75 +407,80 @@ impl NumpyTypes {
         ) {
             return Ok(None);
         }
-        self.read_classified(value, registered, kind, None)
-            .map(Some)
+        self.read_classified(value, export, kind, None).map(Some)
     }
 
-    fn recognize<'a>(&'a self, value: &Bound<'_, PyAny>) -> Option<(&'a Canonical, Kind)> {
+    fn recognize<'a>(&'a self, value: &Bound<'_, PyAny>) -> Option<(ScalarExport<'a>, Kind)> {
         let py = value.py();
+        // Only compare the source's type pointer to retained canonical types.
+        // A non-match uses a live type reference for subclass inspection.
+        let pointer = value.get_type_ptr().cast();
+        if let Some((registered, kind)) = self
+            .numeric
+            .iter()
+            .find(|(registered, _)| pointer == registered.typ(py).as_ptr())
+        {
+            let export = if self.exact_export {
+                ScalarExport::Exact
+            } else {
+                ScalarExport::Qualified(registered)
+            };
+            return Some((export, *kind));
+        }
         let typ = value.get_type();
+        if let Some(base) = &self.numeric_base
+            && !super::actual_type_is_subtype(&typ, base.bind(py))
+        {
+            return None;
+        }
         self.numeric
             .iter()
-            .find(|(registered, _)| typ.is(registered.typ(py)))
-            .or_else(|| {
-                if let Some(base) = &self.numeric_base
-                    && !super::actual_type_is_subtype(&typ, base.bind(py))
-                {
-                    return None;
-                }
-                self.numeric
-                    .iter()
-                    .find(|(registered, _)| super::actual_type_is_subtype(&typ, registered.typ(py)))
-            })
-            .map(|(registered, kind)| (registered, *kind))
+            .find(|(registered, _)| super::actual_type_is_subtype(&typ, registered.typ(py)))
+            .map(|(registered, kind)| (ScalarExport::Qualified(registered), *kind))
     }
 
     fn read_classified(
         &self,
         value: &Bound<'_, PyAny>,
-        registered: &Canonical,
+        export: ScalarExport<'_>,
         kind: Kind,
         budget: Option<&dyn Checkpoint>,
     ) -> PyResult<NumpyScalar> {
         let scalar = match kind {
             Kind::I8 => NumpyScalar::Signed(i64::from(i8::from_ne_bytes([fixed_bytes(
-                value, registered, 1,
+                value, export, 1,
             )?[0]]))),
             Kind::I16 => {
-                let b = fixed_bytes(value, registered, 2)?;
+                let b = fixed_bytes(value, export, 2)?;
                 NumpyScalar::Signed(i64::from(i16::from_ne_bytes([b[0], b[1]])))
             }
             Kind::I32 => {
-                let b = fixed_bytes(value, registered, 4)?;
+                let b = fixed_bytes(value, export, 4)?;
                 NumpyScalar::Signed(i64::from(i32::from_ne_bytes([b[0], b[1], b[2], b[3]])))
             }
-            Kind::I64 => {
-                NumpyScalar::Signed(i64::from_ne_bytes(fixed_bytes(value, registered, 8)?))
-            }
-            Kind::U8 => NumpyScalar::Unsigned(u64::from(fixed_bytes(value, registered, 1)?[0])),
+            Kind::I64 => NumpyScalar::Signed(i64::from_ne_bytes(fixed_bytes(value, export, 8)?)),
+            Kind::U8 => NumpyScalar::Unsigned(u64::from(fixed_bytes(value, export, 1)?[0])),
             Kind::U16 => {
-                let b = fixed_bytes(value, registered, 2)?;
+                let b = fixed_bytes(value, export, 2)?;
                 NumpyScalar::Unsigned(u64::from(u16::from_ne_bytes([b[0], b[1]])))
             }
             Kind::U32 => {
-                let b = fixed_bytes(value, registered, 4)?;
+                let b = fixed_bytes(value, export, 4)?;
                 NumpyScalar::Unsigned(u64::from(u32::from_ne_bytes([b[0], b[1], b[2], b[3]])))
             }
-            Kind::U64 => {
-                NumpyScalar::Unsigned(u64::from_ne_bytes(fixed_bytes(value, registered, 8)?))
-            }
+            Kind::U64 => NumpyScalar::Unsigned(u64::from_ne_bytes(fixed_bytes(value, export, 8)?)),
             Kind::F16 => {
-                let b = fixed_bytes(value, registered, 2)?;
+                let b = fixed_bytes(value, export, 2)?;
                 NumpyScalar::Float(half_to_f64(u16::from_ne_bytes([b[0], b[1]])))
             }
             Kind::F32 => {
-                let b = fixed_bytes(value, registered, 4)?;
+                let b = fixed_bytes(value, export, 4)?;
                 NumpyScalar::Float(f64::from(f32::from_ne_bytes([b[0], b[1], b[2], b[3]])))
             }
-            Kind::F64 => NumpyScalar::Float(f64::from_ne_bytes(fixed_bytes(value, registered, 8)?)),
-            Kind::Bool => NumpyScalar::Bool(fixed_bytes(value, registered, 1)?[0] != 0),
+            Kind::F64 => NumpyScalar::Float(f64::from_ne_bytes(fixed_bytes(value, export, 8)?)),
+            Kind::Bool => NumpyScalar::Bool(fixed_bytes(value, export, 1)?[0] != 0),
             Kind::DateTime | Kind::Duration => {
-                let ticks = i64::from_ne_bytes(fixed_bytes(value, registered, 8)?);
+                let ticks = i64::from_ne_bytes(fixed_bytes(value, export, 8)?);
                 let kind = match kind {
                     Kind::DateTime => TimeKind::DateTime,
                     _ => TimeKind::Duration,
@@ -586,11 +604,14 @@ fn exact_type(
 /// Copy at most eight bytes from an immutable canonical scalar export.
 fn fixed_bytes(
     value: &Bound<'_, PyAny>,
-    registered: &Canonical,
+    source: ScalarExport<'_>,
     width: usize,
 ) -> PyResult<[u8; 8]> {
     let py = value.py();
-    let export = registered.acquire(value, pyo3::ffi::PyBUF_SIMPLE)?;
+    let export = match source {
+        ScalarExport::Exact => Export::acquire(value, pyo3::ffi::PyBUF_SIMPLE)?,
+        ScalarExport::Qualified(base) => base.acquire(value, pyo3::ffi::PyBUF_SIMPLE)?,
+    };
     let raw = &export.raw;
     let valid = raw.len == width as isize && raw.readonly != 0 && !raw.buf.is_null();
     let mut bytes = [0; 8];

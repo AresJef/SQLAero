@@ -1,6 +1,6 @@
 //! MaskedArray base data and actual instance masks, without filled() or hooks.
 
-use super::{NumpyArrayApi, NumpySource, RecordSource};
+use super::{NumpyArrayApi, NumpySource, RecordSource, ScalarExport};
 use crate::errors;
 use crate::input::cell::Target;
 use crate::input::control::Checkpoint;
@@ -59,7 +59,9 @@ impl<'py> Reader<'py> {
         if value.is_exact_instance_of::<PyBool>() {
             value.extract().map(Some)
         } else if value.get_type().is(api.boolean.typ(value.py())) {
-            Ok(Some(super::fixed_bytes(value, &api.boolean, 1)?[0] != 0))
+            Ok(Some(
+                super::fixed_bytes(value, ScalarExport::Qualified(&api.boolean), 1)?[0] != 0,
+            ))
         } else {
             Ok(None)
         }

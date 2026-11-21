@@ -53,24 +53,24 @@ pub(super) fn read<'a, 'py>(
     if value.get_type().is(types.decimal_type(py)) {
         return Ok(Some(Source::Decimal(value)));
     }
-    // Provider temporal storage must win over its datetime/timedelta ancestry:
-    // a Timestamp's nanoseconds cannot be silently read as Python microseconds.
-    if let Some(pandas) = types.pandas_types(py, budget)?
-        && let Some(numpy) = types.numpy_types(py, budget)?
-        && let Some(facts) = pandas.read_scalar(value, numpy, budget)?
-    {
-        return Ok(Some(Source::Pandas {
-            owner: value,
-            facts,
-        }));
-    }
-    if let Some(numpy) = types.numpy_types(py, budget)?
-        && let Some(facts) = numpy.read(value, budget)?
-    {
-        return Ok(Some(Source::Numpy(facts)));
-    }
     if value.get_type().is(types.struct_time.bind(py)) {
         return Ok(Some(Source::StructTime(value.cast()?)));
+    }
+    if let Some(numpy) = types.numpy_types(py, budget)? {
+        if let Some(facts) = numpy.read(value, budget)? {
+            return Ok(Some(Source::Numpy(facts)));
+        }
+        // Pandas stores its temporal values on the datetime and timedelta
+        // ancestry, not on NumPy's immutable scalar classes. Keep those
+        // nanosecond facts ahead of reading the standard Python base.
+        if let Some(pandas) = types.pandas_types(py, budget)?
+            && let Some(facts) = pandas.read_scalar(value, numpy, budget)?
+        {
+            return Ok(Some(Source::Pandas {
+                owner: value,
+                facts,
+            }));
+        }
     }
     if value.is_instance_of::<PyDateTime>() {
         Ok(Some(Source::Datetime(value.cast()?)))
