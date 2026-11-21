@@ -59,6 +59,7 @@ enum Kind {
 /// Canonical type and function references owned by one Python module state.
 pub(crate) struct NumpyTypes {
     numeric: Vec<(Canonical, Kind)>,
+    numeric_base: Option<Py<PyType>>,
     datetime_data: Py<PyAny>,
     datetime_dtype_get: Py<PyAny>,
     duration_dtype_get: Py<PyAny>,
@@ -290,6 +291,25 @@ impl NumpyTypes {
                 kind,
             ));
         }
+        let numeric_base = super::control::callback(py, budget, || {
+            module
+                .dict()
+                .get_item(PyString::from_bytes(py, b"generic")?)
+        })?
+        .and_then(|value| value.cast_into::<PyType>().ok())
+        .filter(|base| {
+            // Static CPython types can only have immutable static bases. Only
+            // use this rejection shortcut while that common ancestry is proven.
+            numeric.iter().all(|(registered, _)| {
+                let candidate = registered.typ(py);
+                // SAFETY: the registered canonical type is retained and live.
+                let flags = unsafe { pyo3::ffi::PyType_GetFlags(candidate.as_type_ptr()) };
+                flags & pyo3::ffi::Py_TPFLAGS_HEAPTYPE == 0
+                    && flags & pyo3::ffi::Py_TPFLAGS_IMMUTABLETYPE != 0
+                    && super::actual_type_is_subtype(candidate, base)
+            })
+        })
+        .map(Bound::unbind);
         let datetime_data = super::control::callback(py, budget, || {
             errors::attribute(module.as_any(), c"datetime_data")
         })?;
@@ -302,6 +322,7 @@ impl NumpyTypes {
         let arrays = NumpyArrayApi::new(&module, &numeric, &datetime_data, budget)?;
         Ok(Self {
             numeric,
+            numeric_base,
             datetime_data: datetime_data.unbind(),
             datetime_dtype_get: dtype_get(&module, c"datetime64", budget)?,
             duration_dtype_get: dtype_get(&module, c"timedelta64", budget)?,
@@ -384,6 +405,11 @@ impl NumpyTypes {
             .iter()
             .find(|(registered, _)| typ.is(registered.typ(py)))
             .or_else(|| {
+                if let Some(base) = &self.numeric_base
+                    && !super::actual_type_is_subtype(&typ, base.bind(py))
+                {
+                    return None;
+                }
                 self.numeric
                     .iter()
                     .find(|(registered, _)| super::actual_type_is_subtype(&typ, registered.typ(py)))
