@@ -131,12 +131,6 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
 
     fn value(&mut self, value: &Bound<'_, PyAny>, path: &Path<'_>) -> PyResult<()> {
         let py = value.py();
-        if value.is_instance_of::<Json>() {
-            return Err(errors::builtin_message::<PyTypeError>(
-                py,
-                "JSON wrappers cannot be serialized inside JSON; use wrapped.data explicitly",
-            ));
-        }
         if let Some(source) = primitive::read(value)? {
             return match source {
                 Source::Native(value) => self
@@ -165,6 +159,14 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
                 }
                 Source::WideInteger { value, .. } => self.integer(value),
             };
+        }
+        // A wrapper cannot be a primitive. Reject it before provider probes
+        // while keeping the common primitive path free of wrapper inspection.
+        if value.is_exact_instance_of::<Json>() {
+            return Err(errors::builtin_message::<PyTypeError>(
+                py,
+                "JSON wrappers cannot be serialized inside JSON; use wrapped.data explicitly",
+            ));
         }
         if let Some(kind) = super::sequence::kind(value, self.types) {
             return self.container(value, kind, path);
