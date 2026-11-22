@@ -9,6 +9,7 @@ use crate::{errors, input};
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 use pyo3::types::PyString;
+use smallvec::SmallVec;
 use sqlaero_core::json::{DirectKey, Error};
 use sqlaero_transcode::diagnostic::{Coordinate, Path};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
@@ -248,7 +249,7 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
         use std::collections::{HashMap, hash_map::RandomState};
         let py = source.owner().py();
         let seed = RandomState::new();
-        let mut positions: HashMap<u64, Vec<usize>> = HashMap::new();
+        let mut positions: HashMap<u64, SmallVec<[usize; 1]>> = HashMap::new();
         let mut names: Vec<SourceKey> = Vec::new();
         names
             .try_reserve_exact(fields)
@@ -262,19 +263,19 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
             positions
                 .try_reserve(1)
                 .map_err(|_| errors::memory_error(py))?;
-            if let Some(previous) = positions.get(&key.hash) {
-                for &index in previous {
-                    if super::keys::same(py, names[index].name(), &key.value, self.budget)? {
-                        return Err(errors::builtin_format::<PyValueError>(
-                            py,
-                            format_args!(
-                                "JSON object keys collide after normalization at entry {column}"
-                            ),
-                        ));
-                    }
+            // The first index for a hash needs no separate allocation. Full
+            // key bytes still decide equality, including when hashes collide.
+            let previous = positions.entry(key.hash).or_default();
+            for &index in previous.iter() {
+                if super::keys::same(py, names[index].name(), &key.value, self.budget)? {
+                    return Err(errors::builtin_format::<PyValueError>(
+                        py,
+                        format_args!(
+                            "JSON object keys collide after normalization at entry {column}"
+                        ),
+                    ));
                 }
             }
-            let previous = positions.entry(key.hash).or_default();
             previous
                 .try_reserve(1)
                 .map_err(|_| errors::memory_error(py))?;
