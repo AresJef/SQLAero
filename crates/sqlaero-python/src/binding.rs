@@ -594,10 +594,12 @@ pub(crate) fn escape<'py>(
     };
     let budget = crate::input::control::Control::unlimited();
     let mut rows = Rows::new(data, many, itemize, types, &budget)?;
+    let mut scratch = ProjectionScratch::default();
     if rows.public_batch() {
         let output = crate::output::list(py, [])?;
         while let Some(row) = rows.next(types, &budget)? {
-            output.append(row.project(py, types, &context, &budget)?)?;
+            output.append(row.project(py, types, &context, &budget, &mut scratch)?)?;
+            scratch.release_large_buffers();
         }
         check(py, &budget)?;
         Ok(output.into_any())
@@ -609,9 +611,29 @@ pub(crate) fn escape<'py>(
                 "root projection did not produce its logical row",
             )
         })?;
-        let value = row.project(py, types, &context, &budget)?;
+        let value = row.project(py, types, &context, &budget, &mut scratch)?;
         check(py, &budget)?;
         Ok(value)
+    }
+}
+
+#[derive(Default)]
+struct ProjectionScratch {
+    encoded: Vec<u8>,
+    values: Vec<Py<PyAny>>,
+}
+
+impl ProjectionScratch {
+    fn release_large_buffers(&mut self) {
+        // Keep ordinary row capacity only. A long field or wide row must
+        // not pin a correspondingly large scratch allocation for the batch.
+        const RETAIN_BYTES: usize = 4096;
+        if self.encoded.capacity() > RETAIN_BYTES {
+            self.encoded = Vec::new();
+        }
+        if self.values.capacity() > RETAIN_BYTES / std::mem::size_of::<Py<PyAny>>() {
+            self.values = Vec::new();
+        }
     }
 }
 
@@ -945,16 +967,33 @@ impl<'r, 'py> Row<'r, 'py> {
         types: &ScalarTypes,
         context: &Context,
         budget: &dyn Checkpoint,
+        scratch: &mut ProjectionScratch,
     ) -> PyResult<Bound<'out, PyAny>> {
-        let row = self.public_row();
-        let mut values = Vec::new();
-        let mut encoded = Vec::new();
+        // Select the output shape once. Each emitted position already
+        // belongs to that shape, so the sink has no per-value decision.
+        if self.public_row() {
+            self.project_values::<true>(py, types, context, budget, scratch)
+        } else {
+            self.project_values::<false>(py, types, context, budget, scratch)
+        }
+    }
+
+    fn project_values<'out, const ROW: bool>(
+        self,
+        py: Python<'out>,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &dyn Checkpoint,
+        scratch: &mut ProjectionScratch,
+    ) -> PyResult<Bound<'out, PyAny>> {
+        let ProjectionScratch { encoded, values } = scratch;
+        let mut single = None;
         check(py, budget)?;
         self.walk::<false>(
             types,
             context,
             budget,
-            &mut encoded,
+            encoded,
             None,
             |_, output| {
                 output.clear();
@@ -962,27 +1001,32 @@ impl<'r, 'py> Row<'r, 'py> {
             },
             |_, output, _| {
                 let value = display(py, output, context.codec)?.into_any().unbind();
-                values
-                    .try_reserve(1)
-                    .map_err(|_| errors::memory_error(py))?;
-                values.push(value);
+                if ROW {
+                    values
+                        .try_reserve(1)
+                        .map_err(|_| errors::memory_error(py))?;
+                    values.push(value);
+                } else {
+                    single = Some(value);
+                }
                 Ok(())
             },
         )?;
         check(py, budget)?;
-        if row {
-            crate::output::tuple_from_ready_vec(py, values).map(Bound::into_any)
+        if ROW {
+            crate::output::tuple_from_values(
+                py,
+                values.drain(..).map(|value| Ok(value.into_bound(py))),
+            )
+            .map(Bound::into_any)
         } else {
-            values
-                .pop()
-                .map(|value| value.into_bound(py))
-                .ok_or_else(|| {
-                    errors::client(
-                        py,
-                        ClientErrorCode::InternalState,
-                        "scalar projection did not produce a value",
-                    )
-                })
+            single.map(|value| value.into_bound(py)).ok_or_else(|| {
+                errors::client(
+                    py,
+                    ClientErrorCode::InternalState,
+                    "scalar projection did not produce a value",
+                )
+            })
         }
     }
 
