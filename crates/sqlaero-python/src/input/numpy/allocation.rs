@@ -209,6 +209,11 @@ impl<'py> Allocation<'py> {
     pub(super) fn native_root(&self) -> bool {
         self.native_root
     }
+
+    /// A metadata-only check can use the source's own physical export.
+    pub(super) fn is_source_root(&self, value: &Bound<'_, PyAny>) -> bool {
+        !self.zero_only && self.root.is(value)
+    }
 }
 
 fn contiguous_origin(

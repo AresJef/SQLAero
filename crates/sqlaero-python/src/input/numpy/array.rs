@@ -412,6 +412,19 @@ impl<'py> NumpySource<'py> {
             budget,
             self.allocation.native_root(),
             || {
+                if self.allocation.is_source_root(&self.owner) {
+                    let (root, dimensions, lengths) = self.checked_root()?;
+                    // ANY_CONTIGUOUS already includes STRIDES. This is only a
+                    // layout check, so reuse the exact owner's export without
+                    // touching any bytes beneath a missing payload.
+                    let valid = self.checked_strides(&root, dimensions, lengths).is_some();
+                    drop(root);
+                    return if valid {
+                        Ok(())
+                    } else {
+                        Err(self.changed_layout())
+                    };
+                }
                 drop(self.native_view()?);
                 Ok(())
             },
@@ -655,6 +668,25 @@ impl<'py> NumpySource<'py> {
     /// Validate the current original owners once for one bounded native read.
     /// The returned guard must be dropped before making any Python call.
     fn native_view(&self) -> PyResult<NativeView<'_, 'py>> {
+        let (root, dimensions, lengths) = self.checked_root()?;
+        let source = self.array.acquire(&self.owner, pyo3::ffi::PyBUF_STRIDES)?;
+        let Some(strides) = self.checked_strides(&source, dimensions, lengths) else {
+            drop(source);
+            drop(root);
+            return Err(self.changed_layout());
+        };
+        Ok(NativeView {
+            root,
+            source,
+            dimensions,
+            lengths,
+            strides,
+            tensor_axes: &self.tensor_axes,
+            width: self.width,
+        })
+    }
+
+    fn checked_root(&self) -> PyResult<(Export<'_, 'py>, usize, [usize; 2])> {
         let py = self.owner.py();
         if !self.dtype_get.get(&self.owner)?.is(&self.dtype) {
             return Err(errors::builtin_message::<PyBufferError>(
@@ -683,13 +715,16 @@ impl<'py> NumpySource<'py> {
             drop(root);
             return Err(super::allocation::bounds_error(py));
         }
-        let source = match self.array.acquire(&self.owner, pyo3::ffi::PyBUF_STRIDES) {
-            Ok(source) => source,
-            Err(error) => {
-                drop(root);
-                return Err(error);
-            }
-        };
+        Ok((root, dimensions, lengths))
+    }
+
+    /// Check the live canonical buffer's axes without reading its payload.
+    fn checked_strides(
+        &self,
+        source: &Export<'_, 'py>,
+        dimensions: usize,
+        lengths: [usize; 2],
+    ) -> Option<[isize; 2]> {
         let raw = &source.raw;
         let length = lengths[0]
             .checked_mul(if dimensions == 1 { 1 } else { lengths[1] })
@@ -721,23 +756,14 @@ impl<'py> NumpySource<'py> {
                 }
             }
         }
-        if !valid {
-            drop(source);
-            drop(root);
-            return Err(errors::builtin_message::<PyBufferError>(
-                py,
-                "NumPy storage no longer matches its prepared shape or dtype",
-            ));
-        }
-        Ok(NativeView {
-            root,
-            source,
-            dimensions,
-            lengths,
-            strides,
-            tensor_axes: &self.tensor_axes,
-            width: self.width,
-        })
+        valid.then_some(strides)
+    }
+
+    fn changed_layout(&self) -> PyErr {
+        errors::builtin_message::<PyBufferError>(
+            self.owner.py(),
+            "NumPy storage no longer matches its prepared shape or dtype",
+        )
     }
 
     /// Copy only this bounded native fragment, releasing its export before
