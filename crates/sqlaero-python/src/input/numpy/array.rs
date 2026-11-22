@@ -70,6 +70,10 @@ impl RawBlock {
     /// A checked, already owned native-endian floating-point word.
     fn float(&self, index: usize, kind: Kind) -> Option<f64> {
         match kind {
+            #[cfg(Py_GIL_DISABLED)]
+            Kind::F16 => Some(half_to_f64(u16::from_ne_bytes(
+                self.item(index, 2)?.try_into().ok()?,
+            ))),
             Kind::F32 => Some(f64::from(f32::from_ne_bytes(
                 self.item(index, 4)?.try_into().ok()?,
             ))),
@@ -1421,7 +1425,11 @@ impl NumpySource<'_> {
         // The copied block already proved these native vector positions.
         // Keep short values, block misses, other layouts and byte orders on
         // the existing checked read and preserve every target checkpoint.
-        if matches!(kind, Kind::F32 | Kind::F64)
+        // The shared half decoder stays in both builds. Only free-threaded
+        // builds use it here because enabling this shortcut on the GIL build
+        // regressed unrelated native integer workloads.
+        if (matches!(kind, Kind::F32 | Kind::F64)
+            || (cfg!(Py_GIL_DISABLED) && matches!(kind, Kind::F16)))
             && !self.swap
             && column == 0
             && matches!(self.shape, Shape::Vector { length } if row < length)
