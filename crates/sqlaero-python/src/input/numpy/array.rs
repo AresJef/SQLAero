@@ -44,24 +44,36 @@ impl RawBlock {
     }
 
     fn copy_item(&self, index: usize, output: &mut [u8]) -> bool {
-        // Four-byte machine words share this checked copy in both writers.
-        // Other widths keep the general path and its original bounds checks.
-        if output.len() == 4 {
-            let Some(item) = self.item(index, 4).and_then(|item| item.first_chunk::<4>()) else {
-                return false;
-            };
-            let Some(destination) = output.first_chunk_mut::<4>() else {
-                return false;
-            };
-            *destination = *item;
-            return true;
+        // Short fixed copies help on the GIL build. The free-threaded
+        // build keeps its measured generic path for the two smallest widths.
+        match output.len() {
+            #[cfg(not(Py_GIL_DISABLED))]
+            1 => self.copy_word::<1>(index, output),
+            #[cfg(not(Py_GIL_DISABLED))]
+            2 => self.copy_word::<2>(index, output),
+            4 => self.copy_word::<4>(index, output),
+            width => {
+                let Some(item) = self.item(index, width) else {
+                    return false;
+                };
+                output.copy_from_slice(item);
+                true
+            }
         }
-        if let Some(item) = self.item(index, output.len()) {
-            output.copy_from_slice(item);
-            true
-        } else {
-            false
-        }
+    }
+
+    fn copy_word<const WIDTH: usize>(&self, index: usize, output: &mut [u8]) -> bool {
+        let Some(item) = self
+            .item(index, WIDTH)
+            .and_then(|item| item.first_chunk::<WIDTH>())
+        else {
+            return false;
+        };
+        let Some(destination) = output.first_chunk_mut::<WIDTH>() else {
+            return false;
+        };
+        *destination = *item;
+        true
     }
 
     /// A checked, already owned native-endian signed 64-bit word.
