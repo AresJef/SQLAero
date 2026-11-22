@@ -83,6 +83,17 @@ impl RawBlock {
     }
 }
 
+/// Decode one checked native-endian code without copying it into a wider word.
+fn signed_code(bytes: &[u8]) -> Option<i64> {
+    Some(match *bytes {
+        [a] => i64::from(i8::from_ne_bytes([a])),
+        [a, b] => i64::from(i16::from_ne_bytes([a, b])),
+        [a, b, c, d] => i64::from(i32::from_ne_bytes([a, b, c, d])),
+        [a, b, c, d, e, f, g, h] => i64::from_ne_bytes([a, b, c, d, e, f, g, h]),
+        _ => return None,
+    })
+}
+
 /// Keep reusable Unicode capacity behind a small, lazily allocated handle.
 struct UnicodeScratch {
     text: String,
@@ -600,18 +611,30 @@ impl<'py> NumpySource<'py> {
                 ));
             }
         };
-        if !matches!(self.shape, Shape::Vector { .. }) {
+        let Shape::Vector { length } = self.shape else {
             return Err(errors::builtin_message::<PyTypeError>(
                 self.owner.py(),
                 "NumPy codes or ticks require one dimension",
             ));
+        };
+        if !self.swap
+            && row < length
+            && let Some(value) = self
+                .raw
+                .as_ref()
+                .and_then(|block| block.item(row, read))
+                .and_then(signed_code)
+        {
+            // The block is owned by Rust. A new block or a non-native word
+            // still goes through the existing bounded copy and validation.
+            return Ok(value);
         }
         let bytes = self.cell_bytes(row, 0, budget)?;
-        Ok(match read {
-            1 => i64::from(i8::from_ne_bytes([bytes[0]])),
-            2 => i64::from(i16::from_ne_bytes([bytes[0], bytes[1]])),
-            4 => i64::from(i32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
-            _ => i64::from_ne_bytes(bytes),
+        signed_code(&bytes[..read]).ok_or_else(|| {
+            errors::builtin_message::<PyTypeError>(
+                self.owner.py(),
+                "NumPy signed code width is invalid",
+            )
         })
     }
 

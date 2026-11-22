@@ -66,6 +66,21 @@ def test_unusual_public_negative_code_keeps_index_value_and_other_real_null() ->
     assert json_dumps(source, allow_nan=False) == b'[[20,null],[10,"ab"]]'
 
 
+def test_wide_codes_cross_an_owned_block_with_null_and_negative_index() -> None:
+    codes = [255, -1, -2, 254] * 259
+    source = pd.MultiIndex(
+        levels=[pd.RangeIndex(400)],
+        codes=[codes],
+        verify_integrity=False,
+    )[::-1]
+    assert source.codes[0].dtype.itemsize == 2
+    expected = [[254], [398], [None], [255]] * 259
+    assert json.loads(json_dumps(source)) == expected
+    assert _sqlaero._escape_projection(source, many=True) == [
+        ("254",), ("398",), ("NULL",), ("255",)
+    ] * 259
+
+
 def test_out_of_range_code_remains_original_standard_index_error() -> None:
     source = pd.MultiIndex(levels=[pd.Index([7])], codes=[[0, 4]], verify_integrity=False)
     with pytest.raises(IndexError, match="code 4"):
