@@ -7,6 +7,39 @@ use pyo3::types::{PyString, PyStringData, PyStringMethods};
 use sqlaero_transcode::utf8::{self, EncodeError};
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
+pub(crate) const SHORT_UCS4_BYTES: usize = 64;
+
+/// Locate the last occupied code point in a short, fixed-width source while
+/// keeping any NUL inside the value.
+pub(crate) fn short_ucs4_count(source: &[u8]) -> usize {
+    source
+        .iter()
+        .rposition(|byte| *byte != 0)
+        .map_or(0, |last| last / 4 + 1)
+}
+
+/// Encode a short native-endian source into its complete UTF-8 value. An
+/// invalid point returns to the caller's existing source diagnostic.
+pub(crate) fn short_ucs4_text<'a>(
+    source: &[u8],
+    output: &'a mut [u8; SHORT_UCS4_BYTES],
+) -> Option<&'a str> {
+    let (points, tail) = source.as_chunks::<4>();
+    if !tail.is_empty() || source.len() > output.len() {
+        return None;
+    }
+    let mut written = 0;
+    for &word in points {
+        let character = char::from_u32(u32::from_ne_bytes(word))?;
+        // Capacity is at least four bytes per source point. Each encode
+        // appends a complete, valid UTF-8 character to the initialized prefix.
+        written += character.encode_utf8(&mut output[written..]).len();
+    }
+    // SAFETY: the returned prefix consists only of contiguous complete
+    // sequences written by char::encode_utf8. It borrows the caller's stack.
+    Some(unsafe { std::str::from_utf8_unchecked(&output[..written]) })
+}
+
 /// An owned native metadata snapshot through the same base-string reader as
 /// ordinary values. No subclass conversion or whole long UTF-8 conversion.
 pub(crate) fn snapshot(source: &Bound<'_, PyString>, budget: &dyn Checkpoint) -> PyResult<String> {

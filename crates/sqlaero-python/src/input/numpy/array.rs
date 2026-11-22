@@ -177,20 +177,49 @@ enum ArrayKind {
     RecordLayout,
 }
 
+/// Recognize a fixed-width numeric field independently of its containing shape.
+pub(super) fn fixed_kind(tag: &str, width: usize) -> Option<Kind> {
+    match (tag, width) {
+        ("i", 1) => Some(Kind::I8),
+        ("i", 2) => Some(Kind::I16),
+        ("i", 4) => Some(Kind::I32),
+        ("i", 8) => Some(Kind::I64),
+        ("u", 1) => Some(Kind::U8),
+        ("u", 2) => Some(Kind::U16),
+        ("u", 4) => Some(Kind::U32),
+        ("u", 8) => Some(Kind::U64),
+        ("f", 2) => Some(Kind::F16),
+        ("f", 4) => Some(Kind::F32),
+        ("f", 8) => Some(Kind::F64),
+        ("b", 1) => Some(Kind::Bool),
+        _ => None,
+    }
+}
+
+/// Interpret one already owned canonical fixed-width number.
+pub(super) fn fixed_number(kind: Kind, b: [u8; 8]) -> Option<ScalarRef<'static>> {
+    Some(match kind {
+        Kind::I8 => ScalarRef::Signed(i64::from(i8::from_ne_bytes([b[0]]))),
+        Kind::I16 => ScalarRef::Signed(i64::from(i16::from_ne_bytes([b[0], b[1]]))),
+        Kind::I32 => ScalarRef::Signed(i64::from(i32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
+        Kind::I64 => ScalarRef::Signed(i64::from_ne_bytes(b)),
+        Kind::U8 => ScalarRef::Unsigned(u64::from(b[0])),
+        Kind::U16 => ScalarRef::Unsigned(u64::from(u16::from_ne_bytes([b[0], b[1]]))),
+        Kind::U32 => ScalarRef::Unsigned(u64::from(u32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
+        Kind::U64 => ScalarRef::Unsigned(u64::from_ne_bytes(b)),
+        Kind::F16 => ScalarRef::Float(half_to_f64(u16::from_ne_bytes([b[0], b[1]]))),
+        Kind::F32 => ScalarRef::Float(f64::from(f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
+        Kind::F64 => ScalarRef::Float(f64::from_ne_bytes(b)),
+        Kind::Bool => ScalarRef::Boolean(b[0] != 0),
+        Kind::DateTime | Kind::Duration => return None,
+    })
+}
+
 fn dtype_kind(py: Python<'_>, tag: &str, width: usize, record: bool) -> PyResult<ArrayKind> {
+    if let Some(kind) = fixed_kind(tag, width) {
+        return Ok(ArrayKind::Scalar(kind));
+    }
     Ok(match (tag, width) {
-        ("i", 1) => ArrayKind::Scalar(Kind::I8),
-        ("i", 2) => ArrayKind::Scalar(Kind::I16),
-        ("i", 4) => ArrayKind::Scalar(Kind::I32),
-        ("i", 8) => ArrayKind::Scalar(Kind::I64),
-        ("u", 1) => ArrayKind::Scalar(Kind::U8),
-        ("u", 2) => ArrayKind::Scalar(Kind::U16),
-        ("u", 4) => ArrayKind::Scalar(Kind::U32),
-        ("u", 8) => ArrayKind::Scalar(Kind::U64),
-        ("f", 2) => ArrayKind::Scalar(Kind::F16),
-        ("f", 4) => ArrayKind::Scalar(Kind::F32),
-        ("f", 8) => ArrayKind::Scalar(Kind::F64),
-        ("b", 1) => ArrayKind::Scalar(Kind::Bool),
         ("M", 8) => ArrayKind::Scalar(Kind::DateTime),
         ("m", 8) => ArrayKind::Scalar(Kind::Duration),
         ("S", _) => ArrayKind::Bytes,
@@ -603,23 +632,10 @@ impl<'py> NumpySource<'py> {
         b: [u8; 8],
         budget: &dyn Checkpoint,
     ) -> PyResult<ScalarRef<'static>> {
-        Ok(match kind {
-            Kind::I8 => ScalarRef::Signed(i64::from(i8::from_ne_bytes([b[0]]))),
-            Kind::I16 => ScalarRef::Signed(i64::from(i16::from_ne_bytes([b[0], b[1]]))),
-            Kind::I32 => ScalarRef::Signed(i64::from(i32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
-            Kind::I64 => ScalarRef::Signed(i64::from_ne_bytes(b)),
-            Kind::U8 => ScalarRef::Unsigned(u64::from(b[0])),
-            Kind::U16 => ScalarRef::Unsigned(u64::from(u16::from_ne_bytes([b[0], b[1]]))),
-            Kind::U32 => {
-                ScalarRef::Unsigned(u64::from(u32::from_ne_bytes([b[0], b[1], b[2], b[3]])))
-            }
-            Kind::U64 => ScalarRef::Unsigned(u64::from_ne_bytes(b)),
-            Kind::F16 => ScalarRef::Float(half_to_f64(u16::from_ne_bytes([b[0], b[1]]))),
-            Kind::F32 => ScalarRef::Float(f64::from(f32::from_ne_bytes([b[0], b[1], b[2], b[3]]))),
-            Kind::F64 => ScalarRef::Float(f64::from_ne_bytes(b)),
-            Kind::Bool => ScalarRef::Boolean(b[0] != 0),
-            Kind::DateTime | Kind::Duration => self.temporal_fact(i64::from_ne_bytes(b), budget)?,
-        })
+        if let Some(value) = fixed_number(kind, b) {
+            return Ok(value);
+        }
+        self.temporal_fact(i64::from_ne_bytes(b), budget)
     }
 
     /// Read exact temporal storage and its qualified metadata. The shared NaT
@@ -768,7 +784,7 @@ impl<'py> NumpySource<'py> {
 
     /// Copy only this bounded native fragment, releasing its export before
     /// writers, signal checks, Python calls, or recursive field processing.
-    fn copy_source_range(
+    pub(super) fn copy_source_range(
         &self,
         row: usize,
         column: usize,
@@ -1176,11 +1192,23 @@ impl<'py> NumpySource<'py> {
         let swap = self.swap;
         let mut scratch = self.utf8.take();
         if let Some(cell) = self.owned_cell(row, column, budget)? {
-            let valid = Self::owned_unicode_text(py, cell, swap, output, budget, &mut scratch)?;
-            // The helper only retains owned UTF-8, so the cell borrow has ended
-            // before either the codec or the exceptional real getter runs.
-            let result = if valid {
-                let text = scratch.as_ref().map_or("", |scratch| scratch.text.as_str());
+            use crate::input::unicode::{SHORT_UCS4_BYTES, short_ucs4_count, short_ucs4_text};
+            let mut utf8 = [0; SHORT_UCS4_BYTES];
+            let text = if !swap && cell.len() <= SHORT_UCS4_BYTES {
+                crate::input::check(py, budget)?;
+                let count = short_ucs4_count(cell);
+                output.text_minimum(py, count)?;
+                if count != 0 {
+                    crate::input::check(py, budget)?;
+                }
+                short_ucs4_text(&cell[..count * 4], &mut utf8)
+            } else if Self::owned_unicode_text(py, cell, swap, output, budget, &mut scratch)? {
+                Some(scratch.as_ref().map_or("", |scratch| scratch.text.as_str()))
+            } else {
+                None
+            };
+            // Both results own the UTF-8 outside the cell's captured source.
+            let result = if let Some(text) = text {
                 output.text_utf8(py, text, budget)
             } else {
                 let source = self.unicode_source(row, column, budget)?;

@@ -1,7 +1,8 @@
 //! Canonical record schemas and native fields retain their original owners.
 
+use super::array::{fixed_kind, fixed_number};
 use super::mask::{Reader, State};
-use super::{NumpyArrayApi, NumpySource};
+use super::{Kind, NumpyArrayApi, NumpySource};
 use crate::errors;
 use crate::input::attribute::GetSet;
 use crate::input::cell::Target;
@@ -29,6 +30,64 @@ struct Leaf<'py> {
     mask: Option<Reader<'py>>,
 }
 
+/// A small native field in the record's own checked export, or a separately
+/// prepared source for other fields.
+#[derive(Clone, Copy)]
+enum Field {
+    Node(usize),
+    Number {
+        offset: usize,
+        width: usize,
+        kind: Kind,
+    },
+    ShortText {
+        offset: usize,
+        width: usize,
+    },
+}
+
+fn prepare_inline(
+    description: &Bound<'_, PyAny>,
+    name: &Bound<'_, PyAny>,
+    api: &NumpyArrayApi,
+    budget: &dyn Checkpoint,
+) -> PyResult<Option<Field>> {
+    let py = description.py();
+    let entry = crate::input::control::callback(py, Some(budget), || description.get_item(name))?
+        .cast_into::<PyTuple>()?;
+    let dtype = entry.get_item(0)?;
+    if !api.supports_dtype(&dtype) {
+        return Ok(None);
+    }
+    let tag = errors::attribute(&dtype, c"kind")?;
+    let tag = tag.extract::<&str>()?;
+    if !matches!(tag, "i" | "u" | "f" | "b" | "U") {
+        return Ok(None);
+    }
+    let width = errors::attribute(&dtype, c"itemsize")?.extract::<usize>()?;
+    let number = fixed_kind(tag, width);
+    let short_text = tag == "U"
+        && (4..=crate::input::unicode::SHORT_UCS4_BYTES).contains(&width)
+        && width.is_multiple_of(4);
+    if number.is_none() && !short_text {
+        return Ok(None);
+    }
+    if !errors::attribute(&dtype, c"subdtype")?.is_none()
+        || !errors::attribute(&dtype, c"isnative")?.extract::<bool>()?
+    {
+        return Ok(None);
+    }
+    let offset = entry.get_item(1)?.extract::<usize>()?;
+    Ok(Some(match number {
+        Some(kind) => Field::Number {
+            offset,
+            width,
+            kind,
+        },
+        None => Field::ShortText { offset, width },
+    }))
+}
+
 struct Record<'py> {
     owner: Bound<'py, PyAny>,
     fields: Bound<'py, PyTuple>,
@@ -39,7 +98,8 @@ struct Record<'py> {
     view: Option<Bound<'py, PyAny>>,
     mask_view: Option<Bound<'py, PyAny>>,
     scalar_mask: bool,
-    values: Vec<usize>,
+    values: Vec<Field>,
+    fixed_fields: Option<Bound<'py, PyAny>>,
 }
 
 impl<'py> Node<'py> {
@@ -154,6 +214,13 @@ impl<'py> Record<'py> {
         } else {
             None
         };
+        // Keep the optional lookup bounded and restricted to actual scalar
+        // records. No masked field or user Object slot uses this preparation.
+        let fixed_fields = if is_void && (1..=4).contains(&fields.len()) {
+            Some(errors::attribute(&dtype, c"fields")?)
+        } else {
+            None
+        };
         let mut values = Vec::new();
         values
             .try_reserve_exact(fields.len())
@@ -168,7 +235,37 @@ impl<'py> Record<'py> {
             mask_view,
             scalar_mask,
             values,
+            fixed_fields,
         }))
+    }
+
+    fn write_short_text(
+        &self,
+        (row, column): (usize, usize),
+        offset: usize,
+        width: usize,
+        target: &mut (impl Target + ?Sized),
+        budget: &dyn Checkpoint,
+    ) -> PyResult<()> {
+        use crate::input::unicode::{SHORT_UCS4_BYTES, short_ucs4_count, short_ucs4_text};
+        let py = self.owner.py();
+        let mut raw = [0; SHORT_UCS4_BYTES];
+        let raw = &mut raw[..width];
+        self.layout
+            .copy_source_range(row, column, offset, raw, budget)?;
+        let count = short_ucs4_count(raw);
+        target.text_minimum(py, count)?;
+        let mut utf8 = [0; SHORT_UCS4_BYTES];
+        if let Some(text) = short_ucs4_text(&raw[..count * 4], &mut utf8) {
+            return target.text_utf8(py, text, budget);
+        }
+        // Preserve the exact source string and error offsets for an actual
+        // surrogate using the original checked parent export.
+        let text = crate::input::unicode::from_ucs4(py, count, false, budget, |start, bytes| {
+            self.layout
+                .copy_source_range(row, column, offset + start * 4, bytes, budget)
+        })?;
+        target.text(&text, budget)
     }
 }
 
@@ -246,7 +343,7 @@ impl<'py> RecordSource<'py> {
         let mut index = 0;
         while index < nodes.len() {
             crate::input::check(py, budget)?;
-            let (view, fields, mask_view, scalar_mask) = match &mut nodes[index] {
+            let (view, fields, mask_view, scalar_mask, fixed_fields) = match &mut nodes[index] {
                 Node::Value(_) => {
                     index += 1;
                     continue;
@@ -263,6 +360,7 @@ impl<'py> RecordSource<'py> {
                         record.fields.clone(),
                         record.mask_view.take(),
                         record.scalar_mask,
+                        record.fixed_fields.take(),
                     )
                 }
             };
@@ -273,6 +371,13 @@ impl<'py> RecordSource<'py> {
                         py,
                         "NumPy record field names must be strings",
                     ));
+                }
+                if let Some(fixed_fields) = &fixed_fields
+                    && let Some(value) = prepare_inline(fixed_fields, &field, api, budget)?
+                    && let Node::Record(record) = &mut nodes[index]
+                {
+                    record.values.push(value);
+                    continue;
                 }
                 let current = crate::input::control::callback(py, Some(budget), || unsafe {
                     // SAFETY: retained view is an exact qualified ndarray.
@@ -316,7 +421,7 @@ impl<'py> RecordSource<'py> {
                 nodes.push(child);
                 if let Node::Record(record) = &mut nodes[index] {
                     // Capacity was reserved from the actual immutable schema.
-                    record.values.push(child_index);
+                    record.values.push(Field::Node(child_index));
                 }
             }
             index += 1;
@@ -425,12 +530,43 @@ impl<'py> RecordSource<'py> {
                         "NumPy record coordinate is outside its schema",
                     )
                 })?;
+                if matches!(child, Field::ShortText { .. }) {
+                    target.checkpoint(py, 1)?;
+                }
                 if !record.dtype_get.get(&record.owner)?.is(&record.dtype) {
                     return Err(super::allocation::bounds_error(py));
                 }
                 let (row, cell) = coordinate(record.layout.shape(), index);
-                record.layout.validate_record_cell(row, cell, budget)?;
-                (child, rank(record.layout.shape()))
+                match child {
+                    Field::Node(child) => {
+                        record.layout.validate_record_cell(row, cell, budget)?;
+                        (child, rank(record.layout.shape()))
+                    }
+                    Field::Number {
+                        offset,
+                        width,
+                        kind,
+                    } => {
+                        let mut bytes = [0; 8];
+                        record.layout.copy_source_range(
+                            row,
+                            cell,
+                            offset,
+                            &mut bytes[..width],
+                            budget,
+                        )?;
+                        let value = fixed_number(kind, bytes).ok_or_else(|| {
+                            errors::builtin_message::<PyTypeError>(
+                                py,
+                                "record field is outside the prepared number layout",
+                            )
+                        })?;
+                        return target.scalar(py, value);
+                    }
+                    Field::ShortText { offset, width } => {
+                        return record.write_short_text((row, cell), offset, width, target, budget);
+                    }
+                }
             }
             Node::Value(_) => {
                 return Err(errors::builtin_message::<PyTypeError>(
@@ -512,7 +648,10 @@ impl<'py> PreparedSource<'py> for RecordSource<'py> {
                             "record child is outside its fields",
                         )
                     })?;
-                    self.shape_at(*node, 0)
+                    match node {
+                        Field::Node(node) => self.shape_at(*node, 0),
+                        Field::Number { .. } | Field::ShortText { .. } => Ok(Shape::Scalar),
+                    }
                 }
                 Shape::Vector { length } if index < length => Ok(Shape::Record {
                     fields: record.fields.len(),
@@ -540,7 +679,7 @@ impl<'py> PreparedSource<'py> for RecordSource<'py> {
         if record.layout.shape() != Shape::Scalar {
             return Ok(None);
         }
-        let Some(&node) = record.values.get(index) else {
+        let Some(&Field::Node(node)) = record.values.get(index) else {
             return Ok(None);
         };
         if self.shape_at(node, 0)? != Shape::Scalar {
@@ -589,16 +728,29 @@ impl<'py> PreparedSource<'py> for RecordSource<'py> {
             Shape::Record { .. } => {
                 let node = match &self.nodes[0] {
                     Node::Record(record) => {
+                        if matches!(
+                            record.values.get(index),
+                            Some(Field::Number { .. } | Field::ShortText { .. })
+                        ) {
+                            if row != 0 {
+                                return Err(errors::builtin_message::<PyIndexError>(
+                                    record.owner.py(),
+                                    "NumPy source coordinate is outside its prepared shape",
+                                ));
+                            }
+                            return self.consume_field(0, 0, index, target, budget);
+                        }
                         if !record.dtype_get.get(&record.owner)?.is(&record.dtype) {
                             return Err(super::allocation::bounds_error(record.owner.py()));
                         }
                         record.layout.validate_record_cell(0, 0, budget)?;
-                        *record.values.get(index).ok_or_else(|| {
-                            errors::builtin_message::<PyIndexError>(
+                        let Some(&Field::Node(node)) = record.values.get(index) else {
+                            return Err(errors::builtin_message::<PyIndexError>(
                                 record.owner.py(),
                                 "record child is outside its fields",
-                            )
-                        })?
+                            ));
+                        };
+                        node
                     }
                     Node::Value(_) => {
                         return Err(errors::builtin_message::<PyTypeError>(

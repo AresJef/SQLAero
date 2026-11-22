@@ -132,6 +132,15 @@ def test_array_unicode_nul_emoji_and_actual_surrogate_error() -> None:
         assert "data[0]" in " ".join(caught.value.__notes__)
 
 
+def test_short_owned_unicode_keeps_the_original_surrogate_diagnostic() -> None:
+    text = "a\ud800b"
+    values = np.array(["中文\x00🙂"] * 33 + [text], dtype="=U16")
+    with pytest.raises(UnicodeEncodeError) as caught:
+        json_dumps(values)
+    assert (caught.value.object, caught.value.start, caught.value.end) == (text, 1, 2)
+    assert "data[33]" in " ".join(caught.value.__notes__)
+
+
 def test_array_objects_keep_structure_missing_and_true_cycle_boundaries() -> None:
     values = np.empty(2, dtype=object)
     values[:] = [{"key": [7]}, None]

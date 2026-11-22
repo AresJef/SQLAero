@@ -3,6 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 import json
 from typing import NoReturn
@@ -29,6 +30,10 @@ def record(kind: str, dtype: object, values: tuple[object, ...]) -> object:
 @pytest.mark.parametrize(("dtype", "values", "sql", "document"), [
     ([("id", "i8"), ("name", "U2")], (7, "ab"), b"(7,'ab')", b'{"id":7,"name":"ab"}'),
     ([("a", ">i8"), ("b", "<f4")], (-7, 0.5), b"(-7,0.5e0)", b'{"a":-7,"b":0.5}'),
+    ({"names": ["id", "label", "value"], "formats": ["i8", "U3", ">i2"],
+      "offsets": [1, 10, 23], "itemsize": 26},
+     (2**63 - 1, "ab", -9), b"(9223372036854775807,'ab',-9)",
+     b'{"id":9223372036854775807,"label":"ab","value":-9}'),
     ([("flag", "?")], (True,), b"(1)", b'{"flag":true}'),
     ([("at", "M8[ns]"), ("lag", "m8[ns]")],
      (np.datetime64(-1, "ns"), np.timedelta64(-1, "ns")),
@@ -45,6 +50,27 @@ def test_one_record_uses_native_fields_and_target_layout(
     value = record(kind, dtype, values)
     assert _sqlaero._encode_value(value).to_bytes() == sql
     assert json_dumps(value) == document
+
+
+@pytest.mark.parametrize("dtype", ["=U16", "=U17", ">U16"])
+def test_record_short_text_keeps_padding_embedded_nul_and_non_ascii(dtype: str) -> None:
+    text = "a\0\U0001f600'"
+    value = record("scalar", [("id", "i8"), ("tag", dtype)], (7, text))
+    assert json_dumps(value) == '{"id":7,"tag":"a\\u0000\U0001f600\'"}'.encode()
+    assert _sqlaero._encode_value(value).to_bytes() == "(7,'a\\0\U0001f600\\'')".encode()
+    empty = record("scalar", [("tag", dtype)], ("",))
+    assert json_dumps(empty) == b'{"tag":""}'
+    assert _sqlaero._encode_value(empty).to_bytes() == b"('')"
+
+
+@pytest.mark.parametrize("encode", [json_dumps, _sqlaero._encode_value])
+def test_inline_unicode_surrogate_keeps_original_exception_payload(encode: Callable[[object], object]) -> None:
+    text = "a\ud800b"
+    value = record("scalar", [("tag", "=U16")], (text,))
+    with pytest.raises(UnicodeEncodeError) as caught:
+        encode(value)
+    assert caught.value.object == text
+    assert (caught.value.start, caught.value.end) == (1, 2)
 
 
 @pytest.mark.parametrize("kind", ["record", "scalar", "zero_array"])
