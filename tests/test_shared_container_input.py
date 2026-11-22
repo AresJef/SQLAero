@@ -4,6 +4,7 @@
 from typing import Any
 from typing import cast
 from collections.abc import Callable
+import json
 
 
 import pytest
@@ -38,6 +39,28 @@ def test_true_container_subclasses_use_base_storage_for_both_targets(base: type,
     value = hostile(base, data)
     assert _sqlaero._encode_value(value).to_bytes() == sql
     assert json_dumps(value) == json
+
+
+@pytest.mark.parametrize("source", [
+    range(0),
+    range(31),
+    range(32),
+    range(-30, 40, 2),
+    range(2**63 - 1, 2**63 - 65, -2),
+    range(-2**63, -2**63 + 64),
+    range(2**63 - 16, 2**63 + 20),
+    range(0, 32 * 2**64, 2**64),
+])
+def test_range_keeps_exact_values_and_target_shapes(source: range) -> None:
+    values = [str(value).encode("ascii") for value in source]
+    sql = b"(" + b",".join(values) + b")"
+    assert _sqlaero._encode_value(source).to_bytes() == sql
+    assert json_dumps(source) == json.dumps(list(source), separators=(",", ":")).encode("ascii")
+    assert _sqlaero._bind_sql("SELECT %s", (source,)) == [b"\x03SELECT " + sql]
+    if values:
+        assert _sqlaero._bind_sql("SELECT %s", source, many=True) == [
+            b"\x03SELECT " + value for value in values
+        ]
 
 
 @pytest.mark.parametrize("base", [list, tuple, dict])

@@ -19,19 +19,19 @@ from test_public_connection import live, requires_mysql
 from _native_signal import NativeAlarm
 
 
-@pytest.mark.parametrize("kind", ["text", "bytes"])
-def test_medium_values_charge_cumulative_byte_work_before_final_publication(kind: str) -> None:
+@pytest.mark.parametrize("kind", ["text", "bytes", "range"])
+def test_medium_values_charge_cumulative_work_before_final_publication(kind: str) -> None:
     leaf: str | bytes = "a" * 32768
     if kind == "bytes":
         # Hex is twice the payload; keep the complete request below 64 MiB.
         leaf = b"a" * 16384
-    source = [leaf] * 1024
+    source = range(4_000_000) if kind == "range" else [leaf] * 1024
     original = RuntimeError("original signal during cumulative value work")
     deliveries = 0
 
     def interrupt(number: int, frame: FrameType | None) -> None:
         nonlocal deliveries
-        if frame is None or frame.f_code is not test_medium_values_charge_cumulative_byte_work_before_final_publication.__code__:
+        if frame is None or frame.f_code is not test_medium_values_charge_cumulative_work_before_final_publication.__code__:
             return
         deliveries += 1
         if deliveries < 3:

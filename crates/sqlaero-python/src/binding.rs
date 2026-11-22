@@ -2,7 +2,7 @@
 
 use crate::errors;
 use crate::input::control::Checkpoint;
-use crate::input::sequence::Sequence;
+use crate::input::sequence::{NativeIntegers, RangeSource, Sequence};
 use crate::input::source::{self, CellWriter, FragmentRole, PreparedSource, Shape};
 use crate::input::{ScalarTypes, check};
 use pyo3::prelude::*;
@@ -1772,6 +1772,11 @@ impl Visit<'_> {
                 }
                 Ok(false) => (),
             }
+            if RangeSource::recognizes(value) {
+                return self
+                    .range_source(value, output, child)
+                    .map(|()| project(FragmentRole::Row));
+            }
             match Sequence::from(value, self.types, &self.active, Some(self.budget)) {
                 Ok(sequence) => sequence,
                 Err(error) => {
@@ -1787,6 +1792,70 @@ impl Visit<'_> {
             self.native_or_unsupported(value, output, child)
                 .map(project)
         }
+    }
+
+    #[inline(never)]
+    fn range_source(
+        &mut self,
+        source: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
+        match RangeSource::prepare(source, &self.active, Some(self.budget)) {
+            Ok(RangeSource::Native(integers)) => {
+                self.native_integer_sequence(source, &integers, output, child)
+            }
+            Ok(RangeSource::Iterated(sequence)) => self.sequence(&sequence, output, child),
+            Err(error) => {
+                self.failed_value(source, child, &error);
+                Err(error)
+            }
+        }
+    }
+
+    fn native_integer_sequence(
+        &mut self,
+        source: &Bound<'_, PyAny>,
+        integers: &NativeIntegers,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
+        let py = source.py();
+        if let Some(index) = child {
+            self.path.push(index);
+        }
+        self.enter(py, source.as_ptr() as usize)?;
+        let result = (|| {
+            writer::append(output, b"(", self.context.limit)
+                .map_err(|error| errors::wire(py, error))?;
+            self.sequence_items(py, integers.length, output, |visit, index, output| {
+                if let Err(error) = visit.checkpoint(py, 1) {
+                    if visit.path.try_reserve(1).is_ok() {
+                        visit.path.push(index);
+                    }
+                    return Err(error);
+                }
+                let number = integers.value(index);
+                if let Err(wire) =
+                    sqlaero_core::bind::scalar::integer(output, number, visit.context.limit)
+                {
+                    let error = errors::wire(py, wire);
+                    if let Ok(value) = NativeIntegers::diagnostic_value(py, number) {
+                        visit.failed_value(&value, Some(index), &error);
+                    } else if visit.path.try_reserve(1).is_ok() {
+                        visit.path.push(index);
+                    }
+                    return Err(error);
+                }
+                Ok(())
+            })
+        })();
+        self.active.pop();
+        self.active_depth -= 1;
+        if result.is_ok() && child.is_some() {
+            self.path.pop();
+        }
+        result
     }
 
     // Keep canonical entry/exit on its existing inlined traversal path.

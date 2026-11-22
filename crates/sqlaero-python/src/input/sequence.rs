@@ -3,9 +3,9 @@
 use super::ScalarTypes;
 use super::control::{Checkpoint, callback};
 use crate::errors;
-use pyo3::exceptions::{PyIndexError, PyRuntimeError};
+use pyo3::exceptions::{PyIndexError, PyOverflowError, PyRuntimeError};
 use pyo3::prelude::*;
-use pyo3::types::{PyDict, PyFrozenSet, PyIterator, PyList, PySet, PyTuple};
+use pyo3::types::{PyDict, PyFrozenSet, PyInt, PyIterator, PyList, PySet, PyTuple};
 use std::cell::RefCell;
 
 /// Recognition is shared; a target selects the source projection it needs.
@@ -38,12 +38,13 @@ pub(super) fn kind(value: &Bound<'_, PyAny>, types: &ScalarTypes) -> Option<Kind
     if value.is_instance_of::<PyFrozenSet>() {
         return Some(Kind::FrozenSet);
     }
+    if is_range(value) {
+        return Some(Kind::Range);
+    }
     // SAFETY: public canonical type identities only; no object layout is read.
     unsafe {
         let pointer = value.as_ptr();
-        if pyo3::ffi::Py_IS_TYPE(pointer, &raw mut pyo3::ffi::PyRange_Type) != 0 {
-            Some(Kind::Range)
-        } else if pyo3::ffi::Py_IS_TYPE(pointer, &raw mut pyo3::ffi::PyDictKeys_Type) != 0 {
+        if pyo3::ffi::Py_IS_TYPE(pointer, &raw mut pyo3::ffi::PyDictKeys_Type) != 0 {
             Some(Kind::Keys)
         } else if pyo3::ffi::Py_IS_TYPE(pointer, &raw mut pyo3::ffi::PyDictValues_Type) != 0 {
             Some(Kind::Values)
@@ -53,6 +54,100 @@ pub(super) fn kind(value: &Bound<'_, PyAny>, types: &ScalarTypes) -> Option<Kind
             None
         }
     }
+}
+
+#[inline]
+fn is_range(value: &Bound<'_, PyAny>) -> bool {
+    // SAFETY: the attached object is live; this only tests canonical identity.
+    unsafe { pyo3::ffi::Py_IS_TYPE(value.as_ptr(), &raw mut pyo3::ffi::PyRange_Type) != 0 }
+}
+
+/// An immutable sequence whose integer values are already native.
+pub(crate) struct NativeIntegers {
+    pub(crate) length: usize,
+    start: i64,
+    step: i64,
+}
+
+pub(crate) enum RangeSource<'py> {
+    Native(NativeIntegers),
+    Iterated(Sequence<'py>),
+}
+
+impl<'py> RangeSource<'py> {
+    #[inline]
+    pub(crate) fn recognizes(source: &Bound<'_, PyAny>) -> bool {
+        is_range(source)
+    }
+
+    /// Reuse one public length and the original boundary for both outcomes.
+    pub(crate) fn prepare(
+        source: &Bound<'py, PyAny>,
+        active: &[usize],
+        budget: Option<&dyn Checkpoint>,
+    ) -> PyResult<Self> {
+        check_cycle(source, active, budget)?;
+        callback(source.py(), budget, || {
+            let length = source.len()?;
+            if let Some(integers) = NativeIntegers::from_range(source, length)? {
+                return Ok(Self::Native(integers));
+            }
+            Sequence::forward(source, length, source.try_iter()?, false).map(Self::Iterated)
+        })
+    }
+}
+
+impl NativeIntegers {
+    fn from_range(source: &Bound<'_, PyAny>, length: usize) -> PyResult<Option<Self>> {
+        if length < 32 {
+            return Ok(None);
+        }
+        let start = source.getattr(c"start")?;
+        let step = source.getattr(c"step")?;
+        if !start.is_exact_instance_of::<PyInt>() || !step.is_exact_instance_of::<PyInt>() {
+            return Ok(None);
+        }
+        let values = (|| Ok::<_, PyErr>((start.extract::<i64>()?, step.extract::<i64>()?)))();
+        let (start, step) = match values {
+            Ok(values) => values,
+            Err(error) if error.is_instance_of::<PyOverflowError>(source.py()) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        // Length has passed the public Py_ssize_t boundary. The i128
+        // product fits, and qualified endpoints cover every visited term.
+        let end = i128::from(start) + (length - 1) as i128 * i128::from(step);
+        Ok(i64::try_from(end).is_ok().then_some(Self {
+            length,
+            start,
+            step,
+        }))
+    }
+
+    /// The target iterates only the prepared length.
+    pub(crate) fn value(&self, index: usize) -> i64 {
+        (i128::from(self.start) + index as i128 * i128::from(self.step)) as i64
+    }
+
+    pub(crate) fn diagnostic_value(py: Python<'_>, value: i64) -> PyResult<Bound<'_, PyAny>> {
+        // SAFETY: the attached public constructor returns a new exact int or
+        // NULL with its original exception. Only used for failure diagnostics.
+        unsafe { Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyLong_FromLongLong(value)) }
+    }
+}
+
+fn check_cycle(
+    value: &Bound<'_, PyAny>,
+    active: &[usize],
+    budget: Option<&dyn Checkpoint>,
+) -> PyResult<()> {
+    if super::transparent::contains(value.py(), active, value.as_ptr() as usize, budget)? {
+        return Err(errors::client(
+            value.py(),
+            sqlaero_core::error::ClientErrorCode::ContainerNesting,
+            "input contains a true cycle; current request was not sent",
+        ));
+    }
+    Ok(())
 }
 
 /// Do not acquire keys for a positional consumer which needs only values.
@@ -124,19 +219,12 @@ impl Types {
                     (projected.len()?, projected.try_iter()?)
                 }
             };
-            Ok(Sequence::Iterator(super::boxed(
-                py,
-                IterSequence {
-                    owner: value.clone(),
-                    length,
-                    values_only: kind == Kind::Items && projection == Projection::Values,
-                    state: RefCell::new(IterState {
-                        iterator: Some(iterator),
-                        consumed: 0,
-                        current: None,
-                    }),
-                },
-            )?))
+            Sequence::forward(
+                value,
+                length,
+                iterator,
+                kind == Kind::Items && projection == Projection::Values,
+            )
         })
     }
 }
@@ -168,6 +256,28 @@ pub(crate) struct IterSequence<'py> {
 }
 
 impl<'py> Sequence<'py> {
+    #[inline]
+    fn forward(
+        owner: &Bound<'py, PyAny>,
+        length: usize,
+        iterator: Bound<'py, PyIterator>,
+        values_only: bool,
+    ) -> PyResult<Self> {
+        Ok(Self::Iterator(super::boxed(
+            owner.py(),
+            IterSequence {
+                owner: owner.clone(),
+                length,
+                values_only,
+                state: RefCell::new(IterState {
+                    iterator: Some(iterator),
+                    consumed: 0,
+                    current: None,
+                }),
+            },
+        )?))
+    }
+
     pub(crate) fn plain(value: &Bound<'py, PyAny>) -> PyResult<Option<Self>> {
         if value.is_exact_instance_of::<PyList>() {
             Ok(Some(Self::List(value.cast::<PyList>()?.clone())))
@@ -190,13 +300,7 @@ impl<'py> Sequence<'py> {
         let Some(kind) = kind(value, types) else {
             return Ok(None);
         };
-        if super::transparent::contains(value.py(), active, value.as_ptr() as usize, budget)? {
-            return Err(errors::client(
-                value.py(),
-                sqlaero_core::error::ClientErrorCode::ContainerNesting,
-                "input contains a true cycle; current request was not sent",
-            ));
-        }
+        check_cycle(value, active, budget)?;
         types
             .sequences
             .prepare(value, kind, Projection::Values, budget)
