@@ -2,7 +2,7 @@
 
 use super::Error;
 use sqlaero_transcode::number::{Integer, IntegerBuffer};
-use sqlaero_transcode::temporal::{Clock, Date, TimeUnit, Value};
+use sqlaero_transcode::temporal::{Clock, Date, TimeUnit, Value, fixed_calendar, fixed_clock};
 
 pub(super) fn source_error(error: sqlaero_transcode::temporal::Error) -> Error {
     match error {
@@ -53,6 +53,9 @@ impl Text {
     }
 
     fn wide_date(&mut self, year: i128, month: u8, day: u8) -> Result<(), Error> {
+        if let Some(date) = fixed_calendar(year, month, day) {
+            return self.put(&date);
+        }
         if year < 0 {
             self.put(b"-")?;
         }
@@ -64,6 +67,16 @@ impl Text {
     }
 
     fn clock(&mut self, clock: Clock) -> Result<(), Error> {
+        let mut text = [0; 15];
+        if let Some(width) = fixed_clock(
+            u128::from(clock.hour),
+            clock.minute,
+            clock.second,
+            clock.microsecond,
+            &mut text,
+        ) {
+            return self.put(&text[..width]);
+        }
         self.number(clock.hour, 2)?;
         self.put(b":")?;
         self.number(clock.minute, 2)?;

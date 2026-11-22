@@ -1,10 +1,11 @@
 //! Exact temporal tick decomposition without Python objects or floating point.
 
 use super::{
-    scalar::{FIXED_DATE_TIME_WIDTH, ScalarError, fixed_calendar, fixed_clock, fixed_date_time},
+    scalar::{FIXED_DATE_TIME_WIDTH, ScalarError, fixed_date_time},
     writer,
 };
 pub use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
+use sqlaero_transcode::temporal::{fixed_calendar, fixed_clock};
 
 /// A bounded stack formatter; all supported i128 dates fit well below 128 bytes.
 struct Stamp {

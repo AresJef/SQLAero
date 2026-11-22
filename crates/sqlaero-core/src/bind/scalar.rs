@@ -5,6 +5,7 @@ use crate::protocol::framing::WireError;
 use num_bigint::BigInt;
 use sqlaero_transcode::decimal::{Digits, Render};
 use sqlaero_transcode::number;
+use sqlaero_transcode::temporal::{fixed_calendar, fixed_clock};
 
 /// Necessary bit bound before formatting a signed value with at most 65 digits.
 /// Values at this bit width still undergo the exact decimal-length check.
@@ -229,61 +230,6 @@ fn date_body(output: &mut Vec<u8>, value: Date, limit: usize) -> Result<(), Wire
     padded(output, value.month, 2, limit)?;
     append(output, b"-", limit)?;
     padded(output, value.day, 2, limit)
-}
-
-/// The caller has established that the value fits in two decimal digits.
-fn digit_pair(value: u8) -> [u8; 2] {
-    [b'0' + value / 10, b'0' + value % 10]
-}
-
-/// Format the common four-digit nonnegative date without target delimiters.
-pub(super) fn fixed_calendar(year: i128, month: u8, day: u8) -> Option<[u8; 10]> {
-    let year = u16::try_from(year).ok()?;
-    if year >= 10_000 || month >= 100 || day >= 100 {
-        return None;
-    }
-    let [year_thousands, year_hundreds] = digit_pair((year / 100) as u8);
-    let [year_tens, year_ones] = digit_pair((year % 100) as u8);
-    let [month_tens, month_ones] = digit_pair(month);
-    let [day_tens, day_ones] = digit_pair(day);
-    Some([
-        year_thousands,
-        year_hundreds,
-        year_tens,
-        year_ones,
-        b'-',
-        month_tens,
-        month_ones,
-        b'-',
-        day_tens,
-        day_ones,
-    ])
-}
-
-/// Format a two-digit clock with its optional six-digit microsecond field.
-pub(super) fn fixed_clock(
-    hours: u128,
-    minutes: u8,
-    seconds: u8,
-    micros: u32,
-    text: &mut [u8; 15],
-) -> Option<usize> {
-    if hours >= 100 || minutes >= 100 || seconds >= 100 || micros >= 1_000_000 {
-        return None;
-    }
-    *text = *b"00:00:00.000000";
-    text[..2].copy_from_slice(&digit_pair(hours as u8));
-    text[3..5].copy_from_slice(&digit_pair(minutes));
-    text[6..8].copy_from_slice(&digit_pair(seconds));
-    let width = if micros == 0 {
-        8
-    } else {
-        text[9..11].copy_from_slice(&digit_pair((micros / 10_000) as u8));
-        text[11..13].copy_from_slice(&digit_pair((micros / 100 % 100) as u8));
-        text[13..15].copy_from_slice(&digit_pair((micros % 100) as u8));
-        15
-    };
-    Some(width)
 }
 
 pub(super) const FIXED_DATE_TIME_WIDTH: usize = 28;
