@@ -128,7 +128,10 @@ impl Api {
                 header,
                 digits,
                 plain: if unchanged_plain {
-                    Some(source.to_str()?)
+                    // SAFETY: the parse accepted only ASCII coefficient
+                    // digits, at most one point and an optional leading minus.
+                    // This branch excludes exponent text. The str stays owned.
+                    Some(unsafe { std::str::from_utf8_unchecked(bytes) })
                 } else {
                     None
                 },
