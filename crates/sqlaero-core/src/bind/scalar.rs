@@ -286,6 +286,42 @@ pub(super) fn fixed_clock(
     Some(width)
 }
 
+pub(super) const FIXED_DATE_TIME_WIDTH: usize = 28;
+
+/// Assemble a bounded date or datetime using the common decimal fields.
+pub(super) fn fixed_date_time(
+    text: &mut [u8; FIXED_DATE_TIME_WIDTH],
+    year: i128,
+    month: u8,
+    day: u8,
+    clock: Option<Clock>,
+    quoted: bool,
+) -> Option<usize> {
+    let calendar = fixed_calendar(year, month, day)?;
+    let mut end = usize::from(quoted);
+    if quoted {
+        text[0] = b'\'';
+    }
+    text[end..end + 10].copy_from_slice(&calendar);
+    end += 10;
+    if let Some(clock) = clock {
+        text[end] = b' ';
+        end += 1;
+        end += fixed_clock(
+            u128::from(clock.hour),
+            clock.minute,
+            clock.second,
+            clock.microsecond,
+            text[end..].first_chunk_mut::<15>()?,
+        )?;
+    }
+    if quoted {
+        text[end] = b'\'';
+        end += 1;
+    }
+    Some(end)
+}
+
 fn clock_body(
     output: &mut Vec<u8>,
     hours: u128,
@@ -329,21 +365,16 @@ pub fn date_time(
         // SQL writer. Otherwise keep the component writer's allocation and
         // first-failure behavior.
         if limit.min(output.capacity()).saturating_sub(output.len()) >= length {
-            let mut literal = *b"'0000-00-00 00:00:00.000000'";
-            let (prefix, tail) = literal.split_at_mut(12);
-            if let Some(calendar) = fixed_calendar(i128::from(date.year), date.month, date.day)
-                && let Some(text) = tail.first_chunk_mut::<15>()
-                && let Some(width) = fixed_clock(
-                    u128::from(clock.hour),
-                    clock.minute,
-                    clock.second,
-                    clock.microsecond,
-                    text,
-                )
-            {
-                prefix[1..11].copy_from_slice(&calendar);
-                tail[width] = b'\'';
-                output.extend_from_slice(&literal[..length]);
+            let mut literal = [0; FIXED_DATE_TIME_WIDTH];
+            if let Some(written) = fixed_date_time(
+                &mut literal,
+                i128::from(date.year),
+                date.month,
+                date.day,
+                Some(clock),
+                true,
+            ) {
+                output.extend_from_slice(&literal[..written]);
                 return Ok(());
             }
         }

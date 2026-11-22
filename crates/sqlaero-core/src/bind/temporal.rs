@@ -1,7 +1,7 @@
 //! Exact temporal tick decomposition without Python objects or floating point.
 
 use super::{
-    scalar::{ScalarError, fixed_calendar, fixed_clock},
+    scalar::{FIXED_DATE_TIME_WIDTH, ScalarError, fixed_calendar, fixed_clock, fixed_date_time},
     writer,
 };
 pub use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
@@ -117,10 +117,10 @@ pub trait MysqlTemporal {
 }
 impl MysqlTemporal for Temporal {
     fn write_literal(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError> {
-        stamp(self, true)?.finish(output, limit)
+        write_stamp(self, output, limit, true)
     }
     fn write_text(self, output: &mut Vec<u8>, limit: usize) -> Result<(), ScalarError> {
-        stamp(self, false)?.finish(output, limit)
+        write_stamp(self, output, limit, false)
     }
 }
 
@@ -234,8 +234,49 @@ pub fn decompose_date(days: i64) -> Result<Temporal, ScalarError> {
     sqlaero_transcode::temporal::decompose_date(days).map_err(source_error)
 }
 
-fn stamp(value: Temporal, quoted: bool) -> Result<Stamp, ScalarError> {
+fn write_stamp(
+    value: Temporal,
+    output: &mut Vec<u8>,
+    limit: usize,
+    quoted: bool,
+) -> Result<(), ScalarError> {
     let value = mysql_precision(value)?;
+    let mut text = [0; FIXED_DATE_TIME_WIDTH];
+    if let Some(width) = fixed_temporal(&mut text, value, quoted) {
+        return writer::append(output, &text[..width], limit).map_err(Into::into);
+    }
+    stamp(value, quoted)?.finish(output, limit)
+}
+
+fn fixed_temporal(
+    text: &mut [u8; FIXED_DATE_TIME_WIDTH],
+    value: Temporal,
+    quoted: bool,
+) -> Option<usize> {
+    match value {
+        Temporal::Date { year, month, day } => {
+            fixed_date_time(text, year, month, day, None, quoted)
+        }
+        Temporal::Datetime {
+            year,
+            month,
+            day,
+            second,
+            nanosecond,
+        } => {
+            let clock = sqlaero_transcode::temporal::Clock {
+                hour: u8::try_from(second / 3_600).ok()?,
+                minute: (second / 60 % 60) as u8,
+                second: (second % 60) as u8,
+                microsecond: nanosecond / 1000,
+            };
+            fixed_date_time(text, year, month, day, Some(clock), quoted)
+        }
+        _ => None,
+    }
+}
+
+fn stamp(value: Temporal, quoted: bool) -> Result<Stamp, ScalarError> {
     let mut stamp = Stamp::new();
     if quoted {
         stamp.append(b"'")?;
