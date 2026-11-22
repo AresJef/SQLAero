@@ -4,16 +4,15 @@
 use super::{Column, SourceTypes, inherits, invalid, numpy_source};
 use crate::input::cell::{Schema, Target};
 use crate::input::control::{self, Checkpoint};
-use crate::input::numpy::{NumpyArrayApi, NumpySource};
+use crate::input::numpy::{NumpyArrayApi, NumpySource, RowValue};
 use crate::input::source::{Child, PreparedSource, Selected, Shape};
 use crate::{errors, input};
 use pyo3::exceptions::PyIndexError;
 use pyo3::prelude::*;
 use smallvec::SmallVec;
-use sqlaero_transcode::value::ScalarRef;
 
 pub(super) enum Leaf<'py> {
-    Native(ScalarRef<'static>),
+    Native(RowValue),
     Python(Bound<'py, PyAny>),
     /// A qualified retained native source needs no Python scalar acquisition.
     Deferred(usize),
@@ -158,7 +157,7 @@ impl<'py> Multi<'py> {
         for (level, position) in self.levels.iter_mut().zip(&self.positions) {
             input::check(py, budget)?;
             let Some(position) = *position else {
-                self.values.push(Leaf::Native(ScalarRef::Null));
+                self.values.push(Leaf::Native(RowValue::MISSING));
                 continue;
             };
             if level.column.is_none() {
@@ -305,7 +304,7 @@ fn consume_leaf(
         .get(index)
         .ok_or_else(|| invalid(owner.py(), "MultiIndex label is outside its current row"))?
     {
-        Leaf::Native(value) => target.scalar(owner.py(), *value),
+        Leaf::Native(value) => target.scalar(owner.py(), value.fact()),
         Leaf::Python(value) => target.python(value, None),
         Leaf::Deferred(position) => levels
             .get_mut(index)

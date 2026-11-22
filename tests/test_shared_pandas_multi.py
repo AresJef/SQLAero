@@ -31,6 +31,26 @@ def test_missing_codes_are_actual_null_even_with_strict_nonfinite_option(length:
     assert json.loads(json_dumps(source, allow_nan=False)) == [[None, "ab"], [7, None]] * (length // 2)
 
 
+def test_actual_temporal_labels_keep_precision_and_missing_values() -> None:
+    timestamps = pd.DatetimeIndex(["2026-11-12T08:09:10.123456789", "NaT"])
+    durations = pd.TimedeltaIndex([pd.Timedelta(-1_123_456_900, unit="ns"), pd.NaT])
+    source = pd.MultiIndex(
+        levels=[timestamps, durations],
+        codes=[[0, 1, 0], [0, 0, 1]],
+        verify_integrity=False,
+    )
+
+    assert json_dumps(source, allow_nan=False) == (
+        b'[["2026-11-12T08:09:10.123456789","-PT1.1234569S"],'
+        b'[null,"-PT1.1234569S"],["2026-11-12T08:09:10.123456789",null]]'
+    )
+    assert _sqlaero._escape_projection(source, many=True) == [
+        ("'2026-11-12 08:09:10.123456'", "'-00:00:01.123456'"),
+        ("NULL", "'-00:00:01.123456'"),
+        ("'2026-11-12 08:09:10.123456'", "NULL"),
+    ]
+
+
 def test_numeric_rows_do_not_construct_python_index_scalars_or_tuples(monkeypatch: pytest.MonkeyPatch) -> None:
     source = pd.MultiIndex(levels=[pd.Index([2**64 - 1], dtype="uint64"), pd.Index([-0.0, 0.5], dtype="float64")], codes=[[0] * 40, [n % 2 for n in range(40)]])
     def forbidden(*args: object, **kwargs: object):

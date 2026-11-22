@@ -7,6 +7,8 @@
 //! such bytes no longer borrow mutable NumPy memory.
 //! Weak references guard normal resize, not arbitrary external NumPy/C writers.
 
+#[cfg(not(Py_GIL_DISABLED))]
+use super::NumpyScalar;
 use super::allocation::{Allocation, Export};
 use super::{Kind, NumpyArrayApi, half_to_f64};
 use crate::errors;
@@ -79,6 +81,49 @@ impl RawBlock {
             ))),
             Kind::F64 => Some(f64::from_ne_bytes(self.item(index, 8)?.try_into().ok()?)),
             _ => None,
+        }
+    }
+}
+
+/// A fact owned only for the current row. Free-threaded builds retain the
+/// original immediate representation to protect their shared label readers.
+#[cfg_attr(Py_GIL_DISABLED, repr(transparent))]
+pub(crate) struct RowValue(
+    #[cfg(not(Py_GIL_DISABLED))] Option<NumpyScalar>,
+    #[cfg(Py_GIL_DISABLED)] ScalarRef<'static>,
+);
+
+impl RowValue {
+    #[cfg(not(Py_GIL_DISABLED))]
+    pub(crate) const MISSING: Self = Self(None);
+
+    #[cfg(Py_GIL_DISABLED)]
+    pub(crate) const MISSING: Self = Self(ScalarRef::Null);
+
+    #[cfg(Py_GIL_DISABLED)]
+    pub(crate) fn fact(&self) -> ScalarRef<'static> {
+        self.0
+    }
+
+    #[cfg(not(Py_GIL_DISABLED))]
+    pub(crate) fn fact(&self) -> ScalarRef<'static> {
+        match self.0.as_ref() {
+            None => ScalarRef::Null,
+            Some(NumpyScalar::Signed(value)) => ScalarRef::Signed(*value),
+            Some(NumpyScalar::Unsigned(value)) => ScalarRef::Unsigned(*value),
+            Some(NumpyScalar::Float(value)) => ScalarRef::Float(*value),
+            Some(NumpyScalar::Bool(value)) => ScalarRef::Boolean(*value),
+            Some(NumpyScalar::Temporal {
+                ticks,
+                unit,
+                multiplier,
+                kind,
+            }) => ScalarRef::Ticks {
+                value: *ticks,
+                unit: *unit,
+                multiplier: *multiplier,
+                kind: *kind,
+            },
         }
     }
 }
@@ -640,17 +685,51 @@ impl<'py> NumpySource<'py> {
 
     /// Copy one native scalar fact without constructing a Python numeric
     /// object. Non-scalar storage remains with its existing immediate reader.
+    /// Retain an owned, compact fixed-width value for the current Pandas row.
+    /// Normal array and record consumers keep their existing direct facts.
     pub(crate) fn scalar_at(
         &mut self,
         row: usize,
         column: usize,
         budget: &dyn Checkpoint,
-    ) -> PyResult<Option<ScalarRef<'static>>> {
+    ) -> PyResult<Option<RowValue>> {
         let ArrayKind::Scalar(kind) = self.kind else {
             return Ok(None);
         };
         let bytes = self.cell_bytes(row, column, budget)?;
-        self.scalar_fact(kind, bytes, budget).map(Some)
+        let value = self.scalar_fact(kind, bytes, budget)?;
+        #[cfg(Py_GIL_DISABLED)]
+        {
+            Ok(Some(RowValue(value)))
+        }
+        #[cfg(not(Py_GIL_DISABLED))]
+        {
+            let value = match value {
+                ScalarRef::Null => return Ok(Some(RowValue::MISSING)),
+                ScalarRef::Signed(value) => NumpyScalar::Signed(value),
+                ScalarRef::Unsigned(value) => NumpyScalar::Unsigned(value),
+                ScalarRef::Float(value) => NumpyScalar::Float(value),
+                ScalarRef::Boolean(value) => NumpyScalar::Bool(value),
+                ScalarRef::Ticks {
+                    value,
+                    unit,
+                    multiplier,
+                    kind,
+                } => NumpyScalar::Temporal {
+                    ticks: value,
+                    unit,
+                    multiplier,
+                    kind,
+                },
+                _ => {
+                    return Err(errors::builtin_message::<PyTypeError>(
+                        self.owner.py(),
+                        "owned NumPy row values require numeric or temporal fixed-width storage",
+                    ));
+                }
+            };
+            Ok(Some(RowValue(Some(value))))
+        }
     }
 
     fn scalar_fact(

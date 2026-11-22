@@ -16,7 +16,7 @@ use sqlaero_transcode::temporal::{TimeKind, TimeUnit};
 
 mod allocation;
 mod array;
-pub(crate) use array::NumpySource;
+pub(crate) use array::{NumpySource, RowValue};
 mod record;
 pub(crate) use record::RecordSource;
 mod mask;

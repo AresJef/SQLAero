@@ -7,7 +7,7 @@ use crate::input::control::{self, Checkpoint};
 use crate::input::source::{Child, PreparedSource, Selected, Shape};
 use crate::input::{
     arrow,
-    numpy::{NumpyArrayApi, NumpySource, NumpyTypes},
+    numpy::{NumpyArrayApi, NumpySource, NumpyTypes, RowValue},
 };
 use pyo3::exceptions::{PyIndexError, PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
@@ -933,7 +933,7 @@ impl<'py> Column<'py> {
                         .cast::<pyo3::types::PyFloat>()
                         .is_ok_and(|number| number.value().is_nan())
                 {
-                    Ok(multi::Leaf::Native(ValueRef::Null))
+                    Ok(multi::Leaf::Native(RowValue::MISSING))
                 } else {
                     Ok(multi::Leaf::Python(value))
                 }
@@ -944,7 +944,7 @@ impl<'py> Column<'py> {
                 source.state.validate(budget)?;
                 if missing {
                     source.data.validate_layout(budget)?;
-                    Ok(multi::Leaf::Native(ValueRef::Null))
+                    Ok(multi::Leaf::Native(RowValue::MISSING))
                 } else {
                     Ok(source
                         .data
