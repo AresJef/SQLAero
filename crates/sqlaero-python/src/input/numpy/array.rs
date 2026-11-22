@@ -56,6 +56,7 @@ impl RawBlock {
             #[cfg(not(Py_GIL_DISABLED))]
             2 => self.copy_word::<2>(index, output),
             4 => self.copy_word::<4>(index, output),
+            8 => self.copy_word::<8>(index, output),
             width => {
                 let Some(item) = self.item(index, width) else {
                     return false;
@@ -80,9 +81,9 @@ impl RawBlock {
         true
     }
 
-    /// A checked, already owned native-endian 64-bit word.
-    fn word64(&self, index: usize) -> Option<[u8; 8]> {
-        self.item(index, 8)?.try_into().ok()
+    /// A checked, already owned native-endian signed 64-bit word.
+    fn signed64(&self, index: usize) -> Option<i64> {
+        Some(i64::from_ne_bytes(self.item(index, 8)?.try_into().ok()?))
     }
 
     /// A checked, already owned native-endian floating-point word.
@@ -1558,15 +1559,11 @@ impl NumpySource<'_> {
         {
             return output.float(py, value);
         }
-        if matches!(kind, Kind::I64 | Kind::U64)
+        if matches!(kind, Kind::I64)
             && !self.swap
-            && let Some(word) = self.copied_word64(row, column)
+            && let Some(value) = self.copied_signed64(row, column)
         {
-            return if matches!(kind, Kind::I64) {
-                output.signed(py, i64::from_ne_bytes(word))
-            } else {
-                output.scalar(py, ScalarRef::Unsigned(u64::from_ne_bytes(word)))
-            };
+            return output.signed(py, value);
         }
         let b = self.cell_bytes(row, column, budget)?;
         let value = self.scalar_fact(kind, b, budget)?;
@@ -1575,7 +1572,7 @@ impl NumpySource<'_> {
 
     /// The owned block is indexed in logical row-major order, including when
     /// its source used checked noncontiguous strides.
-    fn copied_word64(&self, row: usize, column: usize) -> Option<[u8; 8]> {
+    fn copied_signed64(&self, row: usize, column: usize) -> Option<i64> {
         let block = self.raw.as_ref()?;
         let index = match self.shape {
             Shape::Vector { length } if column == 0 && row < length => row,
@@ -1584,6 +1581,6 @@ impl NumpySource<'_> {
             }
             _ => return None,
         };
-        block.word64(index)
+        block.signed64(index)
     }
 }
