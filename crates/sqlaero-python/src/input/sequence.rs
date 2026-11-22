@@ -123,9 +123,9 @@ impl NativeIntegers {
         }))
     }
 
-    /// The target iterates only the prepared length.
-    pub(crate) fn value(&self, index: usize) -> i64 {
-        (i128::from(self.start) + index as i128 * i128::from(self.step)) as i64
+    /// Qualification proves that terms at indices below length fit in i64.
+    pub(crate) fn first_and_step(&self) -> (i64, i64) {
+        (self.start, self.step)
     }
 
     pub(crate) fn diagnostic_value(py: Python<'_>, value: i64) -> PyResult<Bound<'_, PyAny>> {

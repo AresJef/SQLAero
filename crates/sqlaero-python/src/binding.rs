@@ -1869,6 +1869,7 @@ impl Visit<'_> {
             self.path.push(index);
         }
         self.enter(py, source.as_ptr() as usize)?;
+        let (mut number, step) = integers.first_and_step();
         let result = (|| {
             writer::append(output, b"(", self.context.limit)
                 .map_err(|error| errors::wire(py, error))?;
@@ -1879,7 +1880,6 @@ impl Visit<'_> {
                     }
                     return Err(error);
                 }
-                let number = integers.value(index);
                 if let Err(wire) =
                     sqlaero_core::bind::scalar::integer(output, number, visit.context.limit)
                 {
@@ -1891,6 +1891,9 @@ impl Visit<'_> {
                     }
                     return Err(error);
                 }
+                // Only the unused post-final term can wrap. Each written
+                // value was proved to fit when the range was qualified.
+                number = number.wrapping_add(step);
                 Ok(())
             })
         })();

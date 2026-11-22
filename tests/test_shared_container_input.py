@@ -48,6 +48,8 @@ def test_true_container_subclasses_use_base_storage_for_both_targets(base: type,
     range(-30, 40, 2),
     range(2**63 - 1, 2**63 - 65, -2),
     range(-2**63, -2**63 + 64),
+    range(-2**63 + 31, -2**63 - 1, -1),
+    range(2**63 - 32, 2**63),
     range(2**63 - 16, 2**63 + 20),
     range(0, 32 * 2**64, 2**64),
 ])
