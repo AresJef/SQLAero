@@ -12,6 +12,14 @@ pub(crate) const SHORT_UCS4_BYTES: usize = 64;
 /// Locate the last occupied code point in a short, fixed-width source while
 /// keeping any NUL inside the value.
 pub(crate) fn short_ucs4_count(source: &[u8]) -> usize {
+    let (points, tail) = source.as_chunks::<4>();
+    if tail.is_empty() {
+        return points
+            .iter()
+            .rposition(|point| *point != [0; 4])
+            .map_or(0, |last| last + 1);
+    }
+    // Preserve the existing byte-level estimate for a partial last point.
     source
         .iter()
         .rposition(|byte| *byte != 0)

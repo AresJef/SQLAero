@@ -38,9 +38,13 @@ struct RawBlock {
 impl RawBlock {
     /// Resolve an owned item with one checked byte-range contract. This avoids
     /// dividing the run length by a dynamic width merely to repeat the lookup.
-    fn item(&self, index: usize, width: usize) -> Option<&[u8]> {
+    fn item_range(&self, index: usize, width: usize) -> Option<std::ops::Range<usize>> {
         let offset = index.checked_sub(self.start)?.checked_mul(width)?;
-        self.bytes.get(offset..offset.checked_add(width)?)
+        Some(offset..offset.checked_add(width)?)
+    }
+
+    fn item(&self, index: usize, width: usize) -> Option<&[u8]> {
+        self.bytes.get(self.item_range(index, width)?)
     }
 
     fn copy_item(&self, index: usize, output: &mut [u8]) -> bool {
@@ -76,9 +80,9 @@ impl RawBlock {
         true
     }
 
-    /// A checked, already owned native-endian signed 64-bit word.
-    fn signed64(&self, index: usize) -> Option<i64> {
-        Some(i64::from_ne_bytes(self.item(index, 8)?.try_into().ok()?))
+    /// A checked, already owned native-endian 64-bit word.
+    fn word64(&self, index: usize) -> Option<[u8; 8]> {
+        self.item(index, 8)?.try_into().ok()
     }
 
     /// A checked, already owned native-endian floating-point word.
@@ -1085,13 +1089,16 @@ impl<'py> NumpySource<'py> {
             if let (Some(total), Some(index)) = (total, index)
                 && total >= RAW_BLOCK_MINIMUM
             {
-                if !self
-                    .raw
-                    .as_ref()
-                    .is_some_and(|block| block.item(index, self.width).is_some())
-                {
-                    self.read_block(index, total, columns, budget)?;
+                // Keep the checked range across the refill decision instead
+                // of doing offset arithmetic twice for the same owned cell.
+                let cached = self.raw.as_ref().and_then(|block| {
+                    let range = block.item_range(index, self.width)?;
+                    (range.end <= block.bytes.len()).then_some(range)
+                });
+                if let Some(range) = cached {
+                    return Ok(self.raw.as_ref().and_then(|block| block.bytes.get(range)));
                 }
+                self.read_block(index, total, columns, budget)?;
                 return Ok(self
                     .raw
                     .as_ref()
@@ -1551,11 +1558,15 @@ impl NumpySource<'_> {
         {
             return output.float(py, value);
         }
-        if matches!(kind, Kind::I64)
+        if matches!(kind, Kind::I64 | Kind::U64)
             && !self.swap
-            && let Some(value) = self.copied_signed64(row, column)
+            && let Some(word) = self.copied_word64(row, column)
         {
-            return output.signed(py, value);
+            return if matches!(kind, Kind::I64) {
+                output.signed(py, i64::from_ne_bytes(word))
+            } else {
+                output.scalar(py, ScalarRef::Unsigned(u64::from_ne_bytes(word)))
+            };
         }
         let b = self.cell_bytes(row, column, budget)?;
         let value = self.scalar_fact(kind, b, budget)?;
@@ -1564,7 +1575,7 @@ impl NumpySource<'_> {
 
     /// The owned block is indexed in logical row-major order, including when
     /// its source used checked noncontiguous strides.
-    fn copied_signed64(&self, row: usize, column: usize) -> Option<i64> {
+    fn copied_word64(&self, row: usize, column: usize) -> Option<[u8; 8]> {
         let block = self.raw.as_ref()?;
         let index = match self.shape {
             Shape::Vector { length } if column == 0 && row < length => row,
@@ -1573,6 +1584,6 @@ impl NumpySource<'_> {
             }
             _ => return None,
         };
-        block.signed64(index)
+        block.word64(index)
     }
 }
