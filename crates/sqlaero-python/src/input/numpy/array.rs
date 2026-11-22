@@ -1565,6 +1565,23 @@ impl NumpySource<'_> {
         {
             return output.signed(py, value);
         }
+        // A checked copy already owns complete native vector words. Reuse
+        // them directly without going through the generic eight-byte scratch.
+        if matches!(kind, Kind::I32 | Kind::U32)
+            && !self.swap
+            && column == 0
+            && matches!(self.shape, Shape::Vector { length } if row < length)
+            && let Some(word) = self
+                .raw
+                .as_ref()
+                .and_then(|block| block.item(row, 4)?.try_into().ok())
+        {
+            return if matches!(kind, Kind::I32) {
+                output.signed(py, i64::from(i32::from_ne_bytes(word)))
+            } else {
+                output.scalar(py, ScalarRef::Unsigned(u64::from(u32::from_ne_bytes(word))))
+            };
+        }
         let b = self.cell_bytes(row, column, budget)?;
         let value = self.scalar_fact(kind, b, budget)?;
         output.scalar(py, value)
