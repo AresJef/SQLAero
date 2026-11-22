@@ -3,6 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 
+from datetime import date
 from uuid import UUID
 import re
 
@@ -29,6 +30,14 @@ def test_uuid_canonical_text_for_sql_json_and_keys(value: UUID, text: str) -> No
     match=re.fullmatch(rb"CAST\(X'([0-9a-fA-F]*)' AS BINARY\)",binary)
     assert match is not None
     assert bytes.fromhex(match.group(1).decode())==value.bytes
+
+
+def test_generated_json_strings_preserve_array_and_object_state() -> None:
+    value = UUID(int=7)
+    assert json_dumps([value, date(2026, 11, 22), {"nested": value}, False]) == (
+        b'["00000000-0000-0000-0000-000000000007","2026-11-22",'
+        b'{"nested":"00000000-0000-0000-0000-000000000007"},false]'
+    )
 
 
 def test_true_uuid_subclass_ignores_replaced_int_and_display() -> None:

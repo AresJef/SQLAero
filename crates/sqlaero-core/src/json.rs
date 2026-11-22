@@ -448,6 +448,24 @@ impl Writer {
         Ok(())
     }
 
+    /// Reserve and append a canonical UUID with its full JSON delimiter.
+    #[inline(never)]
+    fn uuid(&mut self, value: u128) -> Result<(), Error> {
+        let uuid = sqlaero_transcode::identifier::UuidText::new(value);
+        let text = uuid.as_str();
+        let comma = self.value_delimiter()?;
+        self.output
+            .try_reserve(text.len() + 2 + usize::from(comma))
+            .map_err(CapacityError::Allocation)?;
+        if comma {
+            self.output.push(',');
+        }
+        self.output.push('"');
+        self.output.push_str(text);
+        self.output.push('"');
+        Ok(())
+    }
+
     /// Start one exact integer; callers may return control between digit blocks.
     /// # Errors
     /// Propagates an actual writer-state or output-capacity error.
@@ -554,10 +572,7 @@ impl Consumer for Writer {
                     return Ok(());
                 }
                 ScalarRef::Uuid(value) => {
-                    let text = sqlaero_transcode::identifier::UuidText::new(value);
-                    writer.string_start(Some(36), false)?;
-                    writer.string_fragment(text.as_str())?;
-                    return writer.string_end();
+                    return writer.uuid(value);
                 }
                 ScalarRef::Date(date) => {
                     return writer.temporal(temporal::Text::calendar(date, None, None)?);
