@@ -62,6 +62,11 @@ impl RawBlock {
         }
     }
 
+    /// A checked, already owned native-endian signed 64-bit word.
+    fn signed64(&self, index: usize) -> Option<i64> {
+        Some(i64::from_ne_bytes(self.item(index, 8)?.try_into().ok()?))
+    }
+
     /// A checked, already owned native-endian floating-point word.
     fn float(&self, index: usize, kind: Kind) -> Option<f64> {
         match kind {
@@ -1361,6 +1366,14 @@ impl NumpySource<'_> {
             && let Some(value) = self.raw.as_ref().and_then(|block| block.float(row, kind))
         {
             return output.float(py, value);
+        }
+        if matches!(kind, Kind::I64)
+            && !self.swap
+            && column == 0
+            && matches!(self.shape, Shape::Vector { length } if row < length)
+            && let Some(value) = self.raw.as_ref().and_then(|block| block.signed64(row))
+        {
+            return output.signed(py, value);
         }
         let b = self.cell_bytes(row, column, budget)?;
         let value = self.scalar_fact(kind, b, budget)?;

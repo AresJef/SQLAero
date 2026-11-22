@@ -77,6 +77,21 @@ def test_non_native_order_arrays_preserve_actual_values(dtype: str) -> None:
     assert json.loads(json_dumps(values)) == [[1, 2], [3, 4]]
 
 
+@pytest.mark.parametrize("reverse", [False, True])
+def test_signed64_extrema_across_owned_block_boundaries(reverse: bool) -> None:
+    expected = list(range(1027))
+    expected[1] = -(1 << 63)
+    expected[1023] = (1 << 63) - 1
+    expected[1024] = -7
+    values = np.array(expected, dtype="=i8")
+    if reverse:
+        values = values[::-1]
+        expected.reverse()
+    assert json_dumps(values) == json.dumps(expected, separators=(",", ":")).encode("ascii")
+    sql = "(" + ",".join(map(str, expected)) + ")"
+    assert _sqlaero._encode_value(values).to_bytes() == sql.encode("ascii")
+
+
 def test_actual_float_width_nonfinite_and_negative_zero_policies() -> None:
     assert json_dumps(np.array([0.1], dtype="f4")) == b"[0.10000000149011612]"
     for dtype in ["f2", "f4", "f8"]:
