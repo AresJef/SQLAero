@@ -92,6 +92,21 @@ def test_signed64_extrema_across_owned_block_boundaries(reverse: bool) -> None:
     assert _sqlaero._encode_value(values).to_bytes() == sql.encode("ascii")
 
 
+@pytest.mark.parametrize("layout", ["contiguous", "reversed", "transposed"])
+def test_signed64_table_extrema_across_owned_block_boundaries(layout: str) -> None:
+    values = np.arange(31 * 35, dtype="=i8").reshape(31, 35)
+    values[0, 0] = -(1 << 63)
+    values[29, 8] = (1 << 63) - 1
+    values[29, 9] = -7
+    if layout == "reversed":
+        values = values[::-1, ::-1]
+    elif layout == "transposed":
+        values = values.T
+    expected = values.tolist()
+    assert json_dumps(values) == json.dumps(expected, separators=(",", ":")).encode("ascii")
+    assert _sqlaero._escape_projection(values) == [tuple(map(str, row)) for row in expected]
+
+
 def test_actual_float_width_nonfinite_and_negative_zero_policies() -> None:
     assert json_dumps(np.array([0.1], dtype="f4")) == b"[0.10000000149011612]"
     for dtype in ["f2", "f4", "f8"]:

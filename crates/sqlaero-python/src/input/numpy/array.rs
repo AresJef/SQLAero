@@ -1395,14 +1395,26 @@ impl NumpySource<'_> {
         }
         if matches!(kind, Kind::I64)
             && !self.swap
-            && column == 0
-            && matches!(self.shape, Shape::Vector { length } if row < length)
-            && let Some(value) = self.raw.as_ref().and_then(|block| block.signed64(row))
+            && let Some(value) = self.copied_signed64(row, column)
         {
             return output.signed(py, value);
         }
         let b = self.cell_bytes(row, column, budget)?;
         let value = self.scalar_fact(kind, b, budget)?;
         output.scalar(py, value)
+    }
+
+    /// The owned block is indexed in logical row-major order, including when
+    /// its source used checked noncontiguous strides.
+    fn copied_signed64(&self, row: usize, column: usize) -> Option<i64> {
+        let block = self.raw.as_ref()?;
+        let index = match self.shape {
+            Shape::Vector { length } if column == 0 && row < length => row,
+            Shape::Table { rows, columns } if row < rows && column < columns => {
+                row.checked_mul(columns)?.checked_add(column)?
+            }
+            _ => return None,
+        };
+        block.signed64(index)
     }
 }
