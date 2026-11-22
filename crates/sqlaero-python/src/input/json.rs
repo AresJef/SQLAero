@@ -2,7 +2,10 @@
 
 use super::primitive::{self, Source};
 use super::sequence::{Kind, Projection};
-use std::collections::{HashMap, hash_map::RandomState};
+use std::collections::{
+    HashMap,
+    hash_map::{Entry, RandomState},
+};
 
 mod keys;
 mod output;
@@ -17,6 +20,7 @@ use pyo3::class::{PyTraverseError, PyVisit};
 use pyo3::exceptions::{PyOverflowError, PyTypeError, PyValueError};
 use pyo3::prelude::*;
 use pyo3::types::{PyBytes, PyInt};
+use smallvec::SmallVec;
 use sqlaero_core::bind::Context;
 use sqlaero_core::json::{Error, Options};
 use sqlaero_transcode::diagnostic::{Coordinate, Path};
@@ -337,8 +341,14 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
             .types
             .sequences
             .prepare(value, kind, projection, self.budget)?;
-        let mut names: HashMap<u64, Vec<String>> = HashMap::new();
-        let seed = RandomState::new();
+        // Arrays need no key state. Keep the customary single name inline;
+        // a genuine hash collision retains all its full names for comparison.
+        let mut object_keys = object.then(|| {
+            (
+                HashMap::<u64, SmallVec<[String; 1]>>::new(),
+                RandomState::new(),
+            )
+        });
         for index in 0..sequence.len() {
             let entry = path.child(if object {
                 Coordinate::Key(index)
@@ -350,17 +360,18 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
                     super::checkpoint(py, self.budget)?;
                 }
                 let current = sequence.row_item(index, self.budget)?;
-                if object {
+                if let Some((names, seed)) = &mut object_keys {
                     let (source_key, source_value) = if let Some(record) = &record {
                         (record.get(index)?, current)
                     } else {
                         let pair = current.cast::<pyo3::types::PyTuple>()?;
                         (pair.get_item(0)?, pair.get_item(1)?)
                     };
-                    let key = keys::read(&source_key, self.types, self.budget, &seed)?;
+                    let key = keys::read(&source_key, self.types, self.budget, seed)?;
                     names.try_reserve(1).map_err(|_| errors::memory_error(py))?;
-                    if let Some(previous) = names.get(&key.hash) {
-                        for name in previous {
+                    let bucket = names.entry(key.hash);
+                    if let Entry::Occupied(entry) = &bucket {
+                        for name in entry.get() {
                             if keys::same(py, name, &key.value, self.budget)? {
                                 return Err(errors::builtin_format::<PyValueError>(
                                     py,
@@ -387,7 +398,9 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
                         ordinal: index,
                     });
                     self.value_at(&source_value, &child)?;
-                    let previous = names.entry(key.hash).or_default();
+                    // Keep this object's bucket across its value write. The
+                    // recursive visit owns separate key maps for its children.
+                    let previous = bucket.or_default();
                     previous
                         .try_reserve(1)
                         .map_err(|_| errors::memory_error(py))?;
