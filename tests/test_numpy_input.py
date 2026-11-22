@@ -1046,6 +1046,17 @@ def test_numpy_owned_binary_cell_keeps_padding_and_fragment_boundaries(content: 
     assert _sqlaero._bind_sql("SELECT %s", value, many=True) == [b"\x03SELECT " + literal] * 33
 
 
+def test_numpy_owned_s16_keeps_every_last_byte_and_embedded_nul() -> None:
+    pattern = [b"\x00" * index + b"\x81" for index in range(16)]
+    pattern.extend((b"", b"A\x00\x80\x00", b"\x00" * 16))
+    expected = list(reversed(pattern * 65))
+    values = np.array(pattern * 65, dtype="S16")[::-1]
+    assert _sqlaero._bind_sql("SELECT %s", values, many=True) == [
+        b"\x03SELECT CAST(X'" + value.rstrip(b"\x00").hex().upper().encode("ascii") + b"' AS BINARY)"
+        for value in expected
+    ]
+
+
 def test_numpy_owned_binary_cell_keeps_the_request_limit_and_failure_position() -> None:
     from sqlaero._sqlaero import OperationalError
     value = np.full(33, b"a\x00b", dtype="S16")

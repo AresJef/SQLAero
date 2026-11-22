@@ -1149,17 +1149,25 @@ impl<'py> NumpySource<'py> {
         if let Some(cell) = self.owned_cell(row, column, budget)? {
             // Preserve the original reverse padding windows and write checks,
             // but borrow the already owned cell rather than copying it twice.
-            let mut length = 0;
-            let mut end = cell.len();
-            while end > 0 {
+            let length = if let Ok(bytes) = <[u8; 16]>::try_from(cell) {
                 crate::input::check(py, budget)?;
-                let start = end.saturating_sub(4096);
-                if let Some(last) = cell[start..end].iter().rposition(|byte| *byte != 0) {
-                    length = start + last + 1;
-                    break;
+                // Little-endian assembly puts the last nonzero byte in
+                // the highest occupied position, regardless of host order.
+                (u128::BITS - u128::from_le_bytes(bytes).leading_zeros()).div_ceil(8) as usize
+            } else {
+                let mut end = cell.len();
+                loop {
+                    if end == 0 {
+                        break 0;
+                    }
+                    crate::input::check(py, budget)?;
+                    let start = end.saturating_sub(4096);
+                    if let Some(last) = cell[start..end].iter().rposition(|byte| *byte != 0) {
+                        break start + last + 1;
+                    }
+                    end = start;
                 }
-                end = start;
-            }
+            };
             output.bytes_start(py, length)?;
             for fragment in cell[..length].chunks(4096) {
                 crate::input::check(py, budget)?;
