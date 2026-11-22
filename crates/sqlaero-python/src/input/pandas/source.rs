@@ -363,7 +363,9 @@ impl SourceTypes {
             let start = control::callback(py, Some(budget), || errors::attribute(index, c"start"))?;
             let step = control::callback(py, Some(budget), || errors::attribute(index, c"step"))?;
             let native = match native_integer(&start)? {
-                Some(start) => native_integer(&step)?.map(|step| (start, step)),
+                Some(start) => {
+                    native_integer(&step)?.map(|step| RangeValues::new(start, step, length))
+                }
                 None => None,
             };
             return Ok(Column::Range {
@@ -778,7 +780,7 @@ enum Column<'py> {
     Range {
         owner: Bound<'py, PyAny>,
         length: usize,
-        native: Option<(i128, i128)>,
+        native: Option<RangeValues>,
     },
     Categorical(Box<Category<'py>>),
     Time {
@@ -786,6 +788,26 @@ enum Column<'py> {
         length: usize,
         offset: Box<OffsetSource<'py>>,
     },
+}
+
+enum RangeValues {
+    Compact { start: i64, step: i64 },
+    Wide { start: i128, step: i128 },
+}
+
+impl RangeValues {
+    fn new(start: i128, step: i128, length: usize) -> Self {
+        let offset = length.saturating_sub(1) as i128;
+        if let (Ok(start), Ok(step)) = (i64::try_from(start), i64::try_from(step))
+            && offset
+                .checked_mul(i128::from(step))
+                .and_then(|last| last.checked_add(i128::from(start)))
+                .is_some_and(|last| i64::try_from(last).is_ok())
+        {
+            return Self::Compact { start, step };
+        }
+        Self::Wide { start, step }
+    }
 }
 
 impl Column<'_> {
@@ -847,9 +869,26 @@ impl Column<'_> {
                     target.python(&value, None)
                 }
             }
-            Self::Range { owner, native, .. } => {
-                if let Some(value) = native
-                    .and_then(|(start, step)| (row as i128).checked_mul(step)?.checked_add(start))
+            Self::Range {
+                owner,
+                length,
+                native,
+            } => {
+                if let Some(RangeValues::Compact { start, step }) = native
+                    && row < *length
+                {
+                    // Both endpoints fit i64, so every selected sum fits even
+                    // when its product alone overflows. Modular arithmetic
+                    // therefore gives the exact signed term.
+                    return target.signed(
+                        owner.py(),
+                        start.wrapping_add(step.wrapping_mul(row as i64)),
+                    );
+                }
+                if let Some(RangeValues::Wide { start, step }) = native
+                    && let Some(value) = (row as i128)
+                        .checked_mul(*step)
+                        .and_then(|delta| delta.checked_add(*start))
                 {
                     if let Ok(value) = i64::try_from(value) {
                         return target.scalar(owner.py(), ValueRef::Signed(value));

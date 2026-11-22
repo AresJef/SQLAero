@@ -625,6 +625,8 @@ def test_pandas_range_index_beyond_native_integer_width_uses_its_exact_values() 
     pytest.param(-(2**127), -(2**127) + 2, 1, id="i128-minimum"),
     pytest.param(2**127 - 2, 2**127 + 4, 3, id="checked-add-overflow"),
     pytest.param(-(2**127) + 1, -(2**127) - 5, -3, id="checked-add-underflow"),
+    pytest.param(-(2**63), 2**63 - 1, 2**62, id="compact-product-overflow-with-final-cancellation"),
+    pytest.param(2**63 - 1, -(2**63), -(2**62), id="compact-product-underflow-with-final-cancellation"),
     pytest.param(-(2**127), 2**127 - 1, 2**127 - 1, id="checked-product-overflow-with-final-cancellation"),
     pytest.param(0, 2**131, 2**130, id="step-wider-than-i128"),
     pytest.param(2**130, 2**130, -1, id="empty-wide-start"),
