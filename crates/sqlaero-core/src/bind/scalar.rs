@@ -323,6 +323,31 @@ pub fn date_time(
     clock: Option<Clock>,
     limit: usize,
 ) -> Result<(), WireError> {
+    if let Some(clock) = clock {
+        let length = if clock.microsecond == 0 { 21 } else { 28 };
+        // A whole literal can reuse space already reserved by the surrounding
+        // SQL writer. Otherwise keep the component writer's allocation and
+        // first-failure behavior.
+        if limit.min(output.capacity()).saturating_sub(output.len()) >= length {
+            let mut literal = *b"'0000-00-00 00:00:00.000000'";
+            let (prefix, tail) = literal.split_at_mut(12);
+            if let Some(calendar) = fixed_calendar(i128::from(date.year), date.month, date.day)
+                && let Some(text) = tail.first_chunk_mut::<15>()
+                && let Some(width) = fixed_clock(
+                    u128::from(clock.hour),
+                    clock.minute,
+                    clock.second,
+                    clock.microsecond,
+                    text,
+                )
+            {
+                prefix[1..11].copy_from_slice(&calendar);
+                tail[width] = b'\'';
+                output.extend_from_slice(&literal[..length]);
+                return Ok(());
+            }
+        }
+    }
     let delimiter = if clock.is_some() { b' ' } else { b'\'' };
     let mut prefix = *b"'0000-00-00'";
     if limit.saturating_sub(output.len()) >= prefix.len()
@@ -431,6 +456,49 @@ fn clock_literal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn datetime_literal_preserves_microseconds_and_component_limits() {
+        let date = Date {
+            year: 2024,
+            month: 2,
+            day: 29,
+        };
+        let clock = Clock {
+            hour: 23,
+            minute: 59,
+            second: 58,
+            microsecond: 7,
+        };
+        for (clock, expected) in [
+            (clock, "x'2024-02-29 23:59:58.000007'"),
+            (
+                Clock {
+                    microsecond: 0,
+                    ..clock
+                },
+                "x'2024-02-29 23:59:58'",
+            ),
+        ] {
+            for capacity in [1, expected.len()] {
+                let mut output = Vec::with_capacity(capacity);
+                output.push(b'x');
+                date_time(&mut output, date, Some(clock), expected.len()).unwrap();
+                assert_eq!(output, expected.as_bytes());
+            }
+        }
+
+        let mut limited = Vec::with_capacity(29);
+        limited.push(b'x');
+        assert!(matches!(
+            date_time(&mut limited, date, Some(clock), 14),
+            Err(WireError::Limit {
+                required: 15,
+                limit: 14
+            })
+        ));
+        assert_eq!(limited, b"x'2024-02-29 ");
+    }
 
     #[test]
     fn clock_block_preserves_fraction_wide_hours_and_request_limit_diagnostics() {
