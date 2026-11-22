@@ -1,11 +1,10 @@
 //! Borrowed native compound cells. A projection retains the original owner
 //! and array; it never builds Python rows or a normalized Rust value tree.
 
-use super::native::Sequence;
 use super::schema::View as TypeView;
 use super::{
-    ArrayRef, DataType, Int64Array, Int64Views, Read, StructArray, consume_scalar,
-    dictionary_label, invalid, names,
+    ArrayRef, Int64Array, Int64Views, Read, StructArray, consume_scalar, dictionary_label, invalid,
+    names,
 };
 use crate::input::cell::Target;
 use crate::input::control::Checkpoint;
@@ -50,7 +49,7 @@ impl<'a> Kind<'a> {
                 // The parent already validated its range. Borrow one typed
                 // child from the same owned array for the complete list.
                 if length > 1
-                    && values.data_type().is_scalar(&DataType::Int64)
+                    && let ArrayRef::Leaf(values) = values
                     && let Some(values) = values.as_any().downcast_ref::<Int64Array>()
                 {
                     Self::Int64Slice {
@@ -109,43 +108,29 @@ fn kind<'a>(py: Python<'_>, array: &'a ArrayRef, index: usize) -> PyResult<Kind<
     if array.is_null(index) {
         return Ok(Kind::Scalar);
     }
-    let (values, start, end) = match array.data_type() {
-        TypeView::Struct(_) => {
-            return array
-                .as_any()
-                .downcast_ref::<StructArray>()
-                .map(Kind::Record)
-                .ok_or_else(|| invalid(py, "Arrow Struct physical type differs"));
-        }
+    match array.data_type() {
+        TypeView::Struct(_) => array
+            .as_any()
+            .downcast_ref::<StructArray>()
+            .map(Kind::Record)
+            .ok_or_else(|| invalid(py, "Arrow Struct physical type differs")),
         TypeView::List(_) | TypeView::LargeList(_) | TypeView::FixedSizeList(_, _) => {
-            let values = array
-                .as_any()
-                .downcast_ref::<Sequence>()
-                .ok_or_else(|| invalid(py, "Arrow list physical type differs"))?;
+            let ArrayRef::Sequence(values) = array else {
+                return Err(invalid(py, "Arrow list physical type differs"));
+            };
             let (start, end) = values
                 .range(index)
                 .ok_or_else(|| invalid(py, "Arrow list offsets are outside the values array"))?;
-            (values.values(), Some(start), Some(end))
+            // The existing range reader checked both offset order and the
+            // upper bound against this same retained child.
+            Ok(Kind::Slice {
+                values: values.values(),
+                start,
+                length: end - start,
+            })
         }
-        _ => return Ok(Kind::Scalar),
-    };
-    let (Some(start), Some(end)) = (start, end) else {
-        return Err(invalid(
-            py,
-            "Arrow list offsets are negative or overflow usize",
-        ));
-    };
-    if start > end || end > values.len() {
-        return Err(invalid(
-            py,
-            "Arrow list offsets are outside the values array",
-        ));
+        _ => Ok(Kind::Scalar),
     }
-    Ok(Kind::Slice {
-        values,
-        start,
-        length: end - start,
-    })
 }
 
 pub(super) fn shape(
@@ -177,7 +162,7 @@ pub(super) fn consume<'py>(
             read.offsets,
         );
     }
-    if target.needs_field_names() {
+    if matches!(array, ArrayRef::Dictionary(_)) && target.needs_field_names() {
         read.dictionary(array.data_type(), true, budget)?;
     }
     target.source(
@@ -217,7 +202,7 @@ pub(super) fn consume_child<'py>(
             read.offsets,
         );
     }
-    if target.needs_field_names() {
+    if matches!(array, ArrayRef::Dictionary(_)) && target.needs_field_names() {
         read.dictionary(array.data_type(), true, budget)?;
     }
     consume_selected_child(read, &selected, index, row, column, target, budget)
