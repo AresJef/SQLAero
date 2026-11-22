@@ -155,7 +155,10 @@ fn scaled(ticks: i64, multiplier: u64) -> Result<i128, Error> {
 }
 
 /// Split an exact fixed-unit value into mathematical floor seconds and fraction.
-fn seconds(value: i128, unit: TimeUnit) -> Result<(i128, u32, usize), Error> {
+fn seconds<const SIGNED_EPOCH: bool>(
+    value: i128,
+    unit: TimeUnit,
+) -> Result<(i128, u32, usize), Error> {
     let factor = match unit {
         TimeUnit::Week => 604_800,
         TimeUnit::Day => 86_400,
@@ -163,25 +166,37 @@ fn seconds(value: i128, unit: TimeUnit) -> Result<(i128, u32, usize), Error> {
         TimeUnit::Minute => 60,
         TimeUnit::Second => 1,
         TimeUnit::Millisecond => {
-            return Ok((value.div_euclid(1_000), value.rem_euclid(1_000) as u32, 3));
+            return Ok(split_fraction::<SIGNED_EPOCH>(value, 1_000, 3));
         }
         TimeUnit::Microsecond => {
-            return Ok((
-                value.div_euclid(1_000_000),
-                value.rem_euclid(1_000_000) as u32,
-                6,
-            ));
+            return Ok(split_fraction::<SIGNED_EPOCH>(value, 1_000_000, 6));
         }
         TimeUnit::Nanosecond => {
-            return Ok((
-                value.div_euclid(1_000_000_000),
-                value.rem_euclid(1_000_000_000) as u32,
-                9,
-            ));
+            return Ok(split_fraction::<SIGNED_EPOCH>(value, 1_000_000_000, 9));
         }
         _ => return Err(Error::Range("finite temporal unit is not supported")),
     };
     Ok((value.checked_mul(factor).ok_or_else(range)?, 0, 0))
+}
+
+fn split_fraction<const SIGNED_EPOCH: bool>(
+    value: i128,
+    divisor: i64,
+    precision: usize,
+) -> (i128, u32, usize) {
+    // Keep the usual source-width division when scaling still fits i64.
+    // The positive, subsecond divisors above keep either remainder in u32.
+    if SIGNED_EPOCH && let Ok(value) = i64::try_from(value) {
+        let second = value.div_euclid(divisor);
+        let fraction = value.rem_euclid(divisor);
+        return (i128::from(second), fraction as u32, precision);
+    }
+    let divisor = i128::from(divisor);
+    (
+        value.div_euclid(divisor),
+        value.rem_euclid(divisor) as u32,
+        precision,
+    )
 }
 
 fn civil(days: i128) -> Result<(i128, u8, u8), Error> {
@@ -242,7 +257,7 @@ pub fn decompose(
                     )
                 }
                 _ => {
-                    let (seconds, part, precision) = seconds(value, unit)?;
+                    let (seconds, part, precision) = seconds::<true>(value, unit)?;
                     let (year, month, day) = civil(seconds.div_euclid(86_400))?;
                     (
                         year,
@@ -272,7 +287,7 @@ pub fn decompose(
                     unit,
                 });
             }
-            let (second, part, precision) = seconds(absolute, unit)?;
+            let (second, part, precision) = seconds::<false>(absolute, unit)?;
             Ok(Value::Duration {
                 negative,
                 second: second as u128,
@@ -293,7 +308,7 @@ pub fn decompose_utc(
     multiplier: u64,
     offset_micros: i128,
 ) -> Result<Value, Error> {
-    let (second, part, precision) = seconds(scaled(ticks, multiplier)?, unit)?;
+    let (second, part, precision) = seconds::<true>(scaled(ticks, multiplier)?, unit)?;
     let fraction =
         i128::from(nanoseconds(part, precision)) + offset_micros.rem_euclid(1_000_000) * 1000;
     let second = second
@@ -317,7 +332,7 @@ pub fn decompose_utc(
 pub fn decompose_clock(ticks: i64, unit: TimeUnit, multiplier: u64) -> Result<Value, Error> {
     let value = scaled(ticks, multiplier)?;
     let absolute = value.checked_abs().ok_or_else(range)?;
-    let (second, part, precision) = seconds(absolute, unit)?;
+    let (second, part, precision) = seconds::<false>(absolute, unit)?;
     Ok(Value::Clock {
         negative: value < 0,
         second: second as u128,
@@ -394,6 +409,40 @@ pub fn fixed_clock(
 #[cfg(test)]
 mod utc_tests {
     use super::*;
+
+    #[test]
+    fn subsecond_division_keeps_floor_and_fraction_across_source_width() {
+        let low = i128::from(i64::MIN);
+        let high = i128::from(i64::MAX);
+        for (unit, divisor, precision) in [
+            (TimeUnit::Millisecond, 1_000, 3),
+            (TimeUnit::Microsecond, 1_000_000, 6),
+            (TimeUnit::Nanosecond, 1_000_000_000, 9),
+        ] {
+            for value in [
+                i128::MIN,
+                low - 1,
+                low,
+                low + 1,
+                -1,
+                0,
+                1,
+                high - 1,
+                high,
+                high + 1,
+                i128::MAX,
+            ] {
+                let signed_epoch = seconds::<true>(value, unit).unwrap();
+                let absolute_clock = seconds::<false>(value, unit).unwrap();
+                let remainder = value.rem_euclid(divisor);
+                assert_eq!(
+                    signed_epoch,
+                    (value.div_euclid(divisor), remainder as u32, precision,)
+                );
+                assert_eq!(absolute_clock, signed_epoch);
+            }
+        }
+    }
 
     #[test]
     fn civil_matches_an_independent_full_gregorian_cycle_and_wide_era_shifts() {
