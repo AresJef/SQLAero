@@ -346,29 +346,36 @@ pub(crate) fn write<C: Consumer + ?Sized>(
     };
     if length <= CHARACTERS {
         super::control::bytes(py, budget, length.saturating_mul(4))?;
-        let text = source.to_str().map_err(|original| {
-            if !original.is_instance_of::<pyo3::exceptions::PyUnicodeEncodeError>(py) {
-                return original;
+        let text = match &data {
+            PyStringData::Ucs1(values) if length <= 16 && values.is_ascii() => {
+                // SAFETY: each codepoint is ASCII, hence exactly the UTF-8
+                // byte already retained by the immutable str owner.
+                unsafe { std::str::from_utf8_unchecked(values) }
             }
-            let invalid = match data {
-                PyStringData::Ucs1(_) => None,
-                PyStringData::Ucs2(values) => values
-                    .iter()
-                    .position(|value| (0xD800..=0xDFFF).contains(value)),
-                PyStringData::Ucs4(values) => values
-                    .iter()
-                    .position(|value| (0xD800..=0xDFFF).contains(value)),
-            };
-            invalid.map_or(original, |index| {
-                super::encode_error(
-                    source,
-                    encoding_label,
-                    index,
-                    index + 1,
-                    "surrogates are not valid input characters",
-                )
-            })
-        })?;
+            _ => source.to_str().map_err(|original| {
+                if !original.is_instance_of::<pyo3::exceptions::PyUnicodeEncodeError>(py) {
+                    return original;
+                }
+                let invalid = match data {
+                    PyStringData::Ucs1(_) => None,
+                    PyStringData::Ucs2(values) => values
+                        .iter()
+                        .position(|value| (0xD800..=0xDFFF).contains(value)),
+                    PyStringData::Ucs4(values) => values
+                        .iter()
+                        .position(|value| (0xD800..=0xDFFF).contains(value)),
+                };
+                invalid.map_or(original, |index| {
+                    super::encode_error(
+                        source,
+                        encoding_label,
+                        index,
+                        index + 1,
+                        "surrogates are not valid input characters",
+                    )
+                })
+            })?,
+        };
         return target
             .write(ScalarRef::Text(text), context)
             .map_err(|error| failure(error, 0, text));
