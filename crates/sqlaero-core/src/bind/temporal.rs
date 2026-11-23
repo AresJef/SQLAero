@@ -125,6 +125,14 @@ impl MysqlTemporal for Temporal {
     }
 }
 
+/// Validate and truncate the source fraction at the target boundary.
+fn mysql_microsecond(nanosecond: u32) -> Result<u32, ScalarError> {
+    if nanosecond >= 1_000_000_000 {
+        return Err(range());
+    }
+    Ok(nanosecond / 1000)
+}
+
 /// Apply only MySQL's approved microsecond and calendar-average policies.
 /// # Errors
 /// Rejects invalid native fractions and checked calendar-period overflow.
@@ -156,27 +164,19 @@ pub fn mysql_precision(value: Temporal) -> Result<Temporal, ScalarError> {
             day,
             second,
             nanosecond,
-        } => {
-            if nanosecond >= 1_000_000_000 {
-                return Err(range());
-            }
-            Temporal::Datetime {
-                year,
-                month,
-                day,
-                second,
-                nanosecond: nanosecond / 1000 * 1000,
-            }
-        }
+        } => Temporal::Datetime {
+            year,
+            month,
+            day,
+            second,
+            nanosecond: mysql_microsecond(nanosecond)? * 1000,
+        },
         Temporal::Clock {
             negative,
             second,
             nanosecond,
         } => {
-            if nanosecond >= 1_000_000_000 {
-                return Err(range());
-            }
-            let nanosecond = nanosecond / 1000 * 1000;
+            let nanosecond = mysql_microsecond(nanosecond)? * 1000;
             Temporal::Clock {
                 negative: negative && (second != 0 || nanosecond != 0),
                 second,
@@ -188,10 +188,7 @@ pub fn mysql_precision(value: Temporal) -> Result<Temporal, ScalarError> {
             second,
             nanosecond,
         } => {
-            if nanosecond >= 1_000_000_000 {
-                return Err(range());
-            }
-            let nanosecond = nanosecond / 1000 * 1000;
+            let nanosecond = mysql_microsecond(nanosecond)? * 1000;
             Temporal::Duration {
                 negative: negative && (second != 0 || nanosecond != 0),
                 second,
@@ -241,20 +238,19 @@ fn write_stamp(
     limit: usize,
     quoted: bool,
 ) -> Result<(), ScalarError> {
-    let value = mysql_precision(value)?;
     let mut text = [0; FIXED_DATE_TIME_WIDTH];
-    if let Some(width) = fixed_temporal(&mut text, value, quoted) {
+    if let Some(width) = fixed_temporal(&mut text, value, quoted)? {
         return writer::append(output, &text[..width], limit).map_err(Into::into);
     }
-    stamp(value, quoted)?.finish(output, limit)
+    stamp(mysql_precision(value)?, quoted)?.finish(output, limit)
 }
 
 fn fixed_temporal(
     text: &mut [u8; FIXED_DATE_TIME_WIDTH],
     value: Temporal,
     quoted: bool,
-) -> Option<usize> {
-    match value {
+) -> Result<Option<usize>, ScalarError> {
+    Ok(match value {
         Temporal::Date { year, month, day } => {
             fixed_date_time(text, year, month, day, None, quoted)
         }
@@ -265,16 +261,20 @@ fn fixed_temporal(
             second,
             nanosecond,
         } => {
+            let microsecond = mysql_microsecond(nanosecond)?;
+            let Ok(hour) = u8::try_from(second / 3_600) else {
+                return Ok(None);
+            };
             let clock = sqlaero_transcode::temporal::Clock {
-                hour: u8::try_from(second / 3_600).ok()?,
+                hour,
                 minute: (second / 60 % 60) as u8,
                 second: (second % 60) as u8,
-                microsecond: nanosecond / 1000,
+                microsecond,
             };
             fixed_date_time(text, year, month, day, Some(clock), quoted)
         }
         _ => None,
-    }
+    })
 }
 
 fn stamp(value: Temporal, quoted: bool) -> Result<Stamp, ScalarError> {
@@ -564,6 +564,25 @@ mod tests {
                 unit: TimeUnit::Month
             }
         );
+    }
+
+    #[test]
+    fn both_text_forms_reject_invalid_native_fraction_before_output() {
+        let bad = Temporal::Datetime {
+            year: 2026,
+            month: 11,
+            day: 23,
+            second: 0,
+            nanosecond: 1_000_000_000,
+        };
+        for quoted in [false, true] {
+            let mut output = b"prefix".to_vec();
+            assert!(matches!(
+                write_stamp(bad, &mut output, 512, quoted),
+                Err(ScalarError::Range(_))
+            ));
+            assert_eq!(output, b"prefix");
+        }
     }
 
     #[test]
