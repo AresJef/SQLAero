@@ -439,39 +439,35 @@ impl ScalarTypes {
     fn write_pandas<D: Destination + ?Sized>(
         &self,
         py: Python<'_>,
-        scalar: pandas::PandasScalar,
+        scalar: pandas::PandasTemporal,
         output: &mut D,
         context: &Context,
     ) -> PyResult<()> {
-        match scalar {
-            pandas::PandasScalar::Null => emit(output, py, ValueRef::Null, context),
-            pandas::PandasScalar::Temporal {
-                ticks,
+        let pandas::PandasTemporal {
+            ticks,
+            unit,
+            multiplier,
+            kind,
+            aware,
+        } = scalar;
+        let value = if ticks == i64::MIN {
+            ValueRef::Null
+        } else if aware {
+            ValueRef::UtcTicks {
+                value: ticks,
+                unit,
+                multiplier,
+                offset_micros: None,
+            }
+        } else {
+            ValueRef::Ticks {
+                value: ticks,
                 unit,
                 multiplier,
                 kind,
-                aware,
-            } => {
-                let value = if ticks == i64::MIN {
-                    ValueRef::Null
-                } else if aware {
-                    ValueRef::UtcTicks {
-                        value: ticks,
-                        unit,
-                        multiplier,
-                        offset_micros: None,
-                    }
-                } else {
-                    ValueRef::Ticks {
-                        value: ticks,
-                        unit,
-                        multiplier,
-                        kind,
-                    }
-                };
-                emit(output, py, value, context)
             }
-        }
+        };
+        emit(output, py, value, context)
     }
 
     fn write_numpy<D: Destination + ?Sized>(

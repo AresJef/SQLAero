@@ -39,7 +39,11 @@ def test_natural_dataframe_counts_the_root_and_current_row(
 
 @pytest.mark.parametrize("value", [pd.NA, pd.NaT])
 def test_pandas_missing_scalars_are_null_before_other_protocols(value: object) -> None:
+    from sqlaero import JSON, json_dumps
+
     assert _sqlaero._encode_value(value).to_bytes() == b"NULL"
+    assert json_dumps(value, allow_nan=False) == b"null"
+    assert _sqlaero._encode_value(JSON(value, allow_nan=False)).to_bytes() == b"'null'"
 
 
 @pytest.mark.parametrize(("value", "expected"), [

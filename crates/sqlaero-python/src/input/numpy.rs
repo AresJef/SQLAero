@@ -428,15 +428,20 @@ impl NumpyTypes {
             return Some((export, *kind));
         }
         let typ = value.get_type();
-        if let Some(base) = &self.numeric_base
-            && !super::actual_type_is_subtype(&typ, base.bind(py))
-        {
+        if self.outside_numeric_base(&typ) {
             return None;
         }
         self.numeric
             .iter()
             .find(|(registered, _)| super::actual_type_is_subtype(&typ, registered.typ(py)))
             .map(|(registered, kind)| (ScalarExport::Qualified(registered), *kind))
+    }
+
+    /// Uses only the common immutable base proved for all registered scalars.
+    pub(super) fn outside_numeric_base(&self, typ: &Bound<'_, PyType>) -> bool {
+        self.numeric_base
+            .as_ref()
+            .is_some_and(|base| !super::actual_type_is_subtype(typ, base.bind(typ.py())))
     }
 
     fn read_classified(

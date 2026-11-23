@@ -13,16 +13,13 @@ use std::ffi::CStr;
 
 mod source;
 
-/// Scalar facts are native before they enter the shared SQL writing path.
-pub(crate) enum PandasScalar {
-    Null,
-    Temporal {
-        ticks: i64,
-        unit: TimeUnit,
-        multiplier: u64,
-        kind: TimeKind,
-        aware: bool,
-    },
+/// Pandas temporal facts retain their original native unit and precision.
+pub(crate) struct PandasTemporal {
+    pub(crate) ticks: i64,
+    pub(crate) unit: TimeUnit,
+    pub(crate) multiplier: u64,
+    pub(crate) kind: TimeKind,
+    pub(crate) aware: bool,
 }
 
 /// Optional canonical identities owned by this Python module's type cache.
@@ -66,19 +63,21 @@ impl PandasTypes {
             .prepare(value, numpy, budget, &self.sources)
     }
 
-    /// Keep missing singletons ahead of datetime subclass handling. asm8
-    /// retains the canonical scalar's unit and nanoseconds; aware Timestamp
-    /// exposes UTC epoch ticks without a per-value Python timezone conversion.
-    pub(crate) fn read_scalar(
+    /// Recognize only the interpreter-owned missing singletons.
+    pub(super) fn is_missing(&self, value: &Bound<'_, PyAny>) -> bool {
+        let py = value.py();
+        value.is(self.missing.bind(py)) || value.is(self.nat.bind(py))
+    }
+
+    /// asm8 retains the canonical scalar's unit and nanoseconds. Aware
+    /// Timestamp exposes UTC epoch ticks without converting through Python.
+    pub(crate) fn read_temporal(
         &self,
         value: &Bound<'_, PyAny>,
         numpy: &NumpyTypes,
         budget: Option<&dyn Checkpoint>,
-    ) -> PyResult<Option<PandasScalar>> {
+    ) -> PyResult<Option<PandasTemporal>> {
         let py = value.py();
-        if value.is(self.missing.bind(py)) || value.is(self.nat.bind(py)) {
-            return Ok(Some(PandasScalar::Null));
-        }
         let (storage, aware) = if super::actual_instance(value, self.timestamp.bind(py)) {
             (
                 &self.timestamp_storage,
@@ -102,7 +101,7 @@ impl PandasTypes {
                 "canonical Pandas asm8 must expose its exact NumPy datetime64 or timedelta64 scalar",
             ));
         };
-        Ok(Some(PandasScalar::Temporal {
+        Ok(Some(PandasTemporal {
             ticks,
             unit,
             multiplier,

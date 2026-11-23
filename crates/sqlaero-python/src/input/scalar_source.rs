@@ -18,7 +18,7 @@ pub(super) enum Source<'a, 'py> {
     Json(&'a Bound<'py, super::json::Json>),
     Pandas {
         owner: &'a Bound<'py, PyAny>,
-        facts: pandas::PandasScalar,
+        facts: pandas::PandasTemporal,
     },
     Numpy(numpy::NumpyScalar),
 }
@@ -57,14 +57,26 @@ pub(super) fn read<'a, 'py>(
         return Ok(Some(Source::StructTime(value.cast()?)));
     }
     if let Some(numpy) = types.numpy_types(py, budget)? {
+        let mut pandas = types.pandas.get();
+        let mut missing = pandas.is_some_and(|types| types.is_missing(value));
+        // The proven NumPy base rules out every registered scalar type. Only
+        // then may a cached Pandas singleton skip the NumPy type-table scan.
+        if missing && numpy.outside_numeric_base(&value.get_type()) {
+            return Ok(Some(Source::Native(ScalarRef::Null)));
+        }
         if let Some(facts) = numpy.read(value, budget)? {
             return Ok(Some(Source::Numpy(facts)));
         }
-        // Pandas stores its temporal values on the datetime and timedelta
-        // ancestry, not on NumPy's immutable scalar classes. Keep those
-        // nanosecond facts ahead of reading the standard Python base.
-        if let Some(pandas) = types.pandas_types(py, budget)?
-            && let Some(facts) = pandas.read_scalar(value, numpy, budget)?
+        if pandas.is_none() {
+            pandas = types.pandas_types(py, budget)?;
+            missing = pandas.is_some_and(|types| types.is_missing(value));
+        }
+        if missing {
+            return Ok(Some(Source::Native(ScalarRef::Null)));
+        }
+        // Pandas temporal facts win over standard datetime/timedelta ancestry.
+        if let Some(pandas) = pandas
+            && let Some(facts) = pandas.read_temporal(value, numpy, budget)?
         {
             return Ok(Some(Source::Pandas {
                 owner: value,

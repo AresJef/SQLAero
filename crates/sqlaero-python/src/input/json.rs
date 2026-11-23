@@ -194,15 +194,8 @@ impl<D: Destination + ?Sized> Serialize<'_, D> {
                 Source::Clock(value) => self.types.read_time(value, self.budget)?,
                 Source::Pandas {
                     owner,
-                    facts: super::pandas::PandasScalar::Null,
-                } => {
-                    let _ = owner;
-                    ScalarRef::Null
-                }
-                Source::Pandas {
-                    owner,
                     facts:
-                        super::pandas::PandasScalar::Temporal {
+                        super::pandas::PandasTemporal {
                             ticks,
                             unit,
                             multiplier,
