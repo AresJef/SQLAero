@@ -35,7 +35,7 @@ pub(super) fn read<'a, 'py>(
     }
     // Standard exact types do not pay optional-provider discovery costs.
     if value.is_exact_instance_of::<PyDateTime>() {
-        return Ok(Some(Source::Datetime(value.cast()?)));
+        return Ok(Some(Source::Datetime(value.cast_exact()?)));
     }
     if value.is_exact_instance_of::<PyDate>() {
         return Ok(Some(Source::Native(ScalarRef::Date(date(
