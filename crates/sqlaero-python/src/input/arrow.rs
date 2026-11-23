@@ -1313,15 +1313,15 @@ pub(crate) fn consume_text_reference(
 /// Python checkpoint; a live conforming producer must keep its exported buffers
 /// allocated for the entire C array lifetime.
 fn byte_slice<'a>(py: Python<'_>, array: &'a ArrayRef, index: usize) -> PyResult<&'a [u8]> {
-    if let Some(bytes) = array.as_any().downcast_ref::<native::Bytes>() {
-        return bytes
-            .value(index)
-            .ok_or_else(|| invalid(py, "Arrow byte value offsets exceed its data buffer"));
-    }
-    let view_array = array
-        .as_any()
-        .downcast_ref::<native::View>()
-        .ok_or_else(|| invalid(py, "Arrow byte storage physical type differs"))?;
+    let view_array = match array {
+        ArrayRef::Bytes(bytes) => {
+            return bytes
+                .value(index)
+                .ok_or_else(|| invalid(py, "Arrow byte value offsets exceed its data buffer"));
+        }
+        ArrayRef::View(view) => view,
+        _ => return Err(invalid(py, "Arrow byte storage physical type differs")),
+    };
     let view = view_array
         .views()
         .get(index)
