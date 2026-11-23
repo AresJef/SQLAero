@@ -273,8 +273,56 @@ fn fixed_temporal(
             };
             fixed_date_time(text, year, month, day, Some(clock), quoted)
         }
+        Temporal::Clock {
+            negative,
+            second,
+            nanosecond,
+        }
+        | Temporal::Duration {
+            negative,
+            second,
+            nanosecond,
+        } => fixed_clock_literal(
+            text,
+            negative,
+            second,
+            mysql_microsecond(nanosecond)?,
+            quoted,
+        ),
         _ => None,
     })
+}
+
+/// Format a common clock or duration once after target truncation.
+fn fixed_clock_literal(
+    text: &mut [u8; FIXED_DATE_TIME_WIDTH],
+    negative: bool,
+    second: u128,
+    microsecond: u32,
+    quoted: bool,
+) -> Option<usize> {
+    let second = u32::try_from(second).ok()?;
+    let hours = u128::from(second / 3600);
+    let mut end = usize::from(quoted);
+    if quoted {
+        text[0] = b'\'';
+    }
+    if negative && (second != 0 || microsecond != 0) {
+        text[end] = b'-';
+        end += 1;
+    }
+    end += fixed_clock(
+        hours,
+        (second / 60 % 60) as u8,
+        (second % 60) as u8,
+        microsecond,
+        text[end..].first_chunk_mut::<15>()?,
+    )?;
+    if quoted {
+        text[end] = b'\'';
+        end += 1;
+    }
+    Some(end)
 }
 
 fn stamp(value: Temporal, quoted: bool) -> Result<Stamp, ScalarError> {
@@ -594,6 +642,44 @@ mod tests {
         let mut prefix = b"x".to_vec();
         assert!(write_components_text(&mut prefix, parts, 19).is_err());
         assert_eq!(prefix, b"x");
+    }
+
+    #[test]
+    fn clock_and_duration_keep_sign_and_limit_at_the_fixed_hour_boundary() {
+        for (negative, second, nanosecond, literal, text) in [
+            (true, 0, 999, "'00:00:00'", "00:00:00"),
+            (true, 0, 1_999, "'-00:00:00.000001'", "-00:00:00.000001"),
+            (
+                true,
+                359_999,
+                999_999_999,
+                "'-99:59:59.999999'",
+                "-99:59:59.999999",
+            ),
+            (false, 360_000, 999, "'100:00:00'", "100:00:00"),
+        ] {
+            for value in [
+                Temporal::Clock {
+                    negative,
+                    second,
+                    nanosecond,
+                },
+                Temporal::Duration {
+                    negative,
+                    second,
+                    nanosecond,
+                },
+            ] {
+                let mut out = b"prefix".to_vec();
+                assert!(value.write_literal(&mut out, 5 + literal.len()).is_err());
+                assert_eq!(&out, b"prefix");
+                value.write_literal(&mut out, 6 + literal.len()).unwrap();
+                assert_eq!(&out[6..], literal.as_bytes());
+                out.clear();
+                value.write_text(&mut out, text.len()).unwrap();
+                assert_eq!(out, text.as_bytes());
+            }
+        }
     }
 
     #[test]
