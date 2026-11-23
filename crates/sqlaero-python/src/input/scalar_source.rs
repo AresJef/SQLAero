@@ -50,10 +50,13 @@ pub(super) fn read<'a, 'py>(
             value.cast::<PyDelta>()?,
         )))));
     }
-    if value.get_type().is(types.decimal_type(py)) {
+    // Both prepared types remain owned by this interpreter's registry.
+    // Compare the object's live type once without taking owned references.
+    let type_ptr = value.get_type_ptr();
+    if type_ptr == types.decimal_type(py).as_type_ptr() {
         return Ok(Some(Source::Decimal(value)));
     }
-    if value.get_type().is(types.struct_time.bind(py)) {
+    if type_ptr == types.struct_time.bind(py).as_type_ptr() {
         return Ok(Some(Source::StructTime(value.cast()?)));
     }
     if let Some(numpy) = types.numpy_types(py, budget)? {
