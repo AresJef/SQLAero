@@ -1326,18 +1326,6 @@ impl<'r, 'py> Row<'r, 'py> {
     ) -> PyResult<FragmentRole> {
         let py = self.value.py();
         check(py, budget)?;
-        let width = self.width();
-        if width != template.slots() {
-            return Err(errors::client_format(
-                py,
-                ClientErrorCode::ParameterCount,
-                format_args!(
-                    "SQL expects {} positions but {} provides {width}; current request was not sent",
-                    template.slots(),
-                    path_text(&self.path)
-                ),
-            ));
-        }
         let mut cursor = 0;
         let role = self.walk::<TRACK_ROLE>(
             types,
@@ -1422,7 +1410,29 @@ impl<'r, 'py> Row<'r, 'py> {
         mut after: impl FnMut(usize, &mut Vec<u8>, FragmentRole) -> PyResult<()>,
     ) -> PyResult<FragmentRole> {
         let py = self.value.py();
-        let width = self.width();
+        let mut width = self.width();
+        if let Some(template) = template {
+            let slots = template.slots();
+            if width != slots {
+                return Err(errors::client_format(
+                    py,
+                    ClientErrorCode::ParameterCount,
+                    format_args!(
+                        "SQL expects {slots} positions but {} provides {width}; current request was not sent",
+                        path_text(&self.path)
+                    ),
+                ));
+            }
+            // The other row widths are stable for this traversal. A live
+            // list retains the current length read before acquiring its items.
+            if self.itemize
+                && !self.zero_positions
+                && matches!(&self.input, RowInput::Sequence(row)
+                    if matches!(row.sequence(), Sequence::List(_)))
+            {
+                width = self.width();
+            }
+        }
         let progress = crate::input::control::Control::local(budget);
         let mut visit = Visit {
             dictionary: self.dictionary,
