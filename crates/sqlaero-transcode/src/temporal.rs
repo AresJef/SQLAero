@@ -184,26 +184,27 @@ fn split_fraction<const SIGNED_EPOCH: bool>(
     divisor: i64,
     precision: usize,
 ) -> (i128, u32, usize) {
-    // Keep the usual source-width division when scaling still fits i64.
-    // The positive, subsecond divisors above keep either remainder in u32.
-    if SIGNED_EPOCH && let Ok(value) = i64::try_from(value) {
-        let second = value.div_euclid(divisor);
-        let fraction = value.rem_euclid(divisor);
-        return (i128::from(second), fraction as u32, precision);
+    let (second, fraction) = split_euclid::<SIGNED_EPOCH>(value, divisor);
+    (second, fraction, precision)
+}
+
+/// Divide a signed temporal count by a positive unit no larger than u32.
+fn split_euclid<const PREFER_I64: bool>(value: i128, divisor: i64) -> (i128, u32) {
+    if PREFER_I64 && let Ok(value) = i64::try_from(value) {
+        return (
+            i128::from(value.div_euclid(divisor)),
+            value.rem_euclid(divisor) as u32,
+        );
     }
     let divisor = i128::from(divisor);
-    (
-        value.div_euclid(divisor),
-        value.rem_euclid(divisor) as u32,
-        precision,
-    )
+    (value.div_euclid(divisor), value.rem_euclid(divisor) as u32)
 }
 
 fn civil(days: i128) -> Result<(i128, u8, u8), Error> {
     // Gregorian eras use Euclidean division, including dates before year zero.
     let z = days.checked_add(719_468).ok_or_else(range)?;
-    let era = z.div_euclid(146_097);
-    let day = z.rem_euclid(146_097);
+    let (era, day) = split_euclid::<true>(z, 146_097);
+    let day = i128::from(day);
     let year_in_era = (day - day / 1_460 + day / 36_524 - day / 146_096) / 365;
     let mut year = year_in_era + era * 400;
     let day_in_year = day - (365 * year_in_era + year_in_era / 4 - year_in_era / 100);
@@ -258,15 +259,9 @@ pub fn decompose(
                 }
                 _ => {
                     let (seconds, part, precision) = seconds::<true>(value, unit)?;
-                    let (year, month, day) = civil(seconds.div_euclid(86_400))?;
-                    (
-                        year,
-                        month,
-                        day,
-                        seconds.rem_euclid(86_400) as u32,
-                        part,
-                        precision,
-                    )
+                    let (days, second) = split_euclid::<true>(seconds, 86_400);
+                    let (year, month, day) = civil(days)?;
+                    (year, month, day, second, part, precision)
                 }
             };
             Ok(Value::Datetime {
@@ -315,12 +310,13 @@ pub fn decompose_utc(
         .checked_add(offset_micros.div_euclid(1_000_000))
         .and_then(|n| n.checked_add(fraction.div_euclid(1_000_000_000)))
         .ok_or_else(range)?;
-    let (year, month, day) = civil(second.div_euclid(86_400))?;
+    let (days, second) = split_euclid::<true>(second, 86_400);
+    let (year, month, day) = civil(days)?;
     Ok(Value::Datetime {
         year,
         month,
         day,
-        second: second.rem_euclid(86_400) as u32,
+        second,
         nanosecond: fraction.rem_euclid(1_000_000_000) as u32,
     })
 }
