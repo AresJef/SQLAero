@@ -379,16 +379,25 @@ pub fn time(output: &mut Vec<u8>, clock: Clock, limit: usize) -> Result<(), Wire
 /// # Errors
 /// Returns a request-buffer error.
 pub fn duration(output: &mut Vec<u8>, micros: i128, limit: usize) -> Result<(), WireError> {
-    const HOUR_MICROS: u128 = 3_600_000_000;
+    const HOUR_MICROS: u64 = 3_600_000_000;
     const SECOND_MICROS: u32 = 1_000_000;
     let magnitude = micros.unsigned_abs();
-    // One wide quotient and remainder. The remaining hour fits in u32.
-    let within_hour = (magnitude % HOUR_MICROS) as u32;
+    // The remainder fits in u32 on both paths. Most inputs can use one
+    // machine word for quotient and remainder; wider values stay exact.
+    let (hours, within_hour) = if let Ok(magnitude) = u64::try_from(magnitude) {
+        (
+            u128::from(magnitude / HOUR_MICROS),
+            (magnitude % HOUR_MICROS) as u32,
+        )
+    } else {
+        let hour_micros = u128::from(HOUR_MICROS);
+        (magnitude / hour_micros, (magnitude % hour_micros) as u32)
+    };
     let whole_seconds = within_hour / SECOND_MICROS;
     clock_literal(
         output,
         micros < 0,
-        magnitude / HOUR_MICROS,
+        hours,
         (whole_seconds / 60) as u8,
         (whole_seconds % 60) as u8,
         within_hour % SECOND_MICROS,
@@ -433,6 +442,21 @@ fn clock_literal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn duration_literal_retains_full_precision_across_machine_word_boundary() {
+        for (micros, expected) in [
+            (3_661_234_567, "'01:01:01.234567'"),
+            (u64::MAX as i128, "'5124095576:01:49.551615'"),
+            (-(u64::MAX as i128), "'-5124095576:01:49.551615'"),
+            (u64::MAX as i128 + 1, "'5124095576:01:49.551616'"),
+            (-(u64::MAX as i128 + 1), "'-5124095576:01:49.551616'"),
+        ] {
+            let mut output = Vec::new();
+            duration(&mut output, micros, 128).unwrap();
+            assert_eq!(output, expected.as_bytes());
+        }
+    }
 
     #[test]
     fn datetime_literal_preserves_microseconds_and_component_limits() {
