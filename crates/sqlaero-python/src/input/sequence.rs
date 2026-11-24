@@ -257,6 +257,53 @@ pub(crate) struct IterSequence<'py> {
     state: RefCell<IterState<'py>>,
 }
 
+impl<'py> IterSequence<'py> {
+    pub(crate) fn projects_items(&self) -> bool {
+        self.values_only
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.length
+    }
+
+    pub(crate) fn identity(&self) -> usize {
+        self.owner.as_ptr() as usize
+    }
+
+    /// Read one actual dict_items value from an exclusively owned forward
+    /// traversal. The caller cannot reread an index or expose this state.
+    pub(crate) fn next_item_value(
+        &mut self,
+        budget: &dyn Checkpoint,
+    ) -> PyResult<&Bound<'py, PyAny>> {
+        let py = self.owner.py();
+        let state = self.state.get_mut();
+        callback(py, Some(budget), || {
+            let iterator = state.iterator.as_mut().ok_or_else(|| {
+                errors::builtin_message::<PyRuntimeError>(
+                    py,
+                    "container acquisition was re-entered",
+                )
+            })?;
+            let pair = iterator.next().transpose()?.ok_or_else(|| {
+                errors::builtin_message::<PyRuntimeError>(
+                    py,
+                    "input container changed length during escape",
+                )
+            })?;
+            let next = pair.cast::<PyTuple>()?.get_item(1)?;
+            state.consumed += 1;
+            // The old value can run a finalizer. Retain the newly acquired
+            // value and its pair until after this state transition.
+            drop(state.current.replace(next));
+            Ok(())
+        })?;
+        state.current.as_ref().ok_or_else(|| {
+            errors::builtin_message::<PyIndexError>(py, "current container item is unavailable")
+        })
+    }
+}
+
 impl<'py> Sequence<'py> {
     #[inline]
     fn forward(

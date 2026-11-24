@@ -265,6 +265,51 @@ def test_bytes_failure_preview_is_bounded_and_keeps_original_length() -> None:
     assert len(notes) < 500
 
 
+def test_nested_dict_items_reports_the_first_failed_position_after_mutation() -> None:
+    source: dict[str, object] = {}
+
+    class RemovingZone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta:
+            del source["later"]
+            return timedelta(0)
+
+    source["first"] = datetime(2026, 11, 12, tzinfo=RemovingZone())
+    source["later"] = 7
+    with pytest.raises(RuntimeError, match="dictionary changed size") as caught:
+        _sqlaero._bind_sql("SELECT %s", (source.items(),))
+    assert "while binding args[0][1]; current request was not sent" in getattr(
+        caught.value, "__notes__", ()
+    )
+
+
+def test_nested_dict_items_acquires_the_next_value_before_releasing_the_previous() -> None:
+    source: dict[str, object] = {}
+    events: list[str] = []
+
+    class FirstZone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta:
+            events.append("first")
+            source["first"] = None
+            return timedelta(0)
+
+        def __del__(self) -> None:
+            events.append("release first")
+            source["second"] = 99
+
+    class SecondZone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta:
+            events.append("second")
+            return timedelta(0)
+
+    source["first"] = datetime(2026, 11, 12, 1, tzinfo=FirstZone())
+    source["second"] = datetime(2026, 11, 12, 2, tzinfo=SecondZone())
+    assert _sqlaero._bind_sql("SELECT %s", (source.items(),)) == [
+        b"\x03SELECT ('2026-11-12 01:00:00','2026-11-12 02:00:00')"
+    ]
+    assert events == ["first", "release first", "second"]
+    assert source["second"] == 99
+
+
 def test_current_tuple_row_keeps_children_alive_after_callback_clears_batch() -> None:
     """The current row owns a tuple even if its original container changes."""
     source: list[tuple[object, ...]] = []

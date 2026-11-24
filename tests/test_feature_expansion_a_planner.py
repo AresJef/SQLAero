@@ -52,11 +52,14 @@ class CountingZone(tzinfo):
         return timedelta(hours=1)
 
 
-def test_rollover_keeps_encoded_row_when_context_is_unchanged() -> None:
+@pytest.mark.parametrize("as_items", [False, True])
+def test_rollover_keeps_encoded_row_when_context_is_unchanged(as_items: bool) -> None:
     zone = CountingZone()
     date = datetime(2024, 1, 2, 3, 4, 5, tzinfo=zone)
     request = b"\x03INSERT t VALUES ('2024-01-02 02:04:05')"
-    assert plan("INSERT t VALUES (%s)", [date, date, date], many=True, limit=len(request)) == [
+    dates = [date, date, date]
+    source = dict(enumerate(dates)).items() if as_items else dates
+    assert plan("INSERT t VALUES (%s)", source, many=True, limit=len(request)) == [
         (request, 0, 1, False), (request, 1, 2, False), (request, 2, 3, True),
     ]
     assert zone.calls == 3

@@ -2,7 +2,7 @@
 
 use crate::errors;
 use crate::input::control::Checkpoint;
-use crate::input::sequence::{NativeIntegers, RangeSource, Sequence};
+use crate::input::sequence::{IterSequence, NativeIntegers, RangeSource, Sequence};
 use crate::input::source::{self, CellWriter, FragmentRole, PreparedSource, Shape};
 use crate::input::{ScalarTypes, check};
 use pyo3::prelude::*;
@@ -1897,6 +1897,11 @@ impl Visit<'_> {
                     .map(|()| project(FragmentRole::Row));
             }
             match Sequence::from(value, self.types, &self.active, Some(self.budget)) {
+                Ok(Some(Sequence::Iterator(mut items))) if items.projects_items() => {
+                    return self
+                        .write_item_values(py, &mut items, output, child)
+                        .map(|()| project(FragmentRole::Row));
+                }
                 Ok(sequence) => sequence,
                 Err(error) => {
                     self.failed_value(value, child, &error);
@@ -1970,6 +1975,38 @@ impl Visit<'_> {
                 // value was proved to fit when the range was qualified.
                 number = number.wrapping_add(step);
                 Ok(())
+            })
+        })();
+        self.active.pop();
+        self.active_depth -= 1;
+        if result.is_ok() && child.is_some() {
+            self.path.pop();
+        }
+        result
+    }
+
+    /// This owned value has one forward consumer. Root row sources may be
+    /// needed again during rollover and keep the general acquisition path.
+    #[inline(never)]
+    fn write_item_values(
+        &mut self,
+        py: Python<'_>,
+        items: &mut IterSequence<'_>,
+        output: &mut Vec<u8>,
+        child: Option<usize>,
+    ) -> PyResult<()> {
+        if let Some(index) = child {
+            self.path.push(index);
+        }
+        self.enter(py, items.identity())?;
+        let result = (|| {
+            writer::append(output, b"(", self.context.limit)
+                .map_err(|error| errors::wire(py, error))?;
+            self.sequence_items(py, items.len(), output, |visit, index, output| {
+                let value = items.next_item_value(visit.budget).inspect_err(|_| {
+                    visit.path.push(index);
+                })?;
+                visit.value(value, output, Some(index))
             })
         })();
         self.active.pop();
