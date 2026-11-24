@@ -5,6 +5,32 @@ use sqlaero_transcode::decimal::Digits;
 use sqlaero_transcode::value::{Consumer, ScalarRef};
 
 #[test]
+fn complete_short_strings_and_fragmented_strings_keep_one_json_state() {
+    let mut writer = Writer::new();
+    let options = Options::default();
+    let width_boundary = "é".repeat(32);
+    let above_boundary = "a".repeat(65);
+    writer.array_start().unwrap();
+    for value in [
+        "",
+        width_boundary.as_str(),
+        above_boundary.as_str(),
+        "a\"\\\n\0",
+    ] {
+        writer.write(ScalarRef::Text(value), &options).unwrap();
+    }
+    writer.object_start().unwrap();
+    writer.key("tail").unwrap();
+    writer.write(ScalarRef::Text("ok"), &options).unwrap();
+    writer.object_end().unwrap();
+    writer.array_end().unwrap();
+    assert_eq!(
+        writer.finish().unwrap(),
+        format!(r#"["","{width_boundary}","{above_boundary}","a\"\\\n\u0000",{{"tail":"ok"}}]"#)
+    );
+}
+
+#[test]
 fn direct_keys_keep_the_same_object_state_across_fragment_draining() {
     let mut writer = Writer::new();
     let key = DirectKey::from_name("é😀".to_owned()).unwrap();

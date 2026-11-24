@@ -504,7 +504,10 @@ impl Writer {
     #[inline(never)]
     fn uuid(&mut self, value: u128) -> Result<(), Error> {
         let uuid = sqlaero_transcode::identifier::UuidText::new(value);
-        let text = uuid.as_str();
+        self.unescaped_string(uuid.as_str())
+    }
+
+    fn unescaped_string(&mut self, text: &str) -> Result<(), Error> {
         let comma = self.value_delimiter()?;
         self.output
             .try_reserve(text.len() + 2 + usize::from(comma))
@@ -516,6 +519,22 @@ impl Writer {
         self.output.push_str(text);
         self.output.push('"');
         Ok(())
+    }
+
+    fn string_value(&mut self, value: &str) -> Result<(), Error> {
+        // A complete short native value needs no open fragment state. Bound
+        // the escape probe so long or fragmented values keep their writer.
+        const SHORT_BYTES: usize = 64;
+        if value.len() <= SHORT_BYTES
+            && !value
+                .bytes()
+                .any(|byte| byte < b' ' || matches!(byte, b'"' | b'\\'))
+        {
+            return self.unescaped_string(value);
+        }
+        self.string_start(Some(value.len()), false)?;
+        self.string_fragment(value)?;
+        self.string_end()
     }
 
     /// Start one exact integer; callers may return control between digit blocks.
@@ -594,11 +613,7 @@ impl Consumer for Writer {
                 ScalarRef::Unsigned(value) => {
                     return writer.integer_value(number::IntegerBuffer::new().format(value));
                 }
-                ScalarRef::Text(value) => {
-                    writer.string_start(Some(value.len()), false)?;
-                    writer.string_fragment(value)?;
-                    return writer.string_end();
-                }
+                ScalarRef::Text(value) => return writer.string_value(value),
                 ScalarRef::Bytes(_) => return Err(Error::Unsupported("binary")),
                 ScalarRef::Decimal {
                     negative,
