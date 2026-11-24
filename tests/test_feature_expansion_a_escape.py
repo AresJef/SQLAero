@@ -2,10 +2,12 @@
 
 # pyright: reportPrivateUsage=false
 
+import sys
 from typing import Any
 
 import pytest
 from sqlaero import _sqlaero
+from sqlaero.errors import DataError
 
 
 def escape(data: object, **options: Any) -> object:
@@ -30,6 +32,46 @@ def test_sequence_and_batch_projection_preserves_explicit_rows() -> None:
     empty_rows: list[list[object]] = [[]]
     assert escape(empty_rows, many=True) == [()]
     assert escape(empty_rows, many=True, itemize=False) == ["()"]
+
+
+@pytest.mark.parametrize("source", [
+    range(0),
+    range(31),
+    range(32),
+    range(33),
+    range(11, -55, -2),
+    range(-(2**63), -(2**63) + 33),
+    range(2**63 - 31, 2**63 + 2),
+    range(2**63, 2**63 + 33),
+    range(0, 33 * 2**64, 2**64),
+])
+def test_range_projection_preserves_root_shapes_and_exact_integers(source: range) -> None:
+    values = tuple(map(str, source))
+    output = escape(source)
+    assert type(output) is tuple and output == values
+    assert all(type(value) is str for value in output)
+    assert escape(source, itemize=False) == "(" + ",".join(values) + ")"
+    assert escape(source, many=True) == (list(values) if values else [()])
+    assert escape(source, many=True, itemize=False) == (list(values) if values else [()])
+
+
+@pytest.mark.parametrize("charset", ["utf8mb4", "ascii", "latin1", "binary", "sjis"])
+def test_projected_range_uses_the_normal_text_output_contract(charset: str) -> None:
+    source = range(-1, -100, -3)
+    assert escape(source, charset=charset) == tuple(map(str, source))
+
+
+def test_range_projection_preserves_fallback_error_positions() -> None:
+    with pytest.raises(DataError, match="65-digit exact SQL range") as invalid:
+        escape(range(10**65 - 32, 10**65 + 1))
+    assert "while binding args[32]; current request was not sent" in getattr(
+        invalid.value, "__notes__", ()
+    )
+    with pytest.raises(OverflowError) as too_long:
+        escape(range(sys.maxsize + 1))
+    assert "while binding args; current request was not sent" in getattr(
+        too_long.value, "__notes__", ()
+    )
 
 
 @pytest.mark.parametrize("root", [[], ()])

@@ -65,6 +65,55 @@ def test_range_keeps_exact_values_and_target_shapes(source: range) -> None:
         ]
 
 
+def test_long_range_projection_propagates_a_signal_at_its_current_position() -> None:
+    script = textwrap.dedent(r"""
+        import re
+        from _native_signal import NativeAlarm, native_call_offsets
+        from sqlaero import _sqlaero
+
+        source = range(4_000_000)
+        original = KeyboardInterrupt("original range projection signal")
+        count = 0
+
+        def project():
+            return _sqlaero._escape_projection(source)
+
+        offsets = native_call_offsets(project.__code__)
+
+        def interrupt(number, frame):
+            global count
+            if frame is None or frame.f_code is not project.__code__ or frame.f_lasti not in offsets:
+                return
+            count += 1
+            if count == 3:
+                alarm.cancel()
+                raise original
+
+        alarm = NativeAlarm(interrupt)
+        try:
+            alarm.start(0.002, 0.002, wait_ready=True)
+            try:
+                project()
+            except KeyboardInterrupt as error:
+                assert error is original and count == 3
+                match = re.search(r"while binding args\[(\d+)\]; current request was not sent",
+                                  "\n".join(error.__notes__))
+                assert match is not None and 0 <= int(match[1]) < len(source)
+            else:
+                raise AssertionError("long range did not observe its pending signal")
+        finally:
+            alarm.close()
+        assert _sqlaero._escape_projection(range(33)) == tuple(map(str, range(33)))
+    """)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = str(Path(__file__).parent) + os.pathsep + env.get("PYTHONPATH", "")
+    result = subprocess.run(
+        [sys.executable, "-c", script], **private_console_options(env),
+        capture_output=True, text=True, timeout=15
+    )
+    assert result.returncode == 0, (result.stdout, result.stderr)
+
+
 @pytest.mark.parametrize("base", [list, tuple, dict])
 @pytest.mark.parametrize("many", [False, True])
 def test_true_subclass_root_layout_reuses_the_same_actual_elements(base: type, many: bool) -> None:

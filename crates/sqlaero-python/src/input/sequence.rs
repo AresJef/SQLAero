@@ -81,6 +81,8 @@ impl<'py> RangeSource<'py> {
     }
 
     /// Reuse one public length and the original boundary for both outcomes.
+    /// Keep the value-only write and root projection callers specialized.
+    #[inline(always)]
     pub(crate) fn prepare(
         source: &Bound<'py, PyAny>,
         active: &[usize],

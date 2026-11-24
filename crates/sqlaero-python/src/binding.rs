@@ -593,6 +593,9 @@ pub(crate) fn escape<'py>(
         ..*context
     };
     let budget = crate::input::control::Control::unlimited();
+    if !many && itemize && RangeSource::recognizes(data) {
+        return project_range(data, types, &context, &budget);
+    }
     let mut rows = Rows::new(data, many, itemize, types, &budget)?;
     let mut scratch = ProjectionScratch::default();
     if rows.public_batch() {
@@ -615,6 +618,68 @@ pub(crate) fn escape<'py>(
         check(py, &budget)?;
         Ok(value)
     }
+}
+
+#[inline(never)]
+fn project_range<'py>(
+    source: &Bound<'py, PyAny>,
+    types: &ScalarTypes,
+    context: &Context,
+    budget: &dyn Checkpoint,
+) -> PyResult<Bound<'py, PyAny>> {
+    let py = source.py();
+    let prepared = RangeSource::prepare(source, &[], Some(budget))
+        .inspect_err(|error| note_preparation(py, error, None))?;
+    let projected = match prepared {
+        RangeSource::Native(integers) => {
+            check(py, budget)?;
+            let mut formatted = sqlaero_transcode::number::IntegerBuffer::new();
+            let mut values = Vec::new();
+            let (mut number, step) = integers.first_and_step();
+            for index in 0..integers.length {
+                // Exact range has no user iterator. Keep the original
+                // per-position interruption checks and diagnostic coordinate.
+                let value = crate::input::control::callback(py, Some(budget), || {
+                    let value = number;
+                    // Only the unused post-final term can wrap.
+                    number = number.wrapping_add(step);
+                    Ok(value)
+                })
+                .inspect_err(|error| {
+                    errors::note_format(
+                        py,
+                        error,
+                        format_args!("while binding args[{index}]; current request was not sent"),
+                    );
+                })?;
+                let value = display(py, formatted.format(value).as_bytes(), context.codec)?;
+                values
+                    .try_reserve(1)
+                    .map_err(|_| errors::memory_error(py))?;
+                values.push(value.into_any().unbind());
+            }
+            check(py, budget)?;
+            crate::output::tuple_from_ready_vec(py, values)?.into_any()
+        }
+        RangeSource::Iterated(sequence) => Row {
+            value: source.clone(),
+            input: RowInput::Sequence(SequenceRef::Owned(sequence)),
+            outer: None,
+            path: SmallVec::new(),
+            itemize: true,
+            zero_positions: false,
+            dictionary: &mut None,
+        }
+        .project(
+            py,
+            types,
+            context,
+            budget,
+            &mut ProjectionScratch::default(),
+        )?,
+    };
+    check(py, budget)?;
+    Ok(projected)
 }
 
 #[derive(Default)]
