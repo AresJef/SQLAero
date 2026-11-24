@@ -265,18 +265,27 @@ def test_bytes_failure_preview_is_bounded_and_keeps_original_length() -> None:
     assert len(notes) < 500
 
 
-def test_nested_dict_items_reports_the_first_failed_position_after_mutation() -> None:
-    source: dict[str, object] = {}
+@pytest.mark.parametrize("kind", ["dict", "keys", "values", "items"])
+def test_nested_mapping_reports_the_first_failed_position_after_mutation(kind: str) -> None:
+    source: dict[object, object] = {}
+    armed = False
 
     class RemovingZone(tzinfo):
         def utcoffset(self, value: datetime | None) -> timedelta:
-            del source["later"]
+            if armed:
+                del source["later"]
             return timedelta(0)
 
-    source["first"] = datetime(2026, 11, 12, tzinfo=RemovingZone())
+    first = datetime(2026, 11, 12, tzinfo=RemovingZone())
+    if kind == "keys":
+        source[first] = 0
+    else:
+        source["first"] = first
     source["later"] = 7
+    observed = {"dict": source, "keys": source.keys(), "values": source.values(), "items": source.items()}[kind]
+    armed = True
     with pytest.raises(RuntimeError, match="dictionary changed size") as caught:
-        _sqlaero._bind_sql("SELECT %s", (source.items(),))
+        _sqlaero._bind_sql("SELECT %s", (observed,))
     assert "while binding args[0][1]; current request was not sent" in getattr(
         caught.value, "__notes__", ()
     )
@@ -303,7 +312,8 @@ def test_nested_set_reports_the_first_failed_position_after_mutation() -> None:
     )
 
 
-def test_nested_dict_items_acquires_the_next_value_before_releasing_the_previous() -> None:
+@pytest.mark.parametrize("kind", ["dict", "values", "items"])
+def test_nested_mapping_acquires_the_next_value_before_releasing_the_previous(kind: str) -> None:
     source: dict[str, object] = {}
     events: list[str] = []
 
@@ -324,7 +334,8 @@ def test_nested_dict_items_acquires_the_next_value_before_releasing_the_previous
 
     source["first"] = datetime(2026, 11, 12, 1, tzinfo=FirstZone())
     source["second"] = datetime(2026, 11, 12, 2, tzinfo=SecondZone())
-    assert _sqlaero._bind_sql("SELECT %s", (source.items(),)) == [
+    observed = {"dict": source, "values": source.values(), "items": source.items()}[kind]
+    assert _sqlaero._bind_sql("SELECT %s", (observed,)) == [
         b"\x03SELECT ('2026-11-12 01:00:00','2026-11-12 02:00:00')"
     ]
     assert events == ["first", "release first", "second"]

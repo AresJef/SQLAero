@@ -224,7 +224,10 @@ impl Types {
             };
             let mode = match (kind, projection) {
                 (Kind::Items, Projection::Values) => IteratorMode::ItemValue,
-                (Kind::Set | Kind::FrozenSet, Projection::Values) => IteratorMode::OwnedValue,
+                (
+                    Kind::Dict | Kind::Keys | Kind::Values | Kind::Set | Kind::FrozenSet,
+                    Projection::Values,
+                ) => IteratorMode::OwnedValue,
                 _ => IteratorMode::General,
             };
             Sequence::forward(value, length, iterator, mode)
