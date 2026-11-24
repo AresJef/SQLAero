@@ -16,13 +16,18 @@ use crate::errors;
 
 enum Column<'py> {
     Native(arrow::Prepared<'py>),
-    Object(Bound<'py, PyAny>),
+    Object(ObjectColumn<'py>),
 }
 
 enum Storage<'py> {
     Native(arrow::Prepared<'py>),
-    Object(Bound<'py, PyAny>),
+    Object(ObjectColumn<'py>),
     Columns(Vec<Column<'py>>),
+}
+
+struct ObjectColumn<'py> {
+    series: Bound<'py, PyAny>,
+    item_name: Option<Bound<'py, PyString>>,
 }
 
 /// The original source retains identity; private Polars COW shells retain the
@@ -249,7 +254,7 @@ impl PolarsTypes {
             let dtype =
                 control::callback(py, Some(budget), || errors::attribute(&snapshot, c"dtype"))?;
             let storage = if types.validate(&dtype, true, 0, budget)? {
-                Storage::Object(snapshot)
+                Storage::Object(ObjectColumn::new(snapshot))
             } else {
                 let name =
                     control::callback(py, Some(budget), || errors::attribute(&snapshot, c"name"))?;
@@ -310,7 +315,7 @@ impl PolarsTypes {
                     })?;
                     prepared_names.bind_polars_column(index, column.clone(), budget)?;
                     prepared.push(if types.validate(&dtype, true, 0, budget)? {
-                        Column::Object(column)
+                        Column::Object(ObjectColumn::new(column))
                     } else {
                         let name = prepared_names.acquire_field(index, budget)?;
                         export_name(
@@ -410,7 +415,7 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         }
         match &mut self.storage {
             Storage::Native(source) => source.child(index, budget),
-            Storage::Object(series) => Ok(Child::Python(object_value(series, index, budget)?)),
+            Storage::Object(column) => Ok(Child::Python(column.value(index, budget)?)),
             Storage::Columns(_) => {
                 unreachable!("column rows were selected before borrowing storage")
             }
@@ -430,21 +435,32 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
     crate::input::source::cell_destinations!();
 }
 
-fn object_value<'py>(
-    series: &Bound<'py, PyAny>,
-    row: usize,
-    budget: &dyn Checkpoint,
-) -> PyResult<Bound<'py, PyAny>> {
-    super::check(series.py(), budget)?;
-    // SAFETY: the attached constructor returns an owned exact int or its
-    // original error. PyO3 passes that owned index through the single-argument
-    // call interface and still looks up the actual series method.
-    let index = unsafe {
-        Bound::<PyAny>::from_owned_ptr_or_err(series.py(), pyo3::ffi::PyLong_FromSize_t(row))?
-    };
-    control::callback(series.py(), Some(budget), || {
-        series.call_method1(c"item", (index,))
-    })
+impl<'py> ObjectColumn<'py> {
+    fn new(series: Bound<'py, PyAny>) -> Self {
+        Self {
+            series,
+            item_name: None,
+        }
+    }
+
+    fn value(&mut self, row: usize, budget: &dyn Checkpoint) -> PyResult<Bound<'py, PyAny>> {
+        let py = self.series.py();
+        super::check(py, budget)?;
+        // SAFETY: the attached constructor returns an owned exact int or its
+        // original error. PyO3 passes this object without an argument tuple.
+        let index = unsafe {
+            Bound::<PyAny>::from_owned_ptr_or_err(py, pyo3::ffi::PyLong_FromSize_t(row))?
+        };
+        control::callback(py, Some(budget), || {
+            // Reuse only the immutable name. Each value still resolves item
+            // on its actual Series, so method changes remain observable.
+            let name = match &mut self.item_name {
+                slot @ None => slot.insert(PyString::from_bytes(py, b"item")?),
+                Some(name) => name,
+            };
+            self.series.call_method1(&*name, (index,))
+        })
+    }
 }
 
 impl<'py> Prepared<'py> {
@@ -460,11 +476,11 @@ impl<'py> Prepared<'py> {
         target.checkpoint(py, 1)?;
         match &mut self.storage {
             Storage::Native(source) => source.consume_cell(row, column, target, budget),
-            Storage::Object(series) => {
+            Storage::Object(object) => {
                 if column != 0 {
                     return Err(invalid(py, "Polars Series has only one cell per row"));
                 }
-                target.python(&object_value(series, row, budget)?, None)
+                target.python(&object.value(row, budget)?, None)
             }
             Storage::Columns(columns) => {
                 let column = columns
@@ -472,9 +488,7 @@ impl<'py> Prepared<'py> {
                     .ok_or_else(|| invalid(py, "Polars column is outside its prepared table"))?;
                 match column {
                     Column::Native(source) => source.consume_cell(row, 0, target, budget),
-                    Column::Object(series) => {
-                        target.python(&object_value(series, row, budget)?, None)
-                    }
+                    Column::Object(object) => target.python(&object.value(row, budget)?, None),
                 }
             }
         }
