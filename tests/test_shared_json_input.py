@@ -320,6 +320,26 @@ def test_bounded_base_text_storage_uses_exact_characters(width: int) -> None:
         assert json_dumps({Text(source): [Text(source)]}) == expected_object
 
 
+@pytest.mark.parametrize(("size", "encoded_size"), [(1024, 3074), (262144, 786434)])
+def test_dense_json_escapes_match_all_three_target_boundaries(
+    size: int, encoded_size: int,
+) -> None:
+    dense = '"\\\n\0' * (size // 4)
+    assert len(json_dumps(dense)) == encoded_size
+    # Cover the boundaries between dense runs, ordinary UTF-8, and control
+    # characters with both two- and six-byte escapes.
+    mixed = "é😀" + dense + "中" + "".join(chr(index) for index in range(32)) + "\\tail"
+    encoder = _sqlaero._prepare_encoder()
+    for source in (dense, mixed):
+        expected = json.dumps(source, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        assert encoder.encode_json(source).to_bytes() == expected
+        public = json_dumps(source)
+        assert type(public) is bytes and public == expected
+        for no_backslash in (False, True):
+            sql = _sqlaero._prepare_encoder(no_backslash=no_backslash)
+            assert sql.encode(JSON(source)).to_bytes() == sql.encode(expected.decode("utf-8")).to_bytes()
+
+
 def test_independent_calls_share_no_writer_or_wrapper_output_state() -> None:
     payload: list[object] = [7, "é中😀" * 1000, [None, True, -0.0]]
     wrapped = JSON(payload)

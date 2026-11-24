@@ -343,12 +343,6 @@ impl Writer {
             ),
             None => None,
         };
-        const CONTROLS: [&str; 32] = [
-            "\\u0000", "\\u0001", "\\u0002", "\\u0003", "\\u0004", "\\u0005", "\\u0006", "\\u0007",
-            "\\b", "\\t", "\\n", "\\u000b", "\\f", "\\r", "\\u000e", "\\u000f", "\\u0010",
-            "\\u0011", "\\u0012", "\\u0013", "\\u0014", "\\u0015", "\\u0016", "\\u0017", "\\u0018",
-            "\\u0019", "\\u001a", "\\u001b", "\\u001c", "\\u001d", "\\u001e", "\\u001f",
-        ];
         let bytes = value.as_bytes();
         // Scan only large, already bounded fragments. Escape bytes are ASCII,
         // so a fragment without them can be appended as its original UTF-8.
@@ -359,26 +353,84 @@ impl Writer {
         {
             self.append(value)?;
         } else {
-            let mut start = 0;
-            for (index, &byte) in bytes.iter().enumerate() {
-                let escape = match byte {
-                    b'"' => "\\\"",
-                    b'\\' => "\\\\",
-                    0..=31 => CONTROLS[usize::from(byte)],
-                    _ => continue,
-                };
-                // Every split is at an ASCII escape character and a UTF-8 boundary.
-                self.append(&value[start..index])?;
-                self.append(escape)?;
-                start = index + 1;
+            let mut text = value;
+            while let Some((index, escape)) = text
+                .bytes()
+                .enumerate()
+                .find_map(|(index, byte)| Self::ascii_escape(byte).map(|escape| (index, escape)))
+            {
+                // Every split is at an ASCII escape and therefore at a UTF-8
+                // boundary. Leave isolated escapes on their simple path.
+                if index != 0 {
+                    self.append(&text[..index])?;
+                }
+                let rest = &text.as_bytes()[index + 1..];
+                let consumed =
+                    if let Some(second) = rest.first().copied().and_then(Self::ascii_escape) {
+                        self.append_escape_run(escape, second, &rest[1..])?
+                    } else {
+                        self.append(escape)?;
+                        1
+                    };
+                text = &text[index + consumed..];
             }
-            self.append(&value[start..])?;
+            self.append(text)?;
         }
         // No callback or borrow of external mutable storage occurs above.
         if let Some(text) = &mut self.text {
             text.remaining = remaining;
         }
         Ok(())
+    }
+
+    #[inline]
+    fn ascii_escape(byte: u8) -> Option<&'static str> {
+        const CONTROLS: [&str; 32] = [
+            "\\u0000", "\\u0001", "\\u0002", "\\u0003", "\\u0004", "\\u0005", "\\u0006", "\\u0007",
+            "\\b", "\\t", "\\n", "\\u000b", "\\f", "\\r", "\\u000e", "\\u000f", "\\u0010",
+            "\\u0011", "\\u0012", "\\u0013", "\\u0014", "\\u0015", "\\u0016", "\\u0017", "\\u0018",
+            "\\u0019", "\\u001a", "\\u001b", "\\u001c", "\\u001d", "\\u001e", "\\u001f",
+        ];
+        match byte {
+            b'"' => Some("\\\""),
+            b'\\' => Some("\\\\"),
+            0..=31 => Some(CONTROLS[usize::from(byte)]),
+            _ => None,
+        }
+    }
+
+    /// Combine short ASCII escapes inside this already bounded input fragment.
+    #[inline(never)]
+    fn append_escape_run(
+        &mut self,
+        first: &'static str,
+        second: &'static str,
+        rest: &[u8],
+    ) -> Result<usize, Error> {
+        let mut buffer = [0; 192];
+        let mut used = 0;
+        let mut consumed = 0;
+        let escapes = [first, second]
+            .into_iter()
+            .chain(rest.iter().copied().map_while(Self::ascii_escape));
+        for escape in escapes {
+            if used + escape.len() > buffer.len() {
+                self.append_ascii_escapes(&buffer[..used])?;
+                used = 0;
+            }
+            let end = used + escape.len();
+            buffer[used..end].copy_from_slice(escape.as_bytes());
+            used = end;
+            consumed += 1;
+        }
+        self.append_ascii_escapes(&buffer[..used])?;
+        Ok(consumed)
+    }
+
+    fn append_ascii_escapes(&mut self, bytes: &[u8]) -> Result<(), Error> {
+        let escaped =
+            std::str::from_utf8(bytes).map_err(|_| Error::State("invalid ASCII escapes"))?;
+        self.append(escaped)
     }
 
     fn string_end(&mut self) -> Result<(), Error> {
