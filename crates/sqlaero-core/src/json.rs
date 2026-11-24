@@ -521,6 +521,8 @@ impl Writer {
         Ok(())
     }
 
+    // Keep text qualification out of the shared scalar dispatch body.
+    #[inline(never)]
     fn string_value(&mut self, value: &str) -> Result<(), Error> {
         // A complete short root can reserve its whole document in one step.
         // Keep the repeated container-value loop on the fragment writer.
