@@ -437,13 +437,13 @@ fn object_value<'py>(
 ) -> PyResult<Bound<'py, PyAny>> {
     super::check(series.py(), budget)?;
     // SAFETY: the attached constructor returns an owned exact int or its
-    // original error; no infallible Rust-tuple argument conversion is used.
+    // original error. PyO3 passes that owned index through the single-argument
+    // call interface and still looks up the actual series method.
     let index = unsafe {
         Bound::<PyAny>::from_owned_ptr_or_err(series.py(), pyo3::ffi::PyLong_FromSize_t(row))?
     };
-    let arguments = crate::output::tuple_from_ready(series.py(), [index])?;
     control::callback(series.py(), Some(budget), || {
-        series.call_method1(c"item", arguments)
+        series.call_method1(c"item", (index,))
     })
 }
 
