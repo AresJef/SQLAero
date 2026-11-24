@@ -522,10 +522,11 @@ impl Writer {
     }
 
     fn string_value(&mut self, value: &str) -> Result<(), Error> {
-        // A complete short native value needs no open fragment state. Bound
-        // the escape probe so long or fragmented values keep their writer.
+        // A complete short root can reserve its whole document in one step.
+        // Keep the repeated container-value loop on the fragment writer.
         const SHORT_BYTES: usize = 64;
-        if value.len() <= SHORT_BYTES
+        if self.frames.is_empty()
+            && value.len() <= SHORT_BYTES
             && !value
                 .bytes()
                 .any(|byte| byte < b' ' || matches!(byte, b'"' | b'\\'))

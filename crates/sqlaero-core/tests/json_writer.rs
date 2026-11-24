@@ -10,6 +10,10 @@ fn complete_short_strings_and_fragmented_strings_keep_one_json_state() {
     let options = Options::default();
     let width_boundary = "é".repeat(32);
     let above_boundary = "a".repeat(65);
+    let mut root = Writer::new();
+    root.write(ScalarRef::Text(&width_boundary), &options)
+        .unwrap();
+    assert_eq!(root.finish().unwrap(), format!("\"{width_boundary}\""));
     writer.array_start().unwrap();
     for value in [
         "",
