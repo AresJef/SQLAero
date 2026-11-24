@@ -3,7 +3,7 @@
 # pyright: reportPrivateUsage=false
 
 import sys
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from sqlaero import _sqlaero
@@ -49,7 +49,8 @@ def test_range_projection_preserves_root_shapes_and_exact_integers(source: range
     values = tuple(map(str, source))
     output = escape(source)
     assert type(output) is tuple and output == values
-    assert all(type(value) is str for value in output)
+    items = cast(tuple[object, ...], output)
+    assert all(type(value) is str for value in items)
     assert escape(source, itemize=False) == "(" + ",".join(values) + ")"
     assert escape(source, many=True) == (list(values) if values else [()])
     assert escape(source, many=True, itemize=False) == (list(values) if values else [()])
