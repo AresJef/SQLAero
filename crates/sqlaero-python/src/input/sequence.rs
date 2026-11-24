@@ -94,7 +94,8 @@ impl<'py> RangeSource<'py> {
             if let Some(integers) = NativeIntegers::from_range(source, length)? {
                 return Ok(Self::Native(integers));
             }
-            Sequence::forward(source, length, source.try_iter()?, false).map(Self::Iterated)
+            Sequence::forward(source, length, source.try_iter()?, IteratorMode::General)
+                .map(Self::Iterated)
         })
     }
 }
@@ -221,12 +222,12 @@ impl Types {
                     (projected.len()?, projected.try_iter()?)
                 }
             };
-            Sequence::forward(
-                value,
-                length,
-                iterator,
-                kind == Kind::Items && projection == Projection::Values,
-            )
+            let mode = match (kind, projection) {
+                (Kind::Items, Projection::Values) => IteratorMode::ItemValue,
+                (Kind::Set | Kind::FrozenSet, Projection::Values) => IteratorMode::OwnedValue,
+                _ => IteratorMode::General,
+            };
+            Sequence::forward(value, length, iterator, mode)
         })
     }
 }
@@ -243,6 +244,12 @@ enum Acquire<'py> {
     Outside,
 }
 
+enum IteratorMode {
+    General,
+    OwnedValue,
+    ItemValue,
+}
+
 struct IterState<'py> {
     // Taken out before advancing: no RefCell guard survives a Python API call.
     iterator: Option<Bound<'py, PyIterator>>,
@@ -253,13 +260,16 @@ struct IterState<'py> {
 pub(crate) struct IterSequence<'py> {
     owner: Bound<'py, PyAny>,
     length: usize,
-    values_only: bool,
+    mode: IteratorMode,
     state: RefCell<IterState<'py>>,
 }
 
 impl<'py> IterSequence<'py> {
-    pub(crate) fn projects_items(&self) -> bool {
-        self.values_only
+    pub(crate) fn supports_owned_iteration(&self) -> bool {
+        matches!(
+            self.mode,
+            IteratorMode::OwnedValue | IteratorMode::ItemValue
+        )
     }
 
     pub(crate) fn len(&self) -> usize {
@@ -270,9 +280,9 @@ impl<'py> IterSequence<'py> {
         self.owner.as_ptr() as usize
     }
 
-    /// Read one actual dict_items value from an exclusively owned forward
-    /// traversal. The caller cannot reread an index or expose this state.
-    pub(crate) fn next_item_value(
+    /// Read one value from an exclusively owned forward traversal.
+    /// Batch sources keep the general path for a retained rollover value.
+    pub(crate) fn next_owned_value(
         &mut self,
         budget: &dyn Checkpoint,
     ) -> PyResult<&Bound<'py, PyAny>> {
@@ -285,16 +295,20 @@ impl<'py> IterSequence<'py> {
                     "container acquisition was re-entered",
                 )
             })?;
-            let pair = iterator.next().transpose()?.ok_or_else(|| {
+            let observed = iterator.next().transpose()?.ok_or_else(|| {
                 errors::builtin_message::<PyRuntimeError>(
                     py,
                     "input container changed length during escape",
                 )
             })?;
-            let next = pair.cast::<PyTuple>()?.get_item(1)?;
+            let next = if matches!(self.mode, IteratorMode::ItemValue) {
+                observed.cast::<PyTuple>()?.get_item(1)?
+            } else {
+                observed
+            };
             state.consumed += 1;
             // The old value can run a finalizer. Retain the newly acquired
-            // value and its pair until after this state transition.
+            // value and its source until after this state transition.
             drop(state.current.replace(next));
             Ok(())
         })?;
@@ -310,14 +324,14 @@ impl<'py> Sequence<'py> {
         owner: &Bound<'py, PyAny>,
         length: usize,
         iterator: Bound<'py, PyIterator>,
-        values_only: bool,
+        mode: IteratorMode,
     ) -> PyResult<Self> {
         Ok(Self::Iterator(super::boxed(
             owner.py(),
             IterSequence {
                 owner: owner.clone(),
                 length,
-                values_only,
+                mode,
                 state: RefCell::new(IterState {
                     iterator: Some(iterator),
                     consumed: 0,
@@ -446,7 +460,7 @@ impl<'py> Sequence<'py> {
             // A dict_items mapping proxy may forward values() to an overridden
             // dict-subclass method. Read its actual item tuple instead; no
             // whole mapping snapshot or user projection method is involved.
-            let next = if value.values_only {
+            let next = if matches!(value.mode, IteratorMode::ItemValue) {
                 next.cast::<PyTuple>()?.get_item(1)?
             } else {
                 next

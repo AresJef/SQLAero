@@ -282,6 +282,27 @@ def test_nested_dict_items_reports_the_first_failed_position_after_mutation() ->
     )
 
 
+def test_nested_set_reports_the_first_failed_position_after_mutation() -> None:
+    source: set[object] = set()
+    armed = False
+
+    class AddingZone(tzinfo):
+        def utcoffset(self, value: datetime | None) -> timedelta:
+            if armed:
+                source.add("new item")
+            return timedelta(0)
+
+    zone = AddingZone()
+    source.add(datetime(2026, 11, 12, 1, tzinfo=zone))
+    source.add(datetime(2026, 11, 12, 2, tzinfo=zone))
+    armed = True
+    with pytest.raises(RuntimeError, match="Set changed size during iteration") as caught:
+        _sqlaero._bind_sql("SELECT %s", (source,))
+    assert "while binding args[0][1]; current request was not sent" in getattr(
+        caught.value, "__notes__", ()
+    )
+
+
 def test_nested_dict_items_acquires_the_next_value_before_releasing_the_previous() -> None:
     source: dict[str, object] = {}
     events: list[str] = []
