@@ -45,6 +45,8 @@ pub enum Part {
     Option(Keyword),
     /// A retained source operand and its structural role.
     Operand(usize, Role),
+    /// One normalized interval, made from its signed integer components.
+    Compound(super::sql_intv::Compound),
 }
 
 /// The rendering recipe contains only native grammar, never source objects.

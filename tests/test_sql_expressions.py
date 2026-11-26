@@ -4,7 +4,8 @@ from datetime import date
 
 import pytest
 from sqlaero import Connection, JSON, json_dumps, sqlfunc, sqlintv
-from sqlaero.errors import DataError, NotSupportedError
+from sqlaero import _sqlaero  # pyright: ignore[reportPrivateUsage]
+from sqlaero.errors import DataError, NotSupportedError, OperationalError
 
 from test_prepared_cursor import statement_counts
 from test_public_connection import connection as connection, requires_mysql
@@ -27,6 +28,17 @@ def test_expression_construction_checks_static_roles() -> None:
         sqlfunc.ABS((1, 2))
     with pytest.raises(TypeError, match="ABS.*scalar"):
         sqlfunc.ABS({"x": 1})
+
+
+def test_expression_bytes_count_toward_the_complete_packet() -> None:
+    query = "SELECT %s"
+    expression = sqlfunc.ABS(-7)
+    request = b"\x03SELECT ABS(-7)"
+    bind = _sqlaero._bind_sql  # pyright: ignore[reportPrivateUsage]
+    assert bind(query, expression, limit=len(request)) == [request]
+    with pytest.raises(OperationalError) as caught:
+        bind(query, expression, limit=len(request) - 1)
+    assert caught.value.code == 65538
 
 
 @requires_mysql

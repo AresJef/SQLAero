@@ -28,6 +28,27 @@ pub struct Digits<'a> {
 }
 
 impl<'a> Digits<'a> {
+    /// Number of bits occupied by each digit of the native radix.
+    pub fn radix_bits(self) -> u8 {
+        self.bits
+    }
+
+    /// Number of digits in the complete native magnitude.
+    pub fn digit_count(self) -> usize {
+        self.len()
+    }
+
+    /// Read one digit in least-significant-first order, zero extending it.
+    /// # Errors
+    /// Returns an error if a stored digit is outside the declared radix.
+    pub fn digit(self, index: usize) -> Result<u32, Error> {
+        if index < self.len() {
+            self.word(index)
+        } else {
+            Ok(0)
+        }
+    }
+
     /// Read a canonical source which fits an unsigned native 128-bit value.
     /// The declared digit width bounds work before any source digit is read.
     /// # Errors

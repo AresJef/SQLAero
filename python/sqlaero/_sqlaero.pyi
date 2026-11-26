@@ -2,8 +2,11 @@
 
 from collections.abc import Mapping
 from datetime import datetime
+from types import ModuleType
 from typing import Any, Generic, Iterator, Literal, Never, Self, SupportsIndex, TypeAlias, TypeVar, final, overload
 from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as MySQLErrorCode
+
+_sqlintv: ModuleType
 
 class _SQLFunction: ...
 class _SQLInterval(_SQLFunction): ...
@@ -38,11 +41,6 @@ class DATE_ADD(_SQLFunction):
 class SUM(_SQLFunction):
     """Sum a scalar expression over a group, with optional DISTINCT."""
     def __init__(self, value: object, *, distinct: bool = False) -> None: ...
-
-@final
-class DAY(_SQLInterval):
-    """Create a MySQL interval measured in days."""
-    def __init__(self, days: object) -> None: ...
 
 @final
 class JSON:

@@ -7,6 +7,7 @@ use crate::input::{
     column::Column,
     sink,
     sql_func::{Kind, SqlFunction},
+    sql_intv,
 };
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
@@ -29,9 +30,9 @@ impl Visit<'_> {
         output: Output<'_>,
         operand: Option<Role>,
     ) -> PyResult<bool> {
-        let Ok(expression) = value.cast::<SqlFunction>() else {
+        if !value.is_instance_of::<SqlFunction>() {
             return Ok(false);
-        };
+        }
         let py = value.py();
         let output = match output {
             Output::Text(output) => output,
@@ -40,7 +41,7 @@ impl Visit<'_> {
                 .map_err(|error| sink::failure(py, error))?
                 .ok_or_else(|| sink::fragment_error(py))?,
         };
-        let expression = SqlFunction::snapshot(expression)?;
+        let expression = SqlFunction::snapshot(value.cast::<SqlFunction>()?)?;
         let allowed = match operand {
             None => true,
             Some(Role::Scalar) => expression.kind == Kind::Scalar,
@@ -63,6 +64,13 @@ impl Visit<'_> {
                 match part {
                     Part::Syntax(text) => self.fixed(py, text, output)?,
                     Part::Option(keyword) => self.fixed(py, keyword.as_str(), output)?,
+                    Part::Compound(unit) => sql_intv::write_compound(
+                        unit,
+                        &expression.operands,
+                        output,
+                        self.context.limit,
+                        self.budget,
+                    )?,
                     Part::Operand(index, role) => {
                         let argument = expression.operands.get_item(index)?;
                         let result = self.operand(&argument, output, index, role);

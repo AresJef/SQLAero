@@ -1,5 +1,31 @@
 """MySQL temporal intervals for use in text expressions."""
 
-from ._sqlaero import DAY as DAY
+from ._sqlaero import _sqlintv  # pyright: ignore[reportPrivateUsage]
 
-__all__: list[str] = ['DAY']
+YEAR = _sqlintv.YEAR
+QUARTER = _sqlintv.QUARTER
+MONTH = _sqlintv.MONTH
+WEEK = _sqlintv.WEEK
+DAY = _sqlintv.DAY
+HOUR = _sqlintv.HOUR
+MINUTE = _sqlintv.MINUTE
+SECOND = _sqlintv.SECOND
+MICROSECOND = _sqlintv.MICROSECOND
+YEAR_MONTH = _sqlintv.YEAR_MONTH
+DAY_HOUR = _sqlintv.DAY_HOUR
+DAY_MINUTE = _sqlintv.DAY_MINUTE
+DAY_SECOND = _sqlintv.DAY_SECOND
+DAY_MICROSECOND = _sqlintv.DAY_MICROSECOND
+HOUR_MINUTE = _sqlintv.HOUR_MINUTE
+HOUR_SECOND = _sqlintv.HOUR_SECOND
+HOUR_MICROSECOND = _sqlintv.HOUR_MICROSECOND
+MINUTE_SECOND = _sqlintv.MINUTE_SECOND
+MINUTE_MICROSECOND = _sqlintv.MINUTE_MICROSECOND
+SECOND_MICROSECOND = _sqlintv.SECOND_MICROSECOND
+
+__all__: list[str] = [
+    'YEAR', 'QUARTER', 'MONTH', 'WEEK', 'DAY', 'HOUR', 'MINUTE', 'SECOND', 'MICROSECOND',
+    'YEAR_MONTH', 'DAY_HOUR', 'DAY_MINUTE', 'DAY_SECOND', 'DAY_MICROSECOND',
+    'HOUR_MINUTE', 'HOUR_SECOND', 'HOUR_MICROSECOND', 'MINUTE_SECOND',
+    'MINUTE_MICROSECOND', 'SECOND_MICROSECOND',
+]
