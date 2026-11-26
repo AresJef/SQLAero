@@ -23,7 +23,9 @@ BIT_OR = _sqlfunc.BIT_OR
 BIT_XOR = _sqlfunc.BIT_XOR
 CAST = _sqlfunc.CAST
 CEIL = _sqlfunc.CEIL
+CEILING = _sqlfunc.CEILING
 CHAR = _sqlfunc.CHAR
+CHARACTER_LENGTH = _sqlfunc.CHARACTER_LENGTH
 CHARSET = _sqlfunc.CHARSET
 CHAR_LENGTH = _sqlfunc.CHAR_LENGTH
 COALESCE = _sqlfunc.COALESCE
@@ -41,11 +43,13 @@ COT = _sqlfunc.COT
 COUNT = _sqlfunc.COUNT
 CRC32 = _sqlfunc.CRC32
 CUME_DIST = _sqlfunc.CUME_DIST
+CURDATE = _sqlfunc.CURDATE
 CURRENT_DATE = _sqlfunc.CURRENT_DATE
 CURRENT_ROLE = _sqlfunc.CURRENT_ROLE
 CURRENT_TIME = _sqlfunc.CURRENT_TIME
 CURRENT_TIMESTAMP = _sqlfunc.CURRENT_TIMESTAMP
 CURRENT_USER = _sqlfunc.CURRENT_USER
+CURTIME = _sqlfunc.CURTIME
 DATABASE = _sqlfunc.DATABASE
 DATE = _sqlfunc.DATE
 DATEDIFF = _sqlfunc.DATEDIFF
@@ -54,6 +58,7 @@ DATE_FORMAT = _sqlfunc.DATE_FORMAT
 DATE_SUB = _sqlfunc.DATE_SUB
 DAY = _sqlfunc.DAY
 DAYNAME = _sqlfunc.DAYNAME
+DAYOFMONTH = _sqlfunc.DAYOFMONTH
 DAYOFWEEK = _sqlfunc.DAYOFWEEK
 DAYOFYEAR = _sqlfunc.DAYOFYEAR
 DEGREES = _sqlfunc.DEGREES
@@ -70,10 +75,12 @@ FORMAT = _sqlfunc.FORMAT
 FROM_BASE64 = _sqlfunc.FROM_BASE64
 FROM_DAYS = _sqlfunc.FROM_DAYS
 FROM_UNIXTIME = _sqlfunc.FROM_UNIXTIME
+FROM_VECTOR = _sqlfunc.FROM_VECTOR
 GET_FORMAT = _sqlfunc.GET_FORMAT
 GREATEST = _sqlfunc.GREATEST
 GROUPING = _sqlfunc.GROUPING
 GROUP_CONCAT = _sqlfunc.GROUP_CONCAT
+GeomCollection = _sqlfunc.GeomCollection
 GeometryCollection = _sqlfunc.GeometryCollection
 HEX = _sqlfunc.HEX
 HOUR = _sqlfunc.HOUR
@@ -127,11 +134,14 @@ LAG = _sqlfunc.LAG
 LAST_DAY = _sqlfunc.LAST_DAY
 LAST_INSERT_ID = _sqlfunc.LAST_INSERT_ID
 LAST_VALUE = _sqlfunc.LAST_VALUE
+LCASE = _sqlfunc.LCASE
 LEAD = _sqlfunc.LEAD
 LEAST = _sqlfunc.LEAST
 LEFT = _sqlfunc.LEFT
 LENGTH = _sqlfunc.LENGTH
 LN = _sqlfunc.LN
+LOCALTIME = _sqlfunc.LOCALTIME
+LOCALTIMESTAMP = _sqlfunc.LOCALTIMESTAMP
 LOCATE = _sqlfunc.LOCATE
 LOG = _sqlfunc.LOG
 LOG10 = _sqlfunc.LOG10
@@ -154,6 +164,7 @@ MBROverlaps = _sqlfunc.MBROverlaps
 MBRTouches = _sqlfunc.MBRTouches
 MBRWithin = _sqlfunc.MBRWithin
 MICROSECOND = _sqlfunc.MICROSECOND
+MID = _sqlfunc.MID
 MIN = _sqlfunc.MIN
 MINUTE = _sqlfunc.MINUTE
 MOD = _sqlfunc.MOD
@@ -167,6 +178,7 @@ NTH_VALUE = _sqlfunc.NTH_VALUE
 NTILE = _sqlfunc.NTILE
 NULLIF = _sqlfunc.NULLIF
 OCT = _sqlfunc.OCT
+OCTET_LENGTH = _sqlfunc.OCTET_LENGTH
 ORD = _sqlfunc.ORD
 PERCENT_RANK = _sqlfunc.PERCENT_RANK
 PERIOD_ADD = _sqlfunc.PERIOD_ADD
@@ -174,6 +186,7 @@ PERIOD_DIFF = _sqlfunc.PERIOD_DIFF
 PI = _sqlfunc.PI
 POSITION = _sqlfunc.POSITION
 POW = _sqlfunc.POW
+POWER = _sqlfunc.POWER
 Point = _sqlfunc.Point
 Polygon = _sqlfunc.Polygon
 QUARTER = _sqlfunc.QUARTER
@@ -195,14 +208,18 @@ ROW_COUNT = _sqlfunc.ROW_COUNT
 ROW_NUMBER = _sqlfunc.ROW_NUMBER
 RPAD = _sqlfunc.RPAD
 RTRIM = _sqlfunc.RTRIM
+SCHEMA = _sqlfunc.SCHEMA
 SECOND = _sqlfunc.SECOND
 SEC_TO_TIME = _sqlfunc.SEC_TO_TIME
+SESSION_USER = _sqlfunc.SESSION_USER
 SHA2 = _sqlfunc.SHA2
 SIGN = _sqlfunc.SIGN
 SIN = _sqlfunc.SIN
 SOUNDEX = _sqlfunc.SOUNDEX
 SPACE = _sqlfunc.SPACE
 SQRT = _sqlfunc.SQRT
+STD = _sqlfunc.STD
+STDDEV = _sqlfunc.STDDEV
 STDDEV_POP = _sqlfunc.STDDEV_POP
 STDDEV_SAMP = _sqlfunc.STDDEV_SAMP
 STRCMP = _sqlfunc.STRCMP
@@ -212,6 +229,8 @@ ST_Area = _sqlfunc.ST_Area
 ST_AsBinary = _sqlfunc.ST_AsBinary
 ST_AsGeoJSON = _sqlfunc.ST_AsGeoJSON
 ST_AsText = _sqlfunc.ST_AsText
+ST_AsWKB = _sqlfunc.ST_AsWKB
+ST_AsWKT = _sqlfunc.ST_AsWKT
 ST_Buffer = _sqlfunc.ST_Buffer
 ST_Buffer_Strategy = _sqlfunc.ST_Buffer_Strategy
 ST_Centroid = _sqlfunc.ST_Centroid
@@ -231,10 +250,15 @@ ST_ExteriorRing = _sqlfunc.ST_ExteriorRing
 ST_FrechetDistance = _sqlfunc.ST_FrechetDistance
 ST_GeoHash = _sqlfunc.ST_GeoHash
 ST_GeomCollFromText = _sqlfunc.ST_GeomCollFromText
+ST_GeomCollFromTxt = _sqlfunc.ST_GeomCollFromTxt
 ST_GeomCollFromWKB = _sqlfunc.ST_GeomCollFromWKB
 ST_GeomFromGeoJSON = _sqlfunc.ST_GeomFromGeoJSON
 ST_GeomFromText = _sqlfunc.ST_GeomFromText
 ST_GeomFromWKB = _sqlfunc.ST_GeomFromWKB
+ST_GeometryCollectionFromText = _sqlfunc.ST_GeometryCollectionFromText
+ST_GeometryCollectionFromWKB = _sqlfunc.ST_GeometryCollectionFromWKB
+ST_GeometryFromText = _sqlfunc.ST_GeometryFromText
+ST_GeometryFromWKB = _sqlfunc.ST_GeometryFromWKB
 ST_GeometryN = _sqlfunc.ST_GeometryN
 ST_GeometryType = _sqlfunc.ST_GeometryType
 ST_HausdorffDistance = _sqlfunc.ST_HausdorffDistance
@@ -252,6 +276,8 @@ ST_LineFromText = _sqlfunc.ST_LineFromText
 ST_LineFromWKB = _sqlfunc.ST_LineFromWKB
 ST_LineInterpolatePoint = _sqlfunc.ST_LineInterpolatePoint
 ST_LineInterpolatePoints = _sqlfunc.ST_LineInterpolatePoints
+ST_LineStringFromText = _sqlfunc.ST_LineStringFromText
+ST_LineStringFromWKB = _sqlfunc.ST_LineStringFromWKB
 ST_LongFromGeoHash = _sqlfunc.ST_LongFromGeoHash
 ST_Longitude = _sqlfunc.ST_Longitude
 ST_MLineFromText = _sqlfunc.ST_MLineFromText
@@ -261,7 +287,14 @@ ST_MPointFromWKB = _sqlfunc.ST_MPointFromWKB
 ST_MPolyFromText = _sqlfunc.ST_MPolyFromText
 ST_MPolyFromWKB = _sqlfunc.ST_MPolyFromWKB
 ST_MakeEnvelope = _sqlfunc.ST_MakeEnvelope
+ST_MultiLineStringFromText = _sqlfunc.ST_MultiLineStringFromText
+ST_MultiLineStringFromWKB = _sqlfunc.ST_MultiLineStringFromWKB
+ST_MultiPointFromText = _sqlfunc.ST_MultiPointFromText
+ST_MultiPointFromWKB = _sqlfunc.ST_MultiPointFromWKB
+ST_MultiPolygonFromText = _sqlfunc.ST_MultiPolygonFromText
+ST_MultiPolygonFromWKB = _sqlfunc.ST_MultiPolygonFromWKB
 ST_NumGeometries = _sqlfunc.ST_NumGeometries
+ST_NumInteriorRing = _sqlfunc.ST_NumInteriorRing
 ST_NumInteriorRings = _sqlfunc.ST_NumInteriorRings
 ST_NumPoints = _sqlfunc.ST_NumPoints
 ST_Overlaps = _sqlfunc.ST_Overlaps
@@ -272,6 +305,8 @@ ST_PointFromWKB = _sqlfunc.ST_PointFromWKB
 ST_PointN = _sqlfunc.ST_PointN
 ST_PolyFromText = _sqlfunc.ST_PolyFromText
 ST_PolyFromWKB = _sqlfunc.ST_PolyFromWKB
+ST_PolygonFromText = _sqlfunc.ST_PolygonFromText
+ST_PolygonFromWKB = _sqlfunc.ST_PolygonFromWKB
 ST_SRID = _sqlfunc.ST_SRID
 ST_Simplify = _sqlfunc.ST_Simplify
 ST_StartPoint = _sqlfunc.ST_StartPoint
@@ -285,11 +320,13 @@ ST_Within = _sqlfunc.ST_Within
 ST_X = _sqlfunc.ST_X
 ST_Y = _sqlfunc.ST_Y
 SUBDATE = _sqlfunc.SUBDATE
+SUBSTR = _sqlfunc.SUBSTR
 SUBSTRING = _sqlfunc.SUBSTRING
 SUBSTRING_INDEX = _sqlfunc.SUBSTRING_INDEX
 SUBTIME = _sqlfunc.SUBTIME
 SUM = _sqlfunc.SUM
 SYSDATE = _sqlfunc.SYSDATE
+SYSTEM_USER = _sqlfunc.SYSTEM_USER
 TAN = _sqlfunc.TAN
 TIME = _sqlfunc.TIME
 TIMEDIFF = _sqlfunc.TIMEDIFF
@@ -301,8 +338,10 @@ TIME_TO_SEC = _sqlfunc.TIME_TO_SEC
 TO_BASE64 = _sqlfunc.TO_BASE64
 TO_DAYS = _sqlfunc.TO_DAYS
 TO_SECONDS = _sqlfunc.TO_SECONDS
+TO_VECTOR = _sqlfunc.TO_VECTOR
 TRIM = _sqlfunc.TRIM
 TRUNCATE = _sqlfunc.TRUNCATE
+UCASE = _sqlfunc.UCASE
 UNCOMPRESS = _sqlfunc.UNCOMPRESS
 UNCOMPRESSED_LENGTH = _sqlfunc.UNCOMPRESSED_LENGTH
 UNHEX = _sqlfunc.UNHEX
@@ -315,6 +354,7 @@ UTC_TIMESTAMP = _sqlfunc.UTC_TIMESTAMP
 UUID = _sqlfunc.UUID
 UUID_SHORT = _sqlfunc.UUID_SHORT
 UUID_TO_BIN = _sqlfunc.UUID_TO_BIN
+VARIANCE = _sqlfunc.VARIANCE
 VAR_POP = _sqlfunc.VAR_POP
 VAR_SAMP = _sqlfunc.VAR_SAMP
 VECTOR_DIM = _sqlfunc.VECTOR_DIM
@@ -330,48 +370,53 @@ __all__: list[str] = [
     'ABS', 'ACOS', 'ADDDATE', 'ADDTIME', 'AES_DECRYPT', 'AES_ENCRYPT', 'ANY_VALUE',
     'ASCII', 'ASIN', 'ATAN', 'ATAN2', 'AVG', 'BIN', 'BIN_TO_UUID',
     'BIT_AND', 'BIT_COUNT', 'BIT_LENGTH', 'BIT_OR', 'BIT_XOR', 'CAST', 'CEIL',
-    'CHAR', 'CHARSET', 'CHAR_LENGTH', 'COALESCE', 'COERCIBILITY', 'COLLATION', 'COMPRESS',
-    'CONCAT', 'CONCAT_WS', 'CONNECTION_ID', 'CONV', 'CONVERT', 'CONVERT_TZ', 'COS',
-    'COT', 'COUNT', 'CRC32', 'CUME_DIST', 'CURRENT_DATE', 'CURRENT_ROLE', 'CURRENT_TIME',
-    'CURRENT_TIMESTAMP', 'CURRENT_USER', 'DATABASE', 'DATE', 'DATEDIFF', 'DATE_ADD', 'DATE_FORMAT',
-    'DATE_SUB', 'DAY', 'DAYNAME', 'DAYOFWEEK', 'DAYOFYEAR', 'DEGREES', 'DENSE_RANK',
-    'ELT', 'EXP', 'EXPORT_SET', 'EXTRACT', 'FIELD', 'FIND_IN_SET', 'FIRST_VALUE',
-    'FLOOR', 'FORMAT', 'FROM_BASE64', 'FROM_DAYS', 'FROM_UNIXTIME', 'GET_FORMAT', 'GREATEST',
-    'GROUPING', 'GROUP_CONCAT', 'GeometryCollection', 'HEX', 'HOUR', 'ICU_VERSION', 'IF',
+    'CEILING', 'CHAR', 'CHARACTER_LENGTH', 'CHARSET', 'CHAR_LENGTH', 'COALESCE', 'COERCIBILITY',
+    'COLLATION', 'COMPRESS', 'CONCAT', 'CONCAT_WS', 'CONNECTION_ID', 'CONV', 'CONVERT',
+    'CONVERT_TZ', 'COS', 'COT', 'COUNT', 'CRC32', 'CUME_DIST', 'CURDATE',
+    'CURRENT_DATE', 'CURRENT_ROLE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP', 'CURRENT_USER', 'CURTIME', 'DATABASE',
+    'DATE', 'DATEDIFF', 'DATE_ADD', 'DATE_FORMAT', 'DATE_SUB', 'DAY', 'DAYNAME',
+    'DAYOFMONTH', 'DAYOFWEEK', 'DAYOFYEAR', 'DEGREES', 'DENSE_RANK', 'ELT', 'EXP',
+    'EXPORT_SET', 'EXTRACT', 'FIELD', 'FIND_IN_SET', 'FIRST_VALUE', 'FLOOR', 'FORMAT',
+    'FROM_BASE64', 'FROM_DAYS', 'FROM_UNIXTIME', 'FROM_VECTOR', 'GET_FORMAT', 'GREATEST', 'GROUPING',
+    'GROUP_CONCAT', 'GeomCollection', 'GeometryCollection', 'HEX', 'HOUR', 'ICU_VERSION', 'IF',
     'IFNULL', 'INET6_ATON', 'INET6_NTOA', 'INET_ATON', 'INET_NTOA', 'INSERT', 'INSTR',
     'INTERVAL', 'ISNULL', 'IS_IPV4', 'IS_IPV4_COMPAT', 'IS_IPV4_MAPPED', 'IS_IPV6', 'IS_UUID',
     'JSON_ARRAY', 'JSON_ARRAYAGG', 'JSON_ARRAY_APPEND', 'JSON_ARRAY_INSERT', 'JSON_CONTAINS', 'JSON_CONTAINS_PATH', 'JSON_DEPTH',
     'JSON_EXTRACT', 'JSON_INSERT', 'JSON_KEYS', 'JSON_LENGTH', 'JSON_MERGE_PATCH', 'JSON_MERGE_PRESERVE', 'JSON_OBJECT',
     'JSON_OBJECTAGG', 'JSON_OVERLAPS', 'JSON_PRETTY', 'JSON_QUOTE', 'JSON_REMOVE', 'JSON_REPLACE', 'JSON_SCHEMA_VALID',
     'JSON_SCHEMA_VALIDATION_REPORT', 'JSON_SEARCH', 'JSON_SET', 'JSON_STORAGE_FREE', 'JSON_STORAGE_SIZE', 'JSON_TYPE', 'JSON_UNQUOTE',
-    'JSON_VALID', 'JSON_VALUE', 'LAG', 'LAST_DAY', 'LAST_INSERT_ID', 'LAST_VALUE', 'LEAD',
-    'LEAST', 'LEFT', 'LENGTH', 'LN', 'LOCATE', 'LOG', 'LOG10',
-    'LOG2', 'LOWER', 'LPAD', 'LTRIM', 'LineString', 'MAKEDATE', 'MAKETIME',
-    'MAKE_SET', 'MAX', 'MBRContains', 'MBRCoveredBy', 'MBRCovers', 'MBRDisjoint', 'MBREquals',
-    'MBRIntersects', 'MBROverlaps', 'MBRTouches', 'MBRWithin', 'MICROSECOND', 'MIN', 'MINUTE',
-    'MOD', 'MONTH', 'MONTHNAME', 'MultiLineString', 'MultiPoint', 'MultiPolygon', 'NOW',
-    'NTH_VALUE', 'NTILE', 'NULLIF', 'OCT', 'ORD', 'PERCENT_RANK', 'PERIOD_ADD',
-    'PERIOD_DIFF', 'PI', 'POSITION', 'POW', 'Point', 'Polygon', 'QUARTER',
-    'QUOTE', 'RADIANS', 'RAND', 'RANDOM_BYTES', 'RANK', 'REGEXP_INSTR', 'REGEXP_LIKE',
-    'REGEXP_REPLACE', 'REGEXP_SUBSTR', 'REPEAT', 'REPLACE', 'REVERSE', 'RIGHT', 'ROUND',
-    'ROW_COUNT', 'ROW_NUMBER', 'RPAD', 'RTRIM', 'SECOND', 'SEC_TO_TIME', 'SHA2',
-    'SIGN', 'SIN', 'SOUNDEX', 'SPACE', 'SQRT', 'STDDEV_POP', 'STDDEV_SAMP',
-    'STRCMP', 'STRING_TO_VECTOR', 'STR_TO_DATE', 'ST_Area', 'ST_AsBinary', 'ST_AsGeoJSON', 'ST_AsText',
-    'ST_Buffer', 'ST_Buffer_Strategy', 'ST_Centroid', 'ST_Collect', 'ST_Contains', 'ST_ConvexHull', 'ST_Crosses',
-    'ST_Difference', 'ST_Dimension', 'ST_Disjoint', 'ST_Distance', 'ST_Distance_Sphere', 'ST_EndPoint', 'ST_Envelope',
-    'ST_Equals', 'ST_ExteriorRing', 'ST_FrechetDistance', 'ST_GeoHash', 'ST_GeomCollFromText', 'ST_GeomCollFromWKB', 'ST_GeomFromGeoJSON',
-    'ST_GeomFromText', 'ST_GeomFromWKB', 'ST_GeometryN', 'ST_GeometryType', 'ST_HausdorffDistance', 'ST_InteriorRingN', 'ST_Intersection',
-    'ST_Intersects', 'ST_IsClosed', 'ST_IsEmpty', 'ST_IsSimple', 'ST_IsValid', 'ST_LatFromGeoHash', 'ST_Latitude',
-    'ST_Length', 'ST_LineFromText', 'ST_LineFromWKB', 'ST_LineInterpolatePoint', 'ST_LineInterpolatePoints', 'ST_LongFromGeoHash', 'ST_Longitude',
-    'ST_MLineFromText', 'ST_MLineFromWKB', 'ST_MPointFromText', 'ST_MPointFromWKB', 'ST_MPolyFromText', 'ST_MPolyFromWKB', 'ST_MakeEnvelope',
-    'ST_NumGeometries', 'ST_NumInteriorRings', 'ST_NumPoints', 'ST_Overlaps', 'ST_PointAtDistance', 'ST_PointFromGeoHash', 'ST_PointFromText',
-    'ST_PointFromWKB', 'ST_PointN', 'ST_PolyFromText', 'ST_PolyFromWKB', 'ST_SRID', 'ST_Simplify', 'ST_StartPoint',
+    'JSON_VALID', 'JSON_VALUE', 'LAG', 'LAST_DAY', 'LAST_INSERT_ID', 'LAST_VALUE', 'LCASE',
+    'LEAD', 'LEAST', 'LEFT', 'LENGTH', 'LN', 'LOCALTIME', 'LOCALTIMESTAMP',
+    'LOCATE', 'LOG', 'LOG10', 'LOG2', 'LOWER', 'LPAD', 'LTRIM',
+    'LineString', 'MAKEDATE', 'MAKETIME', 'MAKE_SET', 'MAX', 'MBRContains', 'MBRCoveredBy',
+    'MBRCovers', 'MBRDisjoint', 'MBREquals', 'MBRIntersects', 'MBROverlaps', 'MBRTouches', 'MBRWithin',
+    'MICROSECOND', 'MID', 'MIN', 'MINUTE', 'MOD', 'MONTH', 'MONTHNAME',
+    'MultiLineString', 'MultiPoint', 'MultiPolygon', 'NOW', 'NTH_VALUE', 'NTILE', 'NULLIF',
+    'OCT', 'OCTET_LENGTH', 'ORD', 'PERCENT_RANK', 'PERIOD_ADD', 'PERIOD_DIFF', 'PI',
+    'POSITION', 'POW', 'POWER', 'Point', 'Polygon', 'QUARTER', 'QUOTE',
+    'RADIANS', 'RAND', 'RANDOM_BYTES', 'RANK', 'REGEXP_INSTR', 'REGEXP_LIKE', 'REGEXP_REPLACE',
+    'REGEXP_SUBSTR', 'REPEAT', 'REPLACE', 'REVERSE', 'RIGHT', 'ROUND', 'ROW_COUNT',
+    'ROW_NUMBER', 'RPAD', 'RTRIM', 'SCHEMA', 'SECOND', 'SEC_TO_TIME', 'SESSION_USER',
+    'SHA2', 'SIGN', 'SIN', 'SOUNDEX', 'SPACE', 'SQRT', 'STD',
+    'STDDEV', 'STDDEV_POP', 'STDDEV_SAMP', 'STRCMP', 'STRING_TO_VECTOR', 'STR_TO_DATE', 'ST_Area',
+    'ST_AsBinary', 'ST_AsGeoJSON', 'ST_AsText', 'ST_AsWKB', 'ST_AsWKT', 'ST_Buffer', 'ST_Buffer_Strategy',
+    'ST_Centroid', 'ST_Collect', 'ST_Contains', 'ST_ConvexHull', 'ST_Crosses', 'ST_Difference', 'ST_Dimension',
+    'ST_Disjoint', 'ST_Distance', 'ST_Distance_Sphere', 'ST_EndPoint', 'ST_Envelope', 'ST_Equals', 'ST_ExteriorRing',
+    'ST_FrechetDistance', 'ST_GeoHash', 'ST_GeomCollFromText', 'ST_GeomCollFromTxt', 'ST_GeomCollFromWKB', 'ST_GeomFromGeoJSON', 'ST_GeomFromText',
+    'ST_GeomFromWKB', 'ST_GeometryCollectionFromText', 'ST_GeometryCollectionFromWKB', 'ST_GeometryFromText', 'ST_GeometryFromWKB', 'ST_GeometryN', 'ST_GeometryType',
+    'ST_HausdorffDistance', 'ST_InteriorRingN', 'ST_Intersection', 'ST_Intersects', 'ST_IsClosed', 'ST_IsEmpty', 'ST_IsSimple',
+    'ST_IsValid', 'ST_LatFromGeoHash', 'ST_Latitude', 'ST_Length', 'ST_LineFromText', 'ST_LineFromWKB', 'ST_LineInterpolatePoint',
+    'ST_LineInterpolatePoints', 'ST_LineStringFromText', 'ST_LineStringFromWKB', 'ST_LongFromGeoHash', 'ST_Longitude', 'ST_MLineFromText', 'ST_MLineFromWKB',
+    'ST_MPointFromText', 'ST_MPointFromWKB', 'ST_MPolyFromText', 'ST_MPolyFromWKB', 'ST_MakeEnvelope', 'ST_MultiLineStringFromText', 'ST_MultiLineStringFromWKB',
+    'ST_MultiPointFromText', 'ST_MultiPointFromWKB', 'ST_MultiPolygonFromText', 'ST_MultiPolygonFromWKB', 'ST_NumGeometries', 'ST_NumInteriorRing', 'ST_NumInteriorRings',
+    'ST_NumPoints', 'ST_Overlaps', 'ST_PointAtDistance', 'ST_PointFromGeoHash', 'ST_PointFromText', 'ST_PointFromWKB', 'ST_PointN',
+    'ST_PolyFromText', 'ST_PolyFromWKB', 'ST_PolygonFromText', 'ST_PolygonFromWKB', 'ST_SRID', 'ST_Simplify', 'ST_StartPoint',
     'ST_SwapXY', 'ST_SymDifference', 'ST_Touches', 'ST_Transform', 'ST_Union', 'ST_Validate', 'ST_Within',
-    'ST_X', 'ST_Y', 'SUBDATE', 'SUBSTRING', 'SUBSTRING_INDEX', 'SUBTIME', 'SUM',
-    'SYSDATE', 'TAN', 'TIME', 'TIMEDIFF', 'TIMESTAMP', 'TIMESTAMPADD', 'TIMESTAMPDIFF',
-    'TIME_FORMAT', 'TIME_TO_SEC', 'TO_BASE64', 'TO_DAYS', 'TO_SECONDS', 'TRIM', 'TRUNCATE',
-    'UNCOMPRESS', 'UNCOMPRESSED_LENGTH', 'UNHEX', 'UNIX_TIMESTAMP', 'UPPER', 'USER', 'UTC_DATE',
-    'UTC_TIME', 'UTC_TIMESTAMP', 'UUID', 'UUID_SHORT', 'UUID_TO_BIN', 'VAR_POP', 'VAR_SAMP',
-    'VECTOR_DIM', 'VECTOR_TO_STRING', 'VERSION', 'WEEK', 'WEEKDAY', 'WEEKOFYEAR', 'YEAR',
-    'YEARWEEK',
+    'ST_X', 'ST_Y', 'SUBDATE', 'SUBSTR', 'SUBSTRING', 'SUBSTRING_INDEX', 'SUBTIME',
+    'SUM', 'SYSDATE', 'SYSTEM_USER', 'TAN', 'TIME', 'TIMEDIFF', 'TIMESTAMP',
+    'TIMESTAMPADD', 'TIMESTAMPDIFF', 'TIME_FORMAT', 'TIME_TO_SEC', 'TO_BASE64', 'TO_DAYS', 'TO_SECONDS',
+    'TO_VECTOR', 'TRIM', 'TRUNCATE', 'UCASE', 'UNCOMPRESS', 'UNCOMPRESSED_LENGTH', 'UNHEX',
+    'UNIX_TIMESTAMP', 'UPPER', 'USER', 'UTC_DATE', 'UTC_TIME', 'UTC_TIMESTAMP', 'UUID',
+    'UUID_SHORT', 'UUID_TO_BIN', 'VARIANCE', 'VAR_POP', 'VAR_SAMP', 'VECTOR_DIM', 'VECTOR_TO_STRING',
+    'VERSION', 'WEEK', 'WEEKDAY', 'WEEKOFYEAR', 'YEAR', 'YEARWEEK',
 ]

@@ -12,7 +12,7 @@ fixed_calls! {
     Asin, "ASIN", (value), "Return the inverse sine in radians.";
     Atan2, "ATAN2", (y, x), "Return the angle of the point (x, y) in radians.";
     BitCount, "BIT_COUNT", (value), "Count the bits set in the supplied value.";
-    Ceil, "CEIL", (value), "Return the smallest integer greater than or equal to value.";
+    Ceil, "CEIL", (value), "Return the smallest integer greater than or equal to value." => [Ceiling, "CEILING"];
     Conv, "CONV", (value, from_base, to_base), "Convert a number between two bases and return text.";
     Cos, "COS", (value), "Return the cosine of an angle in radians.";
     Cot, "COT", (value), "Return the cotangent of an angle in radians.";
@@ -25,7 +25,7 @@ fixed_calls! {
     Log2, "LOG2", (value), "Return the base-two logarithm.";
     Mod, "MOD", (dividend, divisor), "Return the remainder after dividing dividend by divisor.";
     Pi, "PI", (), "Return the value of pi.";
-    Pow, "POW", (base, exponent), "Raise base to the given exponent.";
+    Pow, "POW", (base, exponent), "Raise base to the given exponent." => [Power, "POWER"];
     Radians, "RADIANS", (degrees), "Convert an angle from degrees to radians.";
     Sign, "SIGN", (value), "Return -1, 0, or 1 according to the sign of value.";
     Sin, "SIN", (value), "Return the sine of an angle in radians.";

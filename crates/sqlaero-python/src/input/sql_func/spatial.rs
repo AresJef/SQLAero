@@ -45,7 +45,7 @@ fixed_calls! {
     StLongFromGeoHash, "ST_LongFromGeoHash", (geohash), "Decode the longitude from a geohash.";
     StMakeEnvelope, "ST_MakeEnvelope", (first_point, second_point), "Return the envelope defined by two points.";
     StNumGeometries, "ST_NumGeometries", (collection), "Return the number of geometries in the collection.";
-    StNumInteriorRings, "ST_NumInteriorRings", (polygon), "Return the number of interior rings in the polygon.";
+    StNumInteriorRings, "ST_NumInteriorRings", (polygon), "Return the number of interior rings in the polygon." => [StNumInteriorRing, "ST_NumInteriorRing"];
     StNumPoints, "ST_NumPoints", (line), "Return the number of points in the line.";
     StOverlaps, "ST_Overlaps", (left, right), "Test whether the two shapes overlap.";
     StPointAtDistance, "ST_PointAtDistance", (line, distance), "Return the point at a distance along the line.";
@@ -60,18 +60,18 @@ fixed_calls! {
     StUnion, "ST_Union", (left, right), "Return the union of the two geometries.";
     StValidate, "ST_Validate", (geometry), "Return a valid geometry, or NULL if the geometry is invalid.";
     StWithin, "ST_Within", (inner, outer), "Test whether the first geometry lies within the second.";
-    StringToVector, "STRING_TO_VECTOR", (value), "Convert a bracketed list of numbers to a MySQL vector.";
+    StringToVector, "STRING_TO_VECTOR", (value), "Convert a bracketed list of numbers to a MySQL vector." => [ToVector, "TO_VECTOR"];
     VectorDim, "VECTOR_DIM", (vector), "Return the number of entries in a MySQL vector.";
-    VectorToString, "VECTOR_TO_STRING", (vector), "Return the textual representation of a MySQL vector.";
+    VectorToString, "VECTOR_TO_STRING", (vector), "Return the textual representation of a MySQL vector." => [FromVector, "FROM_VECTOR"];
 }
 
 optional_calls! {
     StAsBinary, "ST_AsBinary", (geometry), (options), "(geometry, options=...)",
-        "Convert a geometry to WKB, optionally specifying axis order.";
+        "Convert a geometry to WKB, optionally specifying axis order." => [StAsWkb, "ST_AsWKB"];
     StAsGeoJson, "ST_AsGeoJSON", (geometry), (maximum_decimal_digits, options), "(geometry, maximum_decimal_digits=..., options=...)",
         "Convert a geometry to GeoJSON with optional precision and formatting flags.";
     StAsText, "ST_AsText", (geometry), (options), "(geometry, options=...)",
-        "Convert a geometry to WKT, optionally specifying axis order.";
+        "Convert a geometry to WKT, optionally specifying axis order." => [StAsWkt, "ST_AsWKT"];
     StBuffer, "ST_Buffer", (geometry, distance), (strategy1, strategy2, strategy3), "(geometry, distance, strategy1=..., strategy2=..., strategy3=...)",
         "Return the areas within the distance using up to three buffer strategies.";
     StBufferStrategy, "ST_Buffer_Strategy", (strategy), (points_per_circle), "(strategy, points_per_circle=...)",
@@ -85,15 +85,15 @@ optional_calls! {
     StGeoHash, "ST_GeoHash", (longitude_or_point, latitude_or_maximum_length), (maximum_length), "(longitude_or_point, latitude_or_maximum_length, maximum_length=...)",
         "Encode a point or longitude and latitude as a geohash of the given maximum length.";
     StGeomCollFromText, "ST_GeomCollFromText", (wkt), (srid, options), "(wkt, srid=..., options=...)",
-        "Construct a geometry collection from WKT.";
+        "Construct a geometry collection from WKT." => [StGeomCollFromTxt, "ST_GeomCollFromTxt", StGeometryCollectionFromText, "ST_GeometryCollectionFromText"];
     StGeomCollFromWkb, "ST_GeomCollFromWKB", (wkb), (srid, options), "(wkb, srid=..., options=...)",
-        "Construct a geometry collection from WKB.";
+        "Construct a geometry collection from WKB." => [StGeometryCollectionFromWkb, "ST_GeometryCollectionFromWKB"];
     StGeomFromGeoJson, "ST_GeomFromGeoJSON", (document), (options, srid), "(document, options=..., srid=...)",
         "Convert a GeoJSON document into a geometry.";
     StGeomFromText, "ST_GeomFromText", (wkt), (srid, options), "(wkt, srid=..., options=...)",
-        "Construct a geometry from WKT.";
+        "Construct a geometry from WKT." => [StGeometryFromText, "ST_GeometryFromText"];
     StGeomFromWkb, "ST_GeomFromWKB", (wkb), (srid, options), "(wkb, srid=..., options=...)",
-        "Construct a geometry from WKB.";
+        "Construct a geometry from WKB." => [StGeometryFromWkb, "ST_GeometryFromWKB"];
     StHausdorffDistance, "ST_HausdorffDistance", (left, right), (unit), "(left, right, unit=...)",
         "Return the discrete Hausdorff distance between geometries.";
     StLatitude, "ST_Latitude", (point), (latitude), "(point, latitude=...)",
@@ -101,31 +101,31 @@ optional_calls! {
     StLength, "ST_Length", (geometry), (unit), "(geometry, unit=...)",
         "Return the length of a line or multiline geometry.";
     StLineFromText, "ST_LineFromText", (wkt), (srid, options), "(wkt, srid=..., options=...)",
-        "Construct a line string from WKT.";
+        "Construct a line string from WKT." => [StLineStringFromText, "ST_LineStringFromText"];
     StLineFromWkb, "ST_LineFromWKB", (wkb), (srid, options), "(wkb, srid=..., options=...)",
-        "Construct a line string from WKB.";
+        "Construct a line string from WKB." => [StLineStringFromWkb, "ST_LineStringFromWKB"];
     StLongitude, "ST_Longitude", (point), (longitude), "(point, longitude=...)",
         "Get a geographic longitude or return a point with the given longitude.";
     StMLineFromText, "ST_MLineFromText", (wkt), (srid, options), "(wkt, srid=..., options=...)",
-        "Construct a multiline string from WKT.";
+        "Construct a multiline string from WKT." => [StMultiLineStringFromText, "ST_MultiLineStringFromText"];
     StMLineFromWkb, "ST_MLineFromWKB", (wkb), (srid, options), "(wkb, srid=..., options=...)",
-        "Construct a multiline string from WKB.";
+        "Construct a multiline string from WKB." => [StMultiLineStringFromWkb, "ST_MultiLineStringFromWKB"];
     StMPointFromText, "ST_MPointFromText", (wkt), (srid, options), "(wkt, srid=..., options=...)",
-        "Construct a multipoint from WKT.";
+        "Construct a multipoint from WKT." => [StMultiPointFromText, "ST_MultiPointFromText"];
     StMPointFromWkb, "ST_MPointFromWKB", (wkb), (srid, options), "(wkb, srid=..., options=...)",
-        "Construct a multipoint from WKB.";
+        "Construct a multipoint from WKB." => [StMultiPointFromWkb, "ST_MultiPointFromWKB"];
     StMPolyFromText, "ST_MPolyFromText", (wkt), (srid, options), "(wkt, srid=..., options=...)",
-        "Construct a multipolygon from WKT.";
+        "Construct a multipolygon from WKT." => [StMultiPolygonFromText, "ST_MultiPolygonFromText"];
     StMPolyFromWkb, "ST_MPolyFromWKB", (wkb), (srid, options), "(wkb, srid=..., options=...)",
-        "Construct a multipolygon from WKB.";
+        "Construct a multipolygon from WKB." => [StMultiPolygonFromWkb, "ST_MultiPolygonFromWKB"];
     StPointFromText, "ST_PointFromText", (wkt), (srid, options), "(wkt, srid=..., options=...)",
         "Construct a point from WKT.";
     StPointFromWkb, "ST_PointFromWKB", (wkb), (srid, options), "(wkb, srid=..., options=...)",
         "Construct a point from WKB.";
     StPolyFromText, "ST_PolyFromText", (wkt), (srid, options), "(wkt, srid=..., options=...)",
-        "Construct a polygon from WKT.";
+        "Construct a polygon from WKT." => [StPolygonFromText, "ST_PolygonFromText"];
     StPolyFromWkb, "ST_PolyFromWKB", (wkb), (srid, options), "(wkb, srid=..., options=...)",
-        "Construct a polygon from WKB.";
+        "Construct a polygon from WKB." => [StPolygonFromWkb, "ST_PolygonFromWKB"];
     StSrid, "ST_SRID", (geometry), (srid), "(geometry, srid=...)",
         "Get the spatial reference ID or set it without transforming the coordinates.";
     StX, "ST_X", (point), (x), "(point, x=...)",
@@ -146,29 +146,37 @@ distinct_calls! {
     StCollect, "ST_Collect", "Collect geometries in a group or window, optionally removing duplicates.";
 }
 
-/// Construct a geometry collection, optionally with zero components.
-#[pyclass(extends = SqlFunction, name = "GeometryCollection", module = "sqlaero.sqlfunc")]
-struct GeometryCollection;
+macro_rules! collection_call {
+    ($class:ident, $name:literal) => {
+        /// Construct a geometry collection, optionally with zero components.
+        #[pyclass(extends = SqlFunction, name = $name, module = "sqlaero.sqlfunc")]
+        struct $class;
 
-#[pymethods]
-impl GeometryCollection {
-    #[new]
-    #[pyo3(signature = (*geometries))]
-    fn new(geometries: &Bound<'_, PyTuple>) -> PyResult<PyClassInitializer<Self>> {
-        let expression = SqlFunction::new(
-            "GeometryCollection",
-            Kind::Scalar,
-            Form::Call("GeometryCollection("),
-            geometries.clone(),
-        )?;
-        Ok(PyClassInitializer::from(expression).add_subclass(Self))
-    }
+        #[pymethods]
+        impl $class {
+            #[new]
+            #[pyo3(signature = (*geometries))]
+            fn new(geometries: &Bound<'_, PyTuple>) -> PyResult<PyClassInitializer<Self>> {
+                let expression = SqlFunction::new(
+                    $name,
+                    Kind::Scalar,
+                    Form::Call("GeometryCollection("),
+                    geometries.clone(),
+                )?;
+                Ok(PyClassInitializer::from(expression).add_subclass(Self))
+            }
+        }
+    };
 }
+
+collection_call!(GeometryCollection, "GeometryCollection");
+collection_call!(GeomCollection, "GeomCollection");
 
 pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_fixed(module)?;
     register_optional(module)?;
     register_variadic(module)?;
     register_distinct(module)?;
-    module.add_class::<GeometryCollection>()
+    module.add_class::<GeometryCollection>()?;
+    module.add_class::<GeomCollection>()
 }

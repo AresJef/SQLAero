@@ -17,9 +17,9 @@ fixed_calls! {
     BitXor, "BIT_XOR", (value), "Return the bitwise XOR over the values in a group.";
     JsonArrayAgg, "JSON_ARRAYAGG", (value), "Aggregate the group values into one JSON array.";
     JsonObjectAgg, "JSON_OBJECTAGG", (key, value), "Aggregate keys and values into one JSON object.";
-    StddevPop, "STDDEV_POP", (value), "Return the population standard deviation of the group.";
+    StddevPop, "STDDEV_POP", (value), "Return the population standard deviation of the group." => [Std, "STD", Stddev, "STDDEV"];
     StddevSamp, "STDDEV_SAMP", (value), "Return the sample standard deviation of the group.";
-    VarPop, "VAR_POP", (value), "Return the population variance of the group.";
+    VarPop, "VAR_POP", (value), "Return the population variance of the group." => [Variance, "VARIANCE"];
     VarSamp, "VAR_SAMP", (value), "Return the sample variance of the group.";
 }
 

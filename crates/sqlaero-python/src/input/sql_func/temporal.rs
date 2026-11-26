@@ -11,10 +11,10 @@ use sqlaero_core::bind::sql_func::{Form, Part, Role, date_shift};
 fixed_calls! {
     Addtime, "ADDTIME", (value, time), "Add a time value to a time or datetime.";
     ConvertTz, "CONVERT_TZ", (value, from_zone, to_zone), "Convert a datetime from one time zone to another.";
-    CurrentDate, "CURRENT_DATE", (), "Return the current date in the session time zone.";
+    CurrentDate, "CURRENT_DATE", (), "Return the current date in the session time zone." => [Curdate, "CURDATE"];
     DateFormat, "DATE_FORMAT", (value, format), "Format a date or datetime with a MySQL format string.";
     DateDiff, "DATEDIFF", (left, right), "Return left minus right as a difference in calendar days.";
-    Day, "DAY", (value), "Return the day of the month.";
+    Day, "DAY", (value), "Return the day of the month." => [DayOfMonth, "DAYOFMONTH"];
     DayName, "DAYNAME", (value), "Return the localized name of the weekday.";
     DayOfWeek, "DAYOFWEEK", (value), "Return the weekday index, with Sunday as 1.";
     DayOfYear, "DAYOFYEAR", (value), "Return the day of the year starting at 1.";
@@ -59,49 +59,58 @@ optional_calls! {
         "Return the corresponding year and week number using MySQL's optional week mode.";
 }
 
-macro_rules! clock_calls {
-    ($( $class:ident, $name:literal, $description:literal; )+) => {
-        $(
-            #[doc = $description]
-            #[pyclass(extends = SqlFunction, name = $name, module = "sqlaero.sqlfunc")]
-            struct $class;
+macro_rules! define_clock_call {
+    ($class:ident, $name:literal, $sql_name:literal, $description:literal) => {
+        #[doc = $description]
+        #[pyclass(extends = SqlFunction, name = $name, module = "sqlaero.sqlfunc")]
+        struct $class;
 
-            #[pymethods]
-            impl $class {
-                #[new]
-                #[pyo3(signature = (fsp=Argument::default()), text_signature = "(fsp=...)")]
-                fn new(py: Python<'_>, fsp: Argument<'_>) -> PyResult<PyClassInitializer<Self>> {
-                    const FRACTION: [&[Part]; 7] = [
-                        &[Part::Syntax(concat!($name, "(0)"))],
-                        &[Part::Syntax(concat!($name, "(1)"))],
-                        &[Part::Syntax(concat!($name, "(2)"))],
-                        &[Part::Syntax(concat!($name, "(3)"))],
-                        &[Part::Syntax(concat!($name, "(4)"))],
-                        &[Part::Syntax(concat!($name, "(5)"))],
-                        &[Part::Syntax(concat!($name, "(6)"))],
-                    ];
-                    let normalized = sql_type::number(fsp.0.as_ref(), concat!($name, " fsp"), 0..=6)?;
-                    let form = normalized.map_or(
-                        Form::Call(concat!($name, "(")),
-                        |digits| Form::Static(FRACTION[digits as usize]),
-                    );
-                    let expression = SqlFunction::new($name, Kind::Scalar, form, PyTuple::empty(py))?;
-                    Ok(PyClassInitializer::from(expression).add_subclass(Self))
-                }
+        #[pymethods]
+        impl $class {
+            #[new]
+            #[pyo3(signature = (fsp=Argument::default()), text_signature = "(fsp=...)")]
+            fn new(py: Python<'_>, fsp: Argument<'_>) -> PyResult<PyClassInitializer<Self>> {
+                const FRACTION: [&[Part]; 7] = [
+                    &[Part::Syntax(concat!($sql_name, "(0)"))],
+                    &[Part::Syntax(concat!($sql_name, "(1)"))],
+                    &[Part::Syntax(concat!($sql_name, "(2)"))],
+                    &[Part::Syntax(concat!($sql_name, "(3)"))],
+                    &[Part::Syntax(concat!($sql_name, "(4)"))],
+                    &[Part::Syntax(concat!($sql_name, "(5)"))],
+                    &[Part::Syntax(concat!($sql_name, "(6)"))],
+                ];
+                let normalized = sql_type::number(fsp.0.as_ref(), concat!($name, " fsp"), 0..=6)?;
+                let form = normalized.map_or(Form::Call(concat!($sql_name, "(")), |digits| {
+                    Form::Static(FRACTION[digits as usize])
+                });
+                let expression = SqlFunction::new($name, Kind::Scalar, form, PyTuple::empty(py))?;
+                Ok(PyClassInitializer::from(expression).add_subclass(Self))
             }
+        }
+    };
+}
+
+macro_rules! clock_calls {
+    ($( $class:ident, $name:literal, $description:literal $(=> [$($alias:ident, $alias_name:literal),+])?; )+) => {
+        $(
+            define_clock_call!($class, $name, $name, $description);
+            $($(define_clock_call!($alias, $alias_name, $name, $description);)+)?
         )+
 
         fn register_clocks(module: &Bound<'_, PyModule>) -> PyResult<()> {
-            $(module.add_class::<$class>()?;)+
+            $(
+                module.add_class::<$class>()?;
+                $($(module.add_class::<$alias>()?;)+)?
+            )+
             Ok(())
         }
     };
 }
 
 clock_calls! {
-    CurrentTime, "CURRENT_TIME", "Return the current session time with optional fractional precision.";
+    CurrentTime, "CURRENT_TIME", "Return the current session time with optional fractional precision." => [Curtime, "CURTIME"];
     CurrentTimestamp, "CURRENT_TIMESTAMP", "Return the current session datetime with optional fractional precision.";
-    Now, "NOW", "Return the session datetime at statement start with optional fractional precision.";
+    Now, "NOW", "Return the session datetime at statement start with optional fractional precision." => [Localtime, "LOCALTIME", LocalTimestamp, "LOCALTIMESTAMP"];
     Sysdate, "SYSDATE", "Return the system datetime at invocation with optional fractional precision.";
     UtcTime, "UTC_TIME", "Return the current UTC time with optional fractional precision.";
     UtcTimestamp, "UTC_TIMESTAMP", "Return the current UTC datetime with optional fractional precision.";

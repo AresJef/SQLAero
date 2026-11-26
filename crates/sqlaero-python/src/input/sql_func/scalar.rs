@@ -18,7 +18,7 @@ fixed_calls! {
     ConnectionId, "CONNECTION_ID", (), "Return the current server connection identifier.";
     CurrentRole, "CURRENT_ROLE", (), "Return the active roles of the current session.";
     CurrentUser, "CURRENT_USER", (), "Return the MySQL account used to check privileges.";
-    Database, "DATABASE", (), "Return the current default database.";
+    Database, "DATABASE", (), "Return the current default database." => [Schema, "SCHEMA"];
     IcuVersion, "ICU_VERSION", (), "Return the ICU library version used by the server.";
     InetAton, "INET_ATON", (address), "Convert a text IPv4 address to an integer.";
     InetNtoa, "INET_NTOA", (address), "Convert an integer IPv4 address to text.";
@@ -34,7 +34,7 @@ fixed_calls! {
     Sha2, "SHA2", (value, bits), "Return a hexadecimal SHA-2 digest using the specified digest width.";
     Uncompress, "UNCOMPRESS", (value), "Decode MySQL compressed data to its original bytes.";
     UncompressedLength, "UNCOMPRESSED_LENGTH", (value), "Return the original byte length of MySQL compressed data.";
-    User, "USER", (), "Return the supplied client username and client host.";
+    User, "USER", (), "Return the supplied client username and client host." => [SessionUser, "SESSION_USER", SystemUser, "SYSTEM_USER"];
     Uuid, "UUID", (), "Generate a version-1 UUID string when the server evaluates the expression.";
     UuidShort, "UUID_SHORT", (), "Generate a server-based unsigned integer identifier.";
     Version, "VERSION", (), "Return the server's version string.";

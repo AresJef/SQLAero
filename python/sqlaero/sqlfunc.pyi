@@ -1706,3 +1706,203 @@ class VECTOR_DIM(_SQLFunction):
 class VECTOR_TO_STRING(_SQLFunction):
     """Return the textual representation of a MySQL vector."""
     def __init__(self, vector: object) -> None: ...
+
+@final
+class CEILING(_SQLFunction):
+    """Return the smallest integer greater than or equal to value."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class CHARACTER_LENGTH(_SQLFunction):
+    """Return the length of value in characters."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class CURDATE(_SQLFunction):
+    """Return the current date in the session time zone."""
+    def __init__(self) -> None: ...
+
+@final
+class CURTIME(_SQLFunction):
+    """Return the current session time with optional fractional precision."""
+    def __init__(self, fsp: int = ...) -> None: ...
+
+@final
+class DAYOFMONTH(_SQLFunction):
+    """Return the day of the month."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class FROM_VECTOR(_SQLFunction):
+    """Return the textual representation of a MySQL vector."""
+    def __init__(self, vector: object) -> None: ...
+
+@final
+class GeomCollection(_SQLFunction):
+    """Construct a geometry collection, optionally with zero components."""
+    def __init__(self, *geometries: object) -> None: ...
+
+@final
+class LCASE(_SQLFunction):
+    """Convert text to lowercase using its character set."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class LOCALTIME(_SQLFunction):
+    """Return the session datetime at statement start with optional fractional precision."""
+    def __init__(self, fsp: int = ...) -> None: ...
+
+@final
+class LOCALTIMESTAMP(_SQLFunction):
+    """Return the session datetime at statement start with optional fractional precision."""
+    def __init__(self, fsp: int = ...) -> None: ...
+
+@final
+class MID(_SQLFunction):
+    """Return characters beginning at the specified position."""
+    def __init__(self, value: object, position: object, length: object = ...) -> None: ...
+
+@final
+class OCTET_LENGTH(_SQLFunction):
+    """Return the length of value in bytes."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class POWER(_SQLFunction):
+    """Raise base to the given exponent."""
+    def __init__(self, base: object, exponent: object) -> None: ...
+
+@final
+class SCHEMA(_SQLFunction):
+    """Return the current default database."""
+    def __init__(self) -> None: ...
+
+@final
+class SESSION_USER(_SQLFunction):
+    """Return the supplied client username and client host."""
+    def __init__(self) -> None: ...
+
+@final
+class ST_AsWKB(_SQLFunction):
+    """Convert a geometry to WKB, optionally specifying axis order."""
+    def __init__(self, geometry: object, options: object = ...) -> None: ...
+
+@final
+class ST_AsWKT(_SQLFunction):
+    """Convert a geometry to WKT, optionally specifying axis order."""
+    def __init__(self, geometry: object, options: object = ...) -> None: ...
+
+@final
+class ST_GeomCollFromTxt(_SQLFunction):
+    """Construct a geometry collection from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_GeometryCollectionFromText(_SQLFunction):
+    """Construct a geometry collection from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_GeometryCollectionFromWKB(_SQLFunction):
+    """Construct a geometry collection from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_GeometryFromText(_SQLFunction):
+    """Construct a geometry from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_GeometryFromWKB(_SQLFunction):
+    """Construct a geometry from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_LineStringFromText(_SQLFunction):
+    """Construct a line string from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_LineStringFromWKB(_SQLFunction):
+    """Construct a line string from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MultiLineStringFromText(_SQLFunction):
+    """Construct a multiline string from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MultiLineStringFromWKB(_SQLFunction):
+    """Construct a multiline string from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MultiPointFromText(_SQLFunction):
+    """Construct a multipoint from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MultiPointFromWKB(_SQLFunction):
+    """Construct a multipoint from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MultiPolygonFromText(_SQLFunction):
+    """Construct a multipolygon from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MultiPolygonFromWKB(_SQLFunction):
+    """Construct a multipolygon from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_NumInteriorRing(_SQLFunction):
+    """Return the number of interior rings in the polygon."""
+    def __init__(self, polygon: object) -> None: ...
+
+@final
+class ST_PolygonFromText(_SQLFunction):
+    """Construct a polygon from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_PolygonFromWKB(_SQLFunction):
+    """Construct a polygon from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class STD(_SQLFunction):
+    """Return the population standard deviation of the group."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class STDDEV(_SQLFunction):
+    """Return the population standard deviation of the group."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class SUBSTR(_SQLFunction):
+    """Return characters beginning at the specified position."""
+    def __init__(self, value: object, position: object, length: object = ...) -> None: ...
+
+@final
+class SYSTEM_USER(_SQLFunction):
+    """Return the supplied client username and client host."""
+    def __init__(self) -> None: ...
+
+@final
+class TO_VECTOR(_SQLFunction):
+    """Convert a bracketed list of numbers to a MySQL vector."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class UCASE(_SQLFunction):
+    """Convert text to uppercase using its character set."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class VARIANCE(_SQLFunction):
+    """Return the population variance of the group."""
+    def __init__(self, value: object) -> None: ...

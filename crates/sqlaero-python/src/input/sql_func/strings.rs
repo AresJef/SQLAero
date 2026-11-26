@@ -13,15 +13,15 @@ fixed_calls! {
     Ascii, "ASCII", (value), "Return the numeric code of the first byte of value.";
     Bin, "BIN", (value), "Return the binary digits of an integer as text.";
     BitLength, "BIT_LENGTH", (value), "Return the length of value in bits.";
-    CharLength, "CHAR_LENGTH", (value), "Return the length of value in characters.";
+    CharLength, "CHAR_LENGTH", (value), "Return the length of value in characters." => [CharacterLength, "CHARACTER_LENGTH"];
     FindInSet, "FIND_IN_SET", (value, string_list), "Find the one-based position of value in a comma-separated string.";
     FromBase64, "FROM_BASE64", (value), "Decode a base64 string to binary data.";
     Hex, "HEX", (value), "Return the hexadecimal representation of a number or byte string.";
     Insert, "INSERT", (value, position, length, replacement), "Replace part of a string beginning at a one-based position.";
     Instr, "INSTR", (value, substring), "Return the one-based position of substring in value or zero.";
     Left, "LEFT", (value, length), "Return the leftmost length characters.";
-    Length, "LENGTH", (value), "Return the length of value in bytes.";
-    Lower, "LOWER", (value), "Convert text to lowercase using its character set.";
+    Length, "LENGTH", (value), "Return the length of value in bytes." => [OctetLength, "OCTET_LENGTH"];
+    Lower, "LOWER", (value), "Convert text to lowercase using its character set." => [Lcase, "LCASE"];
     Lpad, "LPAD", (value, length, padding), "Pad or truncate value on the left to the requested character length.";
     Ltrim, "LTRIM", (value), "Remove leading spaces.";
     Oct, "OCT", (value), "Return the octal digits of an integer as text.";
@@ -39,7 +39,7 @@ fixed_calls! {
     SubstringIndex, "SUBSTRING_INDEX", (value, delimiter, count), "Return the portion before or after the requested delimiter occurrence.";
     ToBase64, "TO_BASE64", (value), "Encode a value as base64 text.";
     Unhex, "UNHEX", (value), "Decode hexadecimal digits to binary data.";
-    Upper, "UPPER", (value), "Convert text to uppercase using its character set.";
+    Upper, "UPPER", (value), "Convert text to uppercase using its character set." => [Ucase, "UCASE"];
 }
 
 optional_calls! {
@@ -54,7 +54,7 @@ optional_calls! {
         "(value, pattern, replacement, position=..., occurrence=..., match_type=...)", "Replace regular expression matches with the supplied text.";
     RegexpSubstr, "REGEXP_SUBSTR", (value, pattern), (position, occurrence, match_type),
         "(value, pattern, position=..., occurrence=..., match_type=...)", "Return the requested regular expression match.";
-    Substring, "SUBSTRING", (value, position), (length), "(value, position, length=...)", "Return characters beginning at the specified position.";
+    Substring, "SUBSTRING", (value, position), (length), "(value, position, length=...)", "Return characters beginning at the specified position." => [Mid, "MID", Substr, "SUBSTR"];
 }
 
 variadic_calls! {
