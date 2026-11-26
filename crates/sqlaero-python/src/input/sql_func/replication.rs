@@ -7,9 +7,6 @@ use pyo3::types::PyTuple;
 use sqlaero_core::bind::sql_func::Form;
 
 fixed_calls! {
-    FailoverAddManaged, "asynchronous_connection_failover_add_managed",
-        (channel, managed_type, managed_name, host, port, network_namespace, primary_weight, secondary_weight),
-        "Add a managed group to a replication channel's asynchronous source list.";
     FailoverAddSource, "asynchronous_connection_failover_add_source",
         (channel, host, port, network_namespace, weight),
         "Add one source to a replication channel's asynchronous source list.";
@@ -50,7 +47,56 @@ optional_calls! {
         "(gtid_set, timeout=...)", "Wait until the local server has executed the given GTID set.";
 }
 
+/// Add a managed group to a replication channel's asynchronous source list.
+#[pyclass(
+    extends = SqlFunction,
+    name = "asynchronous_connection_failover_add_managed",
+    module = "sqlaero.sqlfunc"
+)]
+struct FailoverAddManaged;
+
+#[pymethods]
+impl FailoverAddManaged {
+    #[new]
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "The public signature mirrors all eight named MySQL arguments."
+    )]
+    fn new<'py>(
+        channel: Bound<'py, PyAny>,
+        managed_type: Bound<'py, PyAny>,
+        managed_name: Bound<'py, PyAny>,
+        host: Bound<'py, PyAny>,
+        port: Bound<'py, PyAny>,
+        network_namespace: Bound<'py, PyAny>,
+        primary_weight: Bound<'py, PyAny>,
+        secondary_weight: Bound<'py, PyAny>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let operands = PyTuple::new(
+            channel.py(),
+            [
+                channel,
+                managed_type,
+                managed_name,
+                host,
+                port,
+                network_namespace,
+                primary_weight,
+                secondary_weight,
+            ],
+        )?;
+        let expression = SqlFunction::new(
+            "asynchronous_connection_failover_add_managed",
+            Kind::Scalar,
+            Form::Call("asynchronous_connection_failover_add_managed("),
+            operands,
+        )?;
+        Ok(PyClassInitializer::from(expression).add_subclass(Self))
+    }
+}
+
 pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     register_fixed(module)?;
-    register_optional(module)
+    register_optional(module)?;
+    module.add_class::<FailoverAddManaged>()
 }
