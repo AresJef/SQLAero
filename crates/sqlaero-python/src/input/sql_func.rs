@@ -11,6 +11,7 @@ use sqlaero_core::bind::sql_intv::EXTRACT_UNITS;
 
 mod calls;
 mod conversion;
+mod json_functions;
 mod numeric;
 mod scalar;
 mod strings;
@@ -194,6 +195,7 @@ impl DateAdd {
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let functions = PyModule::new(module.py(), "_sqlfunc")?;
     conversion::register(&functions)?;
+    json_functions::register(&functions)?;
     numeric::register(&functions)?;
     scalar::register(&functions)?;
     strings::register(&functions)?;

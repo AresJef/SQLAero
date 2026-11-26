@@ -1,6 +1,6 @@
 """Concrete MySQL function expression classes."""
 
-from typing import final, overload
+from typing import Literal, final, overload
 from ._sqlaero import _SQLFunction, _SQLInterval  # pyright: ignore[reportPrivateUsage]
 from .sqltype import _Target  # pyright: ignore[reportPrivateUsage]
 
@@ -659,3 +659,150 @@ class UUID_TO_BIN(_SQLFunction):
 class VERSION(_SQLFunction):
     """Return the server's version string."""
     def __init__(self) -> None: ...
+
+@final
+class JSON_ARRAY(_SQLFunction):
+    """Build a JSON array from zero or more SQL values."""
+    def __init__(self, *values: object) -> None: ...
+
+@final
+class JSON_ARRAY_APPEND(_SQLFunction):
+    """Append values to arrays at the specified JSON paths."""
+    def __init__(self, document: object, path: object, value: object, *path_values: object) -> None: ...
+
+@final
+class JSON_ARRAY_INSERT(_SQLFunction):
+    """Insert values at JSON array positions."""
+    def __init__(self, document: object, path: object, value: object, *path_values: object) -> None: ...
+
+@final
+class JSON_INSERT(_SQLFunction):
+    """Insert values at missing JSON paths."""
+    def __init__(self, document: object, path: object, value: object, *path_values: object) -> None: ...
+
+@final
+class JSON_OBJECT(_SQLFunction):
+    """Build a JSON object from zero or more alternating SQL keys and values."""
+    def __init__(self, *key_values: object) -> None: ...
+
+@final
+class JSON_REPLACE(_SQLFunction):
+    """Replace values at existing JSON paths."""
+    def __init__(self, document: object, path: object, value: object, *path_values: object) -> None: ...
+
+@final
+class JSON_SEARCH(_SQLFunction):
+    """Find one or all matching strings in a JSON document."""
+    def __init__(
+        self, document: object, mode: object, search: object, escape_char: str | None = ..., *paths: object,
+    ) -> None: ...
+
+@final
+class JSON_SET(_SQLFunction):
+    """Insert or replace values at the specified JSON paths."""
+    def __init__(self, document: object, path: object, value: object, *path_values: object) -> None: ...
+
+_JsonPolicy = Literal["null", "error"] | tuple[Literal["default"], str | int | float | None]
+
+@final
+class JSON_VALUE(_SQLFunction):
+    """Extract a JSON scalar at a literal path, optionally with a conversion target."""
+    def __init__(
+        self, document: object, path: str, *, returning: _Target | None = None,
+        on_empty: _JsonPolicy | None = None, on_error: _JsonPolicy | None = None,
+    ) -> None: ...
+
+@final
+class JSON_CONTAINS(_SQLFunction):
+    """Check whether a JSON document contains a candidate at an optional path."""
+    def __init__(self, document: object, candidate: object, path: object = ...) -> None: ...
+
+@final
+class JSON_CONTAINS_PATH(_SQLFunction):
+    """Check for data at one or all given JSON paths."""
+    def __init__(self, document: object, mode: object, path: object, *paths: object) -> None: ...
+
+@final
+class JSON_DEPTH(_SQLFunction):
+    """Return the maximum depth of a JSON document."""
+    def __init__(self, document: object) -> None: ...
+
+@final
+class JSON_EXTRACT(_SQLFunction):
+    """Extract JSON data at the specified paths."""
+    def __init__(self, document: object, path: object, *paths: object) -> None: ...
+
+@final
+class JSON_KEYS(_SQLFunction):
+    """Return the keys of a JSON object at an optional path."""
+    def __init__(self, document: object, path: object = ...) -> None: ...
+
+@final
+class JSON_LENGTH(_SQLFunction):
+    """Return the length of a JSON value at an optional path."""
+    def __init__(self, document: object, path: object = ...) -> None: ...
+
+@final
+class JSON_MERGE_PATCH(_SQLFunction):
+    """Merge JSON documents using JSON Merge Patch."""
+    def __init__(self, document: object, other: object, *documents: object) -> None: ...
+
+@final
+class JSON_MERGE_PRESERVE(_SQLFunction):
+    """Merge JSON documents while preserving conflicting values."""
+    def __init__(self, document: object, other: object, *documents: object) -> None: ...
+
+@final
+class JSON_OVERLAPS(_SQLFunction):
+    """Check whether JSON documents share an element or key-value pair."""
+    def __init__(self, document: object, other: object) -> None: ...
+
+@final
+class JSON_PRETTY(_SQLFunction):
+    """Return an indented representation of a JSON document."""
+    def __init__(self, document: object) -> None: ...
+
+@final
+class JSON_QUOTE(_SQLFunction):
+    """Quote a string as a JSON string literal."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class JSON_REMOVE(_SQLFunction):
+    """Remove JSON values at the specified paths."""
+    def __init__(self, document: object, path: object, *paths: object) -> None: ...
+
+@final
+class JSON_SCHEMA_VALID(_SQLFunction):
+    """Check a JSON document against a JSON Schema."""
+    def __init__(self, schema: object, document: object) -> None: ...
+
+@final
+class JSON_SCHEMA_VALIDATION_REPORT(_SQLFunction):
+    """Return the JSON Schema validation report for a document."""
+    def __init__(self, schema: object, document: object) -> None: ...
+
+@final
+class JSON_STORAGE_FREE(_SQLFunction):
+    """Return bytes freed in a JSON column by in-place updates."""
+    def __init__(self, document: object) -> None: ...
+
+@final
+class JSON_STORAGE_SIZE(_SQLFunction):
+    """Return the binary storage size of a JSON document."""
+    def __init__(self, document: object) -> None: ...
+
+@final
+class JSON_TYPE(_SQLFunction):
+    """Return the type name of the JSON value."""
+    def __init__(self, document: object) -> None: ...
+
+@final
+class JSON_UNQUOTE(_SQLFunction):
+    """Unquote a JSON string to yield a SQL string."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class JSON_VALID(_SQLFunction):
+    """Check whether a value is a valid JSON document."""
+    def __init__(self, document: object) -> None: ...
