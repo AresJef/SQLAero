@@ -806,3 +806,263 @@ class JSON_UNQUOTE(_SQLFunction):
 class JSON_VALID(_SQLFunction):
     """Check whether a value is a valid JSON document."""
     def __init__(self, document: object) -> None: ...
+
+@final
+class ADDDATE(_SQLFunction):
+    """Add a number of days or an explicit MySQL interval to a date."""
+    def __init__(self, date: object, days: object) -> None: ...
+
+@final
+class SUBDATE(_SQLFunction):
+    """Subtract a number of days or an explicit MySQL interval from a date."""
+    def __init__(self, date: object, days: object) -> None: ...
+
+@final
+class DATE_SUB(_SQLFunction):
+    """Subtract an explicit MySQL interval from a date or datetime."""
+    def __init__(self, date: object, interval: _SQLInterval) -> None: ...
+
+@final
+class GET_FORMAT(_SQLFunction):
+    """Return a MySQL format string for the given temporal type and format name."""
+    def __init__(self, type: str, format: object) -> None: ...
+
+@final
+class TIMESTAMPADD(_SQLFunction):
+    """Add an integer quantity in a selected unit to a temporal value."""
+    def __init__(self, unit: str, quantity: object, value: object) -> None: ...
+
+@final
+class TIMESTAMPDIFF(_SQLFunction):
+    """Return end minus start as a count of completed units."""
+    def __init__(self, unit: str, start: object, end: object) -> None: ...
+
+@final
+class CURRENT_TIME(_SQLFunction):
+    """Return the current session time with optional fractional precision."""
+    def __init__(self, fsp: int = ...) -> None: ...
+
+@final
+class CURRENT_TIMESTAMP(_SQLFunction):
+    """Return the current session datetime with optional fractional precision."""
+    def __init__(self, fsp: int = ...) -> None: ...
+
+@final
+class NOW(_SQLFunction):
+    """Return the session datetime at statement start with optional fractional precision."""
+    def __init__(self, fsp: int = ...) -> None: ...
+
+@final
+class SYSDATE(_SQLFunction):
+    """Return the system datetime at invocation with optional fractional precision."""
+    def __init__(self, fsp: int = ...) -> None: ...
+
+@final
+class UTC_TIME(_SQLFunction):
+    """Return the current UTC time with optional fractional precision."""
+    def __init__(self, fsp: int = ...) -> None: ...
+
+@final
+class UTC_TIMESTAMP(_SQLFunction):
+    """Return the current UTC datetime with optional fractional precision."""
+    def __init__(self, fsp: int = ...) -> None: ...
+
+@final
+class ADDTIME(_SQLFunction):
+    """Add a time value to a time or datetime."""
+    def __init__(self, value: object, time: object) -> None: ...
+
+@final
+class CONVERT_TZ(_SQLFunction):
+    """Convert a datetime from one time zone to another."""
+    def __init__(self, value: object, from_zone: object, to_zone: object) -> None: ...
+
+@final
+class CURRENT_DATE(_SQLFunction):
+    """Return the current date in the session time zone."""
+    def __init__(self) -> None: ...
+
+@final
+class DATEDIFF(_SQLFunction):
+    """Return left minus right as a difference in calendar days."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class DATE_FORMAT(_SQLFunction):
+    """Format a date or datetime with a MySQL format string."""
+    def __init__(self, value: object, format: object) -> None: ...
+
+@final
+class DAY(_SQLFunction):
+    """Return the day of the month."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class DAYNAME(_SQLFunction):
+    """Return the localized name of the weekday."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class DAYOFWEEK(_SQLFunction):
+    """Return the weekday index, with Sunday as 1."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class DAYOFYEAR(_SQLFunction):
+    """Return the day of the year starting at 1."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class FROM_DAYS(_SQLFunction):
+    """Convert a MySQL day number to a date."""
+    def __init__(self, days: object) -> None: ...
+
+@final
+class FROM_UNIXTIME(_SQLFunction):
+    """Convert Unix epoch seconds to the session time zone, optionally formatting the result."""
+    def __init__(self, seconds: object, format: object = ...) -> None: ...
+
+@final
+class HOUR(_SQLFunction):
+    """Extract the hour component of a time or datetime."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class LAST_DAY(_SQLFunction):
+    """Return the date of the last day of the input month."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class MAKEDATE(_SQLFunction):
+    """Make a date from a year and day of the year."""
+    def __init__(self, year: object, day_of_year: object) -> None: ...
+
+@final
+class MAKETIME(_SQLFunction):
+    """Make a time from hours, minutes, and seconds."""
+    def __init__(self, hour: object, minute: object, second: object) -> None: ...
+
+@final
+class MICROSECOND(_SQLFunction):
+    """Extract the microsecond component of a temporal value."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class MINUTE(_SQLFunction):
+    """Extract the minute component of a temporal value."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class MONTH(_SQLFunction):
+    """Return the number of the month."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class MONTHNAME(_SQLFunction):
+    """Return the localized name of the month."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class PERIOD_ADD(_SQLFunction):
+    """Add months to a MySQL year-month period."""
+    def __init__(self, period: object, months: object) -> None: ...
+
+@final
+class PERIOD_DIFF(_SQLFunction):
+    """Return the difference in months between two year-month periods."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class QUARTER(_SQLFunction):
+    """Return the quarter of the year."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class SECOND(_SQLFunction):
+    """Extract the seconds component of a temporal value."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class SEC_TO_TIME(_SQLFunction):
+    """Convert a number of seconds to a MySQL time."""
+    def __init__(self, seconds: object) -> None: ...
+
+@final
+class STR_TO_DATE(_SQLFunction):
+    """Parse a string using a MySQL temporal format."""
+    def __init__(self, value: object, format: object) -> None: ...
+
+@final
+class SUBTIME(_SQLFunction):
+    """Subtract a time value from a time or datetime."""
+    def __init__(self, value: object, time: object) -> None: ...
+
+@final
+class TIME(_SQLFunction):
+    """Extract the time component of a temporal expression."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class TIMEDIFF(_SQLFunction):
+    """Return the difference between two times or datetimes."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class TIMESTAMP(_SQLFunction):
+    """Return a datetime, optionally adding a time value."""
+    def __init__(self, value: object, time: object = ...) -> None: ...
+
+@final
+class TIME_FORMAT(_SQLFunction):
+    """Format a time with a MySQL format string."""
+    def __init__(self, value: object, format: object) -> None: ...
+
+@final
+class TIME_TO_SEC(_SQLFunction):
+    """Convert a time to a number of seconds."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class TO_DAYS(_SQLFunction):
+    """Return the MySQL day number for a date."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class TO_SECONDS(_SQLFunction):
+    """Return the number of seconds since year zero."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class UNIX_TIMESTAMP(_SQLFunction):
+    """Return Unix epoch seconds for a session datetime or for the current time."""
+    def __init__(self, value: object = ...) -> None: ...
+
+@final
+class UTC_DATE(_SQLFunction):
+    """Return the current date in UTC."""
+    def __init__(self) -> None: ...
+
+@final
+class WEEK(_SQLFunction):
+    """Return the week number using MySQL's optional week mode."""
+    def __init__(self, value: object, mode: object = ...) -> None: ...
+
+@final
+class WEEKDAY(_SQLFunction):
+    """Return the weekday index, with Monday as 0."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class WEEKOFYEAR(_SQLFunction):
+    """Return the ISO week number of a date."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class YEAR(_SQLFunction):
+    """Return the year of a date or datetime."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class YEARWEEK(_SQLFunction):
+    """Return the corresponding year and week number using MySQL's optional week mode."""
+    def __init__(self, value: object, mode: object = ...) -> None: ...

@@ -201,7 +201,7 @@ pub(crate) fn charset_option(value: &Bound<'_, PyString>, function: &str) -> PyR
     })
 }
 
-fn number(
+pub(super) fn number(
     value: Option<&Bound<'_, PyAny>>,
     label: &str,
     range: RangeInclusive<u32>,

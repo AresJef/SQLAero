@@ -15,6 +15,7 @@ mod json_functions;
 mod numeric;
 mod scalar;
 mod strings;
+mod temporal;
 
 /// The base has no Python constructor or public module export. Concrete
 /// classes are final and initialize the recipe through their own constructors.
@@ -179,13 +180,7 @@ impl DateAdd {
         date: Bound<'py, PyAny>,
         interval: Bound<'py, PyAny>,
     ) -> PyResult<PyClassInitializer<Self>> {
-        const FORM: Form = Form::Static(&[
-            Part::Syntax("DATE_ADD("),
-            Part::Operand(0, Role::Scalar),
-            Part::Syntax(","),
-            Part::Operand(1, Role::Interval),
-            Part::Syntax(")"),
-        ]);
+        const FORM: Form = Form::Static(&sql_func::date_shift("DATE_ADD(", Role::Interval));
         let operands = PyTuple::new(date.py(), [date, interval])?;
         let expression = SqlFunction::new("DATE_ADD", Kind::Scalar, FORM, operands)?;
         Ok(PyClassInitializer::from(expression).add_subclass(Self))
@@ -199,6 +194,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     numeric::register(&functions)?;
     scalar::register(&functions)?;
     strings::register(&functions)?;
+    temporal::register(&functions)?;
     functions.add_class::<Date>()?;
     functions.add_class::<Extract>()?;
     functions.add_class::<DateAdd>()?;

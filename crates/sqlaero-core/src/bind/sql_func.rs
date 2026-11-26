@@ -90,6 +90,17 @@ impl Form {
     }
 }
 
+/// Add or subtract an interval, or a scalar day count for ADDDATE and SUBDATE.
+pub const fn date_shift(open: &'static str, quantity: Role) -> [Part; 5] {
+    [
+        Part::Syntax(open),
+        Part::Operand(0, Role::Scalar),
+        Part::Syntax(","),
+        Part::Operand(1, quantity),
+        Part::Syntax(")"),
+    ]
+}
+
 /// The unit is selected by the binding from EXTRACT's closed set.
 pub fn extract(unit: Keyword) -> [Part; 5] {
     [
