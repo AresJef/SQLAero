@@ -11,6 +11,7 @@ fn context(charset: &str, limit: usize) -> Context {
     Context {
         codec: Codec::new(resolve(Some(charset), None).unwrap().charset),
         no_backslash_escapes: false,
+        ansi_quotes: false,
         utc_confirmed: true,
         limit,
     }

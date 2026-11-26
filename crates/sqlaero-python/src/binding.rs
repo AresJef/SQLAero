@@ -2,6 +2,7 @@
 
 use crate::errors;
 use crate::input::control::Checkpoint;
+use crate::input::custom_escape::{self, Conversions};
 use crate::input::sequence::{IterSequence, NativeIntegers, RangeSource, Sequence};
 use crate::input::sink::ParameterSink;
 use crate::input::source::{self, CellWriter, FragmentRole, PreparedSource, Shape};
@@ -216,9 +217,17 @@ pub(crate) struct Planner<'types, 'py> {
     mode: PlanMode,
     merge: bool,
     prepared: Option<Prepared>,
-    pending: Option<(usize, Vec<u8>, ContextKey, FragmentRole)>,
+    pending: Option<Pending>,
     source_end: usize,
     finished: bool,
+}
+
+struct Pending {
+    index: usize,
+    fragment: Vec<u8>,
+    context: ContextKey,
+    role: FragmentRole,
+    conversions: Conversions,
 }
 impl<'types, 'py> Planner<'types, 'py> {
     pub(crate) fn is_batch(&self) -> bool {
@@ -356,33 +365,45 @@ impl<'types, 'py> Planner<'types, 'py> {
                 loop {
                     let index;
                     let role;
-                    if let Some((saved, bytes, saved_key, saved_role)) = self.pending.take() {
-                        index = saved;
-                        fragment = bytes;
-                        role = if saved_key != key {
-                            rows.at(index, self.types, budget)?.bind_repeated(
+                    let mut conversions;
+                    if let Some(previous) = self.pending.take() {
+                        index = previous.index;
+                        fragment = previous.fragment;
+                        conversions = previous.conversions;
+                        role = if previous.context != key {
+                            conversions.begin_replay();
+                            let role = rows.at(index, self.types, budget)?.bind_repeated(
                                 &prepared.template,
                                 self.types,
                                 context,
                                 budget,
                                 layout,
-                                &mut fragment,
-                            )?
+                                TextOutput {
+                                    bytes: &mut fragment,
+                                    conversions: Some(&mut conversions),
+                                },
+                            )?;
+                            conversions.finish_replay(py)?;
+                            role
                         } else {
-                            saved_role
+                            previous.role
                         };
                     } else {
                         index = rows.position();
                         let Some(row) = rows.next(self.types, budget)? else {
                             break;
                         };
+                        conversions = Conversions::default();
                         role = row.bind_repeated(
                             &prepared.template,
                             self.types,
                             context,
                             budget,
                             layout,
-                            &mut fragment,
+                            TextOutput {
+                                bytes: &mut fragment,
+                                conversions: Some(&mut conversions),
+                            },
                         )?;
                     }
                     if role != FragmentRole::Row {
@@ -390,7 +411,13 @@ impl<'types, 'py> Planner<'types, 'py> {
                             .check_single(&fragment)
                             .map_err(|error| errors::wire(py, error))?;
                         if blocks.rows() != 0 {
-                            self.pending = Some((index, fragment, key, role));
+                            self.pending = Some(Pending {
+                                index,
+                                fragment,
+                                context: key,
+                                role,
+                                conversions,
+                            });
                         } else {
                             ordinary = Some(
                                 blocks
@@ -405,7 +432,13 @@ impl<'types, 'py> Planner<'types, 'py> {
                         .push(&fragment)
                         .map_err(|error| errors::wire(py, error))?
                     {
-                        self.pending = Some((index, fragment, key, role));
+                        self.pending = Some(Pending {
+                            index,
+                            fragment,
+                            context: key,
+                            role,
+                            conversions,
+                        });
                         break;
                     }
                     end = if empty { 0 } else { index + 1 };
@@ -423,11 +456,11 @@ impl<'types, 'py> Planner<'types, 'py> {
                 };
                 (bytes, end)
             } else {
-                let index = self
-                    .pending
+                let pending = self.pending.take();
+                let index = pending
                     .as_ref()
-                    .map_or(rows.position(), |pending| pending.0);
-                let row = if self.pending.take().is_some() {
+                    .map_or(rows.position(), |pending| pending.index);
+                let row = if pending.is_some() {
                     rows.at(index, self.types, budget)?
                 } else {
                     let Some(row) = rows.next(self.types, budget)? else {
@@ -457,7 +490,21 @@ impl<'types, 'py> Planner<'types, 'py> {
                         context,
                         budget,
                     )?,
-                    PlanMode::Text => row.bind(&prepared.template, self.types, context, budget)?,
+                    PlanMode::Text => match pending {
+                        Some(mut previous) => {
+                            previous.conversions.begin_replay();
+                            let bytes = row.bind_with_conversions(
+                                &prepared.template,
+                                self.types,
+                                context,
+                                budget,
+                                Some(&mut previous.conversions),
+                            )?;
+                            previous.conversions.finish_replay(py)?;
+                            bytes
+                        }
+                        None => row.bind(&prepared.template, self.types, context, budget)?,
+                    },
                 };
                 (bytes, if empty { 0 } else { index + 1 })
             };
@@ -973,6 +1020,13 @@ struct NativeRow<'r, 'py> {
     source: SourceRef<'r, 'py>,
 }
 
+/// The output for one rendered text row and the optional results it can reuse
+/// if VALUES packet splitting requires the same position to be rebound.
+struct TextOutput<'a> {
+    bytes: &'a mut Vec<u8>,
+    conversions: Option<&'a mut Conversions>,
+}
+
 /// A row has one prepared strategy; ordinary scalars need neither provider.
 enum RowInput<'r, 'py> {
     Scalar,
@@ -1063,6 +1117,7 @@ impl<'r, 'py> Row<'r, 'py> {
             budget,
             encoded,
             None,
+            None,
             |_, output| {
                 output.clear();
                 Ok(false)
@@ -1152,6 +1207,11 @@ impl<'r, 'py> Row<'r, 'py> {
             work: 0,
             native_depth: 0,
             provider_operand: None,
+            standalone: false,
+            guard_splices: template.is_some(),
+            splices: None,
+            conversions: None,
+            slot: 0,
             active_depth: 0,
         };
         if let Some(identity) = self.outer {
@@ -1320,8 +1380,10 @@ impl<'r, 'py> Row<'r, 'py> {
             Some(template),
             |_| Ok(false),
         )?;
-        sink.finish()
-            .map_err(|error| crate::input::sink::failure(py, error))
+        let (output, splices) = sink
+            .finish()
+            .map_err(|error| crate::input::sink::failure(py, error))?;
+        custom_escape::verify_splices(py, output, splices, context, budget)
     }
 
     pub(crate) fn bind(
@@ -1331,12 +1393,33 @@ impl<'r, 'py> Row<'r, 'py> {
         context: &Context,
         budget: &dyn Checkpoint,
     ) -> PyResult<Vec<u8>> {
+        self.bind_with_conversions(template, types, context, budget, None)
+    }
+
+    fn bind_with_conversions(
+        self,
+        template: &Template,
+        types: &ScalarTypes,
+        context: &Context,
+        budget: &dyn Checkpoint,
+        conversions: Option<&mut Conversions>,
+    ) -> PyResult<Vec<u8>> {
         let py = self.value.py();
         let end = template.len();
         let mut output = Vec::new();
         writer::append(&mut output, &[3], context.limit)
             .map_err(|error| errors::wire(py, error))?;
-        self.fill::<false>(template, types, context, budget, 0..end, &mut output)?;
+        self.fill::<false>(
+            template,
+            types,
+            context,
+            budget,
+            0..end,
+            TextOutput {
+                bytes: &mut output,
+                conversions,
+            },
+        )?;
         Ok(output)
     }
 
@@ -1351,8 +1434,18 @@ impl<'r, 'py> Row<'r, 'py> {
         output: &mut Vec<u8>,
     ) -> PyResult<()> {
         output.clear();
-        self.fill::<false>(template, types, context, budget, range, output)
-            .map(|_| ())
+        self.fill::<false>(
+            template,
+            types,
+            context,
+            budget,
+            range,
+            TextOutput {
+                bytes: output,
+                conversions: None,
+            },
+        )
+        .map(|_| ())
     }
 
     /// Bind one repeated fragment and publish its writer-proven row role.
@@ -1363,14 +1456,20 @@ impl<'r, 'py> Row<'r, 'py> {
         context: &Context,
         budget: &dyn Checkpoint,
         layout: &Layout,
-        output: &mut Vec<u8>,
+        output: TextOutput<'_>,
     ) -> PyResult<FragmentRole> {
-        output.clear();
+        output.bytes.clear();
         if layout.whole_row {
             self.fill::<true>(template, types, context, budget, layout.row.clone(), output)
         } else {
             self.fill::<false>(template, types, context, budget, layout.row.clone(), output)
-                .map(|_| FragmentRole::Row)
+                .map(|role| {
+                    if role == FragmentRole::Standalone {
+                        role
+                    } else {
+                        FragmentRole::Row
+                    }
+                })
         }
     }
 
@@ -1381,17 +1480,22 @@ impl<'r, 'py> Row<'r, 'py> {
         context: &Context,
         budget: &dyn Checkpoint,
         range: Range<usize>,
-        output: &mut Vec<u8>,
+        output: TextOutput<'_>,
     ) -> PyResult<FragmentRole> {
+        let TextOutput {
+            bytes: output,
+            conversions,
+        } = output;
         let py = self.value.py();
         check(py, budget)?;
         let mut cursor = 0;
-        let role = self.walk::<TRACK_ROLE>(
+        let walked = self.walk::<TRACK_ROLE>(
             types,
             context,
             budget,
             output,
             Some(template),
+            conversions,
             |_, output| {
                 if template
                     .append_range_until_slot(&range, &mut cursor, output, context.limit)
@@ -1419,8 +1523,21 @@ impl<'r, 'py> Row<'r, 'py> {
                 "unconsumed binding position",
             ));
         }
+        if let Some(splices) = walked.splices {
+            if range.start == 0 && range.end == template.len() {
+                *output = custom_escape::verify_splices(
+                    py,
+                    std::mem::take(output),
+                    Some(splices),
+                    context,
+                    budget,
+                )?;
+            } else {
+                verify_repeated_splices(py, template, range, output, splices, context, budget)?;
+            }
+        }
         check(py, budget)?;
-        Ok(role)
+        Ok(walked.role)
     }
 
     /// Traverse each existing positional role exactly once. Binder framing and
@@ -1438,18 +1555,33 @@ impl<'r, 'py> Row<'r, 'py> {
         budget: &dyn Checkpoint,
         output: &mut Vec<u8>,
         template: Option<&Template>,
+        conversions: Option<&mut Conversions>,
         before: impl FnMut(usize, &mut Vec<u8>) -> PyResult<bool>,
         after: impl FnMut(usize, &mut Vec<u8>, FragmentRole) -> PyResult<()>,
-    ) -> PyResult<FragmentRole> {
+    ) -> PyResult<Walked> {
         // Completed template facts are immutable during this traversal. Keep
         // the common base context without refining it again for every value.
         if context.utc_confirmed && template.is_some_and(Template::has_utc_overrides) {
             self.walk_context::<TRACK_ROLE, true>(
-                types, context, budget, output, template, before, after,
+                types,
+                context,
+                budget,
+                output,
+                template,
+                conversions,
+                before,
+                after,
             )
         } else {
             self.walk_context::<TRACK_ROLE, false>(
-                types, context, budget, output, template, before, after,
+                types,
+                context,
+                budget,
+                output,
+                template,
+                conversions,
+                before,
+                after,
             )
         }
     }
@@ -1465,9 +1597,10 @@ impl<'r, 'py> Row<'r, 'py> {
         budget: &dyn Checkpoint,
         output: &mut Vec<u8>,
         template: Option<&Template>,
+        conversions: Option<&mut Conversions>,
         mut before: impl FnMut(usize, &mut Vec<u8>) -> PyResult<bool>,
         mut after: impl FnMut(usize, &mut Vec<u8>, FragmentRole) -> PyResult<()>,
-    ) -> PyResult<FragmentRole> {
+    ) -> PyResult<Walked> {
         let py = self.value.py();
         let mut width = self.width();
         if let Some(template) = template {
@@ -1503,6 +1636,11 @@ impl<'r, 'py> Row<'r, 'py> {
             work: 0,
             native_depth: 0,
             provider_operand: None,
+            standalone: false,
+            guard_splices: template.is_some(),
+            splices: None,
+            conversions,
+            slot: 0,
             active_depth: 0,
         };
         if let Some(identity) = self.outer {
@@ -1544,6 +1682,7 @@ impl<'r, 'py> Row<'r, 'py> {
         }
         let mut role = FragmentRole::Scalar;
         for index in 0..width {
+            visit.slot = index;
             let effective = if REFINE_UTC {
                 slot_context(template, index, context)
             } else {
@@ -1567,6 +1706,9 @@ impl<'r, 'py> Row<'r, 'py> {
                 self.value.clone()
             };
             let out = before(index, output)?;
+            if let Some(splices) = &mut visit.splices {
+                custom_escape::boundary(py, splices, output.len())?;
+            }
             let result = if out {
                 let mut sink = call::DiscardValue;
                 if let Some(native) = native.as_deref_mut() {
@@ -1657,8 +1799,62 @@ impl<'r, 'py> Row<'r, 'py> {
                 }
             };
         }
-        Ok(role)
+        Ok(Walked {
+            role: if visit.standalone {
+                FragmentRole::Standalone
+            } else {
+                role
+            },
+            splices: visit.splices,
+        })
     }
+}
+
+struct Walked {
+    role: FragmentRole,
+    splices: Option<Vec<usize>>,
+}
+
+fn verify_repeated_splices(
+    py: Python<'_>,
+    template: &Template,
+    range: Range<usize>,
+    row: &[u8],
+    mut splices: Vec<usize>,
+    context: &Context,
+    budget: &dyn Checkpoint,
+) -> PyResult<()> {
+    // The batch framing already proved there are no binding positions
+    // outside the repeated row. Verify its seams with the actual fixed bytes.
+    let mut request = vec![3];
+    let prefix = 0..range.start;
+    let suffix = range.end..template.len();
+    let fixed = |range, request: &mut Vec<u8>| {
+        let mut cursor = 0;
+        let next = template
+            .append_range_until_slot(&range, &mut cursor, request, context.limit)
+            .map_err(|error| errors::wire(py, error))?;
+        if next.is_some() {
+            return Err(errors::client(
+                py,
+                ClientErrorCode::InternalState,
+                "batch framing contains a binding position",
+            ));
+        }
+        Ok(())
+    };
+    fixed(prefix, &mut request)?;
+    for position in &mut splices {
+        *position += request.len();
+    }
+    for chunk in row.chunks(256 * 1024) {
+        check(py, budget)?;
+        writer::append(&mut request, chunk, context.limit)
+            .map_err(|error| errors::wire(py, error))?;
+    }
+    fixed(suffix, &mut request)?;
+    custom_escape::verify_splices(py, request, Some(splices), context, budget)?;
+    Ok(())
 }
 
 fn slot_context(template: Option<&Template>, slot: usize, base: &Context) -> Context {
@@ -1713,6 +1909,11 @@ struct Visit<'a> {
     native_depth: usize,
     // Restrict object-backed values reached while reading a scalar operand.
     provider_operand: Option<Role>,
+    standalone: bool,
+    guard_splices: bool,
+    splices: Option<Vec<usize>>,
+    conversions: Option<&'a mut Conversions>,
+    slot: usize,
     active_depth: usize,
 }
 
@@ -1740,6 +1941,11 @@ pub(crate) fn encode_value(
         work: 0,
         native_depth: 0,
         provider_operand: None,
+        standalone: false,
+        guard_splices: false,
+        splices: None,
+        conversions: None,
+        slot: 0,
         active_depth: 0,
     }
     .value(value, &mut output, None)?;
@@ -1895,7 +2101,7 @@ impl Visit<'_> {
                 }
                 Ok(false) => (),
             }
-            match self.expression(value, expression::Output::Text(output), operand) {
+            match self.structured(value, expression::Output::Text(output), operand) {
                 Ok(true) => return Ok(project(FragmentRole::Scalar)),
                 Err(error) => {
                     self.failed_value(value, child, &error);
@@ -2333,7 +2539,11 @@ impl CellWriter for Visit<'_> {
             )? {
                 return Ok(());
             }
-            if self.expression(value, expression::Output::Parameter(sink), None)? {
+            if self.structured(value, expression::Output::Parameter(sink), None)? {
+                if let Some(splices) = self.splices.take() {
+                    sink.add_splices(splices)
+                        .map_err(|error| crate::input::sink::failure(py, error))?;
+                }
                 return Ok(());
             }
             if let Some(source) = self.types.transparent(value, Some(self.budget))? {

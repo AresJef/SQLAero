@@ -221,6 +221,10 @@ pub(crate) trait ParameterSink: ValueSink<Context = Context, Error = ValueError>
     ) -> Result<Option<&mut Vec<u8>>, ValueError> {
         Ok(None)
     }
+
+    fn add_splices(&mut self, _splices: Vec<usize>) -> Result<(), ValueError> {
+        Err(WireError::Malformed("SQL splices require a local preview").into())
+    }
 }
 
 impl ParameterSink for sqlaero_core::protocol::prepared::Parameters {}

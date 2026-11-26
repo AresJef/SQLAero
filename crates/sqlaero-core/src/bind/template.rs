@@ -40,6 +40,14 @@ pub enum TemplateError {
         /// The lexical setting or opaque statement responsible for the barrier.
         setting: &'static str,
     },
+    /// A dynamic SQL fragment cannot be embedded without changing its boundary.
+    #[error("CustomEscape fragment at character {offset}: {reason}")]
+    Fragment {
+        /// Zero-based Unicode character within the converted fragment.
+        offset: usize,
+        /// The unsafe lexical boundary.
+        reason: &'static str,
+    },
     /// A native allocation or final request-bound failure.
     #[error(transparent)]
     Wire(#[from] WireError),
@@ -59,9 +67,15 @@ pub struct Template {
     slots: usize,
     pub(crate) merge_tokens: Option<Vec<super::batch::Token>>,
     utc_overrides: Vec<UtcOverride>,
+    fragment_is_scalar: bool,
 }
 
 impl Template {
+    /// Whether a validated fragment has no top-level value separator.
+    pub fn fragment_is_scalar(&self) -> bool {
+        self.fragment_is_scalar
+    }
+
     /// Scan the explicit-args path. Text no-args execution bypasses this
     /// module; native no-args preparation uses its raw-marker guard mode.
     ///
@@ -538,6 +552,19 @@ pub struct Compiler {
     special_version: bool,
     hint: bool,
     utc: UtcHints,
+    fragment: Option<Fragment>,
+    splices: Option<Splices>,
+}
+
+#[derive(Default)]
+struct Fragment {
+    parentheses: usize,
+    top_level_comma: bool,
+}
+
+struct Splices {
+    boundaries: Vec<usize>,
+    next: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -755,7 +782,53 @@ impl Compiler {
             special_version: false,
             hint: false,
             utc: UtcHints::new(),
+            fragment: None,
+            splices: None,
         }
+    }
+
+    /// Validate an independently embeddable fragment using the same lexer.
+    /// Percent and question mark bytes remain exactly as supplied.
+    #[must_use]
+    pub fn for_fragment(source: Vec<u8>, context: &super::Context) -> Self {
+        let mut compiler = Self::new(
+            source,
+            context.codec,
+            context.no_backslash_escapes,
+            context.ansi_quotes,
+        );
+        compiler.binding = false;
+        compiler.context.enabled = false;
+        compiler.fragment = Some(Fragment::default());
+        compiler
+    }
+
+    /// Verify already encoded COM_QUERY bytes around the supplied splice
+    /// positions. This pass does not interpret any placeholder syntax.
+    ///
+    /// # Errors
+    /// Returns a malformed request error if the command byte or bounds differ.
+    pub fn for_spliced_query(
+        request: Vec<u8>,
+        boundaries: Vec<usize>,
+        context: &super::Context,
+    ) -> Result<Self, WireError> {
+        if request.first() != Some(&3) {
+            return Err(WireError::Malformed("invalid SQL splice boundaries"));
+        }
+        let mut compiler = Self::new(
+            request,
+            context.codec,
+            context.no_backslash_escapes,
+            context.ansi_quotes,
+        );
+        compiler.position = 1;
+        compiler.binding = false;
+        compiler.splices = Some(Splices {
+            boundaries,
+            next: 0,
+        });
+        Ok(compiler)
     }
 
     /// Enable compact token spans during the same bounded lexical pass.
@@ -853,6 +926,14 @@ impl Compiler {
         result
     }
     fn advance_inner(&mut self) -> Result<Option<Template>, TemplateError> {
+        if self.splices.is_some() {
+            self.scan::<true>()
+        } else {
+            self.scan::<false>()
+        }
+    }
+
+    fn scan<const CHECK_SPLICES: bool>(&mut self) -> Result<Option<Template>, TemplateError> {
         if self.finished {
             return Err(WireError::Malformed("template compiler already consumed").into());
         }
@@ -861,8 +942,14 @@ impl Compiler {
             .saturating_add(256 * 1024)
             .min(self.source.len());
         while self.position < boundary {
+            if CHECK_SPLICES && self.check_splice()? {
+                break;
+            }
             let position = self.position;
             let byte = self.source[position];
+            if byte == 0 && self.fragment.is_some() {
+                return self.fragment_error(position, "NUL in SQL source");
+            }
             if let Some(change) = self.context.barrier {
                 // The old lexer/codec can no longer prove which later bytes
                 // are protected. Inspect the bounded suffix conservatively,
@@ -918,6 +1005,9 @@ impl Compiler {
                             && !(self.special
                                 && self.source.get(self.position..self.position + 2) == Some(b"*/"))
                         {
+                            if self.fragment.is_some() && self.source[self.position] == 0 {
+                                return self.fragment_error(self.position, "NUL in SQL source");
+                            }
                             self.position += self.character(self.position);
                         }
                     } else {
@@ -1014,6 +1104,12 @@ impl Compiler {
                                     .get(position + 2)
                                     .is_some_and(|byte| matches!(byte, b'!' | b'+'))
                             {
+                                if self.fragment.is_some() {
+                                    return self.fragment_error(
+                                        position,
+                                        "executable comments and hints require a fixed template",
+                                    );
+                                }
                                 if self.local != LocalGate::Off {
                                     self.reject_local();
                                     continue;
@@ -1069,6 +1165,26 @@ impl Compiler {
                             }
                         }
                         _ => {
+                            if let Some(fragment) = &mut self.fragment {
+                                match byte {
+                                    b';' => {
+                                        return self
+                                            .fragment_error(position, "statement delimiter");
+                                    }
+                                    b'(' => fragment.parentheses += 1,
+                                    b')' if fragment.parentheses == 0 => {
+                                        return self.fragment_error(
+                                            position,
+                                            "unmatched closing parenthesis",
+                                        );
+                                    }
+                                    b')' => fragment.parentheses -= 1,
+                                    b',' if fragment.parentheses == 0 => {
+                                        fragment.top_level_comma = true
+                                    }
+                                    _ => (),
+                                }
+                            }
                             if !byte.is_ascii_whitespace() {
                                 if self.local == LocalGate::Prefix {
                                     self.reject_local();
@@ -1084,6 +1200,24 @@ impl Compiler {
         }
         if self.position < self.source.len() {
             return Ok(None);
+        }
+        if CHECK_SPLICES {
+            self.check_splice()?;
+            if self
+                .splices
+                .as_ref()
+                .is_some_and(|splices| splices.next != splices.boundaries.len())
+            {
+                return Err(WireError::Malformed("SQL splice lies outside the request").into());
+            }
+        }
+        if let Some(fragment) = &self.fragment {
+            if !matches!(self.state, Lex::Code | Lex::Word { .. }) {
+                return self.fragment_error(self.position, "unfinished quote or comment");
+            }
+            if fragment.parentheses != 0 {
+                return self.fragment_error(self.position, "unmatched opening parenthesis");
+            }
         }
         if let Lex::Word { start } = self.state {
             self.word(start, self.position)?;
@@ -1105,12 +1239,55 @@ impl Compiler {
             pieces: std::mem::take(&mut self.pieces),
             slots: self.slots,
             utc_overrides: std::mem::take(&mut self.utc.ranges),
+            fragment_is_scalar: self
+                .fragment
+                .as_ref()
+                .is_none_or(|fragment| !fragment.top_level_comma),
             merge_tokens: if self.merge_safe {
                 self.tokens.take()
             } else {
                 None
             },
         }))
+    }
+
+    fn fragment_error<T>(&self, position: usize, reason: &'static str) -> Result<T, TemplateError> {
+        Err(TemplateError::Fragment {
+            offset: self.source_position(position)?,
+            reason,
+        })
+    }
+
+    /// A marker must be reached as ordinary code, never skipped by a token
+    /// spanning both sides or swallowed by protected text. If a preceding
+    /// statement changes the context, later bound bytes cannot be certified.
+    fn check_splice(&mut self) -> Result<bool, TemplateError> {
+        let splices = self.splices.as_mut().expect("selected splice scanner");
+        if let Some(change) = self.context.barrier {
+            if let Some(&position) = splices.boundaries.get(splices.next) {
+                return Err(TemplateError::ContextChange {
+                    offset: self.source_position(position)?,
+                    change_offset: self.source_position(change.start)?,
+                    setting: change.setting,
+                });
+            }
+            self.position = self.source.len();
+            return Ok(true);
+        }
+        while let Some(&position) = splices.boundaries.get(splices.next) {
+            if position > self.position {
+                break;
+            }
+            if position < self.position
+                || self.special
+                || !matches!(self.state, Lex::Code | Lex::Word { .. })
+            {
+                return self
+                    .fragment_error(position, "SQL token crosses a dynamic fragment boundary");
+            }
+            splices.next += 1;
+        }
+        Ok(false)
     }
     #[inline]
     fn token(&mut self, symbol: u8, start: usize, end: usize) -> Result<(), WireError> {

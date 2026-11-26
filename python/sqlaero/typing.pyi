@@ -14,7 +14,7 @@ from os import PathLike
 from time import struct_time
 from typing import Any, Literal, Protocol, TypeAlias
 from uuid import UUID
-from ._sqlaero import JSON
+from ._sqlaero import CustomEscape, JSON
 # Internal nominal marker for the built-in expression classes.
 from ._sqlaero import _SQLFunction  # pyright: ignore[reportPrivateUsage]
 
@@ -73,7 +73,7 @@ class _PandasMissingTimeInput(Protocol):
 # not become a top-level member of the union or erase unsupported root errors.
 EscapeInput: TypeAlias = (
     None | bool | int | float | str | bytes | Decimal | date | time | timedelta | struct_time
-    | UUID | Enum | JSON | _SQLFunction
+    | UUID | Enum | JSON | _SQLFunction | CustomEscape[Any]
     | list[Any] | tuple[object, ...] | dict[Any, Any] | set[Any] | frozenset[object] | range
     | KeysView[object] | ValuesView[object] | ItemsView[object, object]
     | _ArrayInput | _FrameInput | _PolarsSeriesInput | _ArrowArrayInput | _ArrowTableInput

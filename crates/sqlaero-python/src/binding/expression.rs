@@ -5,6 +5,7 @@ use crate::errors;
 use crate::input::{
     check,
     column::Column,
+    custom_escape::{self, CustomEscape},
     sink,
     sql_func::{Kind, SqlFunction},
     sql_intv,
@@ -21,26 +22,58 @@ pub(super) enum Output<'a> {
     Parameter(&'a mut dyn sink::ParameterSink),
 }
 
+impl<'a> Output<'a> {
+    fn text(
+        self,
+        py: Python<'_>,
+        context: &sqlaero_core::bind::Context,
+    ) -> PyResult<&'a mut Vec<u8>> {
+        match self {
+            Self::Text(output) => Ok(output),
+            Self::Parameter(sink) => sink
+                .expression_output(context)
+                .map_err(|error| sink::failure(py, error))?
+                .ok_or_else(|| sink::fragment_error(py)),
+        }
+    }
+}
+
 impl Visit<'_> {
-    /// Both text and native parameters use the actual expression base type.
-    /// A native parameter rejects the object before traversing its operands.
-    pub(super) fn expression(
+    /// One input gate covers the library expression family and CustomEscape.
+    /// Native prepared parameters reject both before reaching their writer.
+    pub(super) fn structured(
         &mut self,
         value: &Bound<'_, PyAny>,
         output: Output<'_>,
         operand: Option<Role>,
     ) -> PyResult<bool> {
+        let py = value.py();
+        if value.is_exact_instance_of::<CustomEscape>() {
+            if !matches!(operand, None | Some(Role::Scalar)) {
+                return Err(errors::builtin_message::<PyTypeError>(
+                    py,
+                    "CustomEscape is not valid in this SQL operand position",
+                ));
+            }
+            let output = output.text(py, &self.context)?;
+            let converter = value.cast_exact()?;
+            let text = match &mut self.conversions {
+                Some(conversions) => conversions.convert(self.slot, converter, self.budget)?,
+                None => CustomEscape::convert(converter, self.budget)?,
+            };
+            let start = output.len();
+            self.standalone |= !custom_escape::write(&text, output, &self.context, self.budget)?;
+            if self.guard_splices {
+                let splices = self.splices.get_or_insert_with(Vec::new);
+                custom_escape::boundary(py, splices, start)?;
+                custom_escape::boundary(py, splices, output.len())?;
+            }
+            return Ok(true);
+        }
         if !value.is_instance_of::<SqlFunction>() {
             return Ok(false);
         }
-        let py = value.py();
-        let output = match output {
-            Output::Text(output) => output,
-            Output::Parameter(sink) => sink
-                .expression_output(&self.context)
-                .map_err(|error| sink::failure(py, error))?
-                .ok_or_else(|| sink::fragment_error(py))?,
-        };
+        let output = output.text(py, &self.context)?;
         let expression = SqlFunction::snapshot(value.cast::<SqlFunction>()?)?;
         let allowed = match operand {
             None => true,

@@ -342,6 +342,7 @@ pub(crate) fn _savepoint_request<'py>(
     let context = Context {
         codec: Codec::new(selected.charset),
         no_backslash_escapes: false,
+        ansi_quotes: false,
         utc_confirmed: true,
         limit,
     };
@@ -383,6 +384,7 @@ pub(crate) fn _sql_utf8<'py>(
     let context = Context {
         codec: Codec::new(selected.charset),
         no_backslash_escapes: false,
+        ansi_quotes: false,
         utc_confirmed: true,
         limit,
     };

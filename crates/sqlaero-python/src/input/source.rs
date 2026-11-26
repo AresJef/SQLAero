@@ -61,6 +61,7 @@ pub(crate) fn prepare<'py>(
 pub(crate) enum FragmentRole {
     Scalar,
     Row,
+    Standalone,
 }
 
 /// One actual child, not a normalized Python scalar or an encoded answer.

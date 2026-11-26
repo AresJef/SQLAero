@@ -1,6 +1,6 @@
 """Private native extension declarations."""
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime
 from types import ModuleType
 from typing import Any, Generic, Iterator, Literal, Never, Self, SupportsIndex, TypeAlias, TypeVar, final, overload
@@ -10,6 +10,18 @@ _sqlintv: ModuleType
 
 class _SQLFunction: ...
 class _SQLInterval(_SQLFunction): ...
+
+_CustomValueT = TypeVar("_CustomValueT")
+
+@final
+class CustomEscape(Generic[_CustomValueT]):
+    """Convert one retained value to caller-supplied SQL text during text binding."""
+    def __init__(self, value: _CustomValueT,
+                 converter: Callable[[_CustomValueT], str]) -> None: ...
+    @property
+    def value(self) -> _CustomValueT: ...
+    @property
+    def converter(self) -> Callable[[_CustomValueT], str]: ...
 
 @final
 class Column:

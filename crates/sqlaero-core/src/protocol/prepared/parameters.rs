@@ -667,6 +667,7 @@ mod tests {
         Context {
             codec: Codec::new(crate::charset::resolve(None, None).unwrap().charset),
             no_backslash_escapes: false,
+            ansi_quotes: false,
             utc_confirmed: true,
             limit: 4096,
         }

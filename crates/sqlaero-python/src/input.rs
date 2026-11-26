@@ -22,6 +22,7 @@ mod buffer;
 pub(crate) mod cell;
 pub(crate) mod column;
 pub(crate) mod control;
+pub(crate) mod custom_escape;
 mod decimal;
 mod diagnostic;
 mod identifier;

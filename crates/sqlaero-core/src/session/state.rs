@@ -12,8 +12,6 @@ use mysql_common::packets::{OkPacket, session_state_change::SessionStateChange};
 pub struct ExecutionContext {
     /// Direct input writing policy and actual logical-send bound.
     pub binding: crate::bind::Context,
-    /// Actual ANSI_QUOTES lexical mode.
-    pub ansi_quotes: bool,
     /// Actual result-label encoding.
     pub metadata: OutputCodec,
 }
@@ -94,10 +92,10 @@ impl Facts {
             binding: crate::bind::Context {
                 codec,
                 no_backslash_escapes: contains("NO_BACKSLASH_ESCAPES"),
+                ansi_quotes: contains("ANSI_QUOTES"),
                 utc_confirmed: self.utc_confirmed(),
                 limit: send_limit.min(self.server_packet_limit),
             },
-            ansi_quotes: contains("ANSI_QUOTES"),
             metadata: self.metadata_codec().ok_or(ContextError::MetadataCharset)?,
         })
     }

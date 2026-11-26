@@ -14,6 +14,7 @@ pub(super) struct DisplaySink<'template> {
     template: &'template Template,
     output: Vec<u8>,
     cursor: usize,
+    splices: Option<Vec<usize>>,
 }
 
 impl ParameterSink for DisplaySink<'_> {
@@ -24,6 +25,18 @@ impl ParameterSink for DisplaySink<'_> {
         self.native.write(ValueRef::Null, context)?;
         self.before()?;
         Ok(Some(&mut self.output))
+    }
+
+    fn add_splices(&mut self, splices: Vec<usize>) -> Result<(), ValueError> {
+        if let Some(previous) = &mut self.splices {
+            previous
+                .try_reserve(splices.len())
+                .map_err(WireError::from)?;
+            previous.extend(splices);
+        } else {
+            self.splices = Some(splices);
+        }
+        Ok(())
     }
 }
 impl<'template> DisplaySink<'template> {
@@ -40,6 +53,7 @@ impl<'template> DisplaySink<'template> {
             template,
             output,
             cursor: 0,
+            splices: None,
         })
     }
     fn before(&mut self) -> Result<(), ValueError> {
@@ -50,14 +64,19 @@ impl<'template> DisplaySink<'template> {
         {
             return Err(WireError::Malformed("prepared display position is unavailable").into());
         }
+        if let Some(splices) = &mut self.splices {
+            splices.try_reserve(1).map_err(WireError::from)?;
+            splices.push(self.output.len());
+        }
         Ok(())
     }
-    pub(super) fn finish(self) -> Result<Vec<u8>, ValueError> {
+    pub(super) fn finish(self) -> Result<(Vec<u8>, Option<Vec<usize>>), ValueError> {
         let Self {
             native,
             template,
             mut output,
             mut cursor,
+            splices,
         } = self;
         // This payload is a local validation artifact only. Neither statement
         // id zero nor any byte here is sent, and the native buffer is released
@@ -69,7 +88,7 @@ impl<'template> DisplaySink<'template> {
         {
             return Err(WireError::Malformed("prepared display has an unconsumed position").into());
         }
-        Ok(output)
+        Ok((output, splices))
     }
 }
 impl ValueSink for DisplaySink<'_> {

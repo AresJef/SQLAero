@@ -173,6 +173,7 @@ impl NativeCall {
                 budget,
                 &mut values,
                 None,
+                None,
                 |index, output| {
                     start.set(output.len());
                     let direction = directions.get(index).ok_or_else(|| {

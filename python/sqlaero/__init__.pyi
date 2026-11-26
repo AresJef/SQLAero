@@ -15,6 +15,7 @@ from ._sqlaero import (
     TLSInfo as TLSInfo,
     TLSCertificate as TLSCertificate,
     Column as Column,
+    CustomEscape as CustomEscape,
     ColumnInfo as ColumnInfo,
     Columns as Columns,
 )

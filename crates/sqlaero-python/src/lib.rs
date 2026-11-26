@@ -61,6 +61,7 @@ fn _encode_scalar<'py>(
     let context = sqlaero_core::bind::Context {
         codec: sqlaero_core::charset::codec::Codec::new(encoding.charset),
         no_backslash_escapes: no_backslash,
+        ansi_quotes: false,
         utc_confirmed,
         limit,
     };
@@ -152,6 +153,7 @@ fn _prepare_encoder(module: &Bound<'_, PyModule>, no_backslash: bool) -> PyResul
     let context = sqlaero_core::bind::Context {
         codec: sqlaero_core::charset::codec::Codec::new(encoding.charset),
         no_backslash_escapes: no_backslash,
+        ansi_quotes: false,
         utc_confirmed: true,
         limit: 67108864,
     };
@@ -241,6 +243,7 @@ fn _bind_sql<'py>(
                 .charset,
         ),
         no_backslash_escapes: no_backslash,
+        ansi_quotes: false,
         utc_confirmed: true,
         limit,
     };
@@ -441,6 +444,7 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(_decode_json, module)?)?;
     module.add_class::<input::json::Json>()?;
     module.add_class::<input::column::Column>()?;
+    module.add_class::<input::custom_escape::CustomEscape>()?;
     input::sql_func::register(module)?;
     input::sql_intv::register(module)?;
     module.add_function(wrap_pyfunction!(input::json::json_dumps, module)?)?;

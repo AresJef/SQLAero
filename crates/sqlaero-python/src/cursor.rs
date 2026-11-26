@@ -1840,7 +1840,7 @@ macro_rules! cursor_api {
                     let mut planner=binding::Planner::new(sql,args.0.as_ref(),many,itemize,mode,&types,&budget)?;
                     let mut first:Option<Bound<'py,PyString>>=None;
                     let mut output:Option<Bound<'py,pyo3::types::PyList>>=None;
-                    while let Some(request)=planner.next(py,&reference.binding,reference.ansi_quotes,&budget)? {
+                    while let Some(request)=planner.next(py,&reference.binding,reference.binding.ansi_quotes,&budget)? {
                         let text=request.bytes.get(1..).ok_or_else(||errors::client(py,ClientErrorCode::InternalState,"SQL preview produced no command payload"))?;
                         let value=binding::display(py,text,reference.binding.codec)?;
                         if let Some(output)=&output { output.append(value)?; }

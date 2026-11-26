@@ -458,7 +458,7 @@ impl Connection {
     }
     pub(crate) fn context(&self, py: Python<'_>) -> PyResult<(Context, bool, OutputCodec)> {
         let value = self.execution_context(py)?;
-        Ok((value.binding, value.ansi_quotes, value.metadata))
+        Ok((value.binding, value.binding.ansi_quotes, value.metadata))
     }
     /// Copy historical auxiliary facts without acquiring command ownership or
     /// consulting live state. This reference cannot authorize SQL execution.

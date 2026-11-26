@@ -17,6 +17,8 @@ pub struct Context {
     pub codec: crate::charset::codec::Codec,
     /// Actual NO_BACKSLASH_ESCAPES value, not a guessed SQL mode.
     pub no_backslash_escapes: bool,
+    /// Whether double quotes delimit identifiers in this confirmed context.
+    pub ansi_quotes: bool,
     /// Whether UTC is reliably confirmed for this value's execution context.
     /// Statement-local modifiers can invalidate the confirmed session snapshot.
     pub utc_confirmed: bool,

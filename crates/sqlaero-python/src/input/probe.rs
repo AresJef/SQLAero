@@ -28,6 +28,7 @@ pub(crate) fn _encode_native_scalar<'py>(
     let context = Context {
         codec: Codec::new(encoding.charset),
         no_backslash_escapes: no_backslash,
+        ansi_quotes: false,
         utc_confirmed,
         limit,
     };
@@ -56,6 +57,7 @@ pub(crate) fn _encode_native_rows<'py>(
     let context = Context {
         codec: Codec::new(encoding.charset),
         no_backslash_escapes: no_backslash,
+        ansi_quotes: false,
         utc_confirmed: true,
         limit: 67_108_864,
     };
@@ -106,6 +108,7 @@ pub(crate) fn _plan_sql<'py>(
                 .charset,
         ),
         no_backslash_escapes: false,
+        ansi_quotes: false,
         utc_confirmed: true,
         limit,
     };
@@ -164,6 +167,7 @@ pub(crate) fn _escape_projection<'py>(
     let context = Context {
         codec: Codec::new(encoding.charset),
         no_backslash_escapes: no_backslash,
+        ansi_quotes: false,
         utc_confirmed: true,
         limit: 1,
     };
