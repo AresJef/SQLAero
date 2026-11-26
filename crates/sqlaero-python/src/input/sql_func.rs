@@ -9,6 +9,7 @@ use pyo3::types::{PyDict, PyFrozenSet, PyList, PyRange, PySet, PyString, PyTuple
 use sqlaero_core::bind::sql_func::{self, Form, Keyword, Part, Role};
 use sqlaero_core::bind::sql_intv::EXTRACT_UNITS;
 
+mod aggregate;
 mod calls;
 mod conversion;
 mod json_functions;
@@ -16,6 +17,7 @@ mod numeric;
 mod scalar;
 mod strings;
 mod temporal;
+mod window;
 
 /// The base has no Python constructor or public module export. Concrete
 /// classes are final and initialize the recipe through their own constructors.
@@ -189,48 +191,16 @@ impl DateAdd {
 
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let functions = PyModule::new(module.py(), "_sqlfunc")?;
+    aggregate::register(&functions)?;
     conversion::register(&functions)?;
     json_functions::register(&functions)?;
     numeric::register(&functions)?;
     scalar::register(&functions)?;
     strings::register(&functions)?;
     temporal::register(&functions)?;
+    window::register(&functions)?;
     functions.add_class::<Date>()?;
     functions.add_class::<Extract>()?;
     functions.add_class::<DateAdd>()?;
-    functions.add_class::<Sum>()?;
     module.add_submodule(&functions)
-}
-
-/// Sum a scalar expression over a group, optionally counting distinct values.
-#[pyclass(extends = SqlFunction, name = "SUM", module = "sqlaero.sqlfunc")]
-struct Sum;
-
-#[pymethods]
-impl Sum {
-    #[new]
-    #[pyo3(signature = (value, *, distinct=crate::config::Argument::default()), text_signature = "(value, *, distinct=False)")]
-    fn new<'py>(
-        value: Bound<'py, PyAny>,
-        distinct: crate::config::Argument<'py>,
-    ) -> PyResult<PyClassInitializer<Self>> {
-        let distinct = distinct
-            .0
-            .as_ref()
-            .map(|flag| crate::config::boolean(flag, "distinct"))
-            .transpose()?
-            .unwrap_or(false);
-        let form = if distinct {
-            Form::Static(&[
-                Part::Syntax("SUM(DISTINCT "),
-                Part::Operand(0, Role::Scalar),
-                Part::Syntax(")"),
-            ])
-        } else {
-            Form::Call("SUM(")
-        };
-        let operands = PyTuple::new(value.py(), [value])?;
-        let expression = SqlFunction::new("SUM", Kind::Scalar, form, operands)?;
-        Ok(PyClassInitializer::from(expression).add_subclass(Self))
-    }
 }

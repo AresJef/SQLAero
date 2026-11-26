@@ -1,7 +1,7 @@
 """Concrete MySQL function expression classes."""
 
 from typing import Literal, final, overload
-from ._sqlaero import _SQLFunction, _SQLInterval  # pyright: ignore[reportPrivateUsage]
+from ._sqlaero import Column, _SQLFunction, _SQLInterval  # pyright: ignore[reportPrivateUsage]
 from .sqltype import _Target  # pyright: ignore[reportPrivateUsage]
 
 __all__: list[str]
@@ -1066,3 +1066,151 @@ class YEAR(_SQLFunction):
 class YEARWEEK(_SQLFunction):
     """Return the corresponding year and week number using MySQL's optional week mode."""
     def __init__(self, value: object, mode: object = ...) -> None: ...
+
+@final
+class AVG(_SQLFunction):
+    """Return the average of the group, optionally over distinct values."""
+    def __init__(self, value: object, *, distinct: bool = False) -> None: ...
+
+@final
+class MAX(_SQLFunction):
+    """Return the largest group value. DISTINCT does not affect the result."""
+    def __init__(self, value: object, *, distinct: bool = False) -> None: ...
+
+@final
+class MIN(_SQLFunction):
+    """Return the smallest group value. DISTINCT does not affect the result."""
+    def __init__(self, value: object, *, distinct: bool = False) -> None: ...
+
+@final
+class COUNT(_SQLFunction):
+    """Count all rows, non-NULL values, or distinct tuples of non-NULL values."""
+    def __init__(self, *values: object, distinct: bool = False) -> None: ...
+
+_SortKey = tuple[Column, str]
+
+@final
+class GROUP_CONCAT(_SQLFunction):
+    """Concatenate non-NULL values with an optional explicit order and separator."""
+    def __init__(
+        self, value: object, *values: object, distinct: bool = False,
+        order_by: list[_SortKey] | tuple[_SortKey, ...] | None = None,
+        separator: str | None = None,
+    ) -> None: ...
+
+@final
+class FIRST_VALUE(_SQLFunction):
+    """Return the value for the first row of the window frame."""
+    def __init__(self, value: object, *, null_treatment: str | None = None) -> None: ...
+
+@final
+class LAST_VALUE(_SQLFunction):
+    """Return the value for the last row of the window frame."""
+    def __init__(self, value: object, *, null_treatment: str | None = None) -> None: ...
+
+@final
+class LAG(_SQLFunction):
+    """Return the value a given number of rows before the current row."""
+    def __init__(
+        self, value: object, offset: int = ..., default: object = ..., *, null_treatment: str | None = None,
+    ) -> None: ...
+
+@final
+class LEAD(_SQLFunction):
+    """Return the value a given number of rows after the current row."""
+    def __init__(
+        self, value: object, offset: int = ..., default: object = ..., *, null_treatment: str | None = None,
+    ) -> None: ...
+
+@final
+class NTH_VALUE(_SQLFunction):
+    """Return the value at a positive position within the window frame."""
+    def __init__(
+        self, value: object, position: int, *, from_position: str | None = None,
+        null_treatment: str | None = None,
+    ) -> None: ...
+
+@final
+class NTILE(_SQLFunction):
+    """Divide the partition into a positive number of ordered buckets."""
+    def __init__(self, buckets: int) -> None: ...
+
+@final
+class ANY_VALUE(_SQLFunction):
+    """Return a value without an ONLY_FULL_GROUP_BY check."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class BIT_AND(_SQLFunction):
+    """Return the bitwise AND over the values in a group."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class BIT_OR(_SQLFunction):
+    """Return the bitwise OR over the values in a group."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class BIT_XOR(_SQLFunction):
+    """Return the bitwise XOR over the values in a group."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class GROUPING(_SQLFunction):
+    """Return a bit mask identifying rollup values for the given grouping expressions."""
+    def __init__(self, value: object, *values: object) -> None: ...
+
+@final
+class JSON_ARRAYAGG(_SQLFunction):
+    """Aggregate the group values into one JSON array."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class JSON_OBJECTAGG(_SQLFunction):
+    """Aggregate keys and values into one JSON object."""
+    def __init__(self, key: object, value: object) -> None: ...
+
+@final
+class STDDEV_POP(_SQLFunction):
+    """Return the population standard deviation of the group."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class STDDEV_SAMP(_SQLFunction):
+    """Return the sample standard deviation of the group."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class VAR_POP(_SQLFunction):
+    """Return the population variance of the group."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class VAR_SAMP(_SQLFunction):
+    """Return the sample variance of the group."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class CUME_DIST(_SQLFunction):
+    """Return the current row's cumulative distribution within the partition."""
+    def __init__(self) -> None: ...
+
+@final
+class DENSE_RANK(_SQLFunction):
+    """Return the peer-group rank without gaps."""
+    def __init__(self) -> None: ...
+
+@final
+class PERCENT_RANK(_SQLFunction):
+    """Return the current row's relative rank within its partition."""
+    def __init__(self) -> None: ...
+
+@final
+class RANK(_SQLFunction):
+    """Return the rank of the current row with gaps for peers."""
+    def __init__(self) -> None: ...
+
+@final
+class ROW_NUMBER(_SQLFunction):
+    """Return the sequential number of the current row in its partition."""
+    def __init__(self) -> None: ...
