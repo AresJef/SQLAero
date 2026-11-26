@@ -11,6 +11,7 @@ use sqlaero_core::bind::sql_intv::EXTRACT_UNITS;
 
 mod calls;
 mod numeric;
+mod scalar;
 mod strings;
 
 /// The base has no Python constructor or public module export. Concrete
@@ -192,6 +193,7 @@ impl DateAdd {
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let functions = PyModule::new(module.py(), "_sqlfunc")?;
     numeric::register(&functions)?;
+    scalar::register(&functions)?;
     strings::register(&functions)?;
     functions.add_class::<Date>()?;
     functions.add_class::<Extract>()?;

@@ -429,3 +429,219 @@ class UNHEX(_SQLFunction):
 class UPPER(_SQLFunction):
     """Convert text to uppercase using its character set."""
     def __init__(self, value: object) -> None: ...
+
+@final
+class AES_DECRYPT(_SQLFunction):
+    """Decrypt AES ciphertext using the session's block mode and optional key derivation."""
+    def __init__(
+        self,
+        value: object,
+        key: object,
+        iv: object = ...,
+        kdf: object = ...,
+        salt: object = ...,
+        info_or_iterations: object = ...,
+    ) -> None: ...
+
+@final
+class AES_ENCRYPT(_SQLFunction):
+    """Encrypt data using the session's block mode and optional key derivation."""
+    def __init__(
+        self,
+        value: object,
+        key: object,
+        iv: object = ...,
+        kdf: object = ...,
+        salt: object = ...,
+        info_or_iterations: object = ...,
+    ) -> None: ...
+
+@final
+class BIN_TO_UUID(_SQLFunction):
+    """Convert a binary UUID to text, optionally reversing the time-field swap."""
+    def __init__(self, value: object, swap_flag: object = ...) -> None: ...
+
+@final
+class CHARSET(_SQLFunction):
+    """Return the character set of value."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class COALESCE(_SQLFunction):
+    """Return the first value that is not SQL NULL."""
+    def __init__(self, value: object, *values: object) -> None: ...
+
+@final
+class COERCIBILITY(_SQLFunction):
+    """Return the collation coercibility of value."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class COLLATION(_SQLFunction):
+    """Return the collation of value."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class COMPRESS(_SQLFunction):
+    """Compress value into MySQL's binary format."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class CONNECTION_ID(_SQLFunction):
+    """Return the current server connection identifier."""
+    def __init__(self) -> None: ...
+
+@final
+class CURRENT_ROLE(_SQLFunction):
+    """Return the active roles of the current session."""
+    def __init__(self) -> None: ...
+
+@final
+class CURRENT_USER(_SQLFunction):
+    """Return the MySQL account used to check privileges."""
+    def __init__(self) -> None: ...
+
+@final
+class DATABASE(_SQLFunction):
+    """Return the current default database."""
+    def __init__(self) -> None: ...
+
+@final
+class GREATEST(_SQLFunction):
+    """Return the greatest value according to MySQL comparison rules."""
+    def __init__(self, first: object, second: object, *values: object) -> None: ...
+
+@final
+class ICU_VERSION(_SQLFunction):
+    """Return the ICU library version used by the server."""
+    def __init__(self) -> None: ...
+
+@final
+class IF(_SQLFunction):
+    """Select a value according to the SQL condition."""
+    def __init__(self, condition: object, if_true: object, if_false: object) -> None: ...
+
+@final
+class IFNULL(_SQLFunction):
+    """Return fallback when value is SQL NULL."""
+    def __init__(self, value: object, fallback: object) -> None: ...
+
+@final
+class INET6_ATON(_SQLFunction):
+    """Convert a text IPv4 or IPv6 address to binary."""
+    def __init__(self, address: object) -> None: ...
+
+@final
+class INET6_NTOA(_SQLFunction):
+    """Convert a binary IPv4 or IPv6 address to text."""
+    def __init__(self, address: object) -> None: ...
+
+@final
+class INET_ATON(_SQLFunction):
+    """Convert a text IPv4 address to an integer."""
+    def __init__(self, address: object) -> None: ...
+
+@final
+class INET_NTOA(_SQLFunction):
+    """Convert an integer IPv4 address to text."""
+    def __init__(self, address: object) -> None: ...
+
+@final
+class INTERVAL(_SQLFunction):
+    """Return the position of value among increasing numeric boundaries."""
+    def __init__(self, value: object, first: object, *boundaries: object) -> None: ...
+
+@final
+class ISNULL(_SQLFunction):
+    """Test whether value is SQL NULL."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class IS_IPV4(_SQLFunction):
+    """Test whether address is valid IPv4 text."""
+    def __init__(self, address: object) -> None: ...
+
+@final
+class IS_IPV4_COMPAT(_SQLFunction):
+    """Test whether a binary address is IPv4-compatible IPv6."""
+    def __init__(self, address: object) -> None: ...
+
+@final
+class IS_IPV4_MAPPED(_SQLFunction):
+    """Test whether a binary address is IPv4-mapped IPv6."""
+    def __init__(self, address: object) -> None: ...
+
+@final
+class IS_IPV6(_SQLFunction):
+    """Test whether address is valid IPv6 text."""
+    def __init__(self, address: object) -> None: ...
+
+@final
+class IS_UUID(_SQLFunction):
+    """Test whether value is a valid MySQL UUID string."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class LAST_INSERT_ID(_SQLFunction):
+    """Read the last insert ID or set it for the session when value is supplied."""
+    def __init__(self, value: object = ...) -> None: ...
+
+@final
+class LEAST(_SQLFunction):
+    """Return the least value according to MySQL comparison rules."""
+    def __init__(self, first: object, second: object, *values: object) -> None: ...
+
+@final
+class NULLIF(_SQLFunction):
+    """Return SQL NULL when left equals right, otherwise left."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class RANDOM_BYTES(_SQLFunction):
+    """Return length random bytes from the server."""
+    def __init__(self, length: object) -> None: ...
+
+@final
+class ROW_COUNT(_SQLFunction):
+    """Return the affected row count from the preceding statement."""
+    def __init__(self) -> None: ...
+
+@final
+class SHA2(_SQLFunction):
+    """Return a hexadecimal SHA-2 digest using the specified digest width."""
+    def __init__(self, value: object, bits: object) -> None: ...
+
+@final
+class UNCOMPRESS(_SQLFunction):
+    """Decode MySQL compressed data to its original bytes."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class UNCOMPRESSED_LENGTH(_SQLFunction):
+    """Return the original byte length of MySQL compressed data."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class USER(_SQLFunction):
+    """Return the supplied client username and client host."""
+    def __init__(self) -> None: ...
+
+@final
+class UUID(_SQLFunction):
+    """Generate a version-1 UUID string when the server evaluates the expression."""
+    def __init__(self) -> None: ...
+
+@final
+class UUID_SHORT(_SQLFunction):
+    """Generate a server-based unsigned integer identifier."""
+    def __init__(self) -> None: ...
+
+@final
+class UUID_TO_BIN(_SQLFunction):
+    """Convert a UUID to binary, optionally swapping the time fields."""
+    def __init__(self, value: object, swap_flag: object = ...) -> None: ...
+
+@final
+class VERSION(_SQLFunction):
+    """Return the server's version string."""
+    def __init__(self) -> None: ...
