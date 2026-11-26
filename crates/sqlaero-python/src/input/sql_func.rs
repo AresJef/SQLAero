@@ -13,6 +13,7 @@ mod aggregate;
 mod calls;
 mod conversion;
 mod json_functions;
+mod miscellaneous;
 mod numeric;
 mod scalar;
 mod spatial;
@@ -110,7 +111,13 @@ fn validate_role(name: &str, index: usize, role: Role, value: &Bound<'_, PyAny>)
         {
             "one scalar value or expression"
         }
-        Role::Value if value.is_instance_of::<SqlFunction>() => "one data value",
+        Role::Value
+            if value.is_instance_of::<SqlFunction>()
+                || value.is_exact_instance_of::<super::column::Column>()
+                || value.is_exact_instance_of::<super::custom_escape::CustomEscape>() =>
+        {
+            "one data value"
+        }
         _ => return Ok(()),
     };
     Err(errors::builtin_format::<PyTypeError>(
@@ -195,6 +202,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     aggregate::register(&functions)?;
     conversion::register(&functions)?;
     json_functions::register(&functions)?;
+    miscellaneous::register(&functions)?;
     numeric::register(&functions)?;
     scalar::register(&functions)?;
     spatial::register(&functions)?;

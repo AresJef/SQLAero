@@ -1,12 +1,12 @@
 //! Aggregate expressions and GROUP_CONCAT's identifier and value clauses.
 
-use super::calls::{fixed_calls, prefix_arguments, variadic_calls};
+use super::calls::{fixed_calls, prefix_arguments, sequence_snapshot, variadic_calls};
 use super::{Kind, SqlFunction, keyword};
 use crate::config::Argument;
 use crate::errors;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyString, PyTuple};
+use pyo3::types::{PyString, PyTuple};
 use smallvec::SmallVec;
 use sqlaero_core::bind::sql_func::{Form, Part, Role};
 
@@ -115,21 +115,12 @@ impl Count {
 const DIRECTIONS: &[&str] = &["ASC", "DESC"];
 
 fn sort_entries<'py>(order_by: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyTuple>> {
-    if let Ok(tuple) = order_by.cast::<PyTuple>() {
-        return Ok(tuple.clone());
-    }
-    let list = order_by.cast::<PyList>().map_err(|_| {
+    sequence_snapshot(order_by, || {
         errors::builtin_message::<PyTypeError>(
             order_by.py(),
             "GROUP_CONCAT order_by requires a list or tuple of (Column, direction) pairs",
         )
-    })?;
-    // SAFETY: The caller is attached and holds the list. CPython takes an
-    // owned snapshot, synchronizing list access on free-threaded builds.
-    let tuple = unsafe {
-        Bound::<PyAny>::from_owned_ptr_or_err(list.py(), pyo3::ffi::PyList_AsTuple(list.as_ptr()))?
-    };
-    Ok(tuple.cast_into::<PyTuple>()?)
+    })
 }
 
 /// Concatenate non-NULL values with an optional explicit order and separator.

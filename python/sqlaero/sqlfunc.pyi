@@ -2,6 +2,7 @@
 
 from typing import Literal, final, overload
 from ._sqlaero import Column, _SQLFunction, _SQLInterval  # pyright: ignore[reportPrivateUsage]
+from .sqltype import BINARY as _BinaryTarget, CHAR as _CharTarget
 from .sqltype import _Target  # pyright: ignore[reportPrivateUsage]
 
 __all__: list[str]
@@ -1906,3 +1907,163 @@ class UCASE(_SQLFunction):
 class VARIANCE(_SQLFunction):
     """Return the population variance of the group."""
     def __init__(self, value: object) -> None: ...
+
+@final
+class DEFAULT(_SQLFunction):
+    """Return the declared default of a referenced column."""
+    def __init__(self, column: Column) -> None: ...
+
+@final
+class VALUES(_SQLFunction):
+    """Reference the proposed input column in INSERT ON DUPLICATE KEY UPDATE."""
+    def __init__(self, column: Column) -> None: ...
+
+@final
+class MATCH(_SQLFunction):
+    """Match one or more indexed columns against a full-text search value."""
+    def __init__(self, columns: list[Column] | tuple[Column, ...], search: object, *, mode: str | None = None) -> None: ...
+
+@final
+class NAME_CONST(_SQLFunction):
+    """Return a literal and give its result column the supplied literal name."""
+    def __init__(self, name: str, value: str | bytes | int | float | None) -> None: ...
+
+@final
+class WEIGHT_STRING(_SQLFunction):
+    """Return a binary collation weight with an optional CHAR(N) or BINARY(N) target."""
+    def __init__(self, value: object, target: _CharTarget | _BinaryTarget | None = None) -> None: ...
+
+@final
+class BENCHMARK(_SQLFunction):
+    """Evaluate an expression repeatedly on the server and return zero."""
+    def __init__(self, count: object, expression: object) -> None: ...
+
+@final
+class DISTANCE(_SQLFunction):
+    """Compute vector distance using a named metric on MySQL HeatWave on OCI or MySQL AI."""
+    def __init__(self, left: object, right: object, metric: object) -> None: ...
+
+@final
+class ETAG(_SQLFunction):
+    """Compute a 128-bit row hash from one or more values; requires server support."""
+    def __init__(self, value: object, *values: object) -> None: ...
+
+@final
+class ExtractValue(_SQLFunction):
+    """Extract XML text matching an XPath expression."""
+    def __init__(self, document: object, xpath: object) -> None: ...
+
+@final
+class FORMAT_BYTES(_SQLFunction):
+    """Convert a byte count to a human-readable string."""
+    def __init__(self, bytes: object) -> None: ...
+
+@final
+class FORMAT_PICO_TIME(_SQLFunction):
+    """Convert a duration in picoseconds to a human-readable string."""
+    def __init__(self, picoseconds: object) -> None: ...
+
+@final
+class FOUND_ROWS(_SQLFunction):
+    """Return the row count from the preceding SELECT. This function is deprecated."""
+    def __init__(self) -> None: ...
+
+@final
+class GET_LOCK(_SQLFunction):
+    """Acquire a server-named lock for the current session."""
+    def __init__(self, name: object, timeout: object) -> None: ...
+
+@final
+class IS_FREE_LOCK(_SQLFunction):
+    """Test whether a server-named lock is free."""
+    def __init__(self, name: object) -> None: ...
+
+@final
+class IS_USED_LOCK(_SQLFunction):
+    """Return the connection identifier holding a server-named lock."""
+    def __init__(self, name: object) -> None: ...
+
+@final
+class JSON_MERGE(_SQLFunction):
+    """Merge JSON documents and preserve conflicting values using the deprecated SQL name."""
+    def __init__(self, document: object, other: object, *documents: object) -> None: ...
+
+@final
+class LOAD_FILE(_SQLFunction):
+    """Read a server-local file subject to FILE privilege and secure_file_priv."""
+    def __init__(self, path: object) -> None: ...
+
+@final
+class MD5(_SQLFunction):
+    """Return the hexadecimal MD5 digest. Recent MySQL versions require the legacy hashing component."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class PS_CURRENT_THREAD_ID(_SQLFunction):
+    """Return the Performance Schema thread identifier for the current session."""
+    def __init__(self) -> None: ...
+
+@final
+class PS_THREAD_ID(_SQLFunction):
+    """Return the Performance Schema thread identifier for a connection."""
+    def __init__(self, connection_id: object) -> None: ...
+
+@final
+class RELEASE_ALL_LOCKS(_SQLFunction):
+    """Release all named locks held by the current session."""
+    def __init__(self) -> None: ...
+
+@final
+class RELEASE_LOCK(_SQLFunction):
+    """Release a named lock held by the current session."""
+    def __init__(self, name: object) -> None: ...
+
+@final
+class ROLES_GRAPHML(_SQLFunction):
+    """Return enabled and accessible roles in GraphML, subject to server privileges."""
+    def __init__(self) -> None: ...
+
+@final
+class SHA(_SQLFunction):
+    """Return the hexadecimal SHA-1 digest. Recent MySQL versions require the legacy hashing component."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class SHA1(_SQLFunction):
+    """Return the hexadecimal SHA-1 digest. Recent MySQL versions require the legacy hashing component."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class SLEEP(_SQLFunction):
+    """Pause the server session for the supplied duration in seconds."""
+    def __init__(self, seconds: object) -> None: ...
+
+@final
+class STATEMENT_DIGEST(_SQLFunction):
+    """Return the normalized digest hash of one SQL statement."""
+    def __init__(self, statement: object) -> None: ...
+
+@final
+class STATEMENT_DIGEST_TEXT(_SQLFunction):
+    """Return the normalized text used to digest one SQL statement."""
+    def __init__(self, statement: object) -> None: ...
+
+@final
+class UpdateXML(_SQLFunction):
+    """Replace the XML fragment matching an XPath expression."""
+    def __init__(self, document: object, xpath: object, replacement: object) -> None: ...
+
+@final
+class VALIDATE_PASSWORD_STRENGTH(_SQLFunction):
+    """Return the password score from the server's validation component."""
+    def __init__(self, password: object) -> None: ...
+
+@final
+class VECTOR_DISTANCE(_SQLFunction):
+    """Compute vector distance using a named metric on MySQL HeatWave on OCI or MySQL AI."""
+    def __init__(self, left: object, right: object, metric: object) -> None: ...
+
+@final
+class VERSION_WITH_UPDATE(_SQLFunction):
+    """Return the four-part server version where the server supports it."""
+    def __init__(self) -> None: ...

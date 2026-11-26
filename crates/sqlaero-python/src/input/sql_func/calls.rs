@@ -137,7 +137,23 @@ macro_rules! variadic_calls {
 }
 
 use pyo3::prelude::*;
-use pyo3::types::PyTuple;
+use pyo3::types::{PyList, PyTuple};
+
+pub(super) fn sequence_snapshot<'py>(
+    value: &Bound<'py, PyAny>,
+    invalid: impl FnOnce() -> PyErr,
+) -> PyResult<Bound<'py, PyTuple>> {
+    if let Ok(tuple) = value.cast::<PyTuple>() {
+        return Ok(tuple.clone());
+    }
+    let list = value.cast::<PyList>().map_err(|_| invalid())?;
+    // SAFETY: The caller is attached and holds the list. CPython takes an
+    // owned snapshot, synchronizing list access on free-threaded builds.
+    let tuple = unsafe {
+        Bound::<PyAny>::from_owned_ptr_or_err(list.py(), pyo3::ffi::PyList_AsTuple(list.as_ptr()))?
+    };
+    Ok(tuple.cast_into::<PyTuple>()?)
+}
 
 pub(super) fn prefix_arguments<'py, const N: usize>(
     py: Python<'py>,
