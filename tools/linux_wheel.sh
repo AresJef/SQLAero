@@ -4,13 +4,14 @@
 set -euo pipefail
 
 side=${1:?host or container}
-mode=${2:?probe, build or pypi}
-case "$mode" in probe|build|pypi) ;; *) exit 2 ;; esac
+mode=${2:?probe, build, packaging or pypi}
+case "$mode" in probe|build|packaging|pypi) ;; *) exit 2 ;; esac
 case "${LINUX_LIBC:?glibc or musl}" in
   glibc) compatibility=manylinux_2_28; rust_libc=gnu ;;
   musl) compatibility=musllinux_1_2; rust_libc=musl ;;
   *) exit 2 ;;
 esac
+if [[ "$mode" == packaging ]]; then [[ "$LINUX_LIBC" == musl ]]; fi
 architecture=$(uname -m)
 case "$architecture" in x86_64|aarch64) ;; *) exit 2 ;; esac
 case "${PYTHON_MINOR:?normal CPython minor}" in 3.12|3.13|3.14|3.15) ;; *) exit 2 ;; esac
@@ -40,6 +41,14 @@ if [[ "$side" == host ]]; then
   export LINUX_IMAGE_DIGEST
   LINUX_IMAGE_DIGEST=$(docker image inspect "$image" --format '{{index .RepoDigests 0}}')
   docker image inspect "$image" --format '{{json .RepoDigests}}' > "$evidence/container-image.json"
+  if [[ "$mode" == packaging ]]; then
+    docker run --rm -v "$GITHUB_WORKSPACE:/work" -w /work \
+      -e LINUX_LIBC -e PYTHON_MINOR -e PYTHON_FLAVOR -e LINUX_IMAGE_DIGEST \
+      -e EVIDENCE_DIR="$evidence" -e WHEEL_DIR="$wheels" -e EXPECTED_SDIST_SHA \
+      -e GIT_CONFIG_COUNT=1 -e GIT_CONFIG_KEY_0=safe.directory -e GIT_CONFIG_VALUE_0=/work \
+      "$LINUX_IMAGE_DIGEST" bash tools/linux_wheel.sh container "$mode"
+    exit
+  fi
   # The runner's packaged CLI requires newer glibc. Use Docker's documented
   # static test distribution without installing a daemon or changing the host.
   # Source: https://docs.docker.com/engine/install/binaries/
@@ -95,7 +104,9 @@ PY
   exit
 fi
 [[ "$side" == container ]]
-"$SQLAERO_TEST_MYSQL_ROOT/docker-cli" version --format '{{.Client.Version}}'
+if [[ "$mode" != packaging ]]; then
+  "$SQLAERO_TEST_MYSQL_ROOT/docker-cli" version --format '{{.Client.Version}}'
+fi
 if [[ "$LINUX_LIBC" == musl ]]; then
   apk add --no-cache ca-certificates curl tzdata nodejs patchelf openssl
 else
@@ -163,41 +174,54 @@ if [[ "$mode" == pypi ]]; then
   exit
 fi
 
-cargo fmt --all --check
-cargo test -p sqlaero-core --locked
-cargo clippy --workspace --all-targets --locked -- -D warnings
-python tools/error_catalog.py --check
-pyright --pythonpath "$PYO3_PYTHON"
+if [[ "$mode" != packaging ]]; then
+  cargo fmt --all --check
+  cargo test -p sqlaero-core --locked
+  cargo clippy --workspace --all-targets --locked -- -D warnings
+  python tools/error_catalog.py --check
+  pyright --pythonpath "$PYO3_PYTHON"
+fi
 phase original-build maturin build --release --locked --target "$target" \
   --compatibility "$compatibility" --interpreter python --out "$wheels"
+if [[ "$LINUX_LIBC" == musl ]]; then
+  python tools/release_artifacts.py add-musl-licenses --wheel "$wheels"/*.whl
+fi
 phase original-install python -m pip install --no-deps "$wheels"/*.whl
 sdist_arguments=()
-if [[ "$mode" == build ]]; then sdist_arguments=(--sdist source-dist/*.tar.gz); fi
+if [[ "$mode" == build || "$mode" == packaging ]]; then sdist_arguments=(--sdist source-dist/*.tar.gz); fi
 python tools/release_artifacts.py identity --kind original --wheel "$wheels"/*.whl \
   "${sdist_arguments[@]}" --output "$evidence/original-wheel-identity.json"
-cargo test -p sqlaero-core --lib explicit_roots_keep_platform_ssl_name_usage_and_time_policy --locked -- --ignored --test-threads=1
-cargo test -p sqlaero-core --test establish --locked -- --ignored --test-threads=1
-cargo test -p sqlaero-core --test component_contracts --locked -- --ignored --test-threads=1
-cargo test -p sqlaero-core --test protocol_wire --locked -- --ignored --test-threads=1
-cargo test -p sqlaero-core --test prepared_protocol --locked -- --ignored --test-threads=1
-cargo test -p sqlaero-core --test stream_native --locked -- --ignored --test-threads=1
-cargo test -p sqlaero-core --test local_infile_native --locked -- --ignored --test-threads=1
-if [[ "$PYTHON_MINOR" == 3.13 ]]; then
-  cargo test -p sqlaero-core --test system_trust --locked -- --ignored --test-threads=1
-  cargo test -p sqlaero-core --test tls_append --locked -- --ignored --test-threads=1
+if [[ "$mode" != packaging ]]; then
+  cargo test -p sqlaero-core --lib explicit_roots_keep_platform_ssl_name_usage_and_time_policy --locked -- --ignored --test-threads=1
+  cargo test -p sqlaero-core --test establish --locked -- --ignored --test-threads=1
+  cargo test -p sqlaero-core --test component_contracts --locked -- --ignored --test-threads=1
+  cargo test -p sqlaero-core --test protocol_wire --locked -- --ignored --test-threads=1
+  cargo test -p sqlaero-core --test prepared_protocol --locked -- --ignored --test-threads=1
+  cargo test -p sqlaero-core --test stream_native --locked -- --ignored --test-threads=1
+  cargo test -p sqlaero-core --test local_infile_native --locked -- --ignored --test-threads=1
+  if [[ "$PYTHON_MINOR" == 3.13 ]]; then
+    cargo test -p sqlaero-core --test system_trust --locked -- --ignored --test-threads=1
+    cargo test -p sqlaero-core --test tls_append --locked -- --ignored --test-threads=1
+  fi
+  phase original-test test_package python original
 fi
-phase original-test test_package python original
 if [[ "$mode" == probe ]]; then exit; fi
-if [[ "$PYTHON_MINOR" == 3.13 ]]; then
+if [[ "$mode" == build && "$PYTHON_MINOR" == 3.13 ]]; then
   phase diagnostic-smoke python tools/benchmark.py smoke --seconds 180 --output "$evidence"
 fi
 source_directory=$(python tools/release_artifacts.py extract --sdist source-dist/*.tar.gz \
   --destination sdist-source --expected-sha "$EXPECTED_SDIST_SHA")
 rebuild_source() {
   # A distinct target directory forces a real rebuild from the extracted sdist.
-  (cd "$source_directory" && CARGO_TARGET_DIR=/tmp/sqlaero-target-sdist \
+  (
+    cd "$source_directory"
+    CARGO_TARGET_DIR=/tmp/sqlaero-target-sdist \
     "$PYO3_PYTHON" -m maturin build --release --locked --target "$target" \
-      --compatibility "$compatibility" --interpreter "$PYO3_PYTHON" --out /work/sdist-wheels)
+      --compatibility "$compatibility" --interpreter "$PYO3_PYTHON" --out /work/sdist-wheels
+    if [[ "$LINUX_LIBC" == musl ]]; then
+      "$PYO3_PYTHON" tools/release_artifacts.py add-musl-licenses --wheel /work/sdist-wheels/*.whl
+    fi
+  )
 }
 phase sdist-build rebuild_source
 python -m venv /tmp/sqlaero-sdist
@@ -206,4 +230,4 @@ sdist_python=/tmp/sqlaero-sdist/bin/python
 phase sdist-install "$sdist_python" -m pip install --no-deps sdist-wheels/*.whl
 "$sdist_python" tools/release_artifacts.py identity --kind sdist --wheel sdist-wheels/*.whl \
   --sdist source-dist/*.tar.gz --output "$evidence/sdist-wheel-identity.json"
-phase sdist-test test_package "$sdist_python" sdist
+if [[ "$mode" != packaging ]]; then phase sdist-test test_package "$sdist_python" sdist; fi

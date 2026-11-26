@@ -9,6 +9,9 @@ on:
       runtime:
         type: string
         default: all
+      packaging_only:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -34,22 +37,25 @@ jobs:
         env:
           VALIDATION_PLATFORM: ${{ inputs.platform }}
           VALIDATION_RUNTIME: ${{ inputs.runtime }}
+          PACKAGING_ONLY: ${{ inputs.packaging_only }}
         shell: bash
         run: |
           set -euo pipefail
           rustup toolchain install 1.99.1 --profile minimal --component clippy --component rustfmt
           python -m venv .source-venv
           .source-venv/bin/python -m pip install --disable-pip-version-check maturin==1.15.0
-          .source-venv/bin/python tools/release_artifacts.py notices --output source-evidence/notices.json
+          if [[ "$PACKAGING_ONLY" != true ]]; then
+            .source-venv/bin/python tools/release_artifacts.py notices --output source-evidence/notices.json
+          fi
           .source-venv/bin/maturin sdist --out source-dist
           python - <<'PY'
-          import hashlib
           import json
           import os
           from pathlib import Path
           import subprocess
           import tarfile
           import tomllib
+          from tools.release_artifacts import sdist_record
           version: str = tomllib.loads(Path('pyproject.toml').read_text(encoding='utf-8'))['project']['version']
           if os.environ['GITHUB_REF_TYPE'] == 'tag':
               assert os.environ['GITHUB_REF_NAME'] == 'v' + version
@@ -57,12 +63,13 @@ jobs:
           packages: list[Path] = list(Path('source-dist').glob('*.tar.gz'))
           assert len(packages) == 1 and packages[0].name == f'sqlaero-{version}.tar.gz'
           package: Path = packages[0]
-          digest: str = hashlib.sha256(package.read_bytes()).hexdigest()
+          contents = sdist_record(package)
+          digest: str = contents['sha256']
           with tarfile.open(package) as archive:
               names: list[str] = archive.getnames()
               assert not any('/.runtime/' in name or '/evidence/' in name or '/experimental/' in name for name in names)
           Path('source-evidence').mkdir(exist_ok=True)
-          Path('source-evidence/identity.json').write_text(json.dumps({'version': version, 'file': package.name, 'sha256': digest, 'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'source_tree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(), 'members': names}, indent=2) + '\n', encoding='utf-8')
+          Path('source-evidence/identity.json').write_text(json.dumps({**contents, 'version': version, 'source_commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(), 'source_tree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(), 'members': names}, indent=2) + '\n', encoding='utf-8')
           with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
               output.write(f'version={version}\nsha256={digest}\n')
               runtimes = [
@@ -85,6 +92,8 @@ jobs:
               ]
               selected_runtime = os.environ['VALIDATION_RUNTIME']
               selected_platform = os.environ['VALIDATION_PLATFORM']
+              if os.environ['PACKAGING_ONLY'] == 'true':
+                  platforms = [row for row in platforms if row['name'].startswith('linux-musl-')]
               assert selected_runtime == 'all' or any(row['runtime'] == selected_runtime for row in runtimes)
               assert selected_platform == 'all' or any(row['name'] == selected_platform for row in platforms)
               matrix = {
@@ -133,15 +142,17 @@ jobs:
           python-version: ${{ matrix.python.version }}
           architecture: ${{ matrix.platform.architecture }}
       - name: Prepare the shared native test environment
+        if: ${{ !inputs.packaging_only }}
         uses: ./.github/actions/native-environment
       - name: Select only this job's owned mutable TLS fixture
+        if: ${{ !inputs.packaging_only }}
         run: python tools/mysql_fixture.py environment --output "$GITHUB_ENV"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: canonical-sdist
           path: source-dist
       - name: Prepare the owned Linux loopback servers
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && !inputs.packaging_only
         run: |
           set -euo pipefail
           mkdir -p validation-evidence
@@ -152,7 +163,7 @@ jobs:
           LINUX_LIBC: ${{ contains(matrix.platform.name, '-musl-') && 'musl' || 'glibc' }}
           PYTHON_MINOR: ${{ matrix.python.minor }}
           PYTHON_FLAVOR: ${{ matrix.python.flavor }}
-        run: bash tools/linux_wheel.sh host build
+        run: bash tools/linux_wheel.sh host ${{ inputs.packaging_only && 'packaging' || 'build' }}
       - name: Check the native source and public declarations
         if: runner.os != 'Linux'
         run: |
@@ -244,10 +255,10 @@ jobs:
           subprocess.run([str(python), '-m', 'pip', 'check'], check=True)
           PY
       - name: Stop only this job's owned servers
-        if: always()
+        if: always() && !inputs.packaging_only
         run: python tools/mysql_fixture.py stop
       - name: Collect redacted native server diagnostics
-        if: always()
+        if: always() && !inputs.packaging_only
         run: python tools/mysql_fixture.py diagnostics --output validation-evidence
       - name: Preserve failed original and rebuilt wheels only for diagnosis
         if: failure()
@@ -266,6 +277,14 @@ jobs:
           path: dist/*.whl
           if-no-files-found: error
           retention-days: 7
+      - name: Save the exact validated sdist rebuild
+        if: inputs.packaging_only
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rebuilt-${{ matrix.platform.name }}-cp${{ matrix.python.runtime }}
+          path: sdist-wheels/*.whl
+          if-no-files-found: error
+          retention-days: 7
       - name: Preserve the original and sdist evidence separately
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -276,7 +295,7 @@ jobs:
           retention-days: 7
 
   bundle:
-    if: inputs.platform == 'all' && inputs.runtime == 'all'
+    if: inputs.platform == 'all' && inputs.runtime == 'all' && !inputs.packaging_only
     name: Validate the complete 48-runtime artifact bundle
     needs: [source, build]
     runs-on: ubuntu-24.04

@@ -29,6 +29,10 @@ on:
         type: choice
         default: all
         options: [all, '3.12', '3.13', '3.14', '3.15', '3.14t', '3.15t']
+      packaging_only:
+        description: With full validation, build and check only the selected musllinux packaging artifacts.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -40,6 +44,7 @@ jobs:
     with:
       platform: ${{ inputs.platform }}
       runtime: ${{ inputs.validation_runtime }}
+      packaging_only: ${{ inputs.packaging_only }}
   native-smoke:
     if: ${{ !inputs.full_validation && !startsWith(inputs.platform, 'linux-') }}
     name: Native probe / ${{ matrix.platform }} / CPython ${{ inputs.python || '3.13' }}

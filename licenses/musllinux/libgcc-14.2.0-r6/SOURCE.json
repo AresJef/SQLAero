@@ -1,0 +1,29 @@
+{
+  "package": "libgcc",
+  "version": "14.2.0-r6",
+  "distribution": "Alpine Linux v3.22 main",
+  "alpine_origin": "gcc",
+  "alpine_aports_commit": "fbf60319be3bbaf6dd32ef55cc6fb7189e05c266",
+  "alpine_recipe_url": "https://raw.githubusercontent.com/alpinelinux/aports/fbf60319be3bbaf6dd32ef55cc6fb7189e05c266/main/gcc/APKBUILD",
+  "alpine_recipe_sha256": "4964b49bca5e2bb15f59a00dc3338417b9fa3c75066a55d367eb008135078e0b",
+  "alpine_package_license": "GPL-2.0-or-later AND LGPL-2.1-or-later",
+  "libgcc_license_expression": "GPL-3.0-or-later WITH GCC-exception-3.1",
+  "gcc_source_url": "https://gcc.gnu.org/pub/gcc/releases/gcc-14.2.0/gcc-14.2.0.tar.xz",
+  "gcc_source_sha512": "932bdef0cda94bacedf452ab17f103c0cb511ff2cec55e9112fc0328cbf1d803b42595728ea7b200e0a057c03e85626f937012e49a7515bc5dd256b2bf4bc396",
+  "gcc_license_url_base": "https://raw.githubusercontent.com/gcc-mirror/gcc/releases/gcc-14.2.0/",
+  "apk_library_member": "usr/lib/libgcc_s.so.1",
+  "architectures": {
+    "aarch64": {
+      "apk_url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/aarch64/libgcc-14.2.0-r6.apk",
+      "apk_sha256": "ba1835eec3ad8a120efd3d5020e561d53553a0513763a08f509e3ce6d4baa9ca",
+      "apk_library_sha256": "2d945d6ce360769b41fbffc652c2440014bbd69416f13fe206fbac19d32c9431",
+      "repaired_wheel_member_sha256": "35d3a03b621ff2ba18dcf4a727cd42b016b5ae332f37fb963c2a3f5744e1c046"
+    },
+    "x86_64": {
+      "apk_url": "https://dl-cdn.alpinelinux.org/alpine/v3.22/main/x86_64/libgcc-14.2.0-r6.apk",
+      "apk_sha256": "04f3467bc967e705221a843fe4d3de5850db826e571686e0c0ed453d38cb5c59",
+      "apk_library_sha256": "0cd532bd6739a5419c5a14e8897ad4e9de0df77c9f4e8e6ba202e369a8c8b4e5",
+      "repaired_wheel_member_sha256": "42b5f2c8ca13e5e173d837f5117a04b6c042437548112bde7879251ae8dcff8f"
+    }
+  }
+}

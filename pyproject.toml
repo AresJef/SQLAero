@@ -36,6 +36,9 @@ module-name = "sqlaero._sqlaero"
 include = [
     { path = "rust-toolchain.toml", format = "sdist" },
     { path = "data/error-catalog.json", format = "sdist" },
+    { path = "docs/shared-transcode-json.md", format = "sdist" },
+    { path = "licenses/musllinux/**/*", format = "sdist" },
+    { path = "tools/release_artifacts.py", format = "sdist" },
     { path = "third-party/jiter/**/*", format = "sdist" },
     { path = "third-party/pyo3/**/*", format = "sdist" },
     { path = "third-party/pythoncapi-compat/**/*", format = "sdist" },

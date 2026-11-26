@@ -8,13 +8,16 @@ checks consistent between original wheels, sdist rebuilds, and PyPI downloads.
 from __future__ import annotations
 
 import argparse
+import base64
+import csv
 from email.parser import BytesParser
 import hashlib
 from importlib import import_module
 from importlib.metadata import distribution, version
+import io
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import platform
 import re
 import socket
@@ -22,6 +25,7 @@ import subprocess
 import sys
 import sysconfig
 import tarfile
+from tempfile import TemporaryDirectory
 import time
 import tomllib
 from typing import Any, cast
@@ -29,6 +33,10 @@ from xml.etree import ElementTree
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
+JSON_GUIDE = 'docs/shared-transcode-json.md'
+MUSL_LICENSE_DIR = 'licenses/musllinux/libgcc-14.2.0-r6'
+MUSL_LICENSE_NAMES = ('NOTICE.md', 'COPYING', 'COPYING.LIB', 'COPYING3',
+                      'COPYING.RUNTIME', 'APKBUILD', 'SOURCE.json')
 PLATFORM_TAGS = {
     'macos-arm64': 'macosx_11_0_arm64',
     'macos-x86_64': 'macosx_11_0_x86_64',
@@ -283,13 +291,26 @@ def source_notices(targets: list[str], output: Path, *, quiet: bool = False) -> 
 
 
 def sdist_record(path: Path) -> dict[str, Any]:
-    """Read original license bytes from the actual canonical source archive."""
+    """Check the README guide and license bytes in the canonical source archive."""
     expected = license_materials()
     with tarfile.open(path) as archive:
         prefix = f'sqlaero-{release_version()}/'
-        for name, sha in expected.items():
-            stream = archive.extractfile(prefix + name)
-            assert stream is not None, ('Missing sdist license', name)
+        readme = archive.extractfile(prefix + 'README.md')
+        assert readme is not None
+        with readme:
+            link, = re.findall(r'\[JSON input guide\]\(([^)]+)\)', readme.read().decode('utf-8'))
+        guide_member = (PurePosixPath('README.md').parent / link).as_posix()
+        assert guide_member == JSON_GUIDE, ('Unexpected sdist JSON guide link', link)
+        guide = archive.extractfile(prefix + guide_member)
+        assert guide is not None, ('Missing sdist JSON guide', guide_member)
+        with guide:
+            guide_bytes = guide.read()
+        assert guide_bytes == (ROOT / JSON_GUIDE).read_bytes(), ('sdist JSON guide differs from source', guide_member)
+        for name, sha in (expected | musl_license_materials()).items():
+            member = archive.getmember(prefix + name)
+            assert member.isfile(), ('Expected a regular sdist license file', name)
+            stream = archive.extractfile(member)
+            assert stream is not None
             with stream:
                 hashed = hashlib.sha256()
                 while chunk := stream.read(1024 * 1024):
@@ -297,7 +318,102 @@ def sdist_record(path: Path) -> dict[str, Any]:
                 assert hashed.hexdigest() == sha, (
                     'sdist license differs from source', name)
     return {'file': path.name, 'sha256': digest(path), 'bytes': path.stat().st_size,
-            'license_file_count': len(expected)}
+            'license_file_count': len(expected), 'json_guide_member': guide_member,
+            'json_guide_sha256': hashlib.sha256(guide_bytes).hexdigest()}
+
+
+def musl_license_materials() -> dict[str, str]:
+    """Read only the frozen Alpine libgcc redistribution materials."""
+    return {f'{MUSL_LICENSE_DIR}/{name}': digest(ROOT / MUSL_LICENSE_DIR / name)
+            for name in MUSL_LICENSE_NAMES}
+
+
+def libgcc_component(archive: zipfile.ZipFile, directory: str, target: str) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Relate the repaired ELF member to its audited Alpine package and SBOM."""
+    source = json.loads((ROOT / MUSL_LICENSE_DIR / 'SOURCE.json').read_bytes())
+    assert digest(ROOT / MUSL_LICENSE_DIR / 'APKBUILD') == source['alpine_recipe_sha256']
+    architecture = target.removeprefix('linux-musl-')
+    expected = source['architectures'][architecture]
+    member, = (name for name in archive.namelist()
+               if re.fullmatch(r'sqlaero\.libs/libgcc_s-[0-9a-f]+\.so\.1', name))
+    sha = hashlib.sha256(archive.read(member)).hexdigest()
+    assert sha == expected['repaired_wheel_member_sha256'], ('Unverified Alpine libgcc bytes', target, member, sha)
+    assert member == f"sqlaero.libs/libgcc_s-{expected['apk_library_sha256'][:8]}.so.1", member
+    sbom_path = f'{directory}/sboms/auditwheel.cdx.json'
+    sbom = json.loads(archive.read(sbom_path))
+    component, = (item for item in sbom['components'] if item['name'] == 'libgcc')
+    purl = f"pkg:apk/alpine/libgcc@{source['version']}"
+    assert component['purl'] == purl and component['version'] == source['version']
+    parent = sbom['metadata']['component']['bom-ref']
+    parent_dependencies, = (item['dependsOn'] for item in sbom['dependencies'] if item['ref'] == parent)
+    assert component['bom-ref'] in parent_dependencies, ('SBOM does not link libgcc to the wheel', member)
+    record = dict(member=member, sha256=sha, sbom=sbom_path, version=source['version'], purl=purl,
+                  expression=source['libgcc_license_expression'])
+    return record, sbom, component
+
+
+def record_row(name: str, data: bytes) -> tuple[str, str, str]:
+    """Return a standard RECORD row for an archived file."""
+    encoded = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode('ascii').rstrip('=')
+    return name, f'sha256={encoded}', str(len(data))
+
+
+def verify_wheel_record(archive: zipfile.ZipFile, directory: str) -> None:
+    """Check all archive files and hashes in a musllinux wheel's RECORD."""
+    record = f'{directory}/RECORD'
+    members = [entry.filename for entry in archive.infolist() if not entry.is_dir()]
+    assert len(members) == len(set(members)), 'Duplicate wheel member'
+    rows = list(csv.reader(io.StringIO(archive.read(record).decode('utf-8'))))
+    assert len(rows) == len(members) and {row[0] for row in rows} == set(members), record
+    for name, digest_value, size in rows:
+        expected = (name, '', '') if name == record else record_row(name, archive.read(name))
+        assert (name, digest_value, size) == expected, ('Invalid wheel RECORD row', name)
+
+
+def add_musl_licenses(path: Path) -> None:
+    """Add the verified libgcc materials after the existing musl wheel repair."""
+    tag = path.stem.rsplit('-', 1)[1]
+    assert tag.startswith('musllinux_1_2_'), path
+    materials = musl_license_materials()
+    with TemporaryDirectory(dir=path.parent) as temporary:
+        staged = Path(temporary) / path.name
+        with zipfile.ZipFile(path) as archive, zipfile.ZipFile(staged, 'w', zipfile.ZIP_DEFLATED) as output:
+            metadata, = (name for name in archive.namelist() if name.endswith('.dist-info/METADATA'))
+            directory = metadata.rsplit('/', 1)[0]
+            verify_wheel_record(archive, directory)
+            libgcc, sbom, component = libgcc_component(archive, directory, TAG_PLATFORMS[tag])
+            component['licenses'] = [{'expression': libgcc['expression']}]
+            component['hashes'] = [{'alg': 'SHA-256', 'content': libgcc['sha256']}]
+            header, separator, body = archive.read(metadata).partition(b'\n\n')
+            assert separator
+            original_license = b'License-Expression: MIT'
+            assert header.splitlines().count(original_license) == 1, metadata
+            archive_license = f"License-Expression: MIT AND ({libgcc['expression']})".encode('ascii')
+            header = header.replace(original_license, archive_license)
+            declared = b''.join(f'\nLicense-File: {name}'.encode('ascii') for name in materials)
+            replace = {metadata: header + declared + separator + body,
+                       libgcc['sbom']: (json.dumps(sbom, indent=2) + '\n').encode('utf-8')}
+            record = f'{directory}/RECORD'
+            rows: list[tuple[str, str, str]] = []
+            for member in archive.infolist():
+                if member.filename != record:
+                    data = replace.get(member.filename)
+                    if data is None:
+                        data = archive.read(member)
+                    output.writestr(member, data)
+                    if not member.is_dir():
+                        rows.append(record_row(member.filename, data))
+            for name in materials:
+                member_name = f'{directory}/licenses/{name}'
+                assert member_name not in archive.namelist(), member_name
+                data = (ROOT / name).read_bytes()
+                output.writestr(member_name, data)
+                rows.append(record_row(member_name, data))
+            contents = io.StringIO()
+            csv.writer(contents, lineterminator='\n').writerows([*rows, (record, '', '')])
+            output.writestr(record, contents.getvalue().encode('utf-8'))
+        wheel_record(staged)
+        staged.replace(path)
 
 
 def wheel_record(path: Path) -> dict[str, Any]:
@@ -315,6 +431,19 @@ def wheel_record(path: Path) -> dict[str, Any]:
         parsed = BytesParser().parsebytes(archive.read(metadata[0]))
         assert parsed['Name'] == 'sqlaero' and parsed['Version'] == package_version
         materials = license_materials()
+        libgcc: dict[str, Any] | None = None
+        if target.startswith('linux-musl-'):
+            directory = metadata[0].rsplit('/', 1)[0]
+            libgcc, _, component = libgcc_component(archive, directory, target)
+            assert parsed['License-Expression'] == f"MIT AND ({libgcc['expression']})", path.name
+            assert component.get('licenses') == [{'expression': libgcc['expression']}], libgcc
+            assert component.get('hashes') == [{'alg': 'SHA-256', 'content': libgcc['sha256']}], libgcc
+            verify_wheel_record(archive, directory)
+            runtime_materials = musl_license_materials()
+            materials.update(runtime_materials)
+            libgcc.update(license_files=runtime_materials,
+                          sbom_sha256=hashlib.sha256(archive.read(libgcc['sbom'])).hexdigest(),
+                          record_sha256=hashlib.sha256(archive.read(f'{directory}/RECORD')).hexdigest())
         declared = parsed.get_all('License-File', [])
         assert len(declared) == len(set(declared)) and set(declared) == set(materials), (
             'Wheel License-File declarations differ from source', path.name)
@@ -323,12 +452,15 @@ def wheel_record(path: Path) -> dict[str, Any]:
             assert hashlib.sha256(archive.read(prefix + name)).hexdigest() == sha, (
                 'Wheel license differs from source', path.name, name)
         native_hash = hashlib.sha256(archive.read(native[0])).hexdigest()
-    return {'file': path.name, 'sha256': digest(path), 'bytes': path.stat().st_size,
+    record: dict[str, Any] = {'file': path.name, 'sha256': digest(path), 'bytes': path.stat().st_size,
             'version': package_version, 'python': python, 'abi': abi, 'platform': target,
             'native_member': native[0], 'native_sha256': native_hash,
             'license_file_count': len(materials),
             'license_materials_sha256': hashlib.sha256(
                 json.dumps(materials, sort_keys=True).encode('utf-8')).hexdigest()}
+    if libgcc is not None:
+        record['musl_libgcc'] = libgcc
+    return record
 
 
 def installed(wheel: Path, output: Path, kind: str, sdist: Path | None) -> None:
@@ -361,6 +493,16 @@ def installed(wheel: Path, output: Path, kind: str, sdist: Path | None) -> None:
     license_root = Path(str(package_files.locate_file(metadata_file))).parent / 'licenses'
     for name, sha in license_materials().items():
         assert digest(license_root / name) == sha, ('Installed license differs from source', name)
+    if libgcc := record.get('musl_libgcc'):
+        libgcc = cast(dict[str, Any], libgcc)
+        for name, sha in libgcc['license_files'].items():
+            assert digest(license_root / name) == sha, ('Installed libgcc license differs from source', name)
+        library = (location.parent.parent / libgcc['member']).resolve()
+        assert library.is_relative_to(prefix) and digest(library) == libgcc['sha256'], library
+        maps = Path('/proc/self/maps').read_text(encoding='utf-8').splitlines()
+        loaded = {parts[5] for line in maps if len(parts := line.split(maxsplit=5)) == 6}
+        assert str(library) in loaded, ('Bundled libgcc is not loaded', library)
+        libgcc['loaded_path'] = str(library)
     assert record['python'] == f'cp{sys.version_info.major}{sys.version_info.minor}'
     machine = platform.machine().lower()
     assert machine in ({'arm64', 'aarch64'} if str(record['platform']).endswith(('arm64', 'aarch64'))
@@ -634,6 +776,8 @@ def main() -> None:
     identity.add_argument('--output', type=Path, required=True)
     identity.add_argument('--kind', choices=('original', 'sdist', 'pypi'), required=True)
     identity.add_argument('--sdist', type=Path)
+    musl = commands.add_parser('add-musl-licenses')
+    musl.add_argument('--wheel', type=Path, required=True)
     provider = commands.add_parser('providers')
     provider.add_argument('--identity', type=Path, required=True)
     provider.add_argument('--output', type=Path, required=True)
@@ -658,6 +802,8 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == 'identity':
         installed(args.wheel, args.output, args.kind, args.sdist)
+    elif args.command == 'add-musl-licenses':
+        add_musl_licenses(args.wheel)
     elif args.command == 'providers':
         prepare_providers(args.identity, args.output)
     elif args.command == 'notices':
