@@ -9,6 +9,12 @@ class _SQLFunction: ...
 class _SQLInterval(_SQLFunction): ...
 
 @final
+class Column:
+    """Reference one column, with separate optional qualifier components."""
+    def __init__(self, name: str, *, table: str | None = None,
+                 database: str | None = None) -> None: ...
+
+@final
 class ABS(_SQLFunction):
     """Return the absolute value of a scalar expression."""
     def __init__(self, value: object) -> None: ...
@@ -27,6 +33,11 @@ class EXTRACT(_SQLFunction):
 class DATE_ADD(_SQLFunction):
     """Add one MySQL interval to a date or datetime expression."""
     def __init__(self, date: object, interval: _SQLInterval) -> None: ...
+
+@final
+class SUM(_SQLFunction):
+    """Sum a scalar expression over a group, with optional DISTINCT."""
+    def __init__(self, value: object, *, distinct: bool = False) -> None: ...
 
 @final
 class DAY(_SQLInterval):

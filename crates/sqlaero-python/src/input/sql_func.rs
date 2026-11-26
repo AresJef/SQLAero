@@ -5,7 +5,7 @@ use crate::errors;
 use pyo3::class::gc::{PyTraverseError, PyVisit};
 use pyo3::exceptions::{PyTypeError, PyValueError};
 use pyo3::prelude::*;
-use pyo3::types::{PyList, PyString, PyTuple};
+use pyo3::types::{PyDict, PyFrozenSet, PyList, PyRange, PySet, PyString, PyTuple};
 use sqlaero_core::bind::sql_func::{self, Form, Keyword, Part, Role};
 use sqlaero_core::bind::sql_intv::EXTRACT_UNITS;
 
@@ -81,10 +81,17 @@ impl SqlFunction {
 
 fn validate_role(name: &str, index: usize, role: Role, value: &Bound<'_, PyAny>) -> PyResult<()> {
     let expected = match role {
+        Role::Identifier if !value.is_exact_instance_of::<super::column::Column>() => {
+            "a Column reference"
+        }
         Role::Interval if !value.is_instance_of::<SqlInterval>() => "an SQL interval",
         Role::Scalar | Role::Value
             if value.is_instance_of::<PyList>()
                 || value.is_exact_instance_of::<PyTuple>()
+                || value.is_instance_of::<PyDict>()
+                || value.is_instance_of::<PySet>()
+                || value.is_instance_of::<PyFrozenSet>()
+                || value.is_instance_of::<PyRange>()
                 || value.is_instance_of::<SqlInterval>() =>
         {
             "one scalar value or expression"
@@ -193,5 +200,39 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<Abs>()?;
     module.add_class::<Date>()?;
     module.add_class::<Extract>()?;
-    module.add_class::<DateAdd>()
+    module.add_class::<DateAdd>()?;
+    module.add_class::<Sum>()
+}
+
+/// Sum a scalar expression over a group, optionally counting distinct values.
+#[pyclass(extends = SqlFunction, name = "SUM", module = "sqlaero.sqlfunc")]
+struct Sum;
+
+#[pymethods]
+impl Sum {
+    #[new]
+    #[pyo3(signature = (value, *, distinct=crate::config::Argument::default()), text_signature = "(value, *, distinct=False)")]
+    fn new<'py>(
+        value: Bound<'py, PyAny>,
+        distinct: crate::config::Argument<'py>,
+    ) -> PyResult<PyClassInitializer<Self>> {
+        let distinct = distinct
+            .0
+            .as_ref()
+            .map(|flag| crate::config::boolean(flag, "distinct"))
+            .transpose()?
+            .unwrap_or(false);
+        let form = if distinct {
+            Form::Static(&[
+                Part::Syntax("SUM(DISTINCT "),
+                Part::Operand(0, Role::Scalar),
+                Part::Syntax(")"),
+            ])
+        } else {
+            Form::Call("SUM(")
+        };
+        let operands = PyTuple::new(value.py(), [value])?;
+        let expression = SqlFunction::new("SUM", Kind::Scalar, form, operands)?;
+        Ok(PyClassInitializer::from(expression).add_subclass(Self))
+    }
 }

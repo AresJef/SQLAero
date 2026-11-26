@@ -4,7 +4,7 @@ from datetime import date
 
 import pytest
 from sqlaero import Connection, JSON, json_dumps, sqlfunc, sqlintv
-from sqlaero.errors import NotSupportedError
+from sqlaero.errors import DataError, NotSupportedError
 
 from test_prepared_cursor import statement_counts
 from test_public_connection import connection as connection, requires_mysql
@@ -25,6 +25,18 @@ def test_expression_construction_checks_static_roles() -> None:
         sqlfunc.DATE_ADD(date(2026, 11, 27), "INTERVAL 2 DAY")  # type: ignore[arg-type]
     with pytest.raises(TypeError, match="ABS.*scalar"):
         sqlfunc.ABS((1, 2))
+    with pytest.raises(TypeError, match="ABS.*scalar"):
+        sqlfunc.ABS({"x": 1})
+
+
+@requires_mysql
+def test_expression_depth_is_bounded_by_the_existing_traversal(connection: Connection) -> None:
+    expression: object = -7
+    for _ in range(65):
+        expression = sqlfunc.ABS(expression)
+    assert isinstance(expression, sqlfunc.ABS)
+    with pytest.raises(DataError, match="64 active"):
+        connection.escape(expression)
 
 
 @requires_mysql

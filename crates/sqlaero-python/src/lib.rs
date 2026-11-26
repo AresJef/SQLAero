@@ -440,6 +440,7 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(_parse_size, module)?)?;
     module.add_function(wrap_pyfunction!(_decode_json, module)?)?;
     module.add_class::<input::json::Json>()?;
+    module.add_class::<input::column::Column>()?;
     input::sql_func::register(module)?;
     input::sql_intv::register(module)?;
     module.add_function(wrap_pyfunction!(input::json::json_dumps, module)?)?;

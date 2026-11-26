@@ -14,6 +14,7 @@ from ._sqlaero import (
     Compression as Compression,
     TLSInfo as TLSInfo,
     TLSCertificate as TLSCertificate,
+    Column as Column,
     ColumnInfo as ColumnInfo,
     Columns as Columns,
 )

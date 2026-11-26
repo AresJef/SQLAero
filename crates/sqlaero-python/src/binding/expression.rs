@@ -3,7 +3,9 @@
 use super::Visit;
 use crate::errors;
 use crate::input::{
-    check, control, sink,
+    check,
+    column::Column,
+    sink,
     sql_func::{Kind, SqlFunction},
 };
 use pyo3::exceptions::PyTypeError;
@@ -39,10 +41,13 @@ impl Visit<'_> {
                 .ok_or_else(|| sink::fragment_error(py))?,
         };
         let expression = SqlFunction::snapshot(expression)?;
-        if matches!(operand, Some(Role::Value | Role::Row | Role::Identifier))
-            || (operand == Some(Role::Interval)) != (expression.kind == Kind::Interval)
-                && operand.is_some()
-        {
+        let allowed = match operand {
+            None => true,
+            Some(Role::Scalar) => expression.kind == Kind::Scalar,
+            Some(Role::Interval) => expression.kind == Kind::Interval,
+            Some(Role::Value | Role::Row | Role::Identifier) => false,
+        };
+        if !allowed {
             return Err(errors::builtin_format::<PyTypeError>(
                 py,
                 format_args!(
@@ -60,17 +65,7 @@ impl Visit<'_> {
                     Part::Option(keyword) => self.fixed(py, keyword.as_str(), output)?,
                     Part::Operand(index, role) => {
                         let argument = expression.operands.get_item(index)?;
-                        let result = if role == Role::Identifier {
-                            control::identifier(
-                                &argument,
-                                "SQL identifier",
-                                output,
-                                &self.context,
-                                self.budget,
-                            )
-                        } else {
-                            self.value_with(&argument, output, Some(index), Some(role), |_| ())
-                        };
+                        let result = self.operand(&argument, output, index, role);
                         if let Err(error) = result {
                             errors::note_format(
                                 py,
@@ -94,18 +89,40 @@ impl Visit<'_> {
         Ok(true)
     }
 
+    fn operand(
+        &mut self,
+        argument: &Bound<'_, PyAny>,
+        output: &mut Vec<u8>,
+        index: usize,
+        role: Role,
+    ) -> PyResult<()> {
+        if role == Role::Identifier
+            || (role == Role::Scalar && argument.is_exact_instance_of::<Column>())
+        {
+            let column = argument.cast_exact::<Column>()?;
+            return column
+                .get()
+                .write(argument.py(), output, &self.context, self.budget);
+        }
+        self.value_with(argument, output, Some(index), Some(role), |_| ())
+    }
+
     fn fixed(&self, py: Python<'_>, text: &str, output: &mut Vec<u8>) -> PyResult<()> {
         writer::append(output, text.as_bytes(), self.context.limit)
             .map_err(|error| errors::wire(py, error))
     }
 
     pub(super) fn allow_row(&self, py: Python<'_>, role: Option<Role>) -> PyResult<()> {
-        if matches!(role, Some(Role::Scalar | Role::Value)) {
+        if matches!(role, Some(Role::Scalar | Role::Value | Role::Interval)) {
             return Err(errors::builtin_message::<PyTypeError>(
                 py,
-                "this SQL operand requires one scalar, not a row",
+                "this SQL operand does not accept a row",
             ));
         }
         Ok(())
     }
+}
+
+pub(super) fn requires_row(py: Python<'_>) -> PyErr {
+    errors::builtin_message::<PyTypeError>(py, "this SQL operand requires a row")
 }

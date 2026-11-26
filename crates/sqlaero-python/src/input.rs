@@ -20,6 +20,7 @@ pub(crate) mod arrow;
 mod attribute;
 mod buffer;
 pub(crate) mod cell;
+pub(crate) mod column;
 pub(crate) mod control;
 mod decimal;
 mod diagnostic;

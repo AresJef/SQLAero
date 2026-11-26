@@ -1151,6 +1151,7 @@ impl<'r, 'py> Row<'r, 'py> {
             path: self.path,
             work: 0,
             native_depth: 0,
+            provider_operand: None,
             active_depth: 0,
         };
         if let Some(identity) = self.outer {
@@ -1501,6 +1502,7 @@ impl<'r, 'py> Row<'r, 'py> {
             path: self.path,
             work: 0,
             native_depth: 0,
+            provider_operand: None,
             active_depth: 0,
         };
         if let Some(identity) = self.outer {
@@ -1709,6 +1711,8 @@ struct Visit<'a> {
     path: SmallVec<[usize; 4]>,
     work: usize,
     native_depth: usize,
+    // Restrict object-backed values reached while reading a scalar operand.
+    provider_operand: Option<Role>,
     active_depth: usize,
 }
 
@@ -1735,6 +1739,7 @@ pub(crate) fn encode_value(
         path: SmallVec::new(),
         work: 0,
         native_depth: 0,
+        provider_operand: None,
         active_depth: 0,
     }
     .value(value, &mut output, None)?;
@@ -1878,6 +1883,11 @@ impl Visit<'_> {
                 .types
                 .try_write(value, output, &self.context, Some(self.budget))
             {
+                Ok(true) if operand == Some(Role::Row) => {
+                    let error = expression::requires_row(py);
+                    self.failed_value(value, child, &error);
+                    return Err(error);
+                }
                 Ok(true) => return Ok(project(FragmentRole::Scalar)),
                 Err(error) => {
                     self.failed_value(value, child, &error);
@@ -2136,13 +2146,18 @@ impl Visit<'_> {
             let container = source.shape() != Shape::Scalar;
             if container {
                 self.allow_row(py, operand)?;
+            } else if operand == Some(Role::Row) {
+                return Err(expression::requires_row(py));
             }
             self.enter_source(py, value.as_ptr() as usize, container)?;
             let result = if container {
                 self.native_value(source.as_mut(), output)
                     .map(|()| FragmentRole::Row)
             } else {
-                self.native_cell::<true>(source.as_mut(), 0, 0, output)
+                let previous = std::mem::replace(&mut self.provider_operand, operand);
+                let result = self.native_cell::<true>(source.as_mut(), 0, 0, output);
+                self.provider_operand = previous;
+                result
             };
             self.active.pop();
             self.active_depth -= usize::from(container);
@@ -2295,7 +2310,10 @@ impl CellWriter for Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<FragmentRole> {
-        self.value_role(value, output, child)
+        let operand = self.provider_operand.take();
+        let result = self.value_with(value, output, child, operand, std::convert::identity);
+        self.provider_operand = operand;
+        result
     }
 
     fn native_python(
@@ -2343,9 +2361,10 @@ impl CellWriter for Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<()> {
-        self.value(value, output, child)
+        self.python_role(value, output, child).map(|_| ())
     }
     fn enter_native(&mut self, py: Python<'_>) -> PyResult<()> {
+        self.allow_row(py, self.provider_operand)?;
         if self.active_depth + self.native_depth >= 64 {
             return Err(errors::client_format(
                 py,
