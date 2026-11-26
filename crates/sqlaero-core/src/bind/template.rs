@@ -238,13 +238,21 @@ impl Template {
     ///
     /// # Errors
     /// Returns the actual final request-bound or native allocation failure.
+    #[inline]
     pub fn append_until_slot(
         &self,
         cursor: &mut usize,
         output: &mut Vec<u8>,
         limit: usize,
     ) -> Result<Option<usize>, WireError> {
-        self.append_range_until_slot(&(0..self.source.len()), cursor, output, limit)
+        while let Some(piece) = self.pieces.get(*cursor) {
+            *cursor += 1;
+            match piece {
+                Piece::Bytes(bytes) => writer::append(output, &self.source[bytes.clone()], limit)?,
+                Piece::Value(offset) => return Ok(Some(*offset)),
+            }
+        }
+        Ok(None)
     }
 
     /// Append a selected source range through its next binding position.

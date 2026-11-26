@@ -1409,7 +1409,7 @@ impl<'r, 'py> Row<'r, 'py> {
         let mut output = Vec::new();
         writer::append(&mut output, &[3], context.limit)
             .map_err(|error| errors::wire(py, error))?;
-        self.fill::<false>(
+        self.fill::<false, true>(
             template,
             types,
             context,
@@ -1434,7 +1434,7 @@ impl<'r, 'py> Row<'r, 'py> {
         output: &mut Vec<u8>,
     ) -> PyResult<()> {
         output.clear();
-        self.fill::<false>(
+        self.fill::<false, false>(
             template,
             types,
             context,
@@ -1460,9 +1460,9 @@ impl<'r, 'py> Row<'r, 'py> {
     ) -> PyResult<FragmentRole> {
         output.bytes.clear();
         if layout.whole_row {
-            self.fill::<true>(template, types, context, budget, layout.row.clone(), output)
+            self.fill::<true, false>(template, types, context, budget, layout.row.clone(), output)
         } else {
-            self.fill::<false>(template, types, context, budget, layout.row.clone(), output)
+            self.fill::<false, false>(template, types, context, budget, layout.row.clone(), output)
                 .map(|role| {
                     if role == FragmentRole::Standalone {
                         role
@@ -1473,7 +1473,7 @@ impl<'r, 'py> Row<'r, 'py> {
         }
     }
 
-    fn fill<const TRACK_ROLE: bool>(
+    fn fill<const TRACK_ROLE: bool, const FULL_TEMPLATE: bool>(
         self,
         template: &Template,
         types: &ScalarTypes,
@@ -1489,6 +1489,13 @@ impl<'r, 'py> Row<'r, 'py> {
         let py = self.value.py();
         check(py, budget)?;
         let mut cursor = 0;
+        let append = |cursor: &mut usize, output: &mut Vec<u8>| {
+            if FULL_TEMPLATE {
+                template.append_until_slot(cursor, output, context.limit)
+            } else {
+                template.append_range_until_slot(&range, cursor, output, context.limit)
+            }
+        };
         let walked = self.walk::<TRACK_ROLE>(
             types,
             context,
@@ -1497,8 +1504,7 @@ impl<'r, 'py> Row<'r, 'py> {
             Some(template),
             conversions,
             |_, output| {
-                if template
-                    .append_range_until_slot(&range, &mut cursor, output, context.limit)
+                if append(&mut cursor, output)
                     .map_err(|error| errors::wire(py, error))?
                     .is_none()
                 {
@@ -1512,8 +1518,7 @@ impl<'r, 'py> Row<'r, 'py> {
             },
             |_, _, _| Ok(()),
         )?;
-        if template
-            .append_range_until_slot(&range, &mut cursor, output, context.limit)
+        if append(&mut cursor, output)
             .map_err(|error| errors::wire(py, error))?
             .is_some()
         {
@@ -1524,7 +1529,7 @@ impl<'r, 'py> Row<'r, 'py> {
             ));
         }
         if let Some(splices) = walked.splices {
-            if range.start == 0 && range.end == template.len() {
+            if FULL_TEMPLATE || (range.start == 0 && range.end == template.len()) {
                 *output = custom_escape::verify_splices(
                     py,
                     std::mem::take(output),
