@@ -10,6 +10,7 @@ use sqlaero_core::bind::sql_func::{self, Form, Keyword, Part, Role};
 use sqlaero_core::bind::sql_intv::EXTRACT_UNITS;
 
 mod calls;
+mod conversion;
 mod numeric;
 mod scalar;
 mod strings;
@@ -192,6 +193,7 @@ impl DateAdd {
 
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let functions = PyModule::new(module.py(), "_sqlfunc")?;
+    conversion::register(&functions)?;
     numeric::register(&functions)?;
     scalar::register(&functions)?;
     strings::register(&functions)?;

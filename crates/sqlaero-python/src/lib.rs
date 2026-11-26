@@ -447,6 +447,7 @@ fn _sqlaero(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_class::<input::custom_escape::CustomEscape>()?;
     input::sql_func::register(module)?;
     input::sql_intv::register(module)?;
+    input::sql_type::register(module)?;
     module.add_function(wrap_pyfunction!(input::json::json_dumps, module)?)?;
     module.add_function(wrap_pyfunction!(_encode_scalar, module)?)?;
     module.add_function(wrap_pyfunction!(

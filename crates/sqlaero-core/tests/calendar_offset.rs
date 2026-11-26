@@ -93,6 +93,7 @@ fn no_offset_keeps_server_validation_but_explicit_offset_requires_confirmed_utc(
     let context = Context {
         codec: Codec::new(charset::resolve(None, None).unwrap().charset),
         no_backslash_escapes: false,
+        ansi_quotes: false,
         utc_confirmed: false,
         limit: 1024,
     };

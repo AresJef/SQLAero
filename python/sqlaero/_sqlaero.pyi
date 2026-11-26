@@ -8,6 +8,7 @@ from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as
 
 _sqlfunc: ModuleType
 _sqlintv: ModuleType
+_sqltype: ModuleType
 
 class _SQLFunction: ...
 class _SQLInterval(_SQLFunction): ...

@@ -4,6 +4,7 @@ pub mod batch;
 pub mod scalar;
 pub mod sql_func;
 pub mod sql_intv;
+pub mod sql_type;
 pub mod template;
 pub mod temporal;
 pub mod value;

@@ -1,9 +1,23 @@
 """Concrete MySQL function expression classes."""
 
-from typing import final
+from typing import final, overload
 from ._sqlaero import _SQLFunction, _SQLInterval  # pyright: ignore[reportPrivateUsage]
+from .sqltype import _Target  # pyright: ignore[reportPrivateUsage]
 
 __all__: list[str]
+
+@final
+class CAST(_SQLFunction):
+    """Convert a value to the selected sqltype target."""
+    def __init__(self, value: object, target: _Target, *, at_utc: bool = False) -> None: ...
+
+@final
+class CONVERT(_SQLFunction):
+    """Convert with a sqltype target or transcode with a MySQL charset."""
+    @overload
+    def __init__(self, value: object, target: _Target, *, using: None = None) -> None: ...
+    @overload
+    def __init__(self, value: object, *, using: str) -> None: ...
 
 @final
 class ABS(_SQLFunction):

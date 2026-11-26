@@ -109,6 +109,7 @@ fn context() -> Context {
     Context {
         codec: Codec::new(charset::resolve(None, None).unwrap().charset),
         no_backslash_escapes: false,
+        ansi_quotes: false,
         utc_confirmed: true,
         limit: LIMIT,
     }

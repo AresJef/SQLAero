@@ -1,6 +1,6 @@
 """Public native synchronous MySQL entry points."""
 
-from . import sqlfunc as sqlfunc, sqlintv as sqlintv
+from . import sqlfunc as sqlfunc, sqlintv as sqlintv, sqltype as sqltype
 from ._sqlaero import (
     JSON as JSON,
     json_dumps as json_dumps,

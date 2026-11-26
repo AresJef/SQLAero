@@ -41,6 +41,7 @@ pub(crate) mod sequence;
 pub(crate) mod source;
 pub(crate) mod sql_func;
 pub(crate) mod sql_intv;
+pub(crate) mod sql_type;
 pub(crate) mod standard;
 pub(crate) mod transparent;
 pub(crate) mod unicode;

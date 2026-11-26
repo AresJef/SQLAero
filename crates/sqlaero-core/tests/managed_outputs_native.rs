@@ -169,6 +169,7 @@ fn real_managed_call_retains_business_sets_output_status_tracking_and_tail() {
                 let context = Context {
                     codec: Codec::new(charset::resolve(None, None).unwrap().charset),
                     no_backslash_escapes: false,
+                    ansi_quotes: false,
                     utc_confirmed: true,
                     limit: LIMIT,
                 };

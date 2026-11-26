@@ -97,6 +97,9 @@ impl Visit<'_> {
                 match part {
                     Part::Syntax(text) => self.fixed(py, text, output)?,
                     Part::Option(keyword) => self.fixed(py, keyword.as_str(), output)?,
+                    Part::Target(target) => target
+                        .write(output, self.context.limit)
+                        .map_err(|error| errors::wire(py, error))?,
                     Part::Compound(unit) => sql_intv::write_compound(
                         unit,
                         &expression.operands,

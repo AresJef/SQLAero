@@ -48,6 +48,8 @@ pub enum Part {
     Syntax(&'static str),
     /// A selected option from a closed set.
     Option(Keyword),
+    /// A validated MySQL conversion target.
+    Target(super::sql_type::Target),
     /// A retained source operand and its structural role.
     Operand(usize, Role),
     /// One normalized interval, made from its signed integer components.
