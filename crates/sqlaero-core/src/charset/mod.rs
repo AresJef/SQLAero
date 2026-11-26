@@ -84,6 +84,20 @@ pub struct Resolved {
     pub collation: &'static Collation,
 }
 
+/// Resolve a server SQL charset keyword, including families that are only
+/// permitted for server expressions and result data.
+pub(crate) fn expression_charset(name: &str) -> Option<&'static str> {
+    let name = if name.eq_ignore_ascii_case("utf8") {
+        "utf8mb3"
+    } else {
+        name
+    };
+    catalog::CHARSETS
+        .iter()
+        .find(|charset| charset.name.eq_ignore_ascii_case(name))
+        .map(|charset| charset.name)
+}
+
 /// Invalid configuration tokens or combinations, before network operations.
 #[derive(Debug, thiserror::Error)]
 pub enum CatalogError {

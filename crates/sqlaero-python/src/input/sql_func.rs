@@ -11,6 +11,7 @@ use sqlaero_core::bind::sql_intv::EXTRACT_UNITS;
 
 mod calls;
 mod numeric;
+mod strings;
 
 /// The base has no Python constructor or public module export. Concrete
 /// classes are final and initialize the recipe through their own constructors.
@@ -44,6 +45,9 @@ impl SqlFunction {
     ) -> PyResult<Self> {
         for part in form.parts(operands.len()) {
             if let Part::Operand(index, role) = part {
+                if index.is_multiple_of(16_384) && index != 0 {
+                    operands.py().check_signals()?;
+                }
                 let value = operands.get_item(index)?;
                 validate_role(name, index, role, &value)?;
             }
@@ -188,6 +192,7 @@ impl DateAdd {
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     let functions = PyModule::new(module.py(), "_sqlfunc")?;
     numeric::register(&functions)?;
+    strings::register(&functions)?;
     functions.add_class::<Date>()?;
     functions.add_class::<Extract>()?;
     functions.add_class::<DateAdd>()?;

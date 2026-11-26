@@ -35,10 +35,10 @@ fixed_calls! {
 }
 
 optional_calls! {
-    Atan, "ATAN", (y), x, "(y, x=...)", "Return the inverse tangent, optionally using point coordinates (x, y).";
-    Log, "LOG", (base_or_value), value, "(base_or_value, value=...)", "Return the natural logarithm with one argument or the logarithm of value in the supplied base.";
-    Rand, "RAND", (), seed, "(seed=...)", "Return a random value in [0, 1), optionally initializing the generator with a seed.";
-    Round, "ROUND", (value), digits, "(value, digits=...)", "Round value to digits decimal places, defaulting to zero places.";
+    Atan, "ATAN", (y), (x), "(y, x=...)", "Return the inverse tangent, optionally using point coordinates (x, y).";
+    Log, "LOG", (base_or_value), (value), "(base_or_value, value=...)", "Return the natural logarithm with one argument or the logarithm of value in the supplied base.";
+    Rand, "RAND", (), (seed), "(seed=...)", "Return a random value in [0, 1), optionally initializing the generator with a seed.";
+    Round, "ROUND", (value), (digits), "(value, digits=...)", "Round value to digits decimal places, defaulting to zero places.";
 }
 
 pub(super) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {

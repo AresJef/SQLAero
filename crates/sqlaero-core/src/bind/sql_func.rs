@@ -30,6 +30,11 @@ impl Keyword {
             .map(|keyword| Self(keyword))
     }
 
+    /// Select a canonical MySQL charset for a server expression.
+    pub fn charset(input: &str) -> Option<Self> {
+        crate::charset::expression_charset(input).map(Self)
+    }
+
     /// Return the canonical spelling for SQL output.
     pub fn as_str(self) -> &'static str {
         self.0

@@ -169,3 +169,263 @@ class DATE_ADD(_SQLFunction):
 class SUM(_SQLFunction):
     """Sum a scalar expression over a group, with optional DISTINCT."""
     def __init__(self, value: object, *, distinct: bool = False) -> None: ...
+
+@final
+class ASCII(_SQLFunction):
+    """Return the numeric code of the first byte of value."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class BIN(_SQLFunction):
+    """Return the binary digits of an integer as text."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class BIT_LENGTH(_SQLFunction):
+    """Return the length of value in bits."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class CHAR(_SQLFunction):
+    """Return characters represented by one or more numeric codes with an optional MySQL charset."""
+    def __init__(self, code: object, *codes: object, using: str | None = None) -> None: ...
+
+@final
+class CHAR_LENGTH(_SQLFunction):
+    """Return the length of value in characters."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class CONCAT(_SQLFunction):
+    """Concatenate all supplied values as text or binary data."""
+    def __init__(self, value: object, *values: object) -> None: ...
+
+@final
+class CONCAT_WS(_SQLFunction):
+    """Join non-NULL values with separator."""
+    def __init__(self, separator: object, value: object, *values: object) -> None: ...
+
+@final
+class ELT(_SQLFunction):
+    """Select the value at a one-based index."""
+    def __init__(self, index: object, value: object, *values: object) -> None: ...
+
+@final
+class EXPORT_SET(_SQLFunction):
+    """Select on or off text for each bit and join the results."""
+    def __init__(
+        self,
+        bits: object,
+        on: object,
+        off: object,
+        separator: object = ...,
+        number_of_bits: object = ...,
+    ) -> None: ...
+
+@final
+class FIELD(_SQLFunction):
+    """Return the one-based index of value among the remaining arguments."""
+    def __init__(self, value: object, first: object, *values: object) -> None: ...
+
+@final
+class FIND_IN_SET(_SQLFunction):
+    """Find the one-based position of value in a comma-separated string."""
+    def __init__(self, value: object, string_list: object) -> None: ...
+
+@final
+class FORMAT(_SQLFunction):
+    """Format a number with grouping separators and a specified scale."""
+    def __init__(self, value: object, digits: object, locale: object = ...) -> None: ...
+
+@final
+class FROM_BASE64(_SQLFunction):
+    """Decode a base64 string to binary data."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class HEX(_SQLFunction):
+    """Return the hexadecimal representation of a number or byte string."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class INSERT(_SQLFunction):
+    """Replace part of a string beginning at a one-based position."""
+    def __init__(self, value: object, position: object, length: object, replacement: object) -> None: ...
+
+@final
+class INSTR(_SQLFunction):
+    """Return the one-based position of substring in value or zero."""
+    def __init__(self, value: object, substring: object) -> None: ...
+
+@final
+class LEFT(_SQLFunction):
+    """Return the leftmost length characters."""
+    def __init__(self, value: object, length: object) -> None: ...
+
+@final
+class LENGTH(_SQLFunction):
+    """Return the length of value in bytes."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class LOCATE(_SQLFunction):
+    """Find substring starting at an optional one-based position."""
+    def __init__(self, substring: object, value: object, position: object = ...) -> None: ...
+
+@final
+class LOWER(_SQLFunction):
+    """Convert text to lowercase using its character set."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class LPAD(_SQLFunction):
+    """Pad or truncate value on the left to the requested character length."""
+    def __init__(self, value: object, length: object, padding: object) -> None: ...
+
+@final
+class LTRIM(_SQLFunction):
+    """Remove leading spaces."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class MAKE_SET(_SQLFunction):
+    """Join values selected by the corresponding bits."""
+    def __init__(self, bits: object, value: object, *values: object) -> None: ...
+
+@final
+class OCT(_SQLFunction):
+    """Return the octal digits of an integer as text."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class ORD(_SQLFunction):
+    """Return the combined byte code of the first character."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class POSITION(_SQLFunction):
+    """Return the one-based position of substring within value, or zero."""
+    def __init__(self, substring: object, value: object) -> None: ...
+
+@final
+class QUOTE(_SQLFunction):
+    """Return the server's quoted SQL representation of a value."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class REGEXP_INSTR(_SQLFunction):
+    """Return a position of the requested regular expression match."""
+    def __init__(
+        self,
+        value: object,
+        pattern: object,
+        position: object = ...,
+        occurrence: object = ...,
+        return_option: object = ...,
+        match_type: object = ...,
+    ) -> None: ...
+
+@final
+class REGEXP_LIKE(_SQLFunction):
+    """Test whether value matches the regular expression."""
+    def __init__(self, value: object, pattern: object, match_type: object = ...) -> None: ...
+
+@final
+class REGEXP_REPLACE(_SQLFunction):
+    """Replace regular expression matches with the supplied text."""
+    def __init__(
+        self,
+        value: object,
+        pattern: object,
+        replacement: object,
+        position: object = ...,
+        occurrence: object = ...,
+        match_type: object = ...,
+    ) -> None: ...
+
+@final
+class REGEXP_SUBSTR(_SQLFunction):
+    """Return the requested regular expression match."""
+    def __init__(
+        self,
+        value: object,
+        pattern: object,
+        position: object = ...,
+        occurrence: object = ...,
+        match_type: object = ...,
+    ) -> None: ...
+
+@final
+class REPEAT(_SQLFunction):
+    """Return count copies of value."""
+    def __init__(self, value: object, count: object) -> None: ...
+
+@final
+class REPLACE(_SQLFunction):
+    """Replace all occurrences of substring in value."""
+    def __init__(self, value: object, substring: object, replacement: object) -> None: ...
+
+@final
+class REVERSE(_SQLFunction):
+    """Return the characters in reverse order."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class RIGHT(_SQLFunction):
+    """Return the rightmost length characters."""
+    def __init__(self, value: object, length: object) -> None: ...
+
+@final
+class RPAD(_SQLFunction):
+    """Pad or truncate value on the right to the requested character length."""
+    def __init__(self, value: object, length: object, padding: object) -> None: ...
+
+@final
+class RTRIM(_SQLFunction):
+    """Remove trailing spaces."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class SOUNDEX(_SQLFunction):
+    """Return the MySQL Soundex code for value."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class SPACE(_SQLFunction):
+    """Return a string of count space characters."""
+    def __init__(self, count: object) -> None: ...
+
+@final
+class STRCMP(_SQLFunction):
+    """Compare strings using the effective collation."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class SUBSTRING(_SQLFunction):
+    """Return characters beginning at the specified position."""
+    def __init__(self, value: object, position: object, length: object = ...) -> None: ...
+
+@final
+class SUBSTRING_INDEX(_SQLFunction):
+    """Return the portion before or after the requested delimiter occurrence."""
+    def __init__(self, value: object, delimiter: object, count: object) -> None: ...
+
+@final
+class TO_BASE64(_SQLFunction):
+    """Encode a value as base64 text."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class TRIM(_SQLFunction):
+    """Remove a repeated prefix or suffix, defaulting to spaces on both sides."""
+    def __init__(self, value: object, *, remove: object = ..., direction: str | None = None) -> None: ...
+
+@final
+class UNHEX(_SQLFunction):
+    """Decode hexadecimal digits to binary data."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class UPPER(_SQLFunction):
+    """Convert text to uppercase using its character set."""
+    def __init__(self, value: object) -> None: ...
