@@ -3,6 +3,7 @@
 use crate::errors;
 use crate::input::control::Checkpoint;
 use crate::input::sequence::{IterSequence, NativeIntegers, RangeSource, Sequence};
+use crate::input::sink::ParameterSink;
 use crate::input::source::{self, CellWriter, FragmentRole, PreparedSource, Shape};
 use crate::input::{ScalarTypes, check};
 use pyo3::prelude::*;
@@ -11,6 +12,7 @@ use smallvec::{SmallVec, smallvec};
 use sqlaero_core::bind::{
     Context,
     batch::{Blocks, Layout},
+    sql_func::Role,
     template::{Compiler, Template, TemplateError},
     writer,
 };
@@ -20,6 +22,7 @@ use std::sync::Arc;
 
 pub(crate) mod call;
 mod dictionary;
+mod expression;
 mod prepared_display;
 #[cfg(test)]
 mod prepared_native_tests;
@@ -1116,12 +1119,7 @@ impl<'r, 'py> Row<'r, 'py> {
 
     /// Adapt one logical row directly into native prepared parameters.
     /// Container roles are the same roles used by positional text binding.
-    pub(crate) fn write_parameters<
-        S: sqlaero_core::bind::value::ValueSink<
-                Context = sqlaero_core::bind::Context,
-                Error = sqlaero_core::bind::value::ValueError,
-            >,
-    >(
+    pub(crate) fn write_parameters<S: ParameterSink>(
         self,
         types: &ScalarTypes,
         context: &Context,
@@ -1131,12 +1129,7 @@ impl<'r, 'py> Row<'r, 'py> {
         self.write_parameters_checked(types, context, budget, sink, None, |_| Ok(false))
     }
 
-    fn write_parameters_checked<
-        S: sqlaero_core::bind::value::ValueSink<
-                Context = sqlaero_core::bind::Context,
-                Error = sqlaero_core::bind::value::ValueError,
-            >,
-    >(
+    fn write_parameters_checked<S: ParameterSink>(
         mut self,
         types: &ScalarTypes,
         context: &Context,
@@ -1838,7 +1831,7 @@ impl Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<()> {
-        self.value_with(value, output, child, |_| ())
+        self.value_with(value, output, child, None, |_| ())
     }
     fn value_role(
         &mut self,
@@ -1846,7 +1839,7 @@ impl Visit<'_> {
         output: &mut Vec<u8>,
         child: Option<usize>,
     ) -> PyResult<FragmentRole> {
-        self.value_with(value, output, child, std::convert::identity)
+        self.value_with(value, output, child, None, std::convert::identity)
     }
 
     /// Keep ordinary traversal unit-returning while shape consumers receive
@@ -1856,6 +1849,7 @@ impl Visit<'_> {
         value: &Bound<'_, PyAny>,
         output: &mut Vec<u8>,
         child: Option<usize>,
+        operand: Option<Role>,
         project: impl FnOnce(FragmentRole) -> T,
     ) -> PyResult<T> {
         let py = value.py();
@@ -1891,13 +1885,23 @@ impl Visit<'_> {
                 }
                 Ok(false) => (),
             }
+            match self.expression(value, expression::Output::Text(output), operand) {
+                Ok(true) => return Ok(project(FragmentRole::Scalar)),
+                Err(error) => {
+                    self.failed_value(value, child, &error);
+                    return Err(error);
+                }
+                Ok(false) => (),
+            }
             if RangeSource::recognizes(value) {
+                self.allow_row(py, operand)?;
                 return self
                     .range_source(value, output, child)
                     .map(|()| project(FragmentRole::Row));
             }
             match Sequence::from(value, self.types, &self.active, Some(self.budget)) {
                 Ok(Some(Sequence::Iterator(mut items))) if items.supports_owned_iteration() => {
+                    self.allow_row(py, operand)?;
                     return self
                         .write_owned_sequence(py, &mut items, output, child)
                         .map(|()| project(FragmentRole::Row));
@@ -1910,10 +1914,11 @@ impl Visit<'_> {
             }
         };
         if let Some(sequence) = sequence {
+            self.allow_row(py, operand)?;
             self.sequence(&sequence, output, child)
                 .map(|()| project(FragmentRole::Row))
         } else {
-            self.native_or_unsupported(value, output, child)
+            self.native_or_unsupported(value, output, child, operand)
                 .map(project)
         }
     }
@@ -2094,6 +2099,7 @@ impl Visit<'_> {
         value: &Bound<'_, PyAny>,
         output: &mut Vec<u8>,
         child: Option<usize>,
+        operand: Option<Role>,
     ) -> PyResult<FragmentRole> {
         let py = value.py();
         if let Some(index) = child {
@@ -2114,7 +2120,13 @@ impl Visit<'_> {
             }
             if let Some(source) = self.types.transparent(value, Some(self.budget))? {
                 let previous = self.enter_transparent(&source)?;
-                let result = self.value_role(source.payload(), output, None);
+                let result = self.value_with(
+                    source.payload(),
+                    output,
+                    None,
+                    operand,
+                    std::convert::identity,
+                );
                 self.active.truncate(previous);
                 return result;
             }
@@ -2122,6 +2134,9 @@ impl Visit<'_> {
                 return Err(crate::input::unsupported(value));
             };
             let container = source.shape() != Shape::Scalar;
+            if container {
+                self.allow_row(py, operand)?;
+            }
             self.enter_source(py, value.as_ptr() as usize, container)?;
             let result = if container {
                 self.native_value(source.as_mut(), output)
@@ -2286,10 +2301,7 @@ impl CellWriter for Visit<'_> {
     fn native_python(
         &mut self,
         value: &Bound<'_, PyAny>,
-        sink: &mut dyn sqlaero_core::bind::value::ValueSink<
-            Context = sqlaero_core::bind::Context,
-            Error = sqlaero_core::bind::value::ValueError,
-        >,
+        sink: &mut dyn ParameterSink,
         child: Option<usize>,
     ) -> PyResult<()> {
         let py = value.py();
@@ -2301,6 +2313,9 @@ impl CellWriter for Visit<'_> {
                 &self.context,
                 Some(self.budget),
             )? {
+                return Ok(());
+            }
+            if self.expression(value, expression::Output::Parameter(sink), None)? {
                 return Ok(());
             }
             if let Some(source) = self.types.transparent(value, Some(self.budget))? {

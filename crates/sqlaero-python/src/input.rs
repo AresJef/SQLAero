@@ -10,7 +10,7 @@ use pyo3::types::{
 };
 use sink::{Destination, emit};
 use sqlaero_core::bind::scalar::{Clock, Date, ScalarError};
-use sqlaero_core::bind::value::{ValueError, ValueRef, ValueSink};
+use sqlaero_core::bind::value::{ValueError, ValueRef};
 use sqlaero_core::bind::{Context, writer};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::error::ClientErrorCode;
@@ -37,6 +37,8 @@ mod record;
 mod scalar_source;
 pub(crate) mod sequence;
 pub(crate) mod source;
+pub(crate) mod sql_func;
+pub(crate) mod sql_intv;
 pub(crate) mod standard;
 pub(crate) mod transparent;
 pub(crate) mod unicode;
@@ -218,9 +220,7 @@ impl ScalarTypes {
     }
 
     /// Consume one scalar through the common recognition and protocol boundary.
-    pub(crate) fn write_native<
-        S: ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
-    >(
+    pub(crate) fn write_native<S: sink::ParameterSink>(
         &self,
         value: &Bound<'_, PyAny>,
         sink: &mut S,

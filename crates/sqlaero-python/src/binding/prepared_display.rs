@@ -1,5 +1,6 @@
 //! One native adaptation writes both real-capacity validation and readable SQL.
 
+use crate::input::sink::ParameterSink;
 use sqlaero_core::bind::{
     Context,
     template::Template,
@@ -13,6 +14,17 @@ pub(super) struct DisplaySink<'template> {
     template: &'template Template,
     output: Vec<u8>,
     cursor: usize,
+}
+
+impl ParameterSink for DisplaySink<'_> {
+    fn expression_output(&mut self, context: &Context) -> Result<Option<&mut Vec<u8>>, ValueError> {
+        // Keep ordinary neighbors subject to their native capacity checks.
+        // An expression itself has no native parameter representation, so
+        // only its position is counted in the local validation artifact.
+        self.native.write(ValueRef::Null, context)?;
+        self.before()?;
+        Ok(Some(&mut self.output))
+    }
 }
 impl<'template> DisplaySink<'template> {
     pub(super) fn new(

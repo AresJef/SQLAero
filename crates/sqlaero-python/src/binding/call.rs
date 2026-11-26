@@ -497,7 +497,7 @@ impl CellWriter for LiteralNoneWriter<'_> {
     fn native_python(
         &mut self,
         value: &Bound<'_, PyAny>,
-        sink: &mut dyn ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
+        sink: &mut dyn crate::input::sink::ParameterSink,
         child: Option<usize>,
     ) -> PyResult<()> {
         self.observe(value)?;
@@ -530,6 +530,8 @@ impl CellWriter for LiteralNoneWriter<'_> {
 /// Text CALL substitutes its own NULL after the source check. Consume the
 /// existing cell read without formatting or treating an adapted NULL as proof.
 pub(super) struct DiscardValue;
+impl crate::input::sink::ParameterSink for DiscardValue {}
+
 impl ValueSink for DiscardValue {
     type Context = Context;
     type Error = ValueError;

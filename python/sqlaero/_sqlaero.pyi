@@ -5,6 +5,34 @@ from datetime import datetime
 from typing import Any, Generic, Iterator, Literal, Never, Self, SupportsIndex, TypeAlias, TypeVar, final, overload
 from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as MySQLErrorCode
 
+class _SQLFunction: ...
+class _SQLInterval(_SQLFunction): ...
+
+@final
+class ABS(_SQLFunction):
+    """Return the absolute value of a scalar expression."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class DATE(_SQLFunction):
+    """Extract the date part of a date or datetime expression."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class EXTRACT(_SQLFunction):
+    """Extract the requested MySQL temporal unit from a scalar expression."""
+    def __init__(self, unit: str, value: object) -> None: ...
+
+@final
+class DATE_ADD(_SQLFunction):
+    """Add one MySQL interval to a date or datetime expression."""
+    def __init__(self, date: object, interval: _SQLInterval) -> None: ...
+
+@final
+class DAY(_SQLInterval):
+    """Create a MySQL interval measured in days."""
+    def __init__(self, days: object) -> None: ...
+
 @final
 class JSON:
     """Wrap data as one lazy JSON text parameter.

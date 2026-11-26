@@ -212,9 +212,21 @@ impl<D: Destination + ?Sized> ValueSink for Adapter<'_, D> {
     }
 }
 
-pub(crate) struct Native<'a>(
-    pub(crate) &'a mut dyn ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
-);
+/// A native scalar destination can optionally be a local SQL preview.
+/// Protocol parameters never expose a SQL buffer.
+pub(crate) trait ParameterSink: ValueSink<Context = Context, Error = ValueError> {
+    fn expression_output(
+        &mut self,
+        _context: &Context,
+    ) -> Result<Option<&mut Vec<u8>>, ValueError> {
+        Ok(None)
+    }
+}
+
+impl ParameterSink for sqlaero_core::protocol::prepared::Parameters {}
+impl ParameterSink for TextSink<'_> {}
+
+pub(crate) struct Native<'a>(pub(crate) &'a mut dyn ParameterSink);
 
 impl Destination for Native<'_> {
     fn source(

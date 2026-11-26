@@ -1,8 +1,8 @@
 //! Prepared input shapes and the shared, boundary-only native column contract.
 
+use super::sink::ParameterSink;
 use pyo3::prelude::*;
 use sqlaero_core::bind::Context;
-use sqlaero_core::bind::value::{ValueError, ValueSink};
 pub(crate) use sqlaero_transcode::structure::Shape;
 
 /// Prepare a recognized typed provider at the Python boundary. The caller
@@ -169,7 +169,7 @@ pub(crate) trait CellWriter {
     fn native_python(
         &mut self,
         value: &Bound<'_, PyAny>,
-        sink: &mut dyn ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
+        sink: &mut dyn ParameterSink,
         child: Option<usize>,
     ) -> PyResult<()>;
 
@@ -343,7 +343,7 @@ pub(crate) trait PreparedSource<'py> {
         &mut self,
         row: usize,
         column: usize,
-        sink: &mut dyn ValueSink<Context = sqlaero_core::bind::Context, Error = ValueError>,
+        sink: &mut dyn ParameterSink,
         context: &Context,
         budget: &dyn crate::input::control::Checkpoint,
         visitor: &mut dyn CellWriter,
@@ -384,10 +384,7 @@ macro_rules! cell_destinations {
             &mut self,
             row: usize,
             column: usize,
-            sink: &mut dyn sqlaero_core::bind::value::ValueSink<
-                Context = sqlaero_core::bind::Context,
-                Error = sqlaero_core::bind::value::ValueError,
-            >,
+            sink: &mut dyn $crate::input::sink::ParameterSink,
             context: &sqlaero_core::bind::Context,
             budget: &dyn crate::input::control::Checkpoint,
             visitor: &mut dyn $crate::input::source::CellWriter,
