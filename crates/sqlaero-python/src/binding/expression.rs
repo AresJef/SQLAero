@@ -65,8 +65,8 @@ impl Visit<'_> {
             self.standalone |= !custom_escape::write(&text, output, &self.context, self.budget)?;
             if self.guard_splices {
                 let splices = self.splices.get_or_insert_with(Vec::new);
-                custom_escape::boundary(py, splices, start)?;
-                custom_escape::boundary(py, splices, output.len())?;
+                custom_escape::boundary(py, splices, start, true)?;
+                custom_escape::boundary(py, splices, output.len(), true)?;
             }
             return Ok(true);
         }

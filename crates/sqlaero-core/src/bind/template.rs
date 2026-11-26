@@ -562,9 +562,36 @@ struct Fragment {
     top_level_comma: bool,
 }
 
+/// An offset in an assembled query that must remain lexically reachable.
+#[derive(Clone, Copy)]
+pub struct SpliceBoundary {
+    /// Absolute byte offset in the request.
+    pub offset: usize,
+    /// Raw fragment edges additionally cannot create a new token with neighbors.
+    pub fragment: bool,
+}
+
 struct Splices {
-    boundaries: Vec<usize>,
+    boundaries: Vec<SpliceBoundary>,
     next: usize,
+    word_digits: bool,
+    word_exponent: bool,
+    previous_exponent: Option<usize>,
+}
+
+fn word_byte(byte: u8) -> bool {
+    byte >= 128 || byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$')
+}
+
+fn literal_introducer(word: &[u8]) -> bool {
+    match word {
+        [b'b' | b'B' | b'n' | b'N' | b'x' | b'X'] => true,
+        [b'_', charset @ ..] if charset.len() <= 32 => std::str::from_utf8(charset)
+            .ok()
+            .and_then(crate::charset::expression_charset)
+            .is_some(),
+        _ => false,
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -810,7 +837,7 @@ impl Compiler {
     /// Returns a malformed request error if the command byte or bounds differ.
     pub fn for_spliced_query(
         request: Vec<u8>,
-        boundaries: Vec<usize>,
+        boundaries: Vec<SpliceBoundary>,
         context: &super::Context,
     ) -> Result<Self, WireError> {
         if request.first() != Some(&3) {
@@ -827,6 +854,9 @@ impl Compiler {
         compiler.splices = Some(Splices {
             boundaries,
             next: 0,
+            word_digits: false,
+            word_exponent: false,
+            previous_exponent: None,
         });
         Ok(compiler)
     }
@@ -1015,11 +1045,20 @@ impl Compiler {
                     }
                 }
                 Lex::Word { start } => {
+                    if CHECK_SPLICES && word_byte(byte) {
+                        let splices = self.splices.as_mut().expect("selected splice scanner");
+                        splices.word_exponent = splices.word_digits && matches!(byte, b'e' | b'E');
+                        splices.word_digits &= byte.is_ascii_digit();
+                    }
                     if byte >= 128 {
                         self.position += self.character(position);
-                    } else if byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'$') {
+                    } else if word_byte(byte) {
                         self.position += 1;
                     } else {
+                        if CHECK_SPLICES {
+                            let splices = self.splices.as_mut().expect("selected splice scanner");
+                            splices.previous_exponent = splices.word_exponent.then_some(position);
+                        }
                         self.word(start, position)?;
                         self.state = Lex::Code;
                     }
@@ -1055,14 +1094,18 @@ impl Compiler {
                     }
                 }
                 Lex::Code => {
-                    if (self.tokens.is_some()
+                    if (CHECK_SPLICES
+                        || self.tokens.is_some()
                         || self.local == LocalGate::Prefix
                         || self.context.needs_words()
                         || self.hint)
-                        && (byte >= 128
-                            || byte.is_ascii_alphanumeric()
-                            || matches!(byte, b'_' | b'$'))
+                        && word_byte(byte)
                     {
+                        if CHECK_SPLICES {
+                            let splices = self.splices.as_mut().expect("selected splice scanner");
+                            splices.word_digits = byte.is_ascii_digit();
+                            splices.word_exponent = false;
+                        }
                         self.state = Lex::Word { start: position };
                         self.position += self.character(position);
                         continue;
@@ -1262,11 +1305,11 @@ impl Compiler {
     /// spanning both sides or swallowed by protected text. If a preceding
     /// statement changes the context, later bound bytes cannot be certified.
     fn check_splice(&mut self) -> Result<bool, TemplateError> {
-        let splices = self.splices.as_mut().expect("selected splice scanner");
+        let splices = self.splices.as_ref().expect("selected splice scanner");
         if let Some(change) = self.context.barrier {
-            if let Some(&position) = splices.boundaries.get(splices.next) {
+            if let Some(marker) = splices.boundaries.get(splices.next) {
                 return Err(TemplateError::ContextChange {
-                    offset: self.source_position(position)?,
+                    offset: self.source_position(marker.offset)?,
                     change_offset: self.source_position(change.start)?,
                     setting: change.setting,
                 });
@@ -1274,20 +1317,61 @@ impl Compiler {
             self.position = self.source.len();
             return Ok(true);
         }
-        while let Some(&position) = splices.boundaries.get(splices.next) {
+        let mut next = splices.next;
+        while let Some(marker) = splices.boundaries.get(next) {
+            let position = marker.offset;
             if position > self.position {
                 break;
             }
             if position < self.position
                 || self.special
                 || !matches!(self.state, Lex::Code | Lex::Word { .. })
+                || (marker.fragment && self.joins_spliced_token(position, splices))
             {
                 return self
                     .fragment_error(position, "SQL token crosses a dynamic fragment boundary");
             }
-            splices.next += 1;
+            next += 1;
         }
+        self.splices.as_mut().expect("selected splice scanner").next = next;
         Ok(false)
+    }
+
+    /// Words advance one character at a time and multi-byte operators may
+    /// advance as individual symbols. Neither can silently span a splice.
+    fn joins_spliced_token(&self, position: usize, splices: &Splices) -> bool {
+        let Some(&after) = self.source.get(position) else {
+            return false;
+        };
+        if let Lex::Word { start } = self.state
+            && (word_byte(after)
+                || (after == b'.' && splices.word_digits)
+                || (matches!(after, b'+' | b'-')
+                    && splices.word_exponent
+                    && self
+                        .source
+                        .get(position + 1)
+                        .is_some_and(u8::is_ascii_digit))
+                || (after == b'\'' && literal_introducer(&self.source[start..position])))
+        {
+            return true;
+        }
+        let before = self.source[position - 1];
+        match (before, after) {
+            (b'<', b'=' | b'>' | b'<')
+            | (b'>', b'=' | b'>')
+            | (b'!' | b':', b'=')
+            | (b'-', b'>')
+            | (b'&', b'&')
+            | (b'|', b'|') => true,
+            (b'=', b'>') => self.source.get(position.wrapping_sub(2)) == Some(&b'<'),
+            (b'@', next) => word_byte(next) || matches!(next, b'@' | b'\'' | b'"' | b'`'),
+            (b'.', next) => next.is_ascii_digit(),
+            (b'+' | b'-', next) => {
+                next.is_ascii_digit() && splices.previous_exponent == Some(position - 1)
+            }
+            _ => false,
+        }
     }
     #[inline]
     fn token(&mut self, symbol: u8, start: usize, end: usize) -> Result<(), WireError> {

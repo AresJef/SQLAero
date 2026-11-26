@@ -136,11 +136,25 @@ def test_fragment_cannot_join_a_fixed_token_or_change_later_context(
             ("SELECT 1 %s 2", (CustomEscape("--", lambda value: value),)),
             ("SE%s sql_mode='ANSI_QUOTES'; SELECT %s",
              (CustomEscape("T", lambda value: value), "after")),
+            ("SELECT 1%s", (CustomEscape("0", str),)),
+            ("SELECT %se0", (CustomEscape("1", str),)),
+            ("SELECT 1.%s", (CustomEscape("2", str),)),
+            ("SELECT 1%s", (CustomEscape(".2", str),)),
+            ("SELECT 1e%s", (CustomEscape("+2", str),)),
+            ("SELECT 1e+%s", (CustomEscape("2", str),)),
+            ("SELECT 1<%s2", (CustomEscape("=", str),)),
+            ("SELECT x%s", (CustomEscape("'41'", str),)),
+            ("SELECT _utf8mb4%s", (CustomEscape("'word'", str),)),
+            ("SELECT @%s", (CustomEscape("'variable'", str),)),
         ):
             with pytest.raises(ProgrammingError, match="boundary|context"):
                 cursor.mogrify(sql, args)
+        assert cursor.mogrify("SELECT %s,x%s", (CustomEscape(7, str), "41")) == "SELECT 7,x'41'"
     with connection.cursor() as cursor:
         assert cursor.mogrify("SELECT %s; SELECT %s", (CustomEscape(7, str), 8)) == "SELECT 7; SELECT 8"
+        assert cursor.mogrify("SELECT 1+%s", CustomEscape(2, str)) == "SELECT 1+2"
+        assert cursor.mogrify("SELECT 0x1e+%s", CustomEscape(2, str)) == "SELECT 0x1e+2"
+        assert cursor.mogrify("SELECT %s AS label", CustomEscape("x'41'", str)) == "SELECT x'41' AS label"
 
 
 @requires_mysql

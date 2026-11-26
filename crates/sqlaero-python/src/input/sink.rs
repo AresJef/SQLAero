@@ -7,6 +7,7 @@ use crate::input::control::Checkpoint;
 use pyo3::prelude::*;
 use pyo3::types::PyString;
 use sqlaero_core::bind::Context;
+use sqlaero_core::bind::template::SpliceBoundary;
 use sqlaero_core::bind::value::{TextSink, ValueError, ValueRef, ValueSink};
 use sqlaero_core::charset::codec::CodecError;
 use sqlaero_core::protocol::framing::WireError;
@@ -222,7 +223,7 @@ pub(crate) trait ParameterSink: ValueSink<Context = Context, Error = ValueError>
         Ok(None)
     }
 
-    fn add_splices(&mut self, _splices: Vec<usize>) -> Result<(), ValueError> {
+    fn add_splices(&mut self, _splices: Vec<SpliceBoundary>) -> Result<(), ValueError> {
         Err(WireError::Malformed("SQL splices require a local preview").into())
     }
 }

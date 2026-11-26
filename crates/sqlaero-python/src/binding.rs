@@ -14,7 +14,7 @@ use sqlaero_core::bind::{
     Context,
     batch::{Blocks, Layout},
     sql_func::Role,
-    template::{Compiler, Template, TemplateError},
+    template::{Compiler, SpliceBoundary, Template, TemplateError},
     writer,
 };
 use sqlaero_core::error::ClientErrorCode;
@@ -1707,7 +1707,7 @@ impl<'r, 'py> Row<'r, 'py> {
             };
             let out = before(index, output)?;
             if let Some(splices) = &mut visit.splices {
-                custom_escape::boundary(py, splices, output.len())?;
+                custom_escape::boundary(py, splices, output.len(), false)?;
             }
             let result = if out {
                 let mut sink = call::DiscardValue;
@@ -1812,7 +1812,7 @@ impl<'r, 'py> Row<'r, 'py> {
 
 struct Walked {
     role: FragmentRole,
-    splices: Option<Vec<usize>>,
+    splices: Option<Vec<SpliceBoundary>>,
 }
 
 fn verify_repeated_splices(
@@ -1820,7 +1820,7 @@ fn verify_repeated_splices(
     template: &Template,
     range: Range<usize>,
     row: &[u8],
-    mut splices: Vec<usize>,
+    mut splices: Vec<SpliceBoundary>,
     context: &Context,
     budget: &dyn Checkpoint,
 ) -> PyResult<()> {
@@ -1844,8 +1844,8 @@ fn verify_repeated_splices(
         Ok(())
     };
     fixed(prefix, &mut request)?;
-    for position in &mut splices {
-        *position += request.len();
+    for boundary in &mut splices {
+        boundary.offset += request.len();
     }
     for chunk in row.chunks(256 * 1024) {
         check(py, budget)?;
@@ -1911,7 +1911,7 @@ struct Visit<'a> {
     provider_operand: Option<Role>,
     standalone: bool,
     guard_splices: bool,
-    splices: Option<Vec<usize>>,
+    splices: Option<Vec<SpliceBoundary>>,
     conversions: Option<&'a mut Conversions>,
     slot: usize,
     active_depth: usize,

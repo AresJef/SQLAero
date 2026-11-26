@@ -6,7 +6,11 @@ use pyo3::class::gc::{PyTraverseError, PyVisit};
 use pyo3::exceptions::{PyRuntimeError, PyTypeError};
 use pyo3::prelude::*;
 use pyo3::types::PyString;
-use sqlaero_core::bind::{Context, template::Compiler, writer};
+use sqlaero_core::bind::{
+    Context,
+    template::{Compiler, SpliceBoundary},
+    writer,
+};
 use sqlaero_core::error::ClientErrorCode;
 use std::cell::Cell;
 
@@ -230,14 +234,20 @@ pub(crate) fn write(
 
 pub(crate) fn boundary(
     py: Python<'_>,
-    boundaries: &mut Vec<usize>,
+    boundaries: &mut Vec<SpliceBoundary>,
     position: usize,
+    fragment: bool,
 ) -> PyResult<()> {
-    if boundaries.last() != Some(&position) {
+    if let Some(last) = boundaries.last_mut().filter(|last| last.offset == position) {
+        last.fragment |= fragment;
+    } else {
         boundaries
             .try_reserve(1)
             .map_err(|_| errors::memory_error(py))?;
-        boundaries.push(position);
+        boundaries.push(SpliceBoundary {
+            offset: position,
+            fragment,
+        });
     }
     Ok(())
 }
@@ -245,7 +255,7 @@ pub(crate) fn boundary(
 pub(crate) fn verify_splices(
     py: Python<'_>,
     output: Vec<u8>,
-    boundaries: Option<Vec<usize>>,
+    boundaries: Option<Vec<SpliceBoundary>>,
     context: &Context,
     budget: &dyn Checkpoint,
 ) -> PyResult<Vec<u8>> {

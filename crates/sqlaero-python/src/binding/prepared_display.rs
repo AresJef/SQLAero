@@ -3,7 +3,7 @@
 use crate::input::sink::ParameterSink;
 use sqlaero_core::bind::{
     Context,
-    template::Template,
+    template::{SpliceBoundary, Template},
     value::{TextSink, ValueError, ValueRef, ValueSink},
     writer,
 };
@@ -14,7 +14,7 @@ pub(super) struct DisplaySink<'template> {
     template: &'template Template,
     output: Vec<u8>,
     cursor: usize,
-    splices: Option<Vec<usize>>,
+    splices: Option<Vec<SpliceBoundary>>,
 }
 
 impl ParameterSink for DisplaySink<'_> {
@@ -27,7 +27,7 @@ impl ParameterSink for DisplaySink<'_> {
         Ok(Some(&mut self.output))
     }
 
-    fn add_splices(&mut self, splices: Vec<usize>) -> Result<(), ValueError> {
+    fn add_splices(&mut self, splices: Vec<SpliceBoundary>) -> Result<(), ValueError> {
         if let Some(previous) = &mut self.splices {
             previous
                 .try_reserve(splices.len())
@@ -66,11 +66,14 @@ impl<'template> DisplaySink<'template> {
         }
         if let Some(splices) = &mut self.splices {
             splices.try_reserve(1).map_err(WireError::from)?;
-            splices.push(self.output.len());
+            splices.push(SpliceBoundary {
+                offset: self.output.len(),
+                fragment: false,
+            });
         }
         Ok(())
     }
-    pub(super) fn finish(self) -> Result<(Vec<u8>, Option<Vec<usize>>), ValueError> {
+    pub(super) fn finish(self) -> Result<(Vec<u8>, Option<Vec<SpliceBoundary>>), ValueError> {
         let Self {
             native,
             template,
