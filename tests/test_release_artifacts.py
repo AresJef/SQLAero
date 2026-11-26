@@ -4,11 +4,14 @@ Synthetic members test metadata selection only. Native loading and real
 architecture/libc compatibility are checked by each installed CI interpreter.
 """
 
+import base64
+import csv
 import hashlib
+import io
 import json
 from pathlib import Path
+import re
 import subprocess
-import io
 import tarfile
 from zipfile import ZipFile
 
@@ -60,6 +63,43 @@ def synthetic_license_materials(monkeypatch: pytest.MonkeyPatch) -> dict[str, by
     return materials
 
 
+def add_musl_fixture_inputs(
+    archive: ZipFile, dist_info: str, arch: str, source: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Supply a small off-line equivalent of the wheel and source inputs to musl repair."""
+    library = f'synthetic libgcc for {arch}'.encode()
+    library_sha = hashlib.sha256(library).hexdigest()
+    archive.writestr(f'sqlaero.libs/libgcc_s-{library_sha[:8]}.so.1', library)
+    component = {'name': 'libgcc', 'version': '14.2.0-r6', 'bom-ref': 'runtime',
+                 'purl': 'pkg:apk/alpine/libgcc@14.2.0-r6'}
+    archive.writestr(f'{dist_info}/sboms/auditwheel.cdx.json', json.dumps({
+        'metadata': {'component': {'bom-ref': 'sqlaero'}}, 'components': [component],
+        'dependencies': [{'ref': 'sqlaero', 'dependsOn': ['runtime']}],
+    }))
+
+    kit = source / 'licenses/musllinux/libgcc-14.2.0-r6'
+    kit.mkdir(parents=True)
+    (source / 'pyproject.toml').write_bytes((release_artifacts.ROOT / 'pyproject.toml').read_bytes())
+    for name in ('NOTICE.md', 'COPYING', 'COPYING.LIB', 'COPYING3', 'COPYING.RUNTIME', 'APKBUILD'):
+        (kit / name).write_bytes(f'synthetic {name}\n'.encode())
+    (kit / 'SOURCE.json').write_text(json.dumps({
+        'version': component['version'], 'libgcc_license_expression': 'GPL-3.0-or-later WITH GCC-exception-3.1',
+        'alpine_recipe_sha256': hashlib.sha256((kit / 'APKBUILD').read_bytes()).hexdigest(),
+        'architectures': {arch: {'apk_library_sha256': library_sha, 'repaired_wheel_member_sha256': library_sha}},
+    }), encoding='utf-8')
+    monkeypatch.setattr(release_artifacts, 'ROOT', source)
+
+    # Build RECORD independently of the reader that will check these bytes.
+    record = io.StringIO()
+    rows = csv.writer(record, lineterminator='\n')
+    for member in archive.namelist():
+        data = archive.read(member)
+        digest = base64.urlsafe_b64encode(hashlib.sha256(data).digest()).rstrip(b'=').decode('ascii')
+        rows.writerow((member, f'sha256={digest}', len(data)))
+    rows.writerow((f'{dist_info}/RECORD', '', ''))
+    archive.writestr(f'{dist_info}/RECORD', record.getvalue())
+
+
 def write_skips(path: Path, names: tuple[str, ...], classname: str, reason: str) -> None:
     from xml.etree import ElementTree
 
@@ -87,18 +127,26 @@ def write_skips(path: Path, names: tuple[str, ...], classname: str, reason: str)
 ])
 def test_requested_wheel_tag_maps_to_one_platform(
     tmp_path: Path, python: str, abi: str, tag: str, platform: str,
-    synthetic_license_materials: dict[str, bytes],
+    synthetic_license_materials: dict[str, bytes], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     version = release_artifacts.release_version()
     wheel = tmp_path / f'sqlaero-{version}-{python}-{abi}-{tag}.whl'
+    dist_info = f'sqlaero-{version}.dist-info'
+    musl = tag.startswith('musllinux_1_2_')
     with ZipFile(wheel, 'w') as archive:
         archive.writestr('sqlaero/_sqlaero.pyd' if tag.startswith('win_')
                          else 'sqlaero/_sqlaero.so', b'metadata fixture, not executable code')
-        archive.writestr(f'sqlaero-{version}.dist-info/METADATA',
+        archive.writestr(f'{dist_info}/METADATA',
                          f'Metadata-Version: 2.4\nName: sqlaero\nVersion: {version}\n'
-                         + ''.join(f'License-File: {name}\n' for name in synthetic_license_materials))
+                         'License-Expression: MIT\n'
+                         + ''.join(f'License-File: {name}\n' for name in synthetic_license_materials) + '\n')
         for name, raw in synthetic_license_materials.items():
-            archive.writestr(f'sqlaero-{version}.dist-info/licenses/{name}', raw)
+            archive.writestr(f'{dist_info}/licenses/{name}', raw)
+        if musl:
+            add_musl_fixture_inputs(archive, dist_info, tag.removeprefix('musllinux_1_2_'),
+                                    tmp_path / 'source', monkeypatch)
+    if musl:
+        release_artifacts.add_musl_licenses(wheel)
     record = release_artifacts.wheel_record(wheel)
     assert (record['platform'], record['python'], record['abi']) == (platform, python, abi)
 
@@ -754,8 +802,14 @@ def test_canonical_sdist_contains_the_same_original_license_bytes(
     version = release_artifacts.release_version()
     package = tmp_path / f'sqlaero-{version}.tar.gz'
     missing = 'licenses/third-party/example-1.0.0/LICENSE'
+    root = release_artifacts.ROOT
+    guide = 'docs/shared-transcode-json.md'
+    members = {**synthetic_license_materials, 'README.md': (root / 'README.md').read_bytes(),
+               guide: (root / guide).read_bytes()}
+    kit = root / 'licenses/musllinux/libgcc-14.2.0-r6'
+    members.update({path.relative_to(root).as_posix(): path.read_bytes() for path in kit.iterdir() if path.is_file()})
     with tarfile.open(package, 'w:gz') as archive:
-        for name, raw in synthetic_license_materials.items():
+        for name, raw in members.items():
             if damage == 'missing' and name == missing:
                 continue
             payload = b'changed copyright' if damage == 'changed' and name == missing else raw
@@ -763,10 +817,16 @@ def test_canonical_sdist_contains_the_same_original_license_bytes(
             member.size = len(payload)
             archive.addfile(member, io.BytesIO(payload))
     if damage == 'none':
-        assert release_artifacts.sdist_record(package)['license_file_count'] == 3
-    else:
-        with pytest.raises((AssertionError, KeyError)):
+        record = release_artifacts.sdist_record(package)
+        assert record['license_file_count'] == len(synthetic_license_materials)
+        assert record['json_guide_sha256'] == hashlib.sha256(members[guide]).hexdigest()
+    elif damage == 'missing':
+        with pytest.raises(KeyError, match=re.escape(f'sqlaero-{version}/{missing}')):
             release_artifacts.sdist_record(package)
+    else:
+        with pytest.raises(AssertionError) as error:
+            release_artifacts.sdist_record(package)
+        assert error.value.args == (('sdist license differs from source', missing),)
 
 
 @pytest.mark.parametrize('damage', ['none', 'missing-entry', 'missing-text'])
