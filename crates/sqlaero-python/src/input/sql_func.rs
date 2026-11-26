@@ -9,6 +9,9 @@ use pyo3::types::{PyDict, PyFrozenSet, PyList, PyRange, PySet, PyString, PyTuple
 use sqlaero_core::bind::sql_func::{self, Form, Keyword, Part, Role};
 use sqlaero_core::bind::sql_intv::EXTRACT_UNITS;
 
+mod calls;
+mod numeric;
+
 /// The base has no Python constructor or public module export. Concrete
 /// classes are final and initialize the recipe through their own constructors.
 #[pyclass(subclass, name = "_SQLFunction", module = "sqlaero._sqlaero")]
@@ -125,20 +128,6 @@ pub(super) fn keyword(
     })
 }
 
-/// Return the absolute value of a scalar expression.
-#[pyclass(extends = SqlFunction, name = "ABS", module = "sqlaero.sqlfunc")]
-struct Abs;
-
-#[pymethods]
-impl Abs {
-    #[new]
-    fn new(value: Bound<'_, PyAny>) -> PyResult<PyClassInitializer<Self>> {
-        let operands = PyTuple::new(value.py(), [value])?;
-        let expression = SqlFunction::new("ABS", Kind::Scalar, Form::Call("ABS("), operands)?;
-        Ok(PyClassInitializer::from(expression).add_subclass(Self))
-    }
-}
-
 /// Extract the date part of a date or datetime expression.
 #[pyclass(extends = SqlFunction, name = "DATE", module = "sqlaero.sqlfunc")]
 struct Date;
@@ -197,11 +186,13 @@ impl DateAdd {
 }
 
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
-    module.add_class::<Abs>()?;
-    module.add_class::<Date>()?;
-    module.add_class::<Extract>()?;
-    module.add_class::<DateAdd>()?;
-    module.add_class::<Sum>()
+    let functions = PyModule::new(module.py(), "_sqlfunc")?;
+    numeric::register(&functions)?;
+    functions.add_class::<Date>()?;
+    functions.add_class::<Extract>()?;
+    functions.add_class::<DateAdd>()?;
+    functions.add_class::<Sum>()?;
+    module.add_submodule(&functions)
 }
 
 /// Sum a scalar expression over a group, optionally counting distinct values.

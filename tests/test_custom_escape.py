@@ -1,7 +1,9 @@
 """Public CustomEscape callback and SQL placement behavior."""
 
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from inspect import signature
+from threading import Barrier
 from uuid import uuid4
 
 import pytest
@@ -10,7 +12,7 @@ from sqlaero.errors import InterfaceBusyError, InterfaceError, NotSupportedError
 
 from test_feature_expansion_a_planner import plan
 from test_prepared_cursor import statement_counts
-from test_public_connection import connection as connection, requires_mysql
+from test_public_connection import connection as connection, live, requires_mysql
 
 
 def test_custom_escape_constructor_keeps_read_only_references() -> None:
@@ -334,3 +336,29 @@ def test_custom_callback_retiring_a_transaction_preserves_the_actual_state(
         if not exited:
             transaction.__exit__(None, None, None)
         connection.rollback()
+
+
+@requires_mysql
+@pytest.mark.parametrize("label", ("84", "97"))
+def test_independent_connections_share_one_immutable_wrapper(label: str) -> None:
+    workers = 4
+    entered = Barrier(workers)
+
+    def convert(value: int) -> str:
+        entered.wait(timeout=5)
+        return str(abs(value))
+
+    wrapped = CustomEscape(-7, convert)
+
+    def read() -> tuple[object, ...] | None:
+        result = None
+        with live(label) as separate, separate.cursor() as cursor:
+            cursor.execute("SELECT %s, CONNECTION_ID()", wrapped)
+            result = cursor.fetchone()
+        return result
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = tuple(pool.submit(read) for _ in range(workers))
+        results = tuple(future.result(timeout=10) for future in futures)
+    assert all(result is not None and result[0] == 7 for result in results)
+    assert len({result[1] for result in results if result is not None}) == workers

@@ -6,6 +6,7 @@ from types import ModuleType
 from typing import Any, Generic, Iterator, Literal, Never, Self, SupportsIndex, TypeAlias, TypeVar, final, overload
 from .error_codes import SQLAeroErrorCode as SQLAeroErrorCode, MySQLErrorCode as MySQLErrorCode
 
+_sqlfunc: ModuleType
 _sqlintv: ModuleType
 
 class _SQLFunction: ...
@@ -28,31 +29,6 @@ class Column:
     """Reference one column, with separate optional qualifier components."""
     def __init__(self, name: str, *, table: str | None = None,
                  database: str | None = None) -> None: ...
-
-@final
-class ABS(_SQLFunction):
-    """Return the absolute value of a scalar expression."""
-    def __init__(self, value: object) -> None: ...
-
-@final
-class DATE(_SQLFunction):
-    """Extract the date part of a date or datetime expression."""
-    def __init__(self, value: object) -> None: ...
-
-@final
-class EXTRACT(_SQLFunction):
-    """Extract the requested MySQL temporal unit from a scalar expression."""
-    def __init__(self, unit: str, value: object) -> None: ...
-
-@final
-class DATE_ADD(_SQLFunction):
-    """Add one MySQL interval to a date or datetime expression."""
-    def __init__(self, date: object, interval: _SQLInterval) -> None: ...
-
-@final
-class SUM(_SQLFunction):
-    """Sum a scalar expression over a group, with optional DISTINCT."""
-    def __init__(self, value: object, *, distinct: bool = False) -> None: ...
 
 @final
 class JSON:
