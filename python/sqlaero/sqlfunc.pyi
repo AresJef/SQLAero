@@ -1214,3 +1214,495 @@ class RANK(_SQLFunction):
 class ROW_NUMBER(_SQLFunction):
     """Return the sequential number of the current row in its partition."""
     def __init__(self) -> None: ...
+
+@final
+class GeometryCollection(_SQLFunction):
+    """Construct a geometry collection, optionally with zero components."""
+    def __init__(self, *geometries: object) -> None: ...
+
+@final
+class ST_Collect(_SQLFunction):
+    """Collect geometries in a group or window, optionally removing duplicates."""
+    def __init__(self, value: object, *, distinct: bool = False) -> None: ...
+
+@final
+class LineString(_SQLFunction):
+    """Construct a line string from points or point WKB."""
+    def __init__(self, point: object, *points: object) -> None: ...
+
+@final
+class MBRContains(_SQLFunction):
+    """Test whether the outer bounding rectangle contains the inner rectangle."""
+    def __init__(self, outer: object, inner: object) -> None: ...
+
+@final
+class MBRCoveredBy(_SQLFunction):
+    """Test whether the inner bounding rectangle is covered by the outer rectangle."""
+    def __init__(self, inner: object, outer: object) -> None: ...
+
+@final
+class MBRCovers(_SQLFunction):
+    """Test whether the outer bounding rectangle covers the inner rectangle."""
+    def __init__(self, outer: object, inner: object) -> None: ...
+
+@final
+class MBRDisjoint(_SQLFunction):
+    """Test whether the bounding rectangles are disjoint."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class MBREquals(_SQLFunction):
+    """Test whether the bounding rectangles are equal."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class MBRIntersects(_SQLFunction):
+    """Test whether the bounding rectangles intersect."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class MBROverlaps(_SQLFunction):
+    """Test whether the bounding rectangles overlap."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class MBRTouches(_SQLFunction):
+    """Test whether the bounding rectangles touch."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class MBRWithin(_SQLFunction):
+    """Test whether the inner bounding rectangle is within the outer rectangle."""
+    def __init__(self, inner: object, outer: object) -> None: ...
+
+@final
+class MultiLineString(_SQLFunction):
+    """Construct a multiline string from lines or line WKB."""
+    def __init__(self, line: object, *lines: object) -> None: ...
+
+@final
+class MultiPoint(_SQLFunction):
+    """Construct a multipoint from points or point WKB."""
+    def __init__(self, point: object, *points: object) -> None: ...
+
+@final
+class MultiPolygon(_SQLFunction):
+    """Construct a multipolygon from polygons or polygon WKB."""
+    def __init__(self, polygon: object, *polygons: object) -> None: ...
+
+@final
+class Point(_SQLFunction):
+    """Construct a point from its x and y coordinates."""
+    def __init__(self, x: object, y: object) -> None: ...
+
+@final
+class Polygon(_SQLFunction):
+    """Construct a polygon from its exterior ring and any interior rings."""
+    def __init__(self, ring: object, *rings: object) -> None: ...
+
+@final
+class STRING_TO_VECTOR(_SQLFunction):
+    """Convert a bracketed list of numbers to a MySQL vector."""
+    def __init__(self, value: object) -> None: ...
+
+@final
+class ST_Area(_SQLFunction):
+    """Return the area of the polygon or multipolygon."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_AsBinary(_SQLFunction):
+    """Convert a geometry to WKB, optionally specifying axis order."""
+    def __init__(self, geometry: object, options: object = ...) -> None: ...
+
+@final
+class ST_AsGeoJSON(_SQLFunction):
+    """Convert a geometry to GeoJSON with optional precision and formatting flags."""
+    def __init__(
+        self,
+        geometry: object,
+        maximum_decimal_digits: object = ...,
+        options: object = ...,
+    ) -> None: ...
+
+@final
+class ST_AsText(_SQLFunction):
+    """Convert a geometry to WKT, optionally specifying axis order."""
+    def __init__(self, geometry: object, options: object = ...) -> None: ...
+
+@final
+class ST_Buffer(_SQLFunction):
+    """Return the areas within the distance using up to three buffer strategies."""
+    def __init__(
+        self,
+        geometry: object,
+        distance: object,
+        strategy1: object = ...,
+        strategy2: object = ...,
+        strategy3: object = ...,
+    ) -> None: ...
+
+@final
+class ST_Buffer_Strategy(_SQLFunction):
+    """Construct a binary strategy for ST_Buffer."""
+    def __init__(self, strategy: object, points_per_circle: object = ...) -> None: ...
+
+@final
+class ST_Centroid(_SQLFunction):
+    """Return the centroid of the geometry."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_Contains(_SQLFunction):
+    """Test whether the first geometry contains the second."""
+    def __init__(self, outer: object, inner: object) -> None: ...
+
+@final
+class ST_ConvexHull(_SQLFunction):
+    """Return the convex hull of the geometry."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_Crosses(_SQLFunction):
+    """Test whether the geometries cross."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class ST_Difference(_SQLFunction):
+    """Return the points of the first geometry outside the second."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class ST_Dimension(_SQLFunction):
+    """Return the topological dimension of the geometry."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_Disjoint(_SQLFunction):
+    """Test whether the geometries are disjoint."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class ST_Distance(_SQLFunction):
+    """Return the shortest distance between geometries in the optional unit."""
+    def __init__(self, left: object, right: object, unit: object = ...) -> None: ...
+
+@final
+class ST_Distance_Sphere(_SQLFunction):
+    """Return spherical distance in metres, optionally specifying a radius."""
+    def __init__(self, left: object, right: object, radius: object = ...) -> None: ...
+
+@final
+class ST_EndPoint(_SQLFunction):
+    """Return the endpoint of the line."""
+    def __init__(self, line: object) -> None: ...
+
+@final
+class ST_Envelope(_SQLFunction):
+    """Return the minimum bounding geometry."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_Equals(_SQLFunction):
+    """Test whether the geometries represent the same set of points."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class ST_ExteriorRing(_SQLFunction):
+    """Return the exterior ring of the polygon."""
+    def __init__(self, polygon: object) -> None: ...
+
+@final
+class ST_FrechetDistance(_SQLFunction):
+    """Return the discrete Frechet distance between line geometries."""
+    def __init__(self, left: object, right: object, unit: object = ...) -> None: ...
+
+@final
+class ST_GeoHash(_SQLFunction):
+    """Encode a point or longitude and latitude as a geohash of the given maximum length."""
+    def __init__(
+        self,
+        longitude_or_point: object,
+        latitude_or_maximum_length: object,
+        maximum_length: object = ...,
+    ) -> None: ...
+
+@final
+class ST_GeomCollFromText(_SQLFunction):
+    """Construct a geometry collection from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_GeomCollFromWKB(_SQLFunction):
+    """Construct a geometry collection from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_GeomFromGeoJSON(_SQLFunction):
+    """Convert a GeoJSON document into a geometry."""
+    def __init__(self, document: object, options: object = ..., srid: object = ...) -> None: ...
+
+@final
+class ST_GeomFromText(_SQLFunction):
+    """Construct a geometry from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_GeomFromWKB(_SQLFunction):
+    """Construct a geometry from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_GeometryN(_SQLFunction):
+    """Return the geometry at the one-based collection position."""
+    def __init__(self, collection: object, position: object) -> None: ...
+
+@final
+class ST_GeometryType(_SQLFunction):
+    """Return the name of the geometry type."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_HausdorffDistance(_SQLFunction):
+    """Return the discrete Hausdorff distance between geometries."""
+    def __init__(self, left: object, right: object, unit: object = ...) -> None: ...
+
+@final
+class ST_InteriorRingN(_SQLFunction):
+    """Return the interior ring at the one-based position."""
+    def __init__(self, polygon: object, position: object) -> None: ...
+
+@final
+class ST_Intersection(_SQLFunction):
+    """Return the intersection of two geometries."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class ST_Intersects(_SQLFunction):
+    """Test whether the geometries intersect."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class ST_IsClosed(_SQLFunction):
+    """Test whether the line or multiline is closed."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_IsEmpty(_SQLFunction):
+    """Test whether the geometry is empty."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_IsSimple(_SQLFunction):
+    """Test whether the geometry is simple."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_IsValid(_SQLFunction):
+    """Test whether the geometry is valid."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_LatFromGeoHash(_SQLFunction):
+    """Decode the latitude from a geohash."""
+    def __init__(self, geohash: object) -> None: ...
+
+@final
+class ST_Latitude(_SQLFunction):
+    """Get a geographic latitude or return a point with the given latitude."""
+    def __init__(self, point: object, latitude: object = ...) -> None: ...
+
+@final
+class ST_Length(_SQLFunction):
+    """Return the length of a line or multiline geometry."""
+    def __init__(self, geometry: object, unit: object = ...) -> None: ...
+
+@final
+class ST_LineFromText(_SQLFunction):
+    """Construct a line string from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_LineFromWKB(_SQLFunction):
+    """Construct a line string from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_LineInterpolatePoint(_SQLFunction):
+    """Return the point at a fraction of the line length."""
+    def __init__(self, line: object, fraction: object) -> None: ...
+
+@final
+class ST_LineInterpolatePoints(_SQLFunction):
+    """Return the points at successive fractions of the line length."""
+    def __init__(self, line: object, fraction: object) -> None: ...
+
+@final
+class ST_LongFromGeoHash(_SQLFunction):
+    """Decode the longitude from a geohash."""
+    def __init__(self, geohash: object) -> None: ...
+
+@final
+class ST_Longitude(_SQLFunction):
+    """Get a geographic longitude or return a point with the given longitude."""
+    def __init__(self, point: object, longitude: object = ...) -> None: ...
+
+@final
+class ST_MLineFromText(_SQLFunction):
+    """Construct a multiline string from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MLineFromWKB(_SQLFunction):
+    """Construct a multiline string from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MPointFromText(_SQLFunction):
+    """Construct a multipoint from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MPointFromWKB(_SQLFunction):
+    """Construct a multipoint from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MPolyFromText(_SQLFunction):
+    """Construct a multipolygon from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MPolyFromWKB(_SQLFunction):
+    """Construct a multipolygon from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_MakeEnvelope(_SQLFunction):
+    """Return the envelope defined by two points."""
+    def __init__(self, first_point: object, second_point: object) -> None: ...
+
+@final
+class ST_NumGeometries(_SQLFunction):
+    """Return the number of geometries in the collection."""
+    def __init__(self, collection: object) -> None: ...
+
+@final
+class ST_NumInteriorRings(_SQLFunction):
+    """Return the number of interior rings in the polygon."""
+    def __init__(self, polygon: object) -> None: ...
+
+@final
+class ST_NumPoints(_SQLFunction):
+    """Return the number of points in the line."""
+    def __init__(self, line: object) -> None: ...
+
+@final
+class ST_Overlaps(_SQLFunction):
+    """Test whether the two shapes overlap."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class ST_PointAtDistance(_SQLFunction):
+    """Return the point at a distance along the line."""
+    def __init__(self, line: object, distance: object) -> None: ...
+
+@final
+class ST_PointFromGeoHash(_SQLFunction):
+    """Decode a geohash into a point in the selected reference system."""
+    def __init__(self, geohash: object, srid: object) -> None: ...
+
+@final
+class ST_PointFromText(_SQLFunction):
+    """Construct a point from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_PointFromWKB(_SQLFunction):
+    """Construct a point from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_PointN(_SQLFunction):
+    """Return the point at the one-based position in the line."""
+    def __init__(self, line: object, position: object) -> None: ...
+
+@final
+class ST_PolyFromText(_SQLFunction):
+    """Construct a polygon from WKT."""
+    def __init__(self, wkt: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_PolyFromWKB(_SQLFunction):
+    """Construct a polygon from WKB."""
+    def __init__(self, wkb: object, srid: object = ..., options: object = ...) -> None: ...
+
+@final
+class ST_SRID(_SQLFunction):
+    """Get the spatial reference ID or set it without transforming the coordinates."""
+    def __init__(self, geometry: object, srid: object = ...) -> None: ...
+
+@final
+class ST_Simplify(_SQLFunction):
+    """Simplify the geometry within the supplied distance."""
+    def __init__(self, geometry: object, maximum_distance: object) -> None: ...
+
+@final
+class ST_StartPoint(_SQLFunction):
+    """Return the start point of the line."""
+    def __init__(self, line: object) -> None: ...
+
+@final
+class ST_SwapXY(_SQLFunction):
+    """Return a copy with the x and y coordinates exchanged."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_SymDifference(_SQLFunction):
+    """Return the points belonging to exactly one of the two geometries."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class ST_Touches(_SQLFunction):
+    """Test whether the two geometries touch."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class ST_Transform(_SQLFunction):
+    """Transform the geometry into the target reference system."""
+    def __init__(self, geometry: object, target_srid: object) -> None: ...
+
+@final
+class ST_Union(_SQLFunction):
+    """Return the union of the two geometries."""
+    def __init__(self, left: object, right: object) -> None: ...
+
+@final
+class ST_Validate(_SQLFunction):
+    """Return a valid geometry, or NULL if the geometry is invalid."""
+    def __init__(self, geometry: object) -> None: ...
+
+@final
+class ST_Within(_SQLFunction):
+    """Test whether the first geometry lies within the second."""
+    def __init__(self, inner: object, outer: object) -> None: ...
+
+@final
+class ST_X(_SQLFunction):
+    """Get the x coordinate or return a point with the given x coordinate."""
+    def __init__(self, point: object, x: object = ...) -> None: ...
+
+@final
+class ST_Y(_SQLFunction):
+    """Get the y coordinate or return a point with the given y coordinate."""
+    def __init__(self, point: object, y: object = ...) -> None: ...
+
+@final
+class VECTOR_DIM(_SQLFunction):
+    """Return the number of entries in a MySQL vector."""
+    def __init__(self, vector: object) -> None: ...
+
+@final
+class VECTOR_TO_STRING(_SQLFunction):
+    """Return the textual representation of a MySQL vector."""
+    def __init__(self, vector: object) -> None: ...

@@ -15,6 +15,7 @@ mod conversion;
 mod json_functions;
 mod numeric;
 mod scalar;
+mod spatial;
 mod strings;
 mod temporal;
 mod window;
@@ -196,6 +197,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     json_functions::register(&functions)?;
     numeric::register(&functions)?;
     scalar::register(&functions)?;
+    spatial::register(&functions)?;
     strings::register(&functions)?;
     temporal::register(&functions)?;
     window::register(&functions)?;
