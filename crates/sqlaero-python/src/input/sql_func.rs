@@ -15,6 +15,7 @@ mod conversion;
 mod json_functions;
 mod miscellaneous;
 mod numeric;
+mod replication;
 mod scalar;
 mod spatial;
 mod strings;
@@ -204,6 +205,7 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     json_functions::register(&functions)?;
     miscellaneous::register(&functions)?;
     numeric::register(&functions)?;
+    replication::register(&functions)?;
     scalar::register(&functions)?;
     spatial::register(&functions)?;
     strings::register(&functions)?;

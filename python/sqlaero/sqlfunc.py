@@ -166,6 +166,7 @@ LineString = _sqlfunc.LineString
 MAKEDATE = _sqlfunc.MAKEDATE
 MAKETIME = _sqlfunc.MAKETIME
 MAKE_SET = _sqlfunc.MAKE_SET
+MASTER_POS_WAIT = _sqlfunc.MASTER_POS_WAIT
 MATCH = _sqlfunc.MATCH
 MAX = _sqlfunc.MAX
 MBRContains = _sqlfunc.MBRContains
@@ -240,6 +241,7 @@ SIGN = _sqlfunc.SIGN
 SIN = _sqlfunc.SIN
 SLEEP = _sqlfunc.SLEEP
 SOUNDEX = _sqlfunc.SOUNDEX
+SOURCE_POS_WAIT = _sqlfunc.SOURCE_POS_WAIT
 SPACE = _sqlfunc.SPACE
 SQRT = _sqlfunc.SQRT
 STATEMENT_DIGEST = _sqlfunc.STATEMENT_DIGEST
@@ -391,12 +393,28 @@ VECTOR_DISTANCE = _sqlfunc.VECTOR_DISTANCE
 VECTOR_TO_STRING = _sqlfunc.VECTOR_TO_STRING
 VERSION = _sqlfunc.VERSION
 VERSION_WITH_UPDATE = _sqlfunc.VERSION_WITH_UPDATE
+WAIT_FOR_EXECUTED_GTID_SET = _sqlfunc.WAIT_FOR_EXECUTED_GTID_SET
 WEEK = _sqlfunc.WEEK
 WEEKDAY = _sqlfunc.WEEKDAY
 WEEKOFYEAR = _sqlfunc.WEEKOFYEAR
 WEIGHT_STRING = _sqlfunc.WEIGHT_STRING
 YEAR = _sqlfunc.YEAR
 YEARWEEK = _sqlfunc.YEARWEEK
+asynchronous_connection_failover_add_managed = _sqlfunc.asynchronous_connection_failover_add_managed
+asynchronous_connection_failover_add_source = _sqlfunc.asynchronous_connection_failover_add_source
+asynchronous_connection_failover_delete_managed = _sqlfunc.asynchronous_connection_failover_delete_managed
+asynchronous_connection_failover_delete_source = _sqlfunc.asynchronous_connection_failover_delete_source
+asynchronous_connection_failover_reset = _sqlfunc.asynchronous_connection_failover_reset
+group_replication_disable_member_action = _sqlfunc.group_replication_disable_member_action
+group_replication_enable_member_action = _sqlfunc.group_replication_enable_member_action
+group_replication_get_communication_protocol = _sqlfunc.group_replication_get_communication_protocol
+group_replication_get_write_concurrency = _sqlfunc.group_replication_get_write_concurrency
+group_replication_reset_member_actions = _sqlfunc.group_replication_reset_member_actions
+group_replication_set_as_primary = _sqlfunc.group_replication_set_as_primary
+group_replication_set_communication_protocol = _sqlfunc.group_replication_set_communication_protocol
+group_replication_set_write_concurrency = _sqlfunc.group_replication_set_write_concurrency
+group_replication_switch_to_multi_primary_mode = _sqlfunc.group_replication_switch_to_multi_primary_mode
+group_replication_switch_to_single_primary_mode = _sqlfunc.group_replication_switch_to_single_primary_mode
 
 __all__: list[str] = [
     'ABS', 'ACOS', 'ADDDATE', 'ADDTIME', 'AES_DECRYPT', 'AES_ENCRYPT', 'ANY_VALUE',
@@ -422,38 +440,40 @@ __all__: list[str] = [
     'LAG', 'LAST_DAY', 'LAST_INSERT_ID', 'LAST_VALUE', 'LCASE', 'LEAD', 'LEAST',
     'LEFT', 'LENGTH', 'LN', 'LOAD_FILE', 'LOCALTIME', 'LOCALTIMESTAMP', 'LOCATE',
     'LOG', 'LOG10', 'LOG2', 'LOWER', 'LPAD', 'LTRIM', 'LineString',
-    'MAKEDATE', 'MAKETIME', 'MAKE_SET', 'MATCH', 'MAX', 'MBRContains', 'MBRCoveredBy',
-    'MBRCovers', 'MBRDisjoint', 'MBREquals', 'MBRIntersects', 'MBROverlaps', 'MBRTouches', 'MBRWithin',
-    'MD5', 'MICROSECOND', 'MID', 'MIN', 'MINUTE', 'MOD', 'MONTH',
-    'MONTHNAME', 'MultiLineString', 'MultiPoint', 'MultiPolygon', 'NAME_CONST', 'NOW', 'NTH_VALUE',
-    'NTILE', 'NULLIF', 'OCT', 'OCTET_LENGTH', 'ORD', 'PERCENT_RANK', 'PERIOD_ADD',
-    'PERIOD_DIFF', 'PI', 'POSITION', 'POW', 'POWER', 'PS_CURRENT_THREAD_ID', 'PS_THREAD_ID',
-    'Point', 'Polygon', 'QUARTER', 'QUOTE', 'RADIANS', 'RAND', 'RANDOM_BYTES',
-    'RANK', 'REGEXP_INSTR', 'REGEXP_LIKE', 'REGEXP_REPLACE', 'REGEXP_SUBSTR', 'RELEASE_ALL_LOCKS', 'RELEASE_LOCK',
-    'REPEAT', 'REPLACE', 'REVERSE', 'RIGHT', 'ROLES_GRAPHML', 'ROUND', 'ROW_COUNT',
-    'ROW_NUMBER', 'RPAD', 'RTRIM', 'SCHEMA', 'SECOND', 'SEC_TO_TIME', 'SESSION_USER',
-    'SHA', 'SHA1', 'SHA2', 'SIGN', 'SIN', 'SLEEP', 'SOUNDEX',
-    'SPACE', 'SQRT', 'STATEMENT_DIGEST', 'STATEMENT_DIGEST_TEXT', 'STD', 'STDDEV', 'STDDEV_POP',
-    'STDDEV_SAMP', 'STRCMP', 'STRING_TO_VECTOR', 'STR_TO_DATE', 'ST_Area', 'ST_AsBinary', 'ST_AsGeoJSON',
-    'ST_AsText', 'ST_AsWKB', 'ST_AsWKT', 'ST_Buffer', 'ST_Buffer_Strategy', 'ST_Centroid', 'ST_Collect',
-    'ST_Contains', 'ST_ConvexHull', 'ST_Crosses', 'ST_Difference', 'ST_Dimension', 'ST_Disjoint', 'ST_Distance',
-    'ST_Distance_Sphere', 'ST_EndPoint', 'ST_Envelope', 'ST_Equals', 'ST_ExteriorRing', 'ST_FrechetDistance', 'ST_GeoHash',
-    'ST_GeomCollFromText', 'ST_GeomCollFromTxt', 'ST_GeomCollFromWKB', 'ST_GeomFromGeoJSON', 'ST_GeomFromText', 'ST_GeomFromWKB', 'ST_GeometryCollectionFromText',
-    'ST_GeometryCollectionFromWKB', 'ST_GeometryFromText', 'ST_GeometryFromWKB', 'ST_GeometryN', 'ST_GeometryType', 'ST_HausdorffDistance', 'ST_InteriorRingN',
-    'ST_Intersection', 'ST_Intersects', 'ST_IsClosed', 'ST_IsEmpty', 'ST_IsSimple', 'ST_IsValid', 'ST_LatFromGeoHash',
-    'ST_Latitude', 'ST_Length', 'ST_LineFromText', 'ST_LineFromWKB', 'ST_LineInterpolatePoint', 'ST_LineInterpolatePoints', 'ST_LineStringFromText',
-    'ST_LineStringFromWKB', 'ST_LongFromGeoHash', 'ST_Longitude', 'ST_MLineFromText', 'ST_MLineFromWKB', 'ST_MPointFromText', 'ST_MPointFromWKB',
-    'ST_MPolyFromText', 'ST_MPolyFromWKB', 'ST_MakeEnvelope', 'ST_MultiLineStringFromText', 'ST_MultiLineStringFromWKB', 'ST_MultiPointFromText', 'ST_MultiPointFromWKB',
-    'ST_MultiPolygonFromText', 'ST_MultiPolygonFromWKB', 'ST_NumGeometries', 'ST_NumInteriorRing', 'ST_NumInteriorRings', 'ST_NumPoints', 'ST_Overlaps',
-    'ST_PointAtDistance', 'ST_PointFromGeoHash', 'ST_PointFromText', 'ST_PointFromWKB', 'ST_PointN', 'ST_PolyFromText', 'ST_PolyFromWKB',
-    'ST_PolygonFromText', 'ST_PolygonFromWKB', 'ST_SRID', 'ST_Simplify', 'ST_StartPoint', 'ST_SwapXY', 'ST_SymDifference',
-    'ST_Touches', 'ST_Transform', 'ST_Union', 'ST_Validate', 'ST_Within', 'ST_X', 'ST_Y',
-    'SUBDATE', 'SUBSTR', 'SUBSTRING', 'SUBSTRING_INDEX', 'SUBTIME', 'SUM', 'SYSDATE',
-    'SYSTEM_USER', 'TAN', 'TIME', 'TIMEDIFF', 'TIMESTAMP', 'TIMESTAMPADD', 'TIMESTAMPDIFF',
-    'TIME_FORMAT', 'TIME_TO_SEC', 'TO_BASE64', 'TO_DAYS', 'TO_SECONDS', 'TO_VECTOR', 'TRIM',
-    'TRUNCATE', 'UCASE', 'UNCOMPRESS', 'UNCOMPRESSED_LENGTH', 'UNHEX', 'UNIX_TIMESTAMP', 'UPPER',
-    'USER', 'UTC_DATE', 'UTC_TIME', 'UTC_TIMESTAMP', 'UUID', 'UUID_SHORT', 'UUID_TO_BIN',
-    'UpdateXML', 'VALIDATE_PASSWORD_STRENGTH', 'VALUES', 'VARIANCE', 'VAR_POP', 'VAR_SAMP', 'VECTOR_DIM',
-    'VECTOR_DISTANCE', 'VECTOR_TO_STRING', 'VERSION', 'VERSION_WITH_UPDATE', 'WEEK', 'WEEKDAY', 'WEEKOFYEAR',
-    'WEIGHT_STRING', 'YEAR', 'YEARWEEK',
+    'MAKEDATE', 'MAKETIME', 'MAKE_SET', 'MASTER_POS_WAIT', 'MATCH', 'MAX', 'MBRContains',
+    'MBRCoveredBy', 'MBRCovers', 'MBRDisjoint', 'MBREquals', 'MBRIntersects', 'MBROverlaps', 'MBRTouches',
+    'MBRWithin', 'MD5', 'MICROSECOND', 'MID', 'MIN', 'MINUTE', 'MOD',
+    'MONTH', 'MONTHNAME', 'MultiLineString', 'MultiPoint', 'MultiPolygon', 'NAME_CONST', 'NOW',
+    'NTH_VALUE', 'NTILE', 'NULLIF', 'OCT', 'OCTET_LENGTH', 'ORD', 'PERCENT_RANK',
+    'PERIOD_ADD', 'PERIOD_DIFF', 'PI', 'POSITION', 'POW', 'POWER', 'PS_CURRENT_THREAD_ID',
+    'PS_THREAD_ID', 'Point', 'Polygon', 'QUARTER', 'QUOTE', 'RADIANS', 'RAND',
+    'RANDOM_BYTES', 'RANK', 'REGEXP_INSTR', 'REGEXP_LIKE', 'REGEXP_REPLACE', 'REGEXP_SUBSTR', 'RELEASE_ALL_LOCKS',
+    'RELEASE_LOCK', 'REPEAT', 'REPLACE', 'REVERSE', 'RIGHT', 'ROLES_GRAPHML', 'ROUND',
+    'ROW_COUNT', 'ROW_NUMBER', 'RPAD', 'RTRIM', 'SCHEMA', 'SECOND', 'SEC_TO_TIME',
+    'SESSION_USER', 'SHA', 'SHA1', 'SHA2', 'SIGN', 'SIN', 'SLEEP',
+    'SOUNDEX', 'SOURCE_POS_WAIT', 'SPACE', 'SQRT', 'STATEMENT_DIGEST', 'STATEMENT_DIGEST_TEXT', 'STD',
+    'STDDEV', 'STDDEV_POP', 'STDDEV_SAMP', 'STRCMP', 'STRING_TO_VECTOR', 'STR_TO_DATE', 'ST_Area',
+    'ST_AsBinary', 'ST_AsGeoJSON', 'ST_AsText', 'ST_AsWKB', 'ST_AsWKT', 'ST_Buffer', 'ST_Buffer_Strategy',
+    'ST_Centroid', 'ST_Collect', 'ST_Contains', 'ST_ConvexHull', 'ST_Crosses', 'ST_Difference', 'ST_Dimension',
+    'ST_Disjoint', 'ST_Distance', 'ST_Distance_Sphere', 'ST_EndPoint', 'ST_Envelope', 'ST_Equals', 'ST_ExteriorRing',
+    'ST_FrechetDistance', 'ST_GeoHash', 'ST_GeomCollFromText', 'ST_GeomCollFromTxt', 'ST_GeomCollFromWKB', 'ST_GeomFromGeoJSON', 'ST_GeomFromText',
+    'ST_GeomFromWKB', 'ST_GeometryCollectionFromText', 'ST_GeometryCollectionFromWKB', 'ST_GeometryFromText', 'ST_GeometryFromWKB', 'ST_GeometryN', 'ST_GeometryType',
+    'ST_HausdorffDistance', 'ST_InteriorRingN', 'ST_Intersection', 'ST_Intersects', 'ST_IsClosed', 'ST_IsEmpty', 'ST_IsSimple',
+    'ST_IsValid', 'ST_LatFromGeoHash', 'ST_Latitude', 'ST_Length', 'ST_LineFromText', 'ST_LineFromWKB', 'ST_LineInterpolatePoint',
+    'ST_LineInterpolatePoints', 'ST_LineStringFromText', 'ST_LineStringFromWKB', 'ST_LongFromGeoHash', 'ST_Longitude', 'ST_MLineFromText', 'ST_MLineFromWKB',
+    'ST_MPointFromText', 'ST_MPointFromWKB', 'ST_MPolyFromText', 'ST_MPolyFromWKB', 'ST_MakeEnvelope', 'ST_MultiLineStringFromText', 'ST_MultiLineStringFromWKB',
+    'ST_MultiPointFromText', 'ST_MultiPointFromWKB', 'ST_MultiPolygonFromText', 'ST_MultiPolygonFromWKB', 'ST_NumGeometries', 'ST_NumInteriorRing', 'ST_NumInteriorRings',
+    'ST_NumPoints', 'ST_Overlaps', 'ST_PointAtDistance', 'ST_PointFromGeoHash', 'ST_PointFromText', 'ST_PointFromWKB', 'ST_PointN',
+    'ST_PolyFromText', 'ST_PolyFromWKB', 'ST_PolygonFromText', 'ST_PolygonFromWKB', 'ST_SRID', 'ST_Simplify', 'ST_StartPoint',
+    'ST_SwapXY', 'ST_SymDifference', 'ST_Touches', 'ST_Transform', 'ST_Union', 'ST_Validate', 'ST_Within',
+    'ST_X', 'ST_Y', 'SUBDATE', 'SUBSTR', 'SUBSTRING', 'SUBSTRING_INDEX', 'SUBTIME',
+    'SUM', 'SYSDATE', 'SYSTEM_USER', 'TAN', 'TIME', 'TIMEDIFF', 'TIMESTAMP',
+    'TIMESTAMPADD', 'TIMESTAMPDIFF', 'TIME_FORMAT', 'TIME_TO_SEC', 'TO_BASE64', 'TO_DAYS', 'TO_SECONDS',
+    'TO_VECTOR', 'TRIM', 'TRUNCATE', 'UCASE', 'UNCOMPRESS', 'UNCOMPRESSED_LENGTH', 'UNHEX',
+    'UNIX_TIMESTAMP', 'UPPER', 'USER', 'UTC_DATE', 'UTC_TIME', 'UTC_TIMESTAMP', 'UUID',
+    'UUID_SHORT', 'UUID_TO_BIN', 'UpdateXML', 'VALIDATE_PASSWORD_STRENGTH', 'VALUES', 'VARIANCE', 'VAR_POP',
+    'VAR_SAMP', 'VECTOR_DIM', 'VECTOR_DISTANCE', 'VECTOR_TO_STRING', 'VERSION', 'VERSION_WITH_UPDATE', 'WAIT_FOR_EXECUTED_GTID_SET',
+    'WEEK', 'WEEKDAY', 'WEEKOFYEAR', 'WEIGHT_STRING', 'YEAR', 'YEARWEEK', 'asynchronous_connection_failover_add_managed',
+    'asynchronous_connection_failover_add_source', 'asynchronous_connection_failover_delete_managed', 'asynchronous_connection_failover_delete_source', 'asynchronous_connection_failover_reset', 'group_replication_disable_member_action', 'group_replication_enable_member_action', 'group_replication_get_communication_protocol',
+    'group_replication_get_write_concurrency', 'group_replication_reset_member_actions', 'group_replication_set_as_primary', 'group_replication_set_communication_protocol', 'group_replication_set_write_concurrency', 'group_replication_switch_to_multi_primary_mode', 'group_replication_switch_to_single_primary_mode',
 ]

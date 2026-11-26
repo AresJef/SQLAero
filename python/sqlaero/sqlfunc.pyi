@@ -2067,3 +2067,128 @@ class VECTOR_DISTANCE(_SQLFunction):
 class VERSION_WITH_UPDATE(_SQLFunction):
     """Return the four-part server version where the server supports it."""
     def __init__(self) -> None: ...
+
+@final
+class MASTER_POS_WAIT(_SQLFunction):
+    """Wait for a replica to reach a source binlog position using the deprecated name."""
+    def __init__(
+        self,
+        log_name: object,
+        log_pos: object,
+        timeout: object = ...,
+        channel: object = ...,
+    ) -> None: ...
+
+@final
+class SOURCE_POS_WAIT(_SQLFunction):
+    """Wait for a replica to reach a source binlog position."""
+    def __init__(
+        self,
+        log_name: object,
+        log_pos: object,
+        timeout: object = ...,
+        channel: object = ...,
+    ) -> None: ...
+
+@final
+class WAIT_FOR_EXECUTED_GTID_SET(_SQLFunction):
+    """Wait until the local server has executed the given GTID set."""
+    def __init__(self, gtid_set: object, timeout: object = ...) -> None: ...
+
+@final
+class asynchronous_connection_failover_add_managed(_SQLFunction):
+    """Add a managed group to a replication channel's asynchronous source list."""
+    def __init__(
+        self,
+        channel: object,
+        managed_type: object,
+        managed_name: object,
+        host: object,
+        port: object,
+        network_namespace: object,
+        primary_weight: object,
+        secondary_weight: object,
+    ) -> None: ...
+
+@final
+class asynchronous_connection_failover_add_source(_SQLFunction):
+    """Add one source to a replication channel's asynchronous source list."""
+    def __init__(
+        self,
+        channel: object,
+        host: object,
+        port: object,
+        network_namespace: object,
+        weight: object,
+    ) -> None: ...
+
+@final
+class asynchronous_connection_failover_delete_managed(_SQLFunction):
+    """Remove a managed group from a replication channel's asynchronous source list."""
+    def __init__(self, channel: object, managed_name: object) -> None: ...
+
+@final
+class asynchronous_connection_failover_delete_source(_SQLFunction):
+    """Remove a source from a replication channel's asynchronous source list."""
+    def __init__(
+        self,
+        channel: object,
+        host: object,
+        port: object,
+        network_namespace: object,
+    ) -> None: ...
+
+@final
+class asynchronous_connection_failover_reset(_SQLFunction):
+    """Clear asynchronous failover settings on a server outside a replication group."""
+    def __init__(self) -> None: ...
+
+@final
+class group_replication_disable_member_action(_SQLFunction):
+    """Disable a member action for the specified group replication event."""
+    def __init__(self, name: object, event: object) -> None: ...
+
+@final
+class group_replication_enable_member_action(_SQLFunction):
+    """Enable a member action for the specified group replication event."""
+    def __init__(self, name: object, event: object) -> None: ...
+
+@final
+class group_replication_get_communication_protocol(_SQLFunction):
+    """Return the communication protocol version used by the replication group."""
+    def __init__(self) -> None: ...
+
+@final
+class group_replication_get_write_concurrency(_SQLFunction):
+    """Return the group replication maximum number of consensus instances in progress."""
+    def __init__(self) -> None: ...
+
+@final
+class group_replication_reset_member_actions(_SQLFunction):
+    """Restore default member actions on a server outside a replication group."""
+    def __init__(self) -> None: ...
+
+@final
+class group_replication_set_as_primary(_SQLFunction):
+    """Appoint a replication group member as primary, optionally with a transaction timeout."""
+    def __init__(self, member_uuid: object, timeout: object = ...) -> None: ...
+
+@final
+class group_replication_set_communication_protocol(_SQLFunction):
+    """Set the replication group's communication protocol to the supplied server version."""
+    def __init__(self, version: object) -> None: ...
+
+@final
+class group_replication_set_write_concurrency(_SQLFunction):
+    """Set the group replication maximum number of consensus instances in progress."""
+    def __init__(self, concurrency: object) -> None: ...
+
+@final
+class group_replication_switch_to_multi_primary_mode(_SQLFunction):
+    """Switch a running replication group into multi-primary mode."""
+    def __init__(self) -> None: ...
+
+@final
+class group_replication_switch_to_single_primary_mode(_SQLFunction):
+    """Switch to single-primary mode, optionally selecting a member by UUID."""
+    def __init__(self, member_uuid: object = ...) -> None: ...
