@@ -6,7 +6,7 @@ use crate::errors;
 use crate::input::control::Checkpoint;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
-use pyo3::types::{PyInt, PyTuple};
+use pyo3::types::{PyInt, PyString, PyTuple};
 use sqlaero_core::bind::Context;
 use sqlaero_core::bind::value::ValueRef;
 use sqlaero_core::protocol::framing::WireError;
@@ -82,12 +82,13 @@ fn compact_integer(value: &Bound<'_, PyAny>) -> PyResult<(i64, i32)> {
 
 pub(super) fn struct_time<D: Destination + ?Sized>(
     value: &Bound<'_, PyTuple>,
+    offset_name: &Bound<'_, PyString>,
     result: &mut D,
     context: &Context,
     budget: Option<&dyn Checkpoint>,
 ) -> PyResult<()> {
     let py = value.py();
-    let offset = struct_field(value, 10)?;
+    let offset = value.as_any().getattr(offset_name)?;
     let offset_seconds = if offset.is_none() {
         None
     } else {

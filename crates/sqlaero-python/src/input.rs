@@ -99,6 +99,7 @@ pub(crate) struct ScalarTypes {
     datetime_offset: Py<PyAny>,
     time_offset: Py<PyAny>,
     struct_time: Py<PyType>,
+    struct_time_offset_name: Py<PyString>,
     sequences: sequence::Types,
     uuid: std::sync::OnceLock<identifier::UuidType>,
     enum_type: std::sync::OnceLock<Py<PyType>>,
@@ -175,6 +176,13 @@ impl ScalarTypes {
         let decimal_type =
             errors::attribute(decimal.as_any(), c"Decimal")?.cast_into::<PyType>()?;
         let decimal_api = decimal::Api::new(&decimal_type)?;
+        // SAFETY: the static name is terminated and Python is attached. The
+        // returned string belongs to this interpreter's scalar registry.
+        let struct_time_offset_name = unsafe {
+            Bound::from_owned_ptr_or_err(py, pyo3::ffi::PyUnicode_FromString(c"tm_gmtoff".as_ptr()))
+        }?
+        .cast_into::<PyString>()?
+        .unbind();
         Ok(Self {
             decimal: decimal_api,
             sequences: sequence::Types::new(py)?,
@@ -188,6 +196,7 @@ impl ScalarTypes {
             struct_time: errors::attribute(errors::module(py, c"time")?.as_any(), c"struct_time")?
                 .cast_into::<PyType>()?
                 .unbind(),
+            struct_time_offset_name,
             numpy: std::sync::OnceLock::new(),
             pandas: std::sync::OnceLock::new(),
             polars: std::sync::OnceLock::new(),
@@ -301,7 +310,13 @@ impl ScalarTypes {
                 })?;
             }
             scalar_source::Source::StructTime(value) => {
-                standard::struct_time(value, output, context, budget)?
+                standard::struct_time(
+                    value,
+                    self.struct_time_offset_name.bind(py),
+                    output,
+                    context,
+                    budget,
+                )?;
             }
             scalar_source::Source::Json(value) => {
                 json::mysql(value, self, output, context, budget)?
