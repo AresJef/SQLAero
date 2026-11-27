@@ -218,6 +218,7 @@ pub(crate) struct Planner<'types, 'py> {
     merge: bool,
     prepared: Option<Prepared>,
     pending: Option<Pending>,
+    text_capacity: usize,
     source_end: usize,
     finished: bool,
 }
@@ -256,6 +257,7 @@ impl<'types, 'py> Planner<'types, 'py> {
             merge,
             prepared: None,
             pending: None,
+            text_capacity: 0,
             source_end: 0,
             finished: false,
         })
@@ -498,12 +500,19 @@ impl<'types, 'py> Planner<'types, 'py> {
                                 self.types,
                                 context,
                                 budget,
+                                &mut self.text_capacity,
                                 Some(&mut previous.conversions),
                             )?;
                             previous.conversions.finish_replay(py)?;
                             bytes
                         }
-                        None => row.bind(&prepared.template, self.types, context, budget)?,
+                        None => row.bind(
+                            &prepared.template,
+                            self.types,
+                            context,
+                            budget,
+                            &mut self.text_capacity,
+                        )?,
                     },
                 };
                 (bytes, if empty { 0 } else { index + 1 })
@@ -1392,8 +1401,9 @@ impl<'r, 'py> Row<'r, 'py> {
         types: &ScalarTypes,
         context: &Context,
         budget: &dyn Checkpoint,
+        text_capacity: &mut usize,
     ) -> PyResult<Vec<u8>> {
-        self.bind_with_conversions(template, types, context, budget, None)
+        self.bind_with_conversions(template, types, context, budget, text_capacity, None)
     }
 
     fn bind_with_conversions(
@@ -1402,11 +1412,18 @@ impl<'r, 'py> Row<'r, 'py> {
         types: &ScalarTypes,
         context: &Context,
         budget: &dyn Checkpoint,
+        text_capacity: &mut usize,
         conversions: Option<&mut Conversions>,
     ) -> PyResult<Vec<u8>> {
+        const MAX_CAPACITY_HINT: usize = 4 * 1024;
         let py = self.value.py();
         let end = template.len();
         let mut output = Vec::new();
+        if *text_capacity != 0 && *text_capacity <= context.limit {
+            // This optional allocation must not change which writer or
+            // conversion error is reported for this request.
+            let _ = output.try_reserve_exact(*text_capacity);
+        }
         writer::append(&mut output, &[3], context.limit)
             .map_err(|error| errors::wire(py, error))?;
         self.fill::<false, true>(
@@ -1420,6 +1437,12 @@ impl<'r, 'py> Row<'r, 'py> {
                 conversions,
             },
         )?;
+        let capacity = output.capacity();
+        *text_capacity = if capacity <= MAX_CAPACITY_HINT {
+            capacity
+        } else {
+            0
+        };
         Ok(output)
     }
 
