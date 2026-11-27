@@ -7,10 +7,8 @@
 //! such bytes no longer borrow mutable NumPy memory.
 //! Weak references guard normal resize, not arbitrary external NumPy/C writers.
 
-#[cfg(not(Py_GIL_DISABLED))]
-use super::NumpyScalar;
 use super::allocation::{Allocation, Export};
-use super::{Kind, NumpyArrayApi, half_to_f64};
+use super::{Kind, NumpyArrayApi, NumpyScalar, half_to_f64};
 use crate::errors;
 use crate::input::attribute::GetSet;
 use crate::input::buffer::Canonical;
@@ -102,27 +100,12 @@ impl RawBlock {
     }
 }
 
-/// A fact owned only for the current row. Free-threaded builds retain the
-/// original immediate representation to protect their shared label readers.
-#[cfg_attr(Py_GIL_DISABLED, repr(transparent))]
-pub(crate) struct RowValue(
-    #[cfg(not(Py_GIL_DISABLED))] Option<NumpyScalar>,
-    #[cfg(Py_GIL_DISABLED)] ScalarRef<'static>,
-);
+/// A fixed-width NumPy fact owned while the current Pandas row is acquired.
+pub(crate) struct RowValue(Option<NumpyScalar>);
 
 impl RowValue {
-    #[cfg(not(Py_GIL_DISABLED))]
     pub(crate) const MISSING: Self = Self(None);
 
-    #[cfg(Py_GIL_DISABLED)]
-    pub(crate) const MISSING: Self = Self(ScalarRef::Null);
-
-    #[cfg(Py_GIL_DISABLED)]
-    pub(crate) fn fact(&self) -> ScalarRef<'static> {
-        self.0
-    }
-
-    #[cfg(not(Py_GIL_DISABLED))]
     pub(crate) fn fact(&self) -> ScalarRef<'static> {
         match self.0.as_ref() {
             None => ScalarRef::Null,
@@ -165,9 +148,12 @@ struct UnicodeScratch {
 /// current public strides are checked before any source address is formed;
 /// no Python call, allocation or checkpoint occurs while reading their bytes.
 struct NativeView<'owner, 'py> {
-    // Fields drop in declaration order: end the derived export first.
-    source: Export<'owner, 'py>,
+    // A distinct logical view must outlive its metadata and drop before
+    // the physical export. With a shared owner, the root owns both.
+    _source: Option<Export<'owner, 'py>>,
     root: Export<'owner, 'py>,
+    logical_origin: usize,
+    logical_strides: *const isize,
     dimensions: usize,
     lengths: [usize; 2],
     strides: [isize; 2],
@@ -192,7 +178,7 @@ impl NativeView<'_, '_> {
                 remainder /= length;
                 // SAFETY: native_view checked rank and every axis length;
                 // this public stride vector remains live inside its export.
-                let stride = unsafe { *self.source.raw.strides.add(axis) };
+                let stride = unsafe { *self.logical_strides.add(axis) };
                 offset =
                     offset.checked_add(isize::try_from(coordinate).ok()?.checked_mul(stride)?)?;
             }
@@ -204,7 +190,7 @@ impl NativeView<'_, '_> {
                 offset = offset.checked_add(delta)?;
             }
         }
-        let address = (self.source.raw.buf as usize).checked_add_signed(offset)?;
+        let address = self.logical_origin.checked_add_signed(offset)?;
         if !self.root.contains(address as *const u8, self.width) {
             return None;
         }
@@ -219,7 +205,7 @@ impl NativeView<'_, '_> {
             let mut expected = width;
             for axis in (0..self.dimensions).rev() {
                 // SAFETY: the complete checked metadata stays exported.
-                let stride = unsafe { *self.source.raw.strides.add(axis) };
+                let stride = unsafe { *self.logical_strides.add(axis) };
                 let length = self.tensor_axes[axis];
                 if length > 1 && stride != expected {
                     return false;
@@ -498,7 +484,7 @@ impl<'py> NumpySource<'py> {
             budget,
             self.allocation.native_root(),
             || {
-                let view = self.native_view()?;
+                let view = self.native_view::<false>()?;
                 let valid = view.offset(row, column).is_some();
                 drop(view);
                 if valid {
@@ -531,7 +517,7 @@ impl<'py> NumpySource<'py> {
                         Err(self.changed_layout())
                     };
                 }
-                drop(self.native_view()?);
+                drop(self.native_view::<false>()?);
                 Ok(())
             },
         )
@@ -607,7 +593,7 @@ impl<'py> NumpySource<'py> {
         crate::input::buffer::read(py, budget, self.allocation.native_root(), || {
             // Validate again after the actual protocol. No source export is
             // retained through it or through the following Control boundary.
-            drop(self.native_view()?);
+            drop(self.native_view::<false>()?);
             Ok(())
         })?;
         let facts = (unit, multiplier, kind);
@@ -702,7 +688,6 @@ impl<'py> NumpySource<'py> {
 
     /// Copy one native scalar fact without constructing a Python numeric
     /// object. Non-scalar storage remains with its existing immediate reader.
-    /// Retain an owned, compact fixed-width value for the current Pandas row.
     /// Normal array and record consumers keep their existing direct facts.
     pub(crate) fn scalar_at(
         &mut self,
@@ -715,38 +700,31 @@ impl<'py> NumpySource<'py> {
         };
         let bytes = self.cell_bytes(row, column, budget)?;
         let value = self.scalar_fact(kind, bytes, budget)?;
-        #[cfg(Py_GIL_DISABLED)]
-        {
-            Ok(Some(RowValue(value)))
-        }
-        #[cfg(not(Py_GIL_DISABLED))]
-        {
-            let value = match value {
-                ScalarRef::Null => return Ok(Some(RowValue::MISSING)),
-                ScalarRef::Signed(value) => NumpyScalar::Signed(value),
-                ScalarRef::Unsigned(value) => NumpyScalar::Unsigned(value),
-                ScalarRef::Float(value) => NumpyScalar::Float(value),
-                ScalarRef::Boolean(value) => NumpyScalar::Bool(value),
-                ScalarRef::Ticks {
-                    value,
-                    unit,
-                    multiplier,
-                    kind,
-                } => NumpyScalar::Temporal {
-                    ticks: value,
-                    unit,
-                    multiplier,
-                    kind,
-                },
-                _ => {
-                    return Err(errors::builtin_message::<PyTypeError>(
-                        self.owner.py(),
-                        "owned NumPy row values require numeric or temporal fixed-width storage",
-                    ));
-                }
-            };
-            Ok(Some(RowValue(Some(value))))
-        }
+        let value = match value {
+            ScalarRef::Null => return Ok(Some(RowValue::MISSING)),
+            ScalarRef::Signed(value) => NumpyScalar::Signed(value),
+            ScalarRef::Unsigned(value) => NumpyScalar::Unsigned(value),
+            ScalarRef::Float(value) => NumpyScalar::Float(value),
+            ScalarRef::Boolean(value) => NumpyScalar::Bool(value),
+            ScalarRef::Ticks {
+                value,
+                unit,
+                multiplier,
+                kind,
+            } => NumpyScalar::Temporal {
+                ticks: value,
+                unit,
+                multiplier,
+                kind,
+            },
+            _ => {
+                return Err(errors::builtin_message::<PyTypeError>(
+                    self.owner.py(),
+                    "owned NumPy row values require numeric or temporal fixed-width storage",
+                ));
+            }
+        };
+        Ok(Some(RowValue(Some(value))))
     }
 
     fn scalar_fact(
@@ -806,17 +784,27 @@ impl<'py> NumpySource<'py> {
 
     /// Validate the current original owners once for one bounded native read.
     /// The returned guard must be dropped before making any Python call.
-    fn native_view(&self) -> PyResult<NativeView<'_, 'py>> {
+    fn native_view<const REUSE_LOGICAL_ROOT: bool>(&self) -> PyResult<NativeView<'_, 'py>> {
         let (root, dimensions, lengths) = self.checked_root()?;
-        let source = self.array.acquire(&self.owner, pyo3::ffi::PyBUF_STRIDES)?;
-        let Some(strides) = self.checked_strides(&source, dimensions, lengths) else {
+        let source = if REUSE_LOGICAL_ROOT && self.allocation.is_source_root(&self.owner) {
+            // The existing contiguous root export already includes STRIDES.
+            None
+        } else {
+            Some(self.array.acquire(&self.owner, pyo3::ffi::PyBUF_STRIDES)?)
+        };
+        let logical = source.as_ref().unwrap_or(&root);
+        let Some(strides) = self.checked_strides(logical, dimensions, lengths) else {
             drop(source);
             drop(root);
             return Err(self.changed_layout());
         };
+        let logical_origin = logical.raw.buf as usize;
+        let logical_strides = logical.raw.strides.cast_const();
         Ok(NativeView {
+            _source: source,
             root,
-            source,
+            logical_origin,
+            logical_strides,
             dimensions,
             lengths,
             strides,
@@ -940,7 +928,7 @@ impl<'py> NumpySource<'py> {
                 "NumPy fragment is outside its prepared item width",
             ));
         }
-        let view = self.native_view()?;
+        let view = self.native_view::<false>()?;
         if row >= view.lengths[0] || column >= view.lengths[1] {
             drop(view);
             return Err(errors::builtin_message::<PyIndexError>(
@@ -1016,7 +1004,7 @@ impl<'py> NumpySource<'py> {
             .bytes
             .try_reserve_exact(length)
             .map_err(|_| errors::memory_error(py))?;
-        let view = self.native_view()?;
+        let view = self.native_view::<false>()?;
         let row = start / columns;
         let column = start % columns;
         let first = view.offset(row, column);
@@ -1194,7 +1182,7 @@ impl<'py> NumpySource<'py> {
             }
         };
         crate::input::buffer::read(py, budget, self.allocation.native_root(), || {
-            let view = self.native_view()?;
+            let view = self.native_view::<true>()?;
             if view.offset(row, column).is_none() {
                 drop(view);
                 return Err(super::allocation::bounds_error(py));

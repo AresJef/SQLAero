@@ -8,7 +8,7 @@ use crate::input::sink::ParameterSink;
 use crate::input::source::{self, CellWriter, FragmentRole, PreparedSource, Shape};
 use crate::input::{ScalarTypes, check};
 use pyo3::prelude::*;
-use pyo3::types::PyString;
+use pyo3::types::{PyString, PyTuple};
 use smallvec::{SmallVec, smallvec};
 use sqlaero_core::bind::{
     Context,
@@ -218,7 +218,6 @@ pub(crate) struct Planner<'types, 'py> {
     merge: bool,
     prepared: Option<Prepared>,
     pending: Option<Pending>,
-    text_capacity: usize,
     source_end: usize,
     finished: bool,
 }
@@ -257,7 +256,6 @@ impl<'types, 'py> Planner<'types, 'py> {
             merge,
             prepared: None,
             pending: None,
-            text_capacity: 0,
             source_end: 0,
             finished: false,
         })
@@ -500,19 +498,12 @@ impl<'types, 'py> Planner<'types, 'py> {
                                 self.types,
                                 context,
                                 budget,
-                                &mut self.text_capacity,
                                 Some(&mut previous.conversions),
                             )?;
                             previous.conversions.finish_replay(py)?;
                             bytes
                         }
-                        None => row.bind(
-                            &prepared.template,
-                            self.types,
-                            context,
-                            budget,
-                            &mut self.text_capacity,
-                        )?,
+                        None => row.bind(&prepared.template, self.types, context, budget)?,
                     },
                 };
                 (bytes, if empty { 0 } else { index + 1 })
@@ -1401,9 +1392,8 @@ impl<'r, 'py> Row<'r, 'py> {
         types: &ScalarTypes,
         context: &Context,
         budget: &dyn Checkpoint,
-        text_capacity: &mut usize,
     ) -> PyResult<Vec<u8>> {
-        self.bind_with_conversions(template, types, context, budget, text_capacity, None)
+        self.bind_with_conversions(template, types, context, budget, None)
     }
 
     fn bind_with_conversions(
@@ -1412,17 +1402,18 @@ impl<'r, 'py> Row<'r, 'py> {
         types: &ScalarTypes,
         context: &Context,
         budget: &dyn Checkpoint,
-        text_capacity: &mut usize,
         conversions: Option<&mut Conversions>,
     ) -> PyResult<Vec<u8>> {
-        const MAX_CAPACITY_HINT: usize = 4 * 1024;
         let py = self.value.py();
         let end = template.len();
         let mut output = Vec::new();
-        if *text_capacity != 0 && *text_capacity <= context.limit {
-            // This optional allocation must not change which writer or
-            // conversion error is reported for this request.
-            let _ = output.try_reserve_exact(*text_capacity);
+        const VALUE_GROWTH_ALLOWANCE: usize = 32;
+        const MAX_INITIAL_TEXT_CAPACITY: usize = 4 * 1024;
+        let initial_capacity = end.saturating_add(1 + VALUE_GROWTH_ALLOWANCE);
+        if initial_capacity <= MAX_INITIAL_TEXT_CAPACITY {
+            // Account for the command byte and modest expansion when values
+            // replace slots. Let normal writes report any real failure.
+            let _ = output.try_reserve(initial_capacity.min(context.limit));
         }
         writer::append(&mut output, &[3], context.limit)
             .map_err(|error| errors::wire(py, error))?;
@@ -1437,12 +1428,6 @@ impl<'r, 'py> Row<'r, 'py> {
                 conversions,
             },
         )?;
-        let capacity = output.capacity();
-        *text_capacity = if capacity <= MAX_CAPACITY_HINT {
-            capacity
-        } else {
-            0
-        };
         Ok(output)
     }
 
@@ -2294,14 +2279,7 @@ impl Visit<'_> {
                         visit.value(&item, output, Some(index))
                     })
                 }
-                Sequence::Tuple(value) => {
-                    self.sequence_items(py, value.len(), output, |visit, index, output| {
-                        let item = value.get_borrowed_item(index).inspect_err(|_| {
-                            visit.path.push(index);
-                        })?;
-                        visit.value(&item, output, Some(index))
-                    })
-                }
+                Sequence::Tuple(value) => self.tuple_items(value, output),
                 _ => self.sequence_items(py, sequence.len(), output, |visit, index, output| {
                     sequence.with_item(index, Some(visit.budget), |value| {
                         let value = value.inspect_err(|_| {
@@ -2318,6 +2296,14 @@ impl Visit<'_> {
             self.path.pop();
         }
         result
+    }
+
+    #[inline(never)]
+    fn tuple_items(&mut self, value: &Bound<'_, PyTuple>, output: &mut Vec<u8>) -> PyResult<()> {
+        let items = value.as_slice();
+        self.sequence_items(value.py(), items.len(), output, |visit, index, output| {
+            visit.value(&items[index], output, Some(index))
+        })
     }
 
     fn sequence_items(

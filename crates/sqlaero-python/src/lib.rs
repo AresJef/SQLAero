@@ -309,9 +309,8 @@ fn _bind_sql<'py>(
         }
         return Ok(output);
     }
-    let mut text_capacity = 0;
     while let Some(row) = rows.next(&types, &budget)? {
-        let request = row.bind(&template, &types, &context, &budget, &mut text_capacity)?;
+        let request = row.bind(&template, &types, &context, &budget)?;
         output.append(PyBytes::new(py, &request))?;
     }
     Ok(output)

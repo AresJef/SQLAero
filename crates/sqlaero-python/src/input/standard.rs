@@ -108,14 +108,21 @@ pub(super) fn struct_time<D: Destination + ?Sized>(
     let mut compact = std::array::from_fn::<_, 6, _>(|_| IntegerBuffer::new());
     let mut wide: [Vec<u8>; 6] = std::array::from_fn(|_| Vec::new());
     let mut parts = [&[][..]; 6];
+    // Keep the actual immutable tuple owner across all component reads.
+    let slots = value.as_slice();
     for (index, ((part, compact), wide)) in parts
         .iter_mut()
         .zip(&mut compact)
         .zip(&mut wide)
         .enumerate()
     {
-        let source = value.get_borrowed_item(index)?;
-        let converted = integer(&source, index, budget)?;
+        let source = slots.get(index).ok_or_else(|| {
+            errors::builtin_message::<pyo3::exceptions::PyIndexError>(
+                py,
+                "tuple index out of range",
+            )
+        })?;
+        let converted = integer(source, index, budget)?;
         let (number, overflow) = compact_integer(&converted)?;
         if overflow < 0 || (overflow == 0 && number < 0) {
             return Err(errors::builtin_format::<PyValueError>(
