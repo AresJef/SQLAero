@@ -4,7 +4,7 @@ from collections.abc import Callable
 
 import pytest
 from sqlaero import Column, Connection, CustomEscape, JSON, sqlfunc, sqltype
-from sqlaero.errors import SQLAeroError
+from sqlaero.errors import MySQLErrorCode, ProgrammingError, SQLAeroError
 from sqlaero.typing import EscapeInput
 
 from test_public_connection import connection as connection, live, requires_mysql
@@ -81,7 +81,6 @@ def test_community_compatibility_calls(connection: Connection) -> None:
         (sqlfunc.SLEEP(0), "SLEEP(0)"),
         (sqlfunc.STATEMENT_DIGEST("SELECT 2"), "STATEMENT_DIGEST('SELECT 2')"),
         (sqlfunc.STATEMENT_DIGEST_TEXT("SELECT 2"), "STATEMENT_DIGEST_TEXT('SELECT 2')"),
-        (sqlfunc.VERSION_WITH_UPDATE(), "VERSION_WITH_UPDATE()"),
         (sqlfunc.WEIGHT_STRING("a"), "WEIGHT_STRING('a')"),
         (sqlfunc.WEIGHT_STRING("a", sqltype.BINARY(3)), "WEIGHT_STRING('a' AS BINARY(3))"),
         (sqlfunc.WEIGHT_STRING("a", sqltype.CHAR(3)), "WEIGHT_STRING('a' AS CHAR(3))"),
@@ -102,7 +101,23 @@ def test_community_compatibility_calls(connection: Connection) -> None:
         cursor.execute("SELECT VERSION()")
         server = cursor.fetchone()
         assert server is not None and isinstance(server[0], str)
-        if server[0].startswith("8.4"):
+        release = tuple(map(int, server[0].partition("-")[0].split(".")[:3]))
+        assert len(release) == 3
+        is_84 = release[:2] == (8, 4)
+        # The four-part version was added at different patches in the two LTS series.
+        minimum = (8, 4, 13) if is_84 else (9, 7, 4)
+        version_with_update = sqlfunc.VERSION_WITH_UPDATE()
+        assert str(connection.escape(version_with_update)) == "VERSION_WITH_UPDATE()"
+        if release >= minimum:
+            cursor.execute("SELECT %s,VERSION_WITH_UPDATE()", version_with_update)
+            row = cursor.fetchone()
+            assert row is not None and row[0] == row[1] and isinstance(row[0], str)
+            assert len(row[0].partition("-")[0].split(".")) == 4
+        else:
+            with pytest.raises(ProgrammingError, match="VERSION_WITH_UPDATE") as caught:
+                cursor.execute("SELECT %s", version_with_update)
+            assert caught.value.code == MySQLErrorCode.ER_SP_DOES_NOT_EXIST and caught.value.is_server_error
+        if is_84:
             with pytest.raises(SQLAeroError) as caught:
                 cursor.execute("SELECT %s", sqlfunc.ETAG("a", "b"))
             assert caught.value.is_server_error
