@@ -80,6 +80,7 @@ fn compact_integer(value: &Bound<'_, PyAny>) -> PyResult<(i64, i32)> {
     Ok((number, overflow))
 }
 
+#[inline(never)]
 pub(super) fn struct_time<D: Destination + ?Sized>(
     value: &Bound<'_, PyTuple>,
     offset_name: &Bound<'_, PyString>,
