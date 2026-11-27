@@ -6,7 +6,7 @@ import math
 from typing import Any, cast
 
 import pytest
-from _native_signal import NativeAlarm
+from _native_signal import NativeAlarm, native_call_offsets
 
 from sqlaero import _sqlaero
 
@@ -67,6 +67,7 @@ def test_json_bigint_keeps_its_bound_independent_of_python_text_conversion_limit
 def test_json_checks_signals_before_a_single_large_value_completes(escaped: bool) -> None:
     """Observe a real handler inside one value, without a timing-based SLA."""
     import gc
+    from time import monotonic, sleep
     from types import FrameType
 
     marker = 8712394560123 + int(escaped)
@@ -77,10 +78,13 @@ def test_json_checks_signals_before_a_single_large_value_completes(escaped: bool
     payload = b'[' + str(marker).encode() + b',"' + text + b'"]'
     original = ValueError('original single-value signal')
     observed: list[int] = []
+    deliveries = 0
+    decode_calls = native_call_offsets(decode.__code__)
 
-    def inspect_progress(_signum: int, _frame: FrameType | None) -> None:
-        alarm.start(0)
-        if observed:
+    def inspect_progress(_signum: int, frame: FrameType | None) -> None:
+        nonlocal deliveries
+        deliveries += 1
+        if frame is None or frame.f_code is not decode.__code__ or frame.f_lasti not in decode_calls:
             return
         for value in gc.get_objects():
             if type(value) is not list:
@@ -88,14 +92,17 @@ def test_json_checks_signals_before_a_single_large_value_completes(escaped: bool
             candidate = cast(list[object], value)
             if len(candidate) in (1, 2) and type(candidate[0]) is int and candidate[0] == marker:
                 observed.append(len(candidate))
-                alarm.start(0)
+                alarm.cancel()
                 raise original
-        alarm.start(0.0001, 0.0001)
 
     alarm = NativeAlarm(inspect_progress)
     try:
+        alarm.start(0.0001, 0.0001, wait_ready=True)
+        deadline = monotonic() + 5
+        while deliveries == 0 and monotonic() < deadline:
+            sleep(0.001)
+        assert deliveries > 0, 'no real OS signal reached the prepared JSON handler'
         with pytest.raises(ValueError) as caught:
-            alarm.start(0.0001, 0.0001, wait_ready=True)
             decode(payload)
         assert caught.value is original
         assert observed == [1], 'the handler ran only after the whole value was constructed'
