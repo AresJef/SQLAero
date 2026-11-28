@@ -530,6 +530,7 @@ fn serialize_into<'a, D: Destination + ?Sized>(
 }
 
 /// Serialize one lazy wrapper as text, never as source SQL or binary input.
+#[inline(never)]
 pub(crate) fn mysql<D: Destination + ?Sized>(
     value: &Bound<'_, Json>,
     types: &ScalarTypes,
