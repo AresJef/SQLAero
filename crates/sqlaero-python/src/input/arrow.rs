@@ -934,7 +934,11 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         budget: &dyn Checkpoint,
     ) -> PyResult<super::source::Child<'a, 'py>> {
         let shape = match self.shape {
-            Shape::Table { rows, columns } if index < rows => Shape::Vector { length: columns },
+            Shape::Table { rows, columns } if index < rows => {
+                return Ok(super::source::Child::Native(
+                    super::source::Selected::table_row(self, index, columns),
+                ));
+            }
             Shape::Vector { length } if index < length => {
                 let (array, local) = self.storage.current_array(
                     self.owner.py(),

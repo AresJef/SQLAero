@@ -76,6 +76,7 @@ pub(crate) struct Selected<'a, 'py> {
     parent: &'a mut dyn PreparedSource<'py>,
     index: usize,
     shape: Shape,
+    direct_table_row: bool,
 }
 
 impl<'a, 'py> Selected<'a, 'py> {
@@ -86,6 +87,19 @@ impl<'a, 'py> Selected<'a, 'py> {
             parent,
             index,
             shape,
+            direct_table_row: false,
+        }
+    }
+
+    /// Borrow a table row whose positional cells are the parent's row cells.
+    pub(crate) fn table_row(
+        parent: &'a mut dyn PreparedSource<'py>,
+        index: usize,
+        columns: usize,
+    ) -> Self {
+        Self {
+            direct_table_row: true,
+            ..Self::new(parent, index, Shape::Vector { length: columns })
         }
     }
 }
@@ -110,11 +124,28 @@ impl<'py> PreparedSource<'py> for Selected<'_, 'py> {
     ) -> PyResult<()> {
         self.consume_cell_to(row, column, target, budget)
     }
-    crate::input::source::cell_destinations!();
+    crate::input::source::cell_destinations!(write_text_cell);
 }
 
 impl Selected<'_, '_> {
     super::cell::destinations!();
+
+    fn write_text_cell(
+        &mut self,
+        row: usize,
+        column: usize,
+        output: &mut Vec<u8>,
+        context: &Context,
+        budget: &dyn crate::input::control::Checkpoint,
+        visitor: &mut dyn CellWriter,
+    ) -> PyResult<()> {
+        if self.direct_table_row && column == 0 {
+            return self
+                .parent
+                .write_cell(self.index, row, output, context, budget, visitor);
+        }
+        self.write_cell_to(row, column, output, context, budget, visitor)
+    }
     fn consume_cell_to(
         &mut self,
         row: usize,
@@ -222,11 +253,7 @@ pub(crate) trait PreparedSource<'py> {
             return Ok(Child::Python(value));
         }
         let shape = self.child_shape(index)?;
-        Ok(Child::Native(Selected {
-            parent: self.as_source(),
-            index,
-            shape,
-        }))
+        Ok(Child::Native(Selected::new(self.as_source(), index, shape)))
     }
 
     fn python_child(
@@ -354,6 +381,9 @@ pub(crate) trait PreparedSource<'py> {
 /// Keep text statically specialized while sharing actual cell acquisition.
 macro_rules! cell_destinations {
     () => {
+        $crate::input::source::cell_destinations!(write_cell_to);
+    };
+    ($text:ident) => {
         fn as_source(&mut self) -> &mut dyn $crate::input::source::PreparedSource<'py> {
             self
         }
@@ -366,7 +396,7 @@ macro_rules! cell_destinations {
             budget: &dyn crate::input::control::Checkpoint,
             visitor: &mut dyn $crate::input::source::CellWriter,
         ) -> pyo3::PyResult<()> {
-            self.write_cell_to(row, column, output, context, budget, visitor)
+            self.$text(row, column, output, context, budget, visitor)
         }
         fn write_role_cell(
             &mut self,
