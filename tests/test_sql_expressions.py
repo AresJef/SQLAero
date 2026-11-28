@@ -18,6 +18,9 @@ def test_expression_construction_checks_static_roles() -> None:
     assert interval_base is not None and interval_base.__base__ is sqlfunc.ABS.__base__
     assert not hasattr(sqlfunc, "SQLFunction")
     assert not hasattr(sqlintv, "SQLInterval")
+    for name in ("DISTANCE", "VECTOR_DISTANCE"):
+        assert name not in sqlfunc.__all__
+        assert not hasattr(sqlfunc, name)
     with pytest.raises(TypeError):
         sqlfunc.ABS()  # type: ignore[call-arg]
     with pytest.raises(ValueError, match="EXTRACT.*unit"):

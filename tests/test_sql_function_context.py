@@ -1,7 +1,5 @@
 """Context-bound syntax, compatibility functions, and session lock ownership."""
 
-from collections.abc import Callable
-
 import pytest
 from sqlaero import Column, Connection, CustomEscape, JSON, sqlfunc, sqltype
 from sqlaero.errors import MySQLErrorCode, ProgrammingError, SQLAeroError
@@ -125,14 +123,6 @@ def test_community_compatibility_calls(connection: Connection) -> None:
             cursor.execute("SELECT %s,ETAG('a','b')", sqlfunc.ETAG("a", "b"))
             row = cursor.fetchone()
             assert row is not None and row[0] == row[1] and isinstance(row[0], str) and len(row[0]) == 32
-        for name in ("DISTANCE", "VECTOR_DISTANCE"):
-            constructor: Callable[..., EscapeInput] = getattr(sqlfunc, name)
-            vector = b"\x00\x00\x80\x3f\x00\x00\x00\x40"
-            expr = constructor(vector, vector, "COSINE")
-            assert str(connection.escape(expr)).startswith(name + "(")
-            with pytest.raises(SQLAeroError) as caught:
-                cursor.execute("SELECT %s", expr)
-            assert caught.value.is_server_error and name in str(caught.value).upper()
 
 
 @requires_mysql

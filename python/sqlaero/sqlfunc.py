@@ -65,7 +65,6 @@ DAYOFYEAR = _sqlfunc.DAYOFYEAR
 DEFAULT = _sqlfunc.DEFAULT
 DEGREES = _sqlfunc.DEGREES
 DENSE_RANK = _sqlfunc.DENSE_RANK
-DISTANCE = _sqlfunc.DISTANCE
 ELT = _sqlfunc.ELT
 ETAG = _sqlfunc.ETAG
 EXP = _sqlfunc.EXP
@@ -389,7 +388,6 @@ VARIANCE = _sqlfunc.VARIANCE
 VAR_POP = _sqlfunc.VAR_POP
 VAR_SAMP = _sqlfunc.VAR_SAMP
 VECTOR_DIM = _sqlfunc.VECTOR_DIM
-VECTOR_DISTANCE = _sqlfunc.VECTOR_DISTANCE
 VECTOR_TO_STRING = _sqlfunc.VECTOR_TO_STRING
 VERSION = _sqlfunc.VERSION
 VERSION_WITH_UPDATE = _sqlfunc.VERSION_WITH_UPDATE
@@ -426,7 +424,7 @@ __all__: list[str] = [
     'CURDATE', 'CURRENT_DATE', 'CURRENT_ROLE', 'CURRENT_TIME', 'CURRENT_TIMESTAMP', 'CURRENT_USER', 'CURTIME',
     'DATABASE', 'DATE', 'DATEDIFF', 'DATE_ADD', 'DATE_FORMAT', 'DATE_SUB', 'DAY',
     'DAYNAME', 'DAYOFMONTH', 'DAYOFWEEK', 'DAYOFYEAR', 'DEFAULT', 'DEGREES', 'DENSE_RANK',
-    'DISTANCE', 'ELT', 'ETAG', 'EXP', 'EXPORT_SET', 'EXTRACT', 'ExtractValue',
+    'ELT', 'ETAG', 'EXP', 'EXPORT_SET', 'EXTRACT', 'ExtractValue',
     'FIELD', 'FIND_IN_SET', 'FIRST_VALUE', 'FLOOR', 'FORMAT', 'FORMAT_BYTES', 'FORMAT_PICO_TIME',
     'FOUND_ROWS', 'FROM_BASE64', 'FROM_DAYS', 'FROM_UNIXTIME', 'FROM_VECTOR', 'GET_FORMAT', 'GET_LOCK',
     'GREATEST', 'GROUPING', 'GROUP_CONCAT', 'GeomCollection', 'GeometryCollection', 'HEX', 'HOUR',
@@ -472,7 +470,7 @@ __all__: list[str] = [
     'TO_VECTOR', 'TRIM', 'TRUNCATE', 'UCASE', 'UNCOMPRESS', 'UNCOMPRESSED_LENGTH', 'UNHEX',
     'UNIX_TIMESTAMP', 'UPPER', 'USER', 'UTC_DATE', 'UTC_TIME', 'UTC_TIMESTAMP', 'UUID',
     'UUID_SHORT', 'UUID_TO_BIN', 'UpdateXML', 'VALIDATE_PASSWORD_STRENGTH', 'VALUES', 'VARIANCE', 'VAR_POP',
-    'VAR_SAMP', 'VECTOR_DIM', 'VECTOR_DISTANCE', 'VECTOR_TO_STRING', 'VERSION', 'VERSION_WITH_UPDATE', 'WAIT_FOR_EXECUTED_GTID_SET',
+    'VAR_SAMP', 'VECTOR_DIM', 'VECTOR_TO_STRING', 'VERSION', 'VERSION_WITH_UPDATE', 'WAIT_FOR_EXECUTED_GTID_SET',
     'WEEK', 'WEEKDAY', 'WEEKOFYEAR', 'WEIGHT_STRING', 'YEAR', 'YEARWEEK', 'asynchronous_connection_failover_add_managed',
     'asynchronous_connection_failover_add_source', 'asynchronous_connection_failover_delete_managed', 'asynchronous_connection_failover_delete_source', 'asynchronous_connection_failover_reset', 'group_replication_disable_member_action', 'group_replication_enable_member_action', 'group_replication_get_communication_protocol',
     'group_replication_get_write_concurrency', 'group_replication_reset_member_actions', 'group_replication_set_as_primary', 'group_replication_set_communication_protocol', 'group_replication_set_write_concurrency', 'group_replication_switch_to_multi_primary_mode', 'group_replication_switch_to_single_primary_mode',

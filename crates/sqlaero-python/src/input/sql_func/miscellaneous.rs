@@ -15,7 +15,6 @@ use sqlaero_core::bind::{
 
 fixed_calls! {
     Benchmark, "BENCHMARK", (count, expression), "Evaluate an expression repeatedly on the server and return zero.";
-    Distance, "DISTANCE", (left, right, metric), "Compute vector distance using a named metric on MySQL HeatWave on OCI or MySQL AI.";
     ExtractValue, "ExtractValue", (document, xpath), "Extract XML text matching an XPath expression.";
     FormatBytes, "FORMAT_BYTES", (bytes), "Convert a byte count to a human-readable string.";
     FormatPicoTime, "FORMAT_PICO_TIME", (picoseconds), "Convert a duration in picoseconds to a human-readable string.";
@@ -37,7 +36,6 @@ fixed_calls! {
     StatementDigestText, "STATEMENT_DIGEST_TEXT", (statement), "Return the normalized text used to digest one SQL statement.";
     UpdateXml, "UpdateXML", (document, xpath, replacement), "Replace the XML fragment matching an XPath expression.";
     ValidatePasswordStrength, "VALIDATE_PASSWORD_STRENGTH", (password), "Return the password score from the server's validation component.";
-    VectorDistance, "VECTOR_DISTANCE", (left, right, metric), "Compute vector distance using a named metric on MySQL HeatWave on OCI or MySQL AI.";
     VersionWithUpdate, "VERSION_WITH_UPDATE", (), "Return the four-part server version where the server supports it.";
 }
 

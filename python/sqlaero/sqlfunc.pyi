@@ -1939,11 +1939,6 @@ class BENCHMARK(_SQLFunction):
     def __init__(self, count: object, expression: object) -> None: ...
 
 @final
-class DISTANCE(_SQLFunction):
-    """Compute vector distance using a named metric on MySQL HeatWave on OCI or MySQL AI."""
-    def __init__(self, left: object, right: object, metric: object) -> None: ...
-
-@final
 class ETAG(_SQLFunction):
     """Compute a 128-bit row hash from one or more values; requires server support."""
     def __init__(self, value: object, *values: object) -> None: ...
@@ -2057,11 +2052,6 @@ class UpdateXML(_SQLFunction):
 class VALIDATE_PASSWORD_STRENGTH(_SQLFunction):
     """Return the password score from the server's validation component."""
     def __init__(self, password: object) -> None: ...
-
-@final
-class VECTOR_DISTANCE(_SQLFunction):
-    """Compute vector distance using a named metric on MySQL HeatWave on OCI or MySQL AI."""
-    def __init__(self, left: object, right: object, metric: object) -> None: ...
 
 @final
 class VERSION_WITH_UPDATE(_SQLFunction):
