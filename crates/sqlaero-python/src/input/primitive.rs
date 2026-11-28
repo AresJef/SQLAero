@@ -40,10 +40,15 @@ pub(crate) fn read<'a, 'py>(value: &'a Bound<'py, PyAny>) -> PyResult<Option<Sou
             return Err(error);
         }
         ScalarRef::Signed(compact)
+    } else if value.is_exact_instance_of::<PyFloat>() {
+        // SAFETY: the exact native float check proves the borrowed type.
+        let value = unsafe { value.cast_unchecked::<PyFloat>() };
+        ScalarRef::Float(value.value())
+    } else if let Some(value) = borrow_if::<PyString>(value) {
+        // The Unicode type flag avoids a float subtype lookup for text.
+        return Ok(Some(Source::Text(value)));
     } else if let Some(value) = borrow_if::<PyFloat>(value) {
         ScalarRef::Float(value.value())
-    } else if let Ok(value) = value.cast::<PyString>() {
-        return Ok(Some(Source::Text(value)));
     } else if let Ok(value) = value.cast::<PyBytes>() {
         ScalarRef::Bytes(value.as_bytes())
     } else {
