@@ -1,5 +1,6 @@
 //! One primitive recognition boundary shared by all output targets.
 
+use pyo3::PyTypeCheck;
 use pyo3::prelude::*;
 use pyo3::types::{PyBool, PyBytes, PyFloat, PyFloatMethods, PyInt, PyString};
 use sqlaero_transcode::value::ScalarRef;
@@ -23,7 +24,7 @@ pub(crate) fn read<'a, 'py>(value: &'a Bound<'py, PyAny>) -> PyResult<Option<Sou
         ScalarRef::Null
     } else if value.is_exact_instance_of::<PyBool>() {
         ScalarRef::Boolean(value.extract()?)
-    } else if let Ok(value) = value.cast::<PyInt>() {
+    } else if let Some(value) = borrow_if::<PyInt>(value) {
         let mut overflow = 0;
         // SAFETY: this is a true int, its owner remains live and Python stays
         // attached. The public conversion reads base storage without invoking
@@ -39,14 +40,25 @@ pub(crate) fn read<'a, 'py>(value: &'a Bound<'py, PyAny>) -> PyResult<Option<Sou
             return Err(error);
         }
         ScalarRef::Signed(compact)
-    } else if let Ok(value) = value.cast::<PyFloat>() {
+    } else if let Some(value) = borrow_if::<PyFloat>(value) {
         ScalarRef::Float(value.value())
-    } else if let Ok(value) = value.cast::<PyString>() {
+    } else if let Some(value) = borrow_if::<PyString>(value) {
         return Ok(Some(Source::Text(value)));
-    } else if let Ok(value) = value.cast::<PyBytes>() {
+    } else if let Some(value) = borrow_if::<PyBytes>(value) {
         ScalarRef::Bytes(value.as_bytes())
     } else {
         return Ok(None);
     };
     Ok(Some(Source::Native(scalar)))
+}
+
+/// Probe a known primitive without constructing a cast error on expected misses.
+#[inline]
+fn borrow_if<'a, 'py, T: PyTypeCheck>(value: &'a Bound<'py, PyAny>) -> Option<&'a Bound<'py, T>> {
+    if !value.is_instance_of::<T>() {
+        return None;
+    }
+    // SAFETY: PyTypeCheck guarantees the same type proof used by Bound::cast.
+    // This borrow uses the original live owner without crossing a callback.
+    Some(unsafe { value.cast_unchecked::<T>() })
 }
