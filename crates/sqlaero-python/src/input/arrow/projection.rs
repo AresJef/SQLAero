@@ -232,6 +232,11 @@ fn consume_selected_child<'py>(
         }
         Kind::Record(record) if row == 0 && column < record.num_columns() => {
             let value = record.column(column);
+            // Imported fields share the parent's row window. Physical scalar
+            // storage needs no child projection or nested field names.
+            if scalar_storage(value) {
+                return consume_scalar(read.owner.py(), value, index, target, budget, read.offsets);
+            }
             let node = if target.needs_field_names() {
                 read.child(names::Edge::Field(column), value.data_type(), true, budget)?
             } else {

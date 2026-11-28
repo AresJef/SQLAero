@@ -8,11 +8,10 @@ use std::sync::OnceLock;
 use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList, PyString, PyType};
-use sqlaero_core::bind::Context;
 use sqlaero_core::error::ClientErrorCode;
 
 use super::arrow;
-use super::source::{CellWriter, Child, PreparedSource, Selected, Shape};
+use super::source::{Child, PreparedSource, Selected, Shape};
 use crate::errors;
 
 enum Column<'py> {
@@ -433,7 +432,7 @@ impl<'py> PreparedSource<'py> for Prepared<'py> {
         self.consume_cell_to(row, column, target, budget)
     }
 
-    crate::input::source::cell_destinations!(write_text_cell);
+    crate::input::source::cell_destinations!();
 }
 
 impl<'py> ObjectColumn<'py> {
@@ -466,24 +465,6 @@ impl<'py> ObjectColumn<'py> {
 
 impl<'py> Prepared<'py> {
     crate::input::cell::destinations!();
-
-    fn write_text_cell(
-        &mut self,
-        row: usize,
-        column: usize,
-        output: &mut Vec<u8>,
-        context: &Context,
-        budget: &dyn Checkpoint,
-        visitor: &mut dyn CellWriter,
-    ) -> PyResult<()> {
-        let Storage::Native(source) = &mut self.storage else {
-            return self.write_cell_to(row, column, output, context, budget, visitor);
-        };
-        // Preserve the Polars checkpoint when delegating the same cell to Arrow.
-        visitor.checkpoint(self.owner.py(), 1)?;
-        source.write_cell(row, column, output, context, budget, visitor)
-    }
-
     fn consume_cell_to(
         &mut self,
         row: usize,
