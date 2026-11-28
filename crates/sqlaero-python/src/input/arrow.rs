@@ -1659,11 +1659,6 @@ impl<'py> Prepared<'py> {
             }
         }
         let value = cell_array(py, array, table, column)?;
-        // A selected physical table column has no compound shape or names.
-        // Keep an invalid row on the checked projection path.
-        if table && projection::scalar_storage(value) && index < value.len() {
-            return consume_scalar(py, value, index, target, budget, &mut self.offsets);
-        }
         let node = if table && target.needs_field_names() && names::needed(value.data_type()) {
             self.names.child(0, names::Edge::Field(column), budget)?
         } else {

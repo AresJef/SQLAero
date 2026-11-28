@@ -92,7 +92,7 @@ fn resolve<'a>(
     }
 }
 
-pub(super) fn scalar_storage(array: &ArrayRef) -> bool {
+fn scalar_storage(array: &ArrayRef) -> bool {
     matches!(
         array,
         ArrayRef::Leaf(_) | ArrayRef::Bytes(_) | ArrayRef::View(_)
