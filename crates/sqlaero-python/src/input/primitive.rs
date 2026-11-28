@@ -42,9 +42,9 @@ pub(crate) fn read<'a, 'py>(value: &'a Bound<'py, PyAny>) -> PyResult<Option<Sou
         ScalarRef::Signed(compact)
     } else if let Some(value) = borrow_if::<PyFloat>(value) {
         ScalarRef::Float(value.value())
-    } else if let Some(value) = borrow_if::<PyString>(value) {
+    } else if let Ok(value) = value.cast::<PyString>() {
         return Ok(Some(Source::Text(value)));
-    } else if let Some(value) = borrow_if::<PyBytes>(value) {
+    } else if let Ok(value) = value.cast::<PyBytes>() {
         ScalarRef::Bytes(value.as_bytes())
     } else {
         return Ok(None);
@@ -52,7 +52,7 @@ pub(crate) fn read<'a, 'py>(value: &'a Bound<'py, PyAny>) -> PyResult<Option<Sou
     Ok(Some(Source::Native(scalar)))
 }
 
-/// Probe a known primitive without constructing a cast error on expected misses.
+/// Probe a primitive type without building diagnostics for an expected miss.
 #[inline]
 fn borrow_if<'a, 'py, T: PyTypeCheck>(value: &'a Bound<'py, PyAny>) -> Option<&'a Bound<'py, T>> {
     if !value.is_instance_of::<T>() {
